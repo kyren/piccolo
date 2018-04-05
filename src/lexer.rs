@@ -3,7 +3,7 @@ use std::io::{self, Read};
 
 use failure::{err_msg, Error};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Token {
     Break,
     Do,
@@ -63,15 +63,15 @@ pub struct Lexer<R: Read> {
     // When the source end is reached, this will be set to None
     source: Option<R>,
     peek: Vec<u8>,
-    line_number: usize,
+    line_number: u64,
 }
 
 #[derive(Debug)]
 pub enum NextToken {
-    Token {
+    Next {
         token: Token,
         /// Line number that the token *begins* on, 0-indexed
-        line_number: usize,
+        line_number: u64,
     },
     End,
 }
@@ -92,7 +92,7 @@ impl<R: Read> Lexer<R> {
             start_line = self.line_number;
             match self.lex() {
                 Ok(Some(token)) => {
-                    return Ok(NextToken::Token {
+                    return Ok(NextToken::Next {
                         token,
                         line_number: start_line,
                     });
@@ -387,10 +387,10 @@ impl<R: Read> Lexer<R> {
                     LOWER_Z => {
                         self.advance(1);
                         while let Some(c) = self.peek(0)? {
-                            if is_space(c) {
-                                self.advance(1);
-                            } else if is_newline(c) {
+                            if is_newline(c) {
                                 self.line_end(None)?;
+                            } else if is_space(c) {
+                                self.advance(1);
                             } else {
                                 break;
                             }
@@ -459,20 +459,24 @@ impl<R: Read> Lexer<R> {
 
                 RIGHT_BRACKET => {
                     let mut close_sep_length = 0;
-                    while self.peek(close_sep_length + 1)? == Some(EQUALS) {
+                    self.advance(1);
+                    while self.peek(0)? == Some(EQUALS) {
+                        self.advance(1);
                         close_sep_length += 1;
                     }
 
-                    if open_sep_length == close_sep_length
-                        && self.peek(close_sep_length + 1)? == Some(RIGHT_BRACKET)
-                    {
-                        self.advance(close_sep_length + 2);
+                    if open_sep_length == close_sep_length && self.peek(0)? == Some(RIGHT_BRACKET) {
+                        self.advance(1);
                         break;
                     } else {
+                        // If it turns out this is not a valid long string close delimiter, we need
+                        // to add the invalid close delimiter to the output.
                         if let Some(o) = output.as_mut() {
                             o.push(RIGHT_BRACKET);
+                            for _ in 0..close_sep_length {
+                                o.push(EQUALS);
+                            }
                         }
-                        self.advance(1);
                     }
                 }
 
@@ -490,7 +494,8 @@ impl<R: Read> Lexer<R> {
 
     // Advance the read position by the given amount.  All characters advanced over must have been
     // previously peeked.  `advance(1)` advances the read position by 1, `advance(0)` does nothing.
-    fn advance(&mut self, n: usize) {
+    fn advance(&mut self, n: u8) {
+        let n = n as usize;
         assert!(
             n <= self.peek.len(),
             "cannot advance over un-peeked characters"
@@ -500,7 +505,8 @@ impl<R: Read> Lexer<R> {
 
     // Look at the nth character after the current read position.  `peek(0)` looks at the
     // immediately next character, `peek(1)` the character after that, and so on.
-    fn peek(&mut self, skip: usize) -> Result<Option<u8>, io::Error> {
+    fn peek(&mut self, skip: u8) -> Result<Option<u8>, io::Error> {
+        let skip = skip as usize;
         let mut at_end = false;
         if let Some(source) = self.source.as_mut() {
             while self.peek.len() <= skip {
@@ -567,7 +573,7 @@ fn is_newline(c: u8) -> bool {
 }
 
 fn is_space(c: u8) -> bool {
-    c == SPACE || c == HORIZONTAL_TAB || c == VERTICAL_TAB || c == FORM_FEED
+    c == SPACE || c == HORIZONTAL_TAB || c == VERTICAL_TAB || c == FORM_FEED || is_newline(c)
 }
 
 fn from_digit(c: u8) -> Option<u8> {
