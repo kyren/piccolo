@@ -1,29 +1,30 @@
 use std::char;
+use std::collections::HashMap;
 use std::io::{self, Read};
 
 use failure::{err_msg, Error};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Break,
     Do,
     Else,
     ElseIf,
     End,
-    False,
-    For,
     Function,
     Goto,
     If,
     In,
     Local,
     Nil,
+    For,
+    While,
     Repeat,
+    Until,
     Return,
     Then,
     True,
-    Until,
-    While,
+    False,
     Not,
     And,
     Or,
@@ -39,6 +40,7 @@ pub enum Token {
     BitOr,
     ShiftRight,
     ShiftLeft,
+    Dot,
     Concat,
     Dots,
     Assign,
@@ -53,8 +55,10 @@ pub enum Token {
     Len,
     LeftBracket,
     RightBracket,
-    Number(Box<[u8]>),
-    Integer(Box<[u8]>),
+    LeftBrace,
+    RightBrace,
+    Number(f64),
+    Integer(i64),
     Name(Box<[u8]>),
     String(Box<[u8]>),
 }
@@ -238,7 +242,62 @@ impl<R: Read> Lexer<R> {
                 Some(Token::String(s.into_boxed_slice()))
             }
 
-            c => unimplemented!("{:?} {:?}", self.line_number, c),
+            PERIOD => {
+                if self.peek(1)? == Some(PERIOD) {
+                    if self.peek(2)? == Some(PERIOD) {
+                        self.advance(3);
+                        Some(Token::Dots)
+                    } else {
+                        self.advance(2);
+                        Some(Token::Concat)
+                    }
+                } else {
+                    if self.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
+                        Some(match self.numeral()? {
+                            Numeral::Integer(i) => Token::Integer(i),
+                            Numeral::Float(f) => Token::Number(f),
+                        })
+                    } else {
+                        Some(Token::Dot)
+                    }
+                }
+            }
+
+            c => {
+                if is_digit(c) {
+                    Some(match self.numeral()? {
+                        Numeral::Integer(i) => Token::Integer(i),
+                        Numeral::Float(f) => Token::Number(f),
+                    })
+                } else if let Some(t) = SINGLE_CHAR_TOKEN_MAP.get(&c).cloned() {
+                    self.advance(1);
+                    Some(t)
+                } else if is_alpha(c) {
+                    let mut name = Vec::new();
+                    name.push(c);
+                    self.advance(1);
+
+                    while let Some(c) = self.peek(0)? {
+                        if is_alpha(c) || is_digit(c) {
+                            name.push(c);
+                            self.advance(1);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if let Some(t) = RESERVED_WORD_MAP.get(name.as_slice()).cloned() {
+                        Some(t)
+                    } else {
+                        Some(Token::Name(name.into_boxed_slice()))
+                    }
+                } else {
+                    return Err(format_err!(
+                        "unexpected identifier: '{}'",
+                        char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
+                    ));
+                }
+            }
         })
     }
 
@@ -398,7 +457,7 @@ impl<R: Read> Lexer<R> {
                     }
 
                     c => {
-                        if from_digit(c).is_some() {
+                        if is_digit(c) {
                             let mut u: u16 = 0;
                             for _ in 0..3 {
                                 if let Some(d) = self.peek(0)?.and_then(from_digit) {
@@ -492,6 +551,10 @@ impl<R: Read> Lexer<R> {
         Ok(())
     }
 
+    fn numeral(&mut self) -> Result<Numeral, Error> {
+        unimplemented!()
+    }
+
     // Advance the read position by the given amount.  All characters advanced over must have been
     // previously peeked.  `advance(1)` advances the read position by 1, `advance(0)` does nothing.
     fn advance(&mut self, n: u8) {
@@ -527,6 +590,11 @@ impl<R: Read> Lexer<R> {
     }
 }
 
+enum Numeral {
+    Integer(i64),
+    Float(f64),
+}
+
 const SPACE: u8 = ' ' as u8;
 const NEWLINE: u8 = '\n' as u8;
 const CARRIAGE_RETURN: u8 = '\r' as u8;
@@ -535,8 +603,6 @@ const ALERT_BEEP: u8 = 0x07;
 const BACKSPACE: u8 = 0x08;
 const VERTICAL_TAB: u8 = 0x0b;
 const FORM_FEED: u8 = 0x0c;
-
-const MINUS: u8 = '-' as u8;
 const LEFT_BRACKET: u8 = '[' as u8;
 const RIGHT_BRACKET: u8 = ']' as u8;
 const LEFT_BRACE: u8 = '{' as u8;
@@ -550,23 +616,90 @@ const TILDE: u8 = '~' as u8;
 const COLON: u8 = ':' as u8;
 const DOUBLE_QUOTE: u8 = '"' as u8;
 const SINGLE_QUOTE: u8 = '\'' as u8;
-
+const PERIOD: u8 = '.' as u8;
+const PLUS: u8 = '+' as u8;
+const MINUS: u8 = '-' as u8;
+const ASTERISK: u8 = '*' as u8;
+const CARET: u8 = '^' as u8;
+const PERCENT: u8 = '%' as u8;
+const AMPERSAND: u8 = '&' as u8;
+const OCTOTHORPE: u8 = '#' as u8;
+const PIPE: u8 = '|' as u8;
+const UNDERSCORE: u8 = '_' as u8;
 const LOWER_A: u8 = 'a' as u8;
 const LOWER_B: u8 = 'b' as u8;
 const LOWER_F: u8 = 'f' as u8;
 const LOWER_N: u8 = 'n' as u8;
 const LOWER_R: u8 = 'r' as u8;
 const LOWER_T: u8 = 't' as u8;
+const LOWER_U: u8 = 'u' as u8;
 const LOWER_V: u8 = 'v' as u8;
 const LOWER_X: u8 = 'x' as u8;
-const LOWER_U: u8 = 'u' as u8;
 const LOWER_Z: u8 = 'z' as u8;
-
 const UPPER_A: u8 = 'A' as u8;
 const UPPER_F: u8 = 'F' as u8;
-
+const UPPER_Z: u8 = 'Z' as u8;
 const NUM_0: u8 = '0' as u8;
 const NUM_9: u8 = '9' as u8;
+
+// Tokens that are a single character and never the beginning of another longer token
+const SINGLE_CHAR_TOKENS: &[(u8, Token)] = &[
+    (PLUS, Token::Plus),
+    (MINUS, Token::Minus),
+    (ASTERISK, Token::Times),
+    (CARET, Token::Pow),
+    (PERCENT, Token::Mod),
+    (AMPERSAND, Token::BitAnd),
+    (PIPE, Token::BitOr),
+    (OCTOTHORPE, Token::Len),
+    (RIGHT_BRACKET, Token::RightBracket),
+    (LEFT_BRACE, Token::LeftBrace),
+    (RIGHT_BRACE, Token::RightBrace),
+];
+
+// Identifiers which should be interpreted as keyword tokens
+const RESERVED_WORDS: &[(&str, Token)] = &[
+    ("break", Token::Break),
+    ("do", Token::Do),
+    ("else", Token::Else),
+    ("elseif", Token::ElseIf),
+    ("end", Token::End),
+    ("function", Token::Function),
+    ("goto", Token::Goto),
+    ("if", Token::If),
+    ("in", Token::In),
+    ("local", Token::Local),
+    ("nil", Token::Nil),
+    ("for", Token::For),
+    ("while", Token::While),
+    ("repeat", Token::Repeat),
+    ("until", Token::Until),
+    ("return", Token::Return),
+    ("then", Token::Then),
+    ("true", Token::True),
+    ("false", Token::False),
+    ("not", Token::Not),
+    ("and", Token::And),
+    ("or", Token::Or),
+];
+
+lazy_static! {
+    static ref SINGLE_CHAR_TOKEN_MAP: HashMap<u8, Token> = {
+        let mut m = HashMap::new();
+        for &(c, ref t) in SINGLE_CHAR_TOKENS {
+            m.insert(c, t.clone());
+        }
+        m
+    };
+
+    static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token> = {
+        let mut m = HashMap::new();
+        for &(n, ref t) in RESERVED_WORDS {
+            m.insert(n.as_bytes(), t.clone());
+        }
+        m
+    };
+}
 
 fn is_newline(c: u8) -> bool {
     c == NEWLINE || c == CARRIAGE_RETURN
@@ -576,12 +709,21 @@ fn is_space(c: u8) -> bool {
     c == SPACE || c == HORIZONTAL_TAB || c == VERTICAL_TAB || c == FORM_FEED || is_newline(c)
 }
 
+// Is this character a lua alpha, which is A-Z, a-z, and _
+fn is_alpha(c: u8) -> bool {
+    (c >= LOWER_A && c <= LOWER_Z) || (c >= UPPER_A && c <= UPPER_Z) || c == UNDERSCORE
+}
+
 fn from_digit(c: u8) -> Option<u8> {
     if c >= NUM_0 && c <= NUM_9 {
         Some(c - NUM_0)
     } else {
         None
     }
+}
+
+fn is_digit(c: u8) -> bool {
+    from_digit(c).is_some()
 }
 
 fn from_hex_digit(c: u8) -> Option<u8> {
