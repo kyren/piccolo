@@ -24,7 +24,7 @@ fn test_tokens_lines(source: &str, tokens: &[(Token, u64)]) {
 }
 
 fn str_token(s: &str) -> Token {
-    Token::String(s.as_bytes().to_vec().into_boxed_slice())
+    Token::String(s.as_bytes())
 }
 
 #[test]
