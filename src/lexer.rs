@@ -59,15 +59,32 @@ pub enum Token<'a> {
     RightBracket,
     LeftBrace,
     RightBrace,
-    Number(f64),
-    Integer(i64),
     Name(&'a [u8]),
     String(&'a [u8]),
+    Number(Number<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Number<'a> {
+    Integer {
+        is_hex: bool,
+        /// Will contain u8 digit values 0-9, or 0-15 if the integer is in hex.
+        digits: &'a [u8],
+    },
+    Float {
+        is_hex: bool,
+        /// ipart and fpart contain u8 digit values 0-9, or 0-15 if the float is in hex.
+        whole_part: &'a [u8],
+        frac_part: &'a [u8],
+        /// Exponent is always digital whether or not the float is hex.
+        exp_part: &'a [u8],
+        exp_neg: bool,
+    },
 }
 
 pub struct Lexer<R: Read> {
     lexer_state: LexerState<R>,
-    output_buffer: Vec<u8>,
+    buffer: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -83,21 +100,16 @@ pub enum NextToken<'a> {
 impl<R: Read> Lexer<R> {
     pub fn new(source: R) -> Lexer<R> {
         Lexer {
-            lexer_state: LexerState {
-                stream: Stream::new(source),
-                line_number: 0,
-            },
-            output_buffer: Vec::new(),
+            lexer_state: LexerState::new(source),
+            buffer: Vec::new(),
         }
     }
 
     pub fn next<'a>(&'a mut self) -> Result<NextToken<'a>, Error> {
         self.lexer_state.skip_whitespace()?;
         let line_number = self.lexer_state.line_number;
-        self.output_buffer.clear();
-
         if let Some(token) = self.lexer_state
-            .lex(&mut self.output_buffer)
+            .lex(&mut self.buffer)
             .with_context(|_| format!("starting at line number: {}", line_number))?
         {
             return Ok(NextToken::Next { token, line_number });
@@ -110,9 +122,38 @@ impl<R: Read> Lexer<R> {
 struct LexerState<R: Read> {
     stream: Stream<R>,
     line_number: u64,
+    char_tokens: &'static HashMap<u8, Token<'static>>,
+    reserved_words: &'static HashMap<&'static [u8], Token<'static>>,
 }
 
 impl<R: Read> LexerState<R> {
+    fn new(source: R) -> LexerState<R> {
+        lazy_static! {
+            static ref CHAR_TOKEN_MAP: HashMap<u8, Token<'static>> = {
+                let mut m = HashMap::new();
+                for &(c, ref t) in SINGLE_CHAR_TOKENS {
+                    m.insert(c, t.clone());
+                }
+                m
+            };
+
+            static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token<'static>> = {
+                let mut m = HashMap::new();
+                for &(n, ref t) in RESERVED_WORDS {
+                    m.insert(n.as_bytes(), t.clone());
+                }
+                m
+            };
+        }
+
+        LexerState {
+            stream: Stream::new(source),
+            line_number: 0,
+            char_tokens: &*CHAR_TOKEN_MAP,
+            reserved_words: &*RESERVED_WORD_MAP,
+        }
+    }
+
     // Consumes any whitespace that is next in the stream
     fn skip_whitespace(&mut self) -> Result<(), Error> {
         while let Some(c) = self.stream.peek(0)? {
@@ -129,7 +170,21 @@ impl<R: Read> LexerState<R> {
                     if self.stream.peek(1)? != Some(MINUS) {
                         break;
                     } else {
-                        self.comment()?;
+                        self.stream.advance(2)?;
+
+                        if self.stream.peek(0)? == Some(LEFT_BRACKET) {
+                            // long comment
+                            self.long_string(None)?;
+                        } else {
+                            // Short comment, read until end of line
+                            while let Some(c) = self.stream.peek(0)? {
+                                if is_newline(c) {
+                                    break;
+                                } else {
+                                    self.stream.advance(1)?;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -140,177 +195,165 @@ impl<R: Read> LexerState<R> {
         Ok(())
     }
 
-    // Returns the next token, or None if EOF has been reached.
-    fn lex<'a>(&mut self, output_buffer: &'a mut Vec<u8>) -> Result<Option<Token<'a>>, Error> {
+    // Returns the next token, or None if EOF has been reached.  Uses the provided buffer to store
+    // token strings, clears before use.
+    fn lex<'a>(&mut self, buffer: &'a mut Vec<u8>) -> Result<Option<Token<'a>>, Error> {
+        buffer.clear();
         self.skip_whitespace()?;
 
-        let c = if let Some(c) = self.stream.peek(0)? {
-            c
-        } else {
-            return Ok(None);
-        };
-
-        Ok(match c {
-            SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED => {
-                self.stream.advance(1)?;
-                None
-            }
-
-            NEWLINE | CARRIAGE_RETURN => {
-                self.line_end(None)?;
-                None
-            }
-
-            MINUS => {
-                if self.stream.peek(1)? != Some(MINUS) {
-                    self.stream.advance(1)?;
-                    Some(Token::Minus)
-                } else {
-                    self.comment()?;
-                    None
+        if let Some(c) = self.stream.peek(0)? {
+            Ok(Some(match c {
+                SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED | NEWLINE | CARRIAGE_RETURN => {
+                    unreachable!("whitespace should have been skipped");
                 }
-            }
 
-            LEFT_BRACKET => {
-                let next = self.stream.peek(1)?;
-                if next == Some(EQUALS) || next == Some(LEFT_BRACKET) {
-                    self.long_string(Some(output_buffer))?;
-                    Some(Token::String(output_buffer.as_slice()))
-                } else {
-                    self.stream.advance(1)?;
-                    Some(Token::LeftBracket)
-                }
-            }
-
-            EQUALS => {
-                self.stream.advance(1)?;
-                if self.stream.peek(0)? == Some(EQUALS) {
-                    self.stream.advance(1)?;
-                    Some(Token::Equal)
-                } else {
-                    Some(Token::Assign)
-                }
-            }
-
-            LESS_THAN => {
-                self.stream.advance(1)?;
-                let next = self.stream.peek(0)?;
-                if next == Some(EQUALS) {
-                    self.stream.advance(1)?;
-                    Some(Token::LessEqual)
-                } else if next == Some(LESS_THAN) {
-                    self.stream.advance(1)?;
-                    Some(Token::ShiftLeft)
-                } else {
-                    Some(Token::Less)
-                }
-            }
-
-            GREATER_THAN => {
-                self.stream.advance(1)?;
-                let next = self.stream.peek(0)?;
-                if next == Some(EQUALS) {
-                    self.stream.advance(1)?;
-                    Some(Token::GreaterEqual)
-                } else if next == Some(GREATER_THAN) {
-                    self.stream.advance(1)?;
-                    Some(Token::ShiftRight)
-                } else {
-                    Some(Token::Greater)
-                }
-            }
-
-            FORWARD_SLASH => {
-                self.stream.advance(1)?;
-                if self.stream.peek(0)? == Some(FORWARD_SLASH) {
-                    self.stream.advance(1)?;
-                    Some(Token::IDiv)
-                } else {
-                    Some(Token::Div)
-                }
-            }
-
-            TILDE => {
-                self.stream.advance(1)?;
-                if self.stream.peek(0)? == Some(EQUALS) {
-                    self.stream.advance(1)?;
-                    Some(Token::NotEqual)
-                } else {
-                    Some(Token::BitNot)
-                }
-            }
-
-            COLON => {
-                self.stream.advance(1)?;
-                if self.stream.peek(0)? == Some(COLON) {
-                    self.stream.advance(1)?;
-                    Some(Token::DoubleColon)
-                } else {
-                    Some(Token::Colon)
-                }
-            }
-
-            DOUBLE_QUOTE | SINGLE_QUOTE => {
-                self.short_string(output_buffer)?;
-                Some(Token::String(output_buffer.as_slice()))
-            }
-
-            PERIOD => {
-                if self.stream.peek(1)? == Some(PERIOD) {
-                    if self.stream.peek(2)? == Some(PERIOD) {
-                        self.stream.advance(3)?;
-                        Some(Token::Dots)
+                MINUS => {
+                    if self.stream.peek(1)? != Some(MINUS) {
+                        self.stream.advance(1)?;
+                        Token::Minus
                     } else {
-                        self.stream.advance(2)?;
-                        Some(Token::Concat)
-                    }
-                } else {
-                    if self.stream.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
-                        Some(match self.numeral()? {
-                            Numeral::Integer(i) => Token::Integer(i),
-                            Numeral::Float(f) => Token::Number(f),
-                        })
-                    } else {
-                        Some(Token::Dot)
+                        unreachable!("whitespace should have been skipped");
                     }
                 }
-            }
 
-            c => {
-                if is_digit(c) {
-                    Some(match self.numeral()? {
-                        Numeral::Integer(i) => Token::Integer(i),
-                        Numeral::Float(f) => Token::Number(f),
-                    })
-                } else if let Some(t) = SINGLE_CHAR_TOKEN_MAP.get(&c).cloned() {
-                    self.stream.advance(1)?;
-                    Some(t)
-                } else if is_alpha(c) {
-                    output_buffer.push(c);
-                    self.stream.advance(1)?;
+                LEFT_BRACKET => {
+                    let next = self.stream.peek(1)?;
+                    if next == Some(EQUALS) || next == Some(LEFT_BRACKET) {
+                        self.long_string(Some(buffer))?;
+                        Token::String(buffer.as_slice())
+                    } else {
+                        self.stream.advance(1)?;
+                        Token::LeftBracket
+                    }
+                }
 
-                    while let Some(c) = self.stream.peek(0)? {
-                        if is_alpha(c) || is_digit(c) {
-                            output_buffer.push(c);
-                            self.stream.advance(1)?;
+                EQUALS => {
+                    self.stream.advance(1)?;
+                    if self.stream.peek(0)? == Some(EQUALS) {
+                        self.stream.advance(1)?;
+                        Token::Equal
+                    } else {
+                        Token::Assign
+                    }
+                }
+
+                LESS_THAN => {
+                    self.stream.advance(1)?;
+                    let next = self.stream.peek(0)?;
+                    if next == Some(EQUALS) {
+                        self.stream.advance(1)?;
+                        Token::LessEqual
+                    } else if next == Some(LESS_THAN) {
+                        self.stream.advance(1)?;
+                        Token::ShiftLeft
+                    } else {
+                        Token::Less
+                    }
+                }
+
+                GREATER_THAN => {
+                    self.stream.advance(1)?;
+                    let next = self.stream.peek(0)?;
+                    if next == Some(EQUALS) {
+                        self.stream.advance(1)?;
+                        Token::GreaterEqual
+                    } else if next == Some(GREATER_THAN) {
+                        self.stream.advance(1)?;
+                        Token::ShiftRight
+                    } else {
+                        Token::Greater
+                    }
+                }
+
+                FORWARD_SLASH => {
+                    self.stream.advance(1)?;
+                    if self.stream.peek(0)? == Some(FORWARD_SLASH) {
+                        self.stream.advance(1)?;
+                        Token::IDiv
+                    } else {
+                        Token::Div
+                    }
+                }
+
+                TILDE => {
+                    self.stream.advance(1)?;
+                    if self.stream.peek(0)? == Some(EQUALS) {
+                        self.stream.advance(1)?;
+                        Token::NotEqual
+                    } else {
+                        Token::BitNot
+                    }
+                }
+
+                COLON => {
+                    self.stream.advance(1)?;
+                    if self.stream.peek(0)? == Some(COLON) {
+                        self.stream.advance(1)?;
+                        Token::DoubleColon
+                    } else {
+                        Token::Colon
+                    }
+                }
+
+                DOUBLE_QUOTE | SINGLE_QUOTE => {
+                    self.short_string(buffer)?;
+                    Token::String(buffer.as_slice())
+                }
+
+                PERIOD => {
+                    if self.stream.peek(1)? == Some(PERIOD) {
+                        if self.stream.peek(2)? == Some(PERIOD) {
+                            self.stream.advance(3)?;
+                            Token::Dots
                         } else {
-                            break;
+                            self.stream.advance(2)?;
+                            Token::Concat
+                        }
+                    } else {
+                        if self.stream.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
+                            Token::Number(self.numeral(buffer)?)
+                        } else {
+                            self.stream.advance(1)?;
+                            Token::Dot
                         }
                     }
-
-                    if let Some(t) = RESERVED_WORD_MAP.get(output_buffer.as_slice()).cloned() {
-                        Some(t)
-                    } else {
-                        Some(Token::Name(output_buffer.as_slice()))
-                    }
-                } else {
-                    return Err(format_err!(
-                        "unexpected character: '{}'",
-                        char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
-                    ));
                 }
-            }
-        })
+
+                c => {
+                    if is_digit(c) {
+                        Token::Number(self.numeral(buffer)?)
+                    } else if let Some(t) = self.char_tokens.get(&c).cloned() {
+                        self.stream.advance(1)?;
+                        t
+                    } else if is_alpha(c) {
+                        buffer.push(c);
+                        self.stream.advance(1)?;
+
+                        while let Some(c) = self.stream.peek(0)? {
+                            if is_alpha(c) || is_digit(c) {
+                                buffer.push(c);
+                                self.stream.advance(1)?;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if let Some(t) = self.reserved_words.get(buffer.as_slice()).cloned() {
+                            t
+                        } else {
+                            Token::Name(buffer.as_slice())
+                        }
+                    } else {
+                        return Err(format_err!(
+                            "unexpected character: '{}'",
+                            char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
+                        ));
+                    }
+                }
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
@@ -567,38 +610,86 @@ impl<R: Read> LexerState<R> {
         Ok(())
     }
 
-    // Read either a short or long comment, either `--` to end of line, or `--` followed by a long string.
-    fn comment(&mut self) -> Result<(), Error> {
-        assert_eq!(self.stream.peek(0).unwrap().unwrap(), MINUS);
-        assert_eq!(self.stream.peek(1).unwrap().unwrap(), MINUS);
+    // Reads a hex or decimal integer or floating point identifier.  Allows decimal integers (123),
+    // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
+    // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
+    fn numeral<'a>(&mut self, buffer: &'a mut Vec<u8>) -> Result<Number<'a>, Error> {
+        let p1 = self.stream.peek(0).unwrap().unwrap();
+        assert!(p1 == PERIOD || is_digit(p1));
 
-        self.stream.advance(2)?;
+        let p2 = self.stream.peek(1)?;
+        let is_hex = p1 == NUM_0 && (p2 == Some(LOWER_X) || p2 == Some(UPPER_X));
+        if is_hex {
+            self.stream.advance(2)?;
+        }
 
-        if self.stream.peek(0)? == Some(LEFT_BRACKET) {
-            // long comment
-            self.long_string(None)?;
-        } else {
-            // Short comment, read until end of line
-            while let Some(c) = self.stream.peek(0)? {
-                if is_newline(c) {
-                    break;
-                } else {
-                    self.stream.advance(1)?;
+        let mut has_radix = false;
+        let mut whole_end = 0;
+        while let Some(c) = self.stream.peek(0)? {
+            if c == PERIOD && !has_radix {
+                has_radix = true;
+                whole_end = buffer.len();
+                self.stream.advance(1)?;
+            } else if !is_hex && is_digit(c) {
+                buffer.push(from_digit(c).unwrap());
+                self.stream.advance(1)?;
+            } else if is_hex && is_hex_digit(c) {
+                buffer.push(from_hex_digit(c).unwrap());
+                self.stream.advance(1)?;
+            } else {
+                break;
+            }
+        }
+        let frac_end = buffer.len();
+
+        let mut has_exp = false;
+        let mut exp_neg = false;
+        if let Some(exp_begin) = self.stream.peek(0)? {
+            if (is_hex && (exp_begin == LOWER_P || exp_begin == UPPER_P))
+                || (!is_hex && (exp_begin == LOWER_E || exp_begin == UPPER_E))
+            {
+                has_exp = true;
+                self.stream.advance(1)?;
+
+                if let Some(sign) = self.stream.peek(0)? {
+                    if sign == PLUS {
+                        self.stream.advance(1)?;
+                    } else if sign == MINUS {
+                        exp_neg = true;
+                        self.stream.advance(1)?;
+                    }
+                }
+
+                while let Some(c) = self.stream.peek(0)? {
+                    if let Some(d) = from_digit(c) {
+                        buffer.push(d);
+                        self.stream.advance(1)?;
+                    } else {
+                        break;
+                    }
                 }
             }
         }
 
-        Ok(())
+        if has_exp && buffer.len() == frac_end {
+            Err(err_msg("malformed number"))
+        } else {
+            Ok(if has_radix || has_exp {
+                Number::Float {
+                    is_hex,
+                    whole_part: &buffer[0..whole_end],
+                    frac_part: &buffer[whole_end..frac_end],
+                    exp_part: &buffer[frac_end..],
+                    exp_neg,
+                }
+            } else {
+                Number::Integer {
+                    is_hex,
+                    digits: &buffer[..],
+                }
+            })
+        }
     }
-
-    fn numeral(&mut self) -> Result<Numeral, Error> {
-        unimplemented!()
-    }
-}
-
-enum Numeral {
-    Integer(i64),
-    Float(f64),
 }
 
 const SPACE: u8 = ' ' as u8;
@@ -634,8 +725,10 @@ const PIPE: u8 = '|' as u8;
 const UNDERSCORE: u8 = '_' as u8;
 const LOWER_A: u8 = 'a' as u8;
 const LOWER_B: u8 = 'b' as u8;
+const LOWER_E: u8 = 'e' as u8;
 const LOWER_F: u8 = 'f' as u8;
 const LOWER_N: u8 = 'n' as u8;
+const LOWER_P: u8 = 'p' as u8;
 const LOWER_R: u8 = 'r' as u8;
 const LOWER_T: u8 = 't' as u8;
 const LOWER_U: u8 = 'u' as u8;
@@ -643,7 +736,10 @@ const LOWER_V: u8 = 'v' as u8;
 const LOWER_X: u8 = 'x' as u8;
 const LOWER_Z: u8 = 'z' as u8;
 const UPPER_A: u8 = 'A' as u8;
+const UPPER_E: u8 = 'E' as u8;
 const UPPER_F: u8 = 'F' as u8;
+const UPPER_P: u8 = 'P' as u8;
+const UPPER_X: u8 = 'X' as u8;
 const UPPER_Z: u8 = 'Z' as u8;
 const NUM_0: u8 = '0' as u8;
 const NUM_9: u8 = '9' as u8;
@@ -689,24 +785,6 @@ const RESERVED_WORDS: &[(&str, Token)] = &[
     ("or", Token::Or),
 ];
 
-lazy_static! {
-    static ref SINGLE_CHAR_TOKEN_MAP: HashMap<u8, Token<'static>> = {
-        let mut m = HashMap::new();
-        for &(c, ref t) in SINGLE_CHAR_TOKENS {
-            m.insert(c, t.clone());
-        }
-        m
-    };
-
-    static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token<'static>> = {
-        let mut m = HashMap::new();
-        for &(n, ref t) in RESERVED_WORDS {
-            m.insert(n.as_bytes(), t.clone());
-        }
-        m
-    };
-}
-
 fn is_newline(c: u8) -> bool {
     c == NEWLINE || c == CARRIAGE_RETURN
 }
@@ -742,4 +820,8 @@ fn from_hex_digit(c: u8) -> Option<u8> {
     } else {
         None
     }
+}
+
+fn is_hex_digit(c: u8) -> bool {
+    from_hex_digit(c).is_some()
 }

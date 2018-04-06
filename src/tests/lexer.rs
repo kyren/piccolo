@@ -1,4 +1,4 @@
-use lexer::{Lexer, NextToken, Token};
+use lexer::{Lexer, NextToken, Number, Token};
 
 fn test_tokens(source: &str, tokens: &[Token]) {
     let mut lexer = Lexer::new(source.as_bytes());
@@ -23,8 +23,32 @@ fn test_tokens_lines(source: &str, tokens: &[(Token, u64)]) {
     assert!(i == tokens.len(), "not enough tokens");
 }
 
-fn str_token(s: &str) -> Token {
+fn str_token<'a>(s: &'a str) -> Token<'a> {
     Token::String(s.as_bytes())
+}
+
+fn name_token<'a>(s: &'a str) -> Token<'a> {
+    Token::Name(s.as_bytes())
+}
+
+fn int_token<'a>(is_hex: bool, digits: &'a [u8]) -> Token<'a> {
+    Token::Number(Number::Integer { is_hex, digits })
+}
+
+fn float_token<'a>(
+    is_hex: bool,
+    whole_part: &'a [u8],
+    frac_part: &'a [u8],
+    exp_part: &'a [u8],
+    exp_neg: bool,
+) -> Token<'a> {
+    Token::Number(Number::Float {
+        is_hex,
+        whole_part,
+        frac_part,
+        exp_part,
+        exp_neg,
+    })
 }
 
 #[test]
@@ -84,6 +108,105 @@ fn short_string() {
             (str_token("state."), 5),
             (str_token("question?"), 6),
             (str_token("exclaim!"), 7),
+        ],
+    );
+}
+
+#[test]
+fn numerals() {
+    test_tokens(
+        r#"
+            0xdeadbeef
+            12345
+            12345.
+            3.1415e-2
+            0xdead.beefp+1
+            0Xaa.bbP2
+            .123E-10
+        "#,
+        &[
+            int_token(true, &[13, 14, 10, 13, 11, 14, 14, 15]),
+            int_token(false, &[1, 2, 3, 4, 5]),
+            float_token(false, &[1, 2, 3, 4, 5], &[], &[], false),
+            float_token(false, &[3], &[1, 4, 1, 5], &[2], true),
+            float_token(true, &[13, 14, 10, 13], &[11, 14, 14, 15], &[1], false),
+            float_token(true, &[10, 10], &[11, 11], &[2], false),
+            float_token(false, &[], &[1, 2, 3], &[1, 0], true),
+        ],
+    );
+}
+
+#[test]
+fn words() {
+    test_tokens(
+        r#"
+            break do else elseif end function goto if in local nil for while repeat until return
+            then true false not and or
+            custom names
+        "#,
+        &[
+            Token::Break,
+            Token::Do,
+            Token::Else,
+            Token::ElseIf,
+            Token::End,
+            Token::Function,
+            Token::Goto,
+            Token::If,
+            Token::In,
+            Token::Local,
+            Token::Nil,
+            Token::For,
+            Token::While,
+            Token::Repeat,
+            Token::Until,
+            Token::Return,
+            Token::Then,
+            Token::True,
+            Token::False,
+            Token::Not,
+            Token::And,
+            Token::Or,
+            name_token("custom"),
+            name_token("names"),
+        ],
+    );
+}
+
+#[test]
+fn ops() {
+    test_tokens(
+        r#"+ - * / // ^ % & ~ | >> << . .. ... = < <= > >= == ~= : :: # [ ] { }"#,
+        &[
+            Token::Plus,
+            Token::Minus,
+            Token::Times,
+            Token::Div,
+            Token::IDiv,
+            Token::Pow,
+            Token::Mod,
+            Token::BitAnd,
+            Token::BitNot,
+            Token::BitOr,
+            Token::ShiftRight,
+            Token::ShiftLeft,
+            Token::Dot,
+            Token::Concat,
+            Token::Dots,
+            Token::Assign,
+            Token::Less,
+            Token::LessEqual,
+            Token::Greater,
+            Token::GreaterEqual,
+            Token::Equal,
+            Token::NotEqual,
+            Token::Colon,
+            Token::DoubleColon,
+            Token::Len,
+            Token::LeftBracket,
+            Token::RightBracket,
+            Token::LeftBrace,
+            Token::RightBrace,
         ],
     );
 }

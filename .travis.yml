@@ -1,6 +1,6 @@
 language: rust
-# env:
-#   - RUSTFLAGS="-D warnings"
+env:
+  - RUSTFLAGS="-D warnings"
 matrix:
   include:
     - rust: stable
