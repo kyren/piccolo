@@ -113,6 +113,7 @@ struct LexerState<R: Read> {
 }
 
 impl<R: Read> LexerState<R> {
+    // Consumes any whitespace that is next in the stream
     fn skip_whitespace(&mut self) -> Result<(), Error> {
         while let Some(c) = self.stream.peek(0)? {
             match c {
@@ -139,7 +140,10 @@ impl<R: Read> LexerState<R> {
         Ok(())
     }
 
+    // Returns the next token, or None if EOF has been reached.
     fn lex<'a>(&mut self, output_buffer: &'a mut Vec<u8>) -> Result<Option<Token<'a>>, Error> {
+        self.skip_whitespace()?;
+
         let c = if let Some(c) = self.stream.peek(0)? {
             c
         } else {
