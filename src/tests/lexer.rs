@@ -1,9 +1,9 @@
-use lexer::{Lexer, NextToken, Number, Token};
+use lexer::{Lexer, Token};
 
 fn test_tokens(source: &str, tokens: &[Token]) {
     let mut lexer = Lexer::new(source.as_bytes());
     let mut i = 0;
-    while let NextToken::Next { token, .. } = lexer.next().unwrap() {
+    while let Some(token) = lexer.read_token().unwrap() {
         assert!(i < tokens.len(), "too many tokens");
         assert_eq!(token, tokens[i], "tokens not equal");
         i += 1;
@@ -14,41 +14,50 @@ fn test_tokens(source: &str, tokens: &[Token]) {
 fn test_tokens_lines(source: &str, tokens: &[(Token, u64)]) {
     let mut lexer = Lexer::new(source.as_bytes());
     let mut i = 0;
-    while let NextToken::Next { token, line_number } = lexer.next().unwrap() {
-        assert!(i < tokens.len(), "too many tokens");
-        assert_eq!(token, tokens[i].0, "tokens not equal");
-        assert_eq!(line_number, tokens[i].1, "line numbers do not match");
-        i += 1;
+    loop {
+        lexer.skip_whitespace().unwrap();
+        let line_number = lexer.line_number();
+        if let Some(token) = lexer.read_token().unwrap() {
+            assert!(i < tokens.len(), "too many tokens");
+            assert_eq!(token, tokens[i].0, "tokens not equal");
+            assert_eq!(line_number, tokens[i].1, "line numbers do not match");
+            i += 1;
+        } else {
+            break;
+        }
     }
     assert!(i == tokens.len(), "not enough tokens");
 }
 
-fn str_token<'a>(s: &'a str) -> Token<'a> {
-    Token::String(s.as_bytes())
+fn str_token(s: &str) -> Token {
+    Token::String(s.as_bytes().to_vec().into_boxed_slice())
 }
 
-fn name_token<'a>(s: &'a str) -> Token<'a> {
-    Token::Name(s.as_bytes())
+fn name_token(s: &str) -> Token {
+    Token::Name(s.as_bytes().to_vec().into_boxed_slice())
 }
 
-fn int_token<'a>(is_hex: bool, digits: &'a [u8]) -> Token<'a> {
-    Token::Number(Number::Integer { is_hex, digits })
+fn int_token(is_hex: bool, digits: &[u8]) -> Token {
+    Token::Integer {
+        is_hex,
+        digits: digits.to_vec().into_boxed_slice(),
+    }
 }
 
 fn float_token<'a>(
     is_hex: bool,
-    whole_part: &'a [u8],
-    frac_part: &'a [u8],
-    exp_part: &'a [u8],
+    whole_part: &[u8],
+    frac_part: &[u8],
+    exp_part: &[u8],
     exp_neg: bool,
-) -> Token<'a> {
-    Token::Number(Number::Float {
+) -> Token {
+    Token::Float {
         is_hex,
-        whole_part,
-        frac_part,
-        exp_part,
-        exp_neg,
-    })
+        whole_part: whole_part.to_vec().into_boxed_slice(),
+        fractional_part: frac_part.to_vec().into_boxed_slice(),
+        exponent_part: exp_part.to_vec().into_boxed_slice(),
+        exponent_negative: exp_neg,
+    }
 }
 
 #[test]
@@ -176,7 +185,7 @@ fn words() {
 #[test]
 fn ops() {
     test_tokens(
-        r#"+ - * / // ^ % & ~ | >> << . .. ... = < <= > >= == ~= : :: # [ ] { }"#,
+        r#"+ - * / // ^ % & ~ | , ; >> << . .. ... = < <= > >= == ~= : :: # [ ] { }"#,
         &[
             Token::Plus,
             Token::Minus,
@@ -188,6 +197,8 @@ fn ops() {
             Token::BitAnd,
             Token::BitNot,
             Token::BitOr,
+            Token::Comma,
+            Token::SemiColon,
             Token::ShiftRight,
             Token::ShiftLeft,
             Token::Dot,

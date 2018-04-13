@@ -1,13 +1,11 @@
 use std::char;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{self, Read};
 
-use failure::{err_msg, Error, ResultExt};
+use failure::{err_msg, Error};
 
-use stream::Stream;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token<'a> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Token {
     Break,
     Do,
     Else,
@@ -37,12 +35,12 @@ pub enum Token<'a> {
     IDiv,
     Pow,
     Mod,
+    Len,
     BitAnd,
     BitNot,
     BitOr,
     ShiftRight,
     ShiftLeft,
-    Dot,
     Concat,
     Dots,
     Assign,
@@ -52,84 +50,45 @@ pub enum Token<'a> {
     GreaterEqual,
     Equal,
     NotEqual,
+    Dot,
+    SemiColon,
     Colon,
     DoubleColon,
-    Len,
+    Comma,
     LeftBracket,
     RightBracket,
     LeftBrace,
     RightBrace,
-    Name(&'a [u8]),
-    String(&'a [u8]),
-    Number(Number<'a>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Number<'a> {
+    Name(Box<[u8]>),
+    String(Box<[u8]>),
+    /// Digits will contain digit values 0-9, or 0-15 if the integer is in hex.
     Integer {
         is_hex: bool,
-        /// Will contain u8 digit values 0-9, or 0-15 if the integer is in hex.
-        digits: &'a [u8],
+        digits: Box<[u8]>,
     },
+    /// Whole and fractional part contains digits values 0-9, or 0-15 if the float is in hex.
+    /// Exponent is always digital regardless of whether the float is in hex or not.
     Float {
         is_hex: bool,
-        /// ipart and fpart contain u8 digit values 0-9, or 0-15 if the float is in hex.
-        whole_part: &'a [u8],
-        frac_part: &'a [u8],
-        /// Exponent is always digital whether or not the float is hex.
-        exp_part: &'a [u8],
-        exp_neg: bool,
+        whole_part: Box<[u8]>,
+        fractional_part: Box<[u8]>,
+        exponent_part: Box<[u8]>,
+        exponent_negative: bool,
     },
 }
 
 pub struct Lexer<R: Read> {
-    lexer_state: LexerState<R>,
-    buffer: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub enum NextToken<'a> {
-    Next {
-        token: Token<'a>,
-        /// Line number that the token *begins* on, 0-indexed
-        line_number: u64,
-    },
-    End,
+    source: Option<R>,
+    peek_buffer: Vec<u8>,
+    line_number: u64,
+    char_tokens: &'static HashMap<u8, Token>,
+    reserved_words: &'static HashMap<&'static [u8], Token>,
 }
 
 impl<R: Read> Lexer<R> {
     pub fn new(source: R) -> Lexer<R> {
-        Lexer {
-            lexer_state: LexerState::new(source),
-            buffer: Vec::new(),
-        }
-    }
-
-    pub fn next<'a>(&'a mut self) -> Result<NextToken<'a>, Error> {
-        self.lexer_state.skip_whitespace()?;
-        let line_number = self.lexer_state.line_number;
-        if let Some(token) = self.lexer_state
-            .lex(&mut self.buffer)
-            .with_context(|_| format!("starting at line number: {}", line_number))?
-        {
-            return Ok(NextToken::Next { token, line_number });
-        } else {
-            return Ok(NextToken::End);
-        }
-    }
-}
-
-struct LexerState<R: Read> {
-    stream: Stream<R>,
-    line_number: u64,
-    char_tokens: &'static HashMap<u8, Token<'static>>,
-    reserved_words: &'static HashMap<&'static [u8], Token<'static>>,
-}
-
-impl<R: Read> LexerState<R> {
-    fn new(source: R) -> LexerState<R> {
         lazy_static! {
-            static ref CHAR_TOKEN_MAP: HashMap<u8, Token<'static>> = {
+            static ref CHAR_TOKEN_MAP: HashMap<u8, Token> = {
                 let mut m = HashMap::new();
                 for &(c, ref t) in SINGLE_CHAR_TOKENS {
                     m.insert(c, t.clone());
@@ -137,7 +96,7 @@ impl<R: Read> LexerState<R> {
                 m
             };
 
-            static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token<'static>> = {
+            static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token> = {
                 let mut m = HashMap::new();
                 for &(n, ref t) in RESERVED_WORDS {
                     m.insert(n.as_bytes(), t.clone());
@@ -146,20 +105,27 @@ impl<R: Read> LexerState<R> {
             };
         }
 
-        LexerState {
-            stream: Stream::new(source),
+        Lexer {
+            source: Some(source),
+            peek_buffer: Vec::new(),
             line_number: 0,
             char_tokens: &*CHAR_TOKEN_MAP,
             reserved_words: &*RESERVED_WORD_MAP,
         }
     }
 
-    // Consumes any whitespace that is next in the stream
-    fn skip_whitespace(&mut self) -> Result<(), Error> {
-        while let Some(c) = self.stream.peek(0)? {
+    /// Current line number of the source file, 0-indexed
+    pub fn line_number(&self) -> u64 {
+        self.line_number
+    }
+
+    /// Consumes any whitespace that is next in the stream, the line number will now be the starting
+    /// line number of the next token.
+    pub fn skip_whitespace(&mut self) -> Result<(), Error> {
+        while let Some(c) = self.peek(0)? {
             match c {
                 SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED => {
-                    self.stream.advance(1)?;
+                    self.advance(1);
                 }
 
                 NEWLINE | CARRIAGE_RETURN => {
@@ -167,21 +133,21 @@ impl<R: Read> LexerState<R> {
                 }
 
                 MINUS => {
-                    if self.stream.peek(1)? != Some(MINUS) {
+                    if self.peek(1)? != Some(MINUS) {
                         break;
                     } else {
-                        self.stream.advance(2)?;
+                        self.advance(2);
 
-                        if self.stream.peek(0)? == Some(LEFT_BRACKET) {
+                        if self.peek(0)? == Some(LEFT_BRACKET) {
                             // long comment
                             self.long_string(None)?;
                         } else {
                             // Short comment, read until end of line
-                            while let Some(c) = self.stream.peek(0)? {
+                            while let Some(c) = self.peek(0)? {
                                 if is_newline(c) {
                                     break;
                                 } else {
-                                    self.stream.advance(1)?;
+                                    self.advance(1);
                                 }
                             }
                         }
@@ -195,21 +161,19 @@ impl<R: Read> LexerState<R> {
         Ok(())
     }
 
-    // Returns the next token, or None if EOF has been reached.  Uses the provided buffer to store
-    // token strings, clears before use.
-    fn lex<'a>(&mut self, buffer: &'a mut Vec<u8>) -> Result<Option<Token<'a>>, Error> {
-        buffer.clear();
+    /// Reads the next token, or None if the end of the source has been reached.
+    pub fn read_token<'a>(&mut self) -> Result<Option<Token>, Error> {
         self.skip_whitespace()?;
 
-        if let Some(c) = self.stream.peek(0)? {
+        if let Some(c) = self.peek(0)? {
             Ok(Some(match c {
                 SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED | NEWLINE | CARRIAGE_RETURN => {
                     unreachable!("whitespace should have been skipped");
                 }
 
                 MINUS => {
-                    if self.stream.peek(1)? != Some(MINUS) {
-                        self.stream.advance(1)?;
+                    if self.peek(1)? != Some(MINUS) {
+                        self.advance(1);
                         Token::Minus
                     } else {
                         unreachable!("whitespace should have been skipped");
@@ -217,20 +181,21 @@ impl<R: Read> LexerState<R> {
                 }
 
                 LEFT_BRACKET => {
-                    let next = self.stream.peek(1)?;
+                    let next = self.peek(1)?;
                     if next == Some(EQUALS) || next == Some(LEFT_BRACKET) {
-                        self.long_string(Some(buffer))?;
-                        Token::String(buffer.as_slice())
+                        let mut output = Vec::new();
+                        self.long_string(Some(&mut output))?;
+                        Token::String(output.into_boxed_slice())
                     } else {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         Token::LeftBracket
                     }
                 }
 
                 EQUALS => {
-                    self.stream.advance(1)?;
-                    if self.stream.peek(0)? == Some(EQUALS) {
-                        self.stream.advance(1)?;
+                    self.advance(1);
+                    if self.peek(0)? == Some(EQUALS) {
+                        self.advance(1);
                         Token::Equal
                     } else {
                         Token::Assign
@@ -238,13 +203,13 @@ impl<R: Read> LexerState<R> {
                 }
 
                 LESS_THAN => {
-                    self.stream.advance(1)?;
-                    let next = self.stream.peek(0)?;
+                    self.advance(1);
+                    let next = self.peek(0)?;
                     if next == Some(EQUALS) {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         Token::LessEqual
                     } else if next == Some(LESS_THAN) {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         Token::ShiftLeft
                     } else {
                         Token::Less
@@ -252,13 +217,13 @@ impl<R: Read> LexerState<R> {
                 }
 
                 GREATER_THAN => {
-                    self.stream.advance(1)?;
-                    let next = self.stream.peek(0)?;
+                    self.advance(1);
+                    let next = self.peek(0)?;
                     if next == Some(EQUALS) {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         Token::GreaterEqual
                     } else if next == Some(GREATER_THAN) {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         Token::ShiftRight
                     } else {
                         Token::Greater
@@ -266,9 +231,9 @@ impl<R: Read> LexerState<R> {
                 }
 
                 FORWARD_SLASH => {
-                    self.stream.advance(1)?;
-                    if self.stream.peek(0)? == Some(FORWARD_SLASH) {
-                        self.stream.advance(1)?;
+                    self.advance(1);
+                    if self.peek(0)? == Some(FORWARD_SLASH) {
+                        self.advance(1);
                         Token::IDiv
                     } else {
                         Token::Div
@@ -276,9 +241,9 @@ impl<R: Read> LexerState<R> {
                 }
 
                 TILDE => {
-                    self.stream.advance(1)?;
-                    if self.stream.peek(0)? == Some(EQUALS) {
-                        self.stream.advance(1)?;
+                    self.advance(1);
+                    if self.peek(0)? == Some(EQUALS) {
+                        self.advance(1);
                         Token::NotEqual
                     } else {
                         Token::BitNot
@@ -286,34 +251,31 @@ impl<R: Read> LexerState<R> {
                 }
 
                 COLON => {
-                    self.stream.advance(1)?;
-                    if self.stream.peek(0)? == Some(COLON) {
-                        self.stream.advance(1)?;
+                    self.advance(1);
+                    if self.peek(0)? == Some(COLON) {
+                        self.advance(1);
                         Token::DoubleColon
                     } else {
                         Token::Colon
                     }
                 }
 
-                DOUBLE_QUOTE | SINGLE_QUOTE => {
-                    self.short_string(buffer)?;
-                    Token::String(buffer.as_slice())
-                }
+                DOUBLE_QUOTE | SINGLE_QUOTE => Token::String(self.short_string()?),
 
                 PERIOD => {
-                    if self.stream.peek(1)? == Some(PERIOD) {
-                        if self.stream.peek(2)? == Some(PERIOD) {
-                            self.stream.advance(3)?;
+                    if self.peek(1)? == Some(PERIOD) {
+                        if self.peek(2)? == Some(PERIOD) {
+                            self.advance(3);
                             Token::Dots
                         } else {
-                            self.stream.advance(2)?;
+                            self.advance(2);
                             Token::Concat
                         }
                     } else {
-                        if self.stream.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
-                            Token::Number(self.numeral(buffer)?)
+                        if self.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
+                            self.numeral()?
                         } else {
-                            self.stream.advance(1)?;
+                            self.advance(1);
                             Token::Dot
                         }
                     }
@@ -321,18 +283,19 @@ impl<R: Read> LexerState<R> {
 
                 c => {
                     if is_digit(c) {
-                        Token::Number(self.numeral(buffer)?)
+                        self.numeral()?
                     } else if let Some(t) = self.char_tokens.get(&c).cloned() {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         t
                     } else if is_alpha(c) {
+                        let mut buffer = Vec::new();
                         buffer.push(c);
-                        self.stream.advance(1)?;
+                        self.advance(1);
 
-                        while let Some(c) = self.stream.peek(0)? {
+                        while let Some(c) = self.peek(0)? {
                             if is_alpha(c) || is_digit(c) {
                                 buffer.push(c);
-                                self.stream.advance(1)?;
+                                self.advance(1);
                             } else {
                                 break;
                             }
@@ -341,7 +304,7 @@ impl<R: Read> LexerState<R> {
                         if let Some(t) = self.reserved_words.get(buffer.as_slice()).cloned() {
                             t
                         } else {
-                            Token::Name(buffer.as_slice())
+                            Token::Name(buffer.into_boxed_slice())
                         }
                     } else {
                         return Err(format_err!(
@@ -359,16 +322,16 @@ impl<R: Read> LexerState<R> {
     // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
     // number.
     fn line_end(&mut self, mut output: Option<&mut Vec<u8>>) -> Result<(), Error> {
-        let newline = self.stream.peek(0).unwrap().unwrap();
+        let newline = self.peek(0).unwrap().unwrap();
         assert!(is_newline(newline));
-        self.stream.advance(1)?;
+        self.advance(1);
         if let Some(o) = output.as_mut() {
             o.push(newline);
         }
 
-        if let Some(next_newline) = self.stream.peek(0)? {
+        if let Some(next_newline) = self.peek(0)? {
             if is_newline(next_newline) && next_newline != newline {
-                self.stream.advance(1)?;
+                self.advance(1);
                 if let Some(o) = output.as_mut() {
                     o.push(next_newline);
                 }
@@ -381,13 +344,14 @@ impl<R: Read> LexerState<R> {
 
     // Read a string on a single line delimited by ' or " that allows for \ escaping of certain
     // characters.
-    fn short_string(&mut self, output: &mut Vec<u8>) -> Result<(), Error> {
-        let start_quote = self.stream.peek(0).unwrap().unwrap();
+    fn short_string(&mut self) -> Result<Box<[u8]>, Error> {
+        let mut output = Vec::new();
+        let start_quote = self.peek(0).unwrap().unwrap();
         assert!(start_quote == SINGLE_QUOTE || start_quote == DOUBLE_QUOTE);
-        self.stream.advance(1)?;
+        self.advance(1);
 
         loop {
-            let c = if let Some(c) = self.stream.peek(0)? {
+            let c = if let Some(c) = self.peek(0)? {
                 c
             } else {
                 return Err(err_msg("unfinished short string"));
@@ -397,95 +361,92 @@ impl<R: Read> LexerState<R> {
                 return Err(err_msg("unfinished short string"));
             }
 
-            self.stream.advance(1)?;
+            self.advance(1);
             if c == BACKSLASH {
-                match self.stream
-                    .peek(0)?
+                match self.peek(0)?
                     .ok_or_else(|| err_msg("unfinished short string"))?
                 {
                     LOWER_A => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(ALERT_BEEP);
                     }
 
                     LOWER_B => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(BACKSPACE);
                     }
 
                     LOWER_F => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(FORM_FEED);
                     }
 
                     LOWER_N => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(NEWLINE);
                     }
 
                     LOWER_R => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(CARRIAGE_RETURN);
                     }
 
                     LOWER_T => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(HORIZONTAL_TAB);
                     }
 
                     LOWER_V => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(VERTICAL_TAB);
                     }
 
                     BACKSLASH => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(BACKSLASH);
                     }
 
                     SINGLE_QUOTE => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(SINGLE_QUOTE);
                     }
 
                     DOUBLE_QUOTE => {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                         output.push(DOUBLE_QUOTE);
                     }
 
                     NEWLINE | CARRIAGE_RETURN => {
-                        self.line_end(Some(output))?;
+                        self.line_end(Some(&mut output))?;
                     }
 
                     LOWER_X => {
-                        self.stream.advance(1)?;
-                        let first = self.stream
-                            .peek(0)?
+                        self.advance(1);
+                        let first = self.peek(0)?
                             .and_then(from_hex_digit)
                             .ok_or_else(|| err_msg("hexadecimal digit expected"))?;
-                        let second = self.stream
-                            .peek(1)?
+                        let second = self.peek(1)?
                             .and_then(from_hex_digit)
                             .ok_or_else(|| err_msg("hexadecimal digit expected"))?;
                         output.push(first << 4 | second);
-                        self.stream.advance(2)?;
+                        self.advance(2);
                     }
 
                     LOWER_U => {
-                        if self.stream.peek(1)? != Some(LEFT_BRACE) {
+                        if self.peek(1)? != Some(LEFT_BRACE) {
                             return Err(err_msg("missing '{'"));
                         }
-                        self.stream.advance(2)?;
+                        self.advance(2);
 
                         let mut u: u32 = 0;
                         loop {
-                            if let Some(c) = self.stream.peek(0)? {
+                            if let Some(c) = self.peek(0)? {
                                 if c == RIGHT_BRACE {
-                                    self.stream.advance(1)?;
+                                    self.advance(1);
                                     break;
                                 } else if let Some(h) = from_hex_digit(c) {
                                     u = (u << 4) | h as u32;
-                                    self.stream.advance(1)?;
+                                    self.advance(1);
                                 } else {
                                     return Err(err_msg("missing '}'"));
                                 }
@@ -502,12 +463,12 @@ impl<R: Read> LexerState<R> {
                     }
 
                     LOWER_Z => {
-                        self.stream.advance(1)?;
-                        while let Some(c) = self.stream.peek(0)? {
+                        self.advance(1);
+                        while let Some(c) = self.peek(0)? {
                             if is_newline(c) {
                                 self.line_end(None)?;
                             } else if is_space(c) {
-                                self.stream.advance(1)?;
+                                self.advance(1);
                             } else {
                                 break;
                             }
@@ -518,9 +479,9 @@ impl<R: Read> LexerState<R> {
                         if is_digit(c) {
                             let mut u: u16 = 0;
                             for _ in 0..3 {
-                                if let Some(d) = self.stream.peek(0)?.and_then(from_digit) {
+                                if let Some(d) = self.peek(0)?.and_then(from_digit) {
                                     u = 10 * u + d as u16;
-                                    self.stream.advance(1)?;
+                                    self.advance(1);
                                 } else {
                                     break;
                                 }
@@ -542,27 +503,27 @@ impl<R: Read> LexerState<R> {
             }
         }
 
-        Ok(())
+        Ok(output.into_boxed_slice())
     }
 
     // Read a [=*[...]=*] sequence with matching numbers of '='.
     fn long_string(&mut self, mut output: Option<&mut Vec<u8>>) -> Result<(), Error> {
-        assert_eq!(self.stream.peek(0).unwrap().unwrap(), LEFT_BRACKET);
-        self.stream.advance(1)?;
+        assert_eq!(self.peek(0).unwrap().unwrap(), LEFT_BRACKET);
+        self.advance(1);
 
         let mut open_sep_length = 0;
-        while self.stream.peek(0)? == Some(EQUALS) {
-            self.stream.advance(1)?;
+        while self.peek(0)? == Some(EQUALS) {
+            self.advance(1);
             open_sep_length += 1;
         }
 
-        if self.stream.peek(0)? != Some(LEFT_BRACKET) {
+        if self.peek(0)? != Some(LEFT_BRACKET) {
             return Err(err_msg("invalid long string delimiter"));
         }
-        self.stream.advance(1)?;
+        self.advance(1);
 
         loop {
-            let c = if let Some(c) = self.stream.peek(0)? {
+            let c = if let Some(c) = self.peek(0)? {
                 c
             } else {
                 return Err(err_msg("unfinished long string"));
@@ -575,16 +536,14 @@ impl<R: Read> LexerState<R> {
 
                 RIGHT_BRACKET => {
                     let mut close_sep_length = 0;
-                    self.stream.advance(1)?;
-                    while self.stream.peek(0)? == Some(EQUALS) {
-                        self.stream.advance(1)?;
+                    self.advance(1);
+                    while self.peek(0)? == Some(EQUALS) {
+                        self.advance(1);
                         close_sep_length += 1;
                     }
 
-                    if open_sep_length == close_sep_length
-                        && self.stream.peek(0)? == Some(RIGHT_BRACKET)
-                    {
-                        self.stream.advance(1)?;
+                    if open_sep_length == close_sep_length && self.peek(0)? == Some(RIGHT_BRACKET) {
+                        self.advance(1);
                         break;
                     } else {
                         // If it turns out this is not a valid long string close delimiter, we need
@@ -602,7 +561,7 @@ impl<R: Read> LexerState<R> {
                     if let Some(o) = output.as_mut() {
                         o.push(c);
                     }
-                    self.stream.advance(1)?;
+                    self.advance(1);
                 }
             }
         }
@@ -613,57 +572,66 @@ impl<R: Read> LexerState<R> {
     // Reads a hex or decimal integer or floating point identifier.  Allows decimal integers (123),
     // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
-    fn numeral<'a>(&mut self, buffer: &'a mut Vec<u8>) -> Result<Number<'a>, Error> {
-        let p1 = self.stream.peek(0).unwrap().unwrap();
+    fn numeral(&mut self) -> Result<Token, Error> {
+        let p1 = self.peek(0).unwrap().unwrap();
         assert!(p1 == PERIOD || is_digit(p1));
 
-        let p2 = self.stream.peek(1)?;
+        let p2 = self.peek(1)?;
         let is_hex = p1 == NUM_0 && (p2 == Some(LOWER_X) || p2 == Some(UPPER_X));
         if is_hex {
-            self.stream.advance(2)?;
+            self.advance(2);
         }
 
+        let mut whole_part = Vec::new();
+        let mut frac_part = Vec::new();
+        let mut exp_part = Vec::new();
+
         let mut has_radix = false;
-        let mut whole_end = 0;
-        while let Some(c) = self.stream.peek(0)? {
+        while let Some(c) = self.peek(0)? {
             if c == PERIOD && !has_radix {
                 has_radix = true;
-                whole_end = buffer.len();
-                self.stream.advance(1)?;
+                self.advance(1);
             } else if !is_hex && is_digit(c) {
-                buffer.push(from_digit(c).unwrap());
-                self.stream.advance(1)?;
+                if has_radix {
+                    frac_part.push(from_digit(c).unwrap());
+                } else {
+                    whole_part.push(from_digit(c).unwrap());
+                }
+                self.advance(1);
             } else if is_hex && is_hex_digit(c) {
-                buffer.push(from_hex_digit(c).unwrap());
-                self.stream.advance(1)?;
+                if has_radix {
+                    frac_part.push(from_hex_digit(c).unwrap());
+                } else {
+                    whole_part.push(from_hex_digit(c).unwrap());
+                }
+                self.advance(1);
             } else {
                 break;
             }
         }
-        let frac_end = buffer.len();
 
         let mut has_exp = false;
         let mut exp_neg = false;
-        if let Some(exp_begin) = self.stream.peek(0)? {
+        if let Some(exp_begin) = self.peek(0)? {
             if (is_hex && (exp_begin == LOWER_P || exp_begin == UPPER_P))
                 || (!is_hex && (exp_begin == LOWER_E || exp_begin == UPPER_E))
             {
                 has_exp = true;
-                self.stream.advance(1)?;
+                self.advance(1);
 
-                if let Some(sign) = self.stream.peek(0)? {
+                if let Some(sign) = self.peek(0)? {
                     if sign == PLUS {
-                        self.stream.advance(1)?;
+                        self.advance(1);
                     } else if sign == MINUS {
                         exp_neg = true;
-                        self.stream.advance(1)?;
+                        self.advance(1);
                     }
                 }
 
-                while let Some(c) = self.stream.peek(0)? {
+                while let Some(c) = self.peek(0)? {
                     if let Some(d) = from_digit(c) {
-                        buffer.push(d);
-                        self.stream.advance(1)?;
+                        exp_part.push(d);
+                        self.advance(1);
                     } else {
                         break;
                     }
@@ -671,24 +639,70 @@ impl<R: Read> LexerState<R> {
             }
         }
 
-        if has_exp && buffer.len() == frac_end {
-            Err(err_msg("malformed number"))
-        } else {
-            Ok(if has_radix || has_exp {
-                Number::Float {
-                    is_hex,
-                    whole_part: &buffer[0..whole_end],
-                    frac_part: &buffer[whole_end..frac_end],
-                    exp_part: &buffer[frac_end..],
-                    exp_neg,
-                }
-            } else {
-                Number::Integer {
-                    is_hex,
-                    digits: &buffer[..],
-                }
-            })
+        if has_exp && exp_part.is_empty() {
+            return Err(err_msg("malformed number"));
         }
+
+        Ok(if has_exp || has_radix {
+            Token::Float {
+                is_hex,
+                whole_part: whole_part.into_boxed_slice(),
+                fractional_part: frac_part.into_boxed_slice(),
+                exponent_part: exp_part.into_boxed_slice(),
+                exponent_negative: exp_neg,
+            }
+        } else {
+            Token::Integer {
+                is_hex,
+                digits: whole_part.into_boxed_slice(),
+            }
+        })
+    }
+
+    fn peek(&mut self, n: usize) -> Result<Option<u8>, io::Error> {
+        let mut at_end = false;
+        let mut err = None;
+
+        if let Some(source) = self.source.as_mut() {
+            while self.peek_buffer.len() <= n {
+                let mut c = [0];
+                match source.read(&mut c) {
+                    Ok(0) => {
+                        at_end = true;
+                        break;
+                    }
+                    Ok(_) => {
+                        self.peek_buffer.push(c[0]);
+                    }
+                    Err(e) => {
+                        if e.kind() != io::ErrorKind::Interrupted {
+                            at_end = true;
+                            err = Some(e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if at_end {
+            self.source = None;
+            self.peek_buffer.clear();
+        }
+
+        if let Some(err) = err {
+            return Err(err);
+        }
+
+        Ok(self.peek_buffer.get(n).cloned())
+    }
+
+    fn advance(&mut self, n: usize) {
+        assert!(
+            n <= self.peek_buffer.len(),
+            "cannot advance over un-peeked characters"
+        );
+        self.peek_buffer.drain(0..n);
     }
 }
 
@@ -711,9 +725,11 @@ const FORWARD_SLASH: u8 = '/' as u8;
 const BACKSLASH: u8 = '\\' as u8;
 const TILDE: u8 = '~' as u8;
 const COLON: u8 = ':' as u8;
+const SEMICOLON: u8 = ';' as u8;
 const DOUBLE_QUOTE: u8 = '"' as u8;
 const SINGLE_QUOTE: u8 = '\'' as u8;
 const PERIOD: u8 = '.' as u8;
+const COMMA: u8 = ',' as u8;
 const PLUS: u8 = '+' as u8;
 const MINUS: u8 = '-' as u8;
 const ASTERISK: u8 = '*' as u8;
@@ -753,6 +769,8 @@ const SINGLE_CHAR_TOKENS: &[(u8, Token)] = &[
     (PERCENT, Token::Mod),
     (AMPERSAND, Token::BitAnd),
     (PIPE, Token::BitOr),
+    (COMMA, Token::Comma),
+    (SEMICOLON, Token::SemiColon),
     (OCTOTHORPE, Token::Len),
     (RIGHT_BRACKET, Token::RightBracket),
     (LEFT_BRACE, Token::LeftBrace),
