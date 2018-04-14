@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::io::Read;
 
 use failure::{err_msg, Error};
@@ -74,7 +76,7 @@ pub struct GotoStatement {
 
 pub struct FunctionStatement {
     pub name: FunctionName,
-    pub parameter_list: Vec<FunctionParameter>,
+    pub parameters: Vec<FunctionParameter>,
     pub body: Block,
 }
 
@@ -86,6 +88,24 @@ pub struct LocalStatement {
 pub struct Expression {
     pub prefix: Box<PrefixExpression>,
     pub tail: Vec<(BinaryOperator, Expression)>,
+}
+
+pub enum PrefixExpression {
+    Simple(SimpleExpression),
+    UnaryOperator(UnaryOperator, Expression),
+}
+
+pub enum SimpleExpression {
+    Float(f64),
+    Int(i64),
+    String(Box<[u8]>),
+    Nil,
+    True,
+    False,
+    VarArgs,
+    TableConstructor(TableConstructor),
+    Function(FunctionExpression),
+    Suffixed(SuffixedExpression),
 }
 
 pub enum PrimaryExpression {
@@ -113,23 +133,6 @@ pub struct SuffixedExpression {
     pub suffixes: Vec<SuffixPart>,
 }
 
-pub enum SimpleExpression {
-    Float(f64),
-    Int(i64),
-    String(Box<[u8]>),
-    Nil,
-    True,
-    False,
-    TableConstructor(TableConstructor),
-    Function(FunctionExpression),
-    Suffixed(SuffixedExpression),
-}
-
-pub enum PrefixExpression {
-    Simple(SimpleExpression),
-    UnaryOperator(UnaryOperator, Expression),
-}
-
 pub struct FunctionExpression {
     pub parameter_list: Vec<FunctionParameter>,
     pub body: Block,
@@ -141,7 +144,13 @@ pub struct FunctionCallStatement {
 }
 
 pub struct AssignmentStatement {
-    pub assignments: Vec<(SuffixedExpression, VarSuffix, Expression)>,
+    pub targets: Vec<AssignmentTarget>,
+    pub values: Vec<Expression>,
+}
+
+pub enum AssignmentTarget {
+    Name(Box<[u8]>),
+    Suffixed(SuffixedExpression, VarSuffix),
 }
 
 pub struct FunctionName {
@@ -174,6 +183,7 @@ pub enum RecordField {
     Expression(Expression),
 }
 
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum UnaryOperator {
     Not,
     Minus,
@@ -181,6 +191,7 @@ pub enum UnaryOperator {
     Len,
 }
 
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -211,7 +222,7 @@ pub fn parse_chunk<R: Read>(source: R) -> Result<Chunk, Error> {
 
 struct Parser<R: Read> {
     lexer: Lexer<R>,
-    read_buffer: Vec<(Token, u64)>,
+    read_buffer: Vec<Token>,
 }
 
 impl<R: Read> Parser<R> {
@@ -339,7 +350,7 @@ impl<R: Read> Parser<R> {
         let name = self.expect_name()?;
 
         match self.take_next()? {
-            (Token::Assign, _) => {
+            Token::Assign => {
                 let initial = self.parse_expression()?;
                 self.expect_next(Token::Comma)?;
                 let limit = self.parse_expression()?;
@@ -363,7 +374,7 @@ impl<R: Read> Parser<R> {
                 })
             }
 
-            (Token::Comma, _) | (Token::In, _) => {
+            Token::Comma | Token::In => {
                 let mut names = Vec::new();
                 names.push(name);
                 while self.check_ahead(0, Token::Comma)? {
@@ -380,10 +391,9 @@ impl<R: Read> Parser<R> {
                 Ok(ForStatement::List { names, lists, body })
             }
 
-            (token, line_num) => Err(format_err!(
-                "unexpected token {:?} at line: {}, expectede '=' or 'in'",
+            token => Err(format_err!(
+                "unexpected token {:?} expectede '=' or 'in'",
                 token,
-                line_num
             )),
         }
     }
@@ -397,27 +407,113 @@ impl<R: Read> Parser<R> {
     }
 
     fn parse_function_statement(&mut self) -> Result<FunctionStatement, Error> {
-        unimplemented!()
+        self.expect_next(Token::Function)?;
+        let name = self.parse_function_name()?;
+        self.expect_next(Token::LeftParen)?;
+
+        let mut parameters = Vec::new();
+        while !self.check_ahead(0, Token::RightParen)? {
+            parameters.push(self.parse_function_parameter()?);
+        }
+        self.take_next()?;
+
+        let body = self.parse_block()?;
+        self.expect_next(Token::End)?;
+
+        Ok(FunctionStatement {
+            name,
+            parameters,
+            body,
+        })
     }
 
     fn parse_local_statement(&mut self) -> Result<LocalStatement, Error> {
-        unimplemented!()
+        self.expect_next(Token::Local)?;
+        let mut names = Vec::new();
+        names.push(self.expect_name()?);
+        while self.check_ahead(0, Token::Comma)? {
+            self.take_next()?;
+            names.push(self.expect_name()?);
+        }
+
+        let values = if self.check_ahead(0, Token::Assign)? {
+            self.take_next()?;
+            self.parse_expression_list()?
+        } else {
+            Vec::new()
+        };
+
+        Ok(LocalStatement { names, values })
     }
 
     fn parse_label_statement(&mut self) -> Result<LabelStatement, Error> {
-        unimplemented!()
+        self.expect_next(Token::DoubleColon)?;
+        let name = self.expect_name()?;
+        self.expect_next(Token::DoubleColon)?;
+        Ok(LabelStatement { name })
     }
 
     fn parse_goto_statement(&mut self) -> Result<GotoStatement, Error> {
-        unimplemented!()
+        self.expect_next(Token::Goto)?;
+        let name = self.expect_name()?;
+        Ok(GotoStatement { name })
     }
 
     fn parse_expression_statement(&mut self) -> Result<Statement, Error> {
-        unimplemented!()
+        let mut suffixed_expression = self.parse_suffixed_expression()?;
+        if self.check_ahead(0, Token::Assign)? || self.check_ahead(0, Token::Comma)? {
+            let mut targets = Vec::new();
+            loop {
+                let assignment_target = if let Some(suffix) = suffixed_expression.suffixes.pop() {
+                    match suffix {
+                        SuffixPart::Var(var_suffix) => {
+                            AssignmentTarget::Suffixed(suffixed_expression, var_suffix)
+                        }
+                        SuffixPart::Call(_) => {
+                            return Err(err_msg("cannot assign to expression"));
+                        }
+                    }
+                } else {
+                    match suffixed_expression.primary {
+                        PrimaryExpression::Name(name) => AssignmentTarget::Name(name),
+                        _ => return Err(err_msg("cannot assign to expression")),
+                    }
+                };
+                targets.push(assignment_target);
+
+                if !self.check_ahead(0, Token::Comma)? {
+                    break;
+                } else {
+                    suffixed_expression = self.parse_suffixed_expression()?;
+                }
+            }
+
+            self.expect_next(Token::Assign)?;
+            let values = self.parse_expression_list()?;
+
+            Ok(Statement::Assignment(AssignmentStatement {
+                targets,
+                values,
+            }))
+        } else {
+            if let Some(suffix) = suffixed_expression.suffixes.pop() {
+                match suffix {
+                    SuffixPart::Call(call_suffix) => {
+                        Ok(Statement::FunctionCall(FunctionCallStatement {
+                            head: suffixed_expression,
+                            call: call_suffix,
+                        }))
+                    }
+                    SuffixPart::Var(_) => Err(err_msg("expression is not a statement")),
+                }
+            } else {
+                Err(err_msg("expression is not a statement"))
+            }
+        }
     }
 
     fn parse_expression(&mut self) -> Result<Expression, Error> {
-        unimplemented!()
+        self.parse_sub_expression(MIN_PRIORITY)
     }
 
     fn parse_expression_list(&mut self) -> Result<Vec<Expression>, Error> {
@@ -427,6 +523,36 @@ impl<R: Read> Parser<R> {
             expressions.push(self.parse_expression()?);
         }
         Ok(expressions)
+    }
+
+    fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression, Error> {
+        let prefix = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
+            self.take_next()?;
+            PrefixExpression::UnaryOperator(unary_op, self.parse_sub_expression(UNARY_PRIORITY)?)
+        } else {
+            PrefixExpression::Simple(self.parse_simple_expression()?)
+        };
+
+        let mut tail = Vec::new();
+        while let Some(binary_op) = get_binary_operator(self.get_next()?) {
+            let (left_priority, right_priority) = binary_priority(binary_op);
+            if left_priority <= priority_limit {
+                break;
+            }
+
+            self.take_next()?;
+            let right_expression = self.parse_sub_expression(right_priority)?;
+            tail.push((binary_op, right_expression));
+        }
+
+        Ok(Expression {
+            prefix: Box::new(prefix),
+            tail,
+        })
+    }
+
+    fn parse_simple_expression(&mut self) -> Result<SimpleExpression, Error> {
+        unimplemented!()
     }
 
     fn parse_primary_expression(&mut self) -> Result<PrimaryExpression, Error> {
@@ -449,23 +575,7 @@ impl<R: Read> Parser<R> {
         unimplemented!()
     }
 
-    fn parse_simple_expression(&mut self) -> Result<SimpleExpression, Error> {
-        unimplemented!()
-    }
-
-    fn parse_prefix_expression(&mut self) -> Result<PrefixExpression, Error> {
-        unimplemented!()
-    }
-
     fn parse_function_expression(&mut self) -> Result<FunctionExpression, Error> {
-        unimplemented!()
-    }
-
-    fn parse_function_call_statement(&mut self) -> Result<FunctionCallStatement, Error> {
-        unimplemented!()
-    }
-
-    fn parse_assignment_statement(&mut self) -> Result<AssignmentStatement, Error> {
         unimplemented!()
     }
 
@@ -502,7 +612,7 @@ impl<R: Read> Parser<R> {
     // Return a reference to the next token in the stream, erroring if we are at the end.
     fn get_next(&mut self) -> Result<&Token, Error> {
         self.read_ahead(1)?;
-        if let Some(&(ref token, _)) = self.read_buffer.get(0) {
+        if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
         } else {
             Err(format_err!("unexpected end of token stream"))
@@ -518,15 +628,14 @@ impl<R: Read> Parser<R> {
                 token
             ))
         } else {
-            let (next_token, line_num) = self.read_buffer.remove(0);
+            let next_token = self.read_buffer.remove(0);
             if next_token == token {
                 Ok(())
             } else {
                 Err(format_err!(
-                    "expected token {:?} found {:?} on line: {}",
+                    "expected token {:?} found {:?}",
                     token,
                     next_token,
-                    line_num + 1
                 ))
             }
         }
@@ -539,24 +648,17 @@ impl<R: Read> Parser<R> {
             Err(err_msg("unexpected end of token stream, expected name"))
         } else {
             match self.read_buffer.remove(0) {
-                (Token::Name(name), _) => Ok(name),
-                (token, line_num) => Err(format_err!(
-                    "expected name found {:?} on line: {}",
-                    token,
-                    line_num + 1
-                )),
+                Token::Name(name) => Ok(name),
+                token => Err(format_err!("expected name found {:?}", token,)),
             }
         }
     }
 
     // Take the next token in the stream by value, erroring if we are at the end.
-    fn take_next(&mut self) -> Result<(Token, u64), Error> {
+    fn take_next(&mut self) -> Result<Token, Error> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(format_err!(
-                "unexpected end of token stream at line: {}",
-                self.lexer.line_number()
-            ))
+            Err(err_msg("unexpected end of token stream"))
         } else {
             Ok(self.read_buffer.remove(0))
         }
@@ -566,7 +668,7 @@ impl<R: Read> Parser<R> {
     // past the end of the stream, this will simply return false.
     fn check_ahead(&mut self, n: usize, token: Token) -> Result<bool, Error> {
         self.read_ahead(n)?;
-        Ok(if let Some(&(ref t, _)) = self.read_buffer.get(n) {
+        Ok(if let Some(t) = self.read_buffer.get(n) {
             *t == token
         } else {
             false
@@ -577,14 +679,84 @@ impl<R: Read> Parser<R> {
     // possible).
     fn read_ahead(&mut self, n: usize) -> Result<(), Error> {
         while self.read_buffer.len() <= n {
-            self.lexer.skip_whitespace()?;
-            let line_number = self.lexer.line_number();
             if let Some(token) = self.lexer.read_token()? {
-                self.read_buffer.push((token, line_number));
+                self.read_buffer.push(token);
             } else {
                 break;
             }
         }
         Ok(())
+    }
+}
+
+// Priority lower than any unary or binary operator.
+const MIN_PRIORITY: u8 = 0;
+
+// Priority of all unary operators.
+const UNARY_PRIORITY: u8 = 12;
+
+// Returns the left and right priority of the given binary operator.
+fn binary_priority(binop: BinaryOperator) -> (u8, u8) {
+    match binop {
+        BinaryOperator::Add => (10, 10),
+        BinaryOperator::Sub => (10, 10),
+        BinaryOperator::Mul => (11, 11),
+        BinaryOperator::Mod => (11, 11),
+        BinaryOperator::Pow => (14, 13),
+        BinaryOperator::Div => (11, 11),
+        BinaryOperator::IDiv => (11, 11),
+        BinaryOperator::BitAnd => (6, 6),
+        BinaryOperator::BitOr => (4, 4),
+        BinaryOperator::BitXor => (5, 5),
+        BinaryOperator::ShiftLeft => (7, 7),
+        BinaryOperator::ShiftRight => (7, 7),
+        BinaryOperator::Concat => (9, 8),
+        BinaryOperator::NotEqual => (10, 10),
+        BinaryOperator::Equal => (3, 3),
+        BinaryOperator::LessThan => (3, 3),
+        BinaryOperator::LessEqual => (3, 3),
+        BinaryOperator::GreaterThan => (3, 3),
+        BinaryOperator::GreaterEqual => (3, 3),
+        BinaryOperator::And => (2, 2),
+        BinaryOperator::Or => (1, 1),
+    }
+}
+
+// Get the unary operator associated with the given token, if it exists.
+fn get_unary_operator(token: &Token) -> Option<UnaryOperator> {
+    match *token {
+        Token::Not => Some(UnaryOperator::Not),
+        Token::Minus => Some(UnaryOperator::Minus),
+        Token::BitNotXor => Some(UnaryOperator::BitNot),
+        Token::Len => Some(UnaryOperator::Len),
+        _ => None,
+    }
+}
+
+// Get the binary operator associated with the given token, if it exists.
+fn get_binary_operator(token: &Token) -> Option<BinaryOperator> {
+    match *token {
+        Token::Minus => Some(BinaryOperator::Sub),
+        Token::Add => Some(BinaryOperator::Add),
+        Token::Mul => Some(BinaryOperator::Mul),
+        Token::Mod => Some(BinaryOperator::Mod),
+        Token::Pow => Some(BinaryOperator::Pow),
+        Token::Div => Some(BinaryOperator::Div),
+        Token::IDiv => Some(BinaryOperator::IDiv),
+        Token::BitAnd => Some(BinaryOperator::BitAnd),
+        Token::BitOr => Some(BinaryOperator::BitOr),
+        Token::BitNotXor => Some(BinaryOperator::BitXor),
+        Token::ShiftLeft => Some(BinaryOperator::ShiftLeft),
+        Token::ShiftRight => Some(BinaryOperator::ShiftRight),
+        Token::Concat => Some(BinaryOperator::Concat),
+        Token::NotEqual => Some(BinaryOperator::NotEqual),
+        Token::Equal => Some(BinaryOperator::Equal),
+        Token::LessThan => Some(BinaryOperator::LessThan),
+        Token::LessEqual => Some(BinaryOperator::LessEqual),
+        Token::GreaterThan => Some(BinaryOperator::GreaterThan),
+        Token::GreaterEqual => Some(BinaryOperator::GreaterEqual),
+        Token::And => Some(BinaryOperator::And),
+        Token::Or => Some(BinaryOperator::Or),
+        _ => None,
     }
 }

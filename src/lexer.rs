@@ -28,25 +28,25 @@ pub enum Token {
     Not,
     And,
     Or,
-    Plus,
     Minus,
-    Times,
+    Add,
+    Mul,
     Div,
     IDiv,
     Pow,
     Mod,
     Len,
+    BitNotXor,
     BitAnd,
-    BitNot,
     BitOr,
     ShiftRight,
     ShiftLeft,
     Concat,
     Dots,
     Assign,
-    Less,
+    LessThan,
     LessEqual,
-    Greater,
+    GreaterThan,
     GreaterEqual,
     Equal,
     NotEqual,
@@ -55,6 +55,8 @@ pub enum Token {
     Colon,
     DoubleColon,
     Comma,
+    LeftParen,
+    RightParen,
     LeftBracket,
     RightBracket,
     LeftBrace,
@@ -212,7 +214,7 @@ impl<R: Read> Lexer<R> {
                         self.advance(1);
                         Token::ShiftLeft
                     } else {
-                        Token::Less
+                        Token::LessThan
                     }
                 }
 
@@ -226,7 +228,7 @@ impl<R: Read> Lexer<R> {
                         self.advance(1);
                         Token::ShiftRight
                     } else {
-                        Token::Greater
+                        Token::GreaterThan
                     }
                 }
 
@@ -246,7 +248,7 @@ impl<R: Read> Lexer<R> {
                         self.advance(1);
                         Token::NotEqual
                     } else {
-                        Token::BitNot
+                        Token::BitNotXor
                     }
                 }
 
@@ -714,6 +716,8 @@ const ALERT_BEEP: u8 = 0x07;
 const BACKSPACE: u8 = 0x08;
 const VERTICAL_TAB: u8 = 0x0b;
 const FORM_FEED: u8 = 0x0c;
+const LEFT_PAREN: u8 = '(' as u8;
+const RIGHT_PAREN: u8 = ')' as u8;
 const LEFT_BRACKET: u8 = '[' as u8;
 const RIGHT_BRACKET: u8 = ']' as u8;
 const LEFT_BRACE: u8 = '{' as u8;
@@ -762,9 +766,9 @@ const NUM_9: u8 = '9' as u8;
 
 // Tokens that are a single character and never the beginning of another longer token
 const SINGLE_CHAR_TOKENS: &[(u8, Token)] = &[
-    (PLUS, Token::Plus),
     (MINUS, Token::Minus),
-    (ASTERISK, Token::Times),
+    (PLUS, Token::Add),
+    (ASTERISK, Token::Mul),
     (CARET, Token::Pow),
     (PERCENT, Token::Mod),
     (AMPERSAND, Token::BitAnd),
@@ -772,6 +776,8 @@ const SINGLE_CHAR_TOKENS: &[(u8, Token)] = &[
     (COMMA, Token::Comma),
     (SEMICOLON, Token::SemiColon),
     (OCTOTHORPE, Token::Len),
+    (LEFT_PAREN, Token::LeftParen),
+    (RIGHT_PAREN, Token::RightParen),
     (RIGHT_BRACKET, Token::RightBracket),
     (LEFT_BRACE, Token::LeftBrace),
     (RIGHT_BRACE, Token::RightBrace),
