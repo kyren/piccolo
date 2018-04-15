@@ -1,10 +1,10 @@
-use std::char;
+use std::{char, mem, str, i32, i64};
 use std::collections::HashMap;
 use std::io::{self, Read};
 
 use failure::{err_msg, Error};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Break,
     Do,
@@ -61,27 +61,18 @@ pub enum Token {
     RightBracket,
     LeftBrace,
     RightBrace,
+    /// Numerals are only lexed as integers in the range [-(2^63-1), 2^63-1], otherwise they will be
+    /// lexed as floats.
+    Integer(i64),
+    Float(f64),
     Name(Box<[u8]>),
     String(Box<[u8]>),
-    /// Digits will contain digit values 0-9, or 0-15 if the integer is in hex.
-    Integer {
-        is_hex: bool,
-        digits: Box<[u8]>,
-    },
-    /// Whole and fractional part contains digits values 0-9, or 0-15 if the float is in hex.
-    /// Exponent is always digital regardless of whether the float is in hex or not.
-    Float {
-        is_hex: bool,
-        whole_part: Box<[u8]>,
-        fractional_part: Box<[u8]>,
-        exponent_part: Box<[u8]>,
-        exponent_negative: bool,
-    },
 }
 
 pub struct Lexer<R: Read> {
     source: Option<R>,
     peek_buffer: Vec<u8>,
+    output_buffer: Vec<u8>,
     line_number: u64,
     char_tokens: &'static HashMap<u8, Token>,
     reserved_words: &'static HashMap<&'static [u8], Token>,
@@ -110,6 +101,7 @@ impl<R: Read> Lexer<R> {
         Lexer {
             source: Some(source),
             peek_buffer: Vec::new(),
+            output_buffer: Vec::new(),
             line_number: 0,
             char_tokens: &*CHAR_TOKEN_MAP,
             reserved_words: &*RESERVED_WORD_MAP,
@@ -131,7 +123,7 @@ impl<R: Read> Lexer<R> {
                 }
 
                 NEWLINE | CARRIAGE_RETURN => {
-                    self.line_end(None)?;
+                    self.read_line_end(false)?;
                 }
 
                 MINUS => {
@@ -142,7 +134,7 @@ impl<R: Read> Lexer<R> {
 
                         if self.peek(0)? == Some(LEFT_BRACKET) {
                             // long comment
-                            self.long_string(None)?;
+                            self.read_long_string(false)?;
                         } else {
                             // Short comment, read until end of line
                             while let Some(c) = self.peek(0)? {
@@ -185,9 +177,8 @@ impl<R: Read> Lexer<R> {
                 LEFT_BRACKET => {
                     let next = self.peek(1)?;
                     if next == Some(EQUALS) || next == Some(LEFT_BRACKET) {
-                        let mut output = Vec::new();
-                        self.long_string(Some(&mut output))?;
-                        Token::String(output.into_boxed_slice())
+                        self.read_long_string(true)?;
+                        Token::String(self.take_output())
                     } else {
                         self.advance(1);
                         Token::LeftBracket
@@ -262,7 +253,10 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                DOUBLE_QUOTE | SINGLE_QUOTE => Token::String(self.short_string()?),
+                DOUBLE_QUOTE | SINGLE_QUOTE => {
+                    self.read_short_string()?;
+                    Token::String(self.take_output())
+                }
 
                 PERIOD => {
                     if self.peek(1)? == Some(PERIOD) {
@@ -275,7 +269,7 @@ impl<R: Read> Lexer<R> {
                         }
                     } else {
                         if self.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
-                            self.numeral()?
+                            self.read_numeral()?
                         } else {
                             self.advance(1);
                             Token::Dot
@@ -285,28 +279,31 @@ impl<R: Read> Lexer<R> {
 
                 c => {
                     if is_digit(c) {
-                        self.numeral()?
+                        self.read_numeral()?
                     } else if let Some(t) = self.char_tokens.get(&c).cloned() {
                         self.advance(1);
                         t
                     } else if is_alpha(c) {
-                        let mut buffer = Vec::new();
-                        buffer.push(c);
+                        self.output_buffer.clear();
+                        self.output_buffer.push(c);
                         self.advance(1);
 
                         while let Some(c) = self.peek(0)? {
                             if is_alpha(c) || is_digit(c) {
-                                buffer.push(c);
+                                self.output_buffer.push(c);
                                 self.advance(1);
                             } else {
                                 break;
                             }
                         }
 
-                        if let Some(t) = self.reserved_words.get(buffer.as_slice()).cloned() {
+                        if let Some(t) = self.reserved_words
+                            .get(self.output_buffer.as_slice())
+                            .cloned()
+                        {
                             t
                         } else {
-                            Token::Name(buffer.into_boxed_slice())
+                            Token::Name(self.take_output())
                         }
                     } else {
                         return Err(format_err!(
@@ -322,20 +319,20 @@ impl<R: Read> Lexer<R> {
     }
 
     // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
-    // number.
-    fn line_end(&mut self, mut output: Option<&mut Vec<u8>>) -> Result<(), Error> {
+    // number.  If `append_buffer` is true, then appends the read newline to the output buffer.
+    fn read_line_end(&mut self, append_output: bool) -> Result<(), Error> {
         let newline = self.peek(0).unwrap().unwrap();
         assert!(is_newline(newline));
         self.advance(1);
-        if let Some(o) = output.as_mut() {
-            o.push(newline);
+        if append_output {
+            self.output_buffer.push(newline);
         }
 
         if let Some(next_newline) = self.peek(0)? {
             if is_newline(next_newline) && next_newline != newline {
                 self.advance(1);
-                if let Some(o) = output.as_mut() {
-                    o.push(next_newline);
+                if append_output {
+                    self.output_buffer.push(next_newline);
                 }
             }
         }
@@ -345,12 +342,13 @@ impl<R: Read> Lexer<R> {
     }
 
     // Read a string on a single line delimited by ' or " that allows for \ escaping of certain
-    // characters.
-    fn short_string(&mut self) -> Result<Box<[u8]>, Error> {
-        let mut output = Vec::new();
+    // characters.  Always reads the contained string into the output buffer.
+    fn read_short_string(&mut self) -> Result<(), Error> {
         let start_quote = self.peek(0).unwrap().unwrap();
         assert!(start_quote == SINGLE_QUOTE || start_quote == DOUBLE_QUOTE);
         self.advance(1);
+
+        self.output_buffer.clear();
 
         loop {
             let c = if let Some(c) = self.peek(0)? {
@@ -370,56 +368,56 @@ impl<R: Read> Lexer<R> {
                 {
                     LOWER_A => {
                         self.advance(1);
-                        output.push(ALERT_BEEP);
+                        self.output_buffer.push(ALERT_BEEP);
                     }
 
                     LOWER_B => {
                         self.advance(1);
-                        output.push(BACKSPACE);
+                        self.output_buffer.push(BACKSPACE);
                     }
 
                     LOWER_F => {
                         self.advance(1);
-                        output.push(FORM_FEED);
+                        self.output_buffer.push(FORM_FEED);
                     }
 
                     LOWER_N => {
                         self.advance(1);
-                        output.push(NEWLINE);
+                        self.output_buffer.push(NEWLINE);
                     }
 
                     LOWER_R => {
                         self.advance(1);
-                        output.push(CARRIAGE_RETURN);
+                        self.output_buffer.push(CARRIAGE_RETURN);
                     }
 
                     LOWER_T => {
                         self.advance(1);
-                        output.push(HORIZONTAL_TAB);
+                        self.output_buffer.push(HORIZONTAL_TAB);
                     }
 
                     LOWER_V => {
                         self.advance(1);
-                        output.push(VERTICAL_TAB);
+                        self.output_buffer.push(VERTICAL_TAB);
                     }
 
                     BACKSLASH => {
                         self.advance(1);
-                        output.push(BACKSLASH);
+                        self.output_buffer.push(BACKSLASH);
                     }
 
                     SINGLE_QUOTE => {
                         self.advance(1);
-                        output.push(SINGLE_QUOTE);
+                        self.output_buffer.push(SINGLE_QUOTE);
                     }
 
                     DOUBLE_QUOTE => {
                         self.advance(1);
-                        output.push(DOUBLE_QUOTE);
+                        self.output_buffer.push(DOUBLE_QUOTE);
                     }
 
                     NEWLINE | CARRIAGE_RETURN => {
-                        self.line_end(Some(&mut output))?;
+                        self.read_line_end(true)?;
                     }
 
                     LOWER_X => {
@@ -430,7 +428,7 @@ impl<R: Read> Lexer<R> {
                         let second = self.peek(1)?
                             .and_then(from_hex_digit)
                             .ok_or_else(|| err_msg("hexadecimal digit expected"))?;
-                        output.push(first << 4 | second);
+                        self.output_buffer.push(first << 4 | second);
                         self.advance(2);
                     }
 
@@ -460,7 +458,7 @@ impl<R: Read> Lexer<R> {
                         let c = char::from_u32(u).ok_or_else(|| err_msg("invalid UTF-8 value"))?;
                         let mut buf = [0; 4];
                         for &b in c.encode_utf8(&mut buf).as_bytes() {
-                            output.push(b);
+                            self.output_buffer.push(b);
                         }
                     }
 
@@ -468,7 +466,7 @@ impl<R: Read> Lexer<R> {
                         self.advance(1);
                         while let Some(c) = self.peek(0)? {
                             if is_newline(c) {
-                                self.line_end(None)?;
+                                self.read_line_end(false)?;
                             } else if is_space(c) {
                                 self.advance(1);
                             } else {
@@ -492,7 +490,7 @@ impl<R: Read> Lexer<R> {
                                 return Err(err_msg("decimal escape too large"));
                             }
 
-                            output.push(u as u8);
+                            self.output_buffer.push(u as u8);
                         } else {
                             return Err(err_msg("invalid escape sequence"));
                         }
@@ -501,17 +499,22 @@ impl<R: Read> Lexer<R> {
             } else if c == start_quote {
                 break;
             } else {
-                output.push(c);
+                self.output_buffer.push(c);
             }
         }
 
-        Ok(output.into_boxed_slice())
+        Ok(())
     }
 
-    // Read a [=*[...]=*] sequence with matching numbers of '='.
-    fn long_string(&mut self, mut output: Option<&mut Vec<u8>>) -> Result<(), Error> {
+    // Read a [=*[...]=*] sequence with matching numbers of '='.  If `into_output` is true, writes
+    // the contained string into the output buffer.
+    fn read_long_string(&mut self, into_output: bool) -> Result<(), Error> {
         assert_eq!(self.peek(0).unwrap().unwrap(), LEFT_BRACKET);
         self.advance(1);
+
+        if into_output {
+            self.output_buffer.clear();
+        }
 
         let mut open_sep_length = 0;
         while self.peek(0)? == Some(EQUALS) {
@@ -533,7 +536,7 @@ impl<R: Read> Lexer<R> {
 
             match c {
                 NEWLINE | CARRIAGE_RETURN => {
-                    self.line_end(output.as_mut().map(|o| &mut **o))?;
+                    self.read_line_end(into_output)?;
                 }
 
                 RIGHT_BRACKET => {
@@ -550,18 +553,18 @@ impl<R: Read> Lexer<R> {
                     } else {
                         // If it turns out this is not a valid long string close delimiter, we need
                         // to add the invalid close delimiter to the output.
-                        if let Some(o) = output.as_mut() {
-                            o.push(RIGHT_BRACKET);
+                        if into_output {
+                            self.output_buffer.push(RIGHT_BRACKET);
                             for _ in 0..close_sep_length {
-                                o.push(EQUALS);
+                                self.output_buffer.push(EQUALS);
                             }
                         }
                     }
                 }
 
                 c => {
-                    if let Some(o) = output.as_mut() {
-                        o.push(c);
+                    if into_output {
+                        self.output_buffer.push(c);
                     }
                     self.advance(1);
                 }
@@ -574,38 +577,31 @@ impl<R: Read> Lexer<R> {
     // Reads a hex or decimal integer or floating point identifier.  Allows decimal integers (123),
     // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
-    fn numeral(&mut self) -> Result<Token, Error> {
+    fn read_numeral(&mut self) -> Result<Token, Error> {
         let p1 = self.peek(0).unwrap().unwrap();
         assert!(p1 == PERIOD || is_digit(p1));
+
+        self.output_buffer.clear();
 
         let p2 = self.peek(1)?;
         let is_hex = p1 == NUM_0 && (p2 == Some(LOWER_X) || p2 == Some(UPPER_X));
         if is_hex {
+            self.output_buffer.push(p1);
+            self.output_buffer.push(p2.unwrap());
             self.advance(2);
         }
-
-        let mut whole_part = Vec::new();
-        let mut frac_part = Vec::new();
-        let mut exp_part = Vec::new();
 
         let mut has_radix = false;
         while let Some(c) = self.peek(0)? {
             if c == PERIOD && !has_radix {
+                self.output_buffer.push(PERIOD);
                 has_radix = true;
                 self.advance(1);
             } else if !is_hex && is_digit(c) {
-                if has_radix {
-                    frac_part.push(from_digit(c).unwrap());
-                } else {
-                    whole_part.push(from_digit(c).unwrap());
-                }
+                self.output_buffer.push(c);
                 self.advance(1);
             } else if is_hex && is_hex_digit(c) {
-                if has_radix {
-                    frac_part.push(from_hex_digit(c).unwrap());
-                } else {
-                    whole_part.push(from_hex_digit(c).unwrap());
-                }
+                self.output_buffer.push(c);
                 self.advance(1);
             } else {
                 break;
@@ -613,26 +609,24 @@ impl<R: Read> Lexer<R> {
         }
 
         let mut has_exp = false;
-        let mut exp_neg = false;
         if let Some(exp_begin) = self.peek(0)? {
             if (is_hex && (exp_begin == LOWER_P || exp_begin == UPPER_P))
                 || (!is_hex && (exp_begin == LOWER_E || exp_begin == UPPER_E))
             {
+                self.output_buffer.push(exp_begin);
                 has_exp = true;
                 self.advance(1);
 
                 if let Some(sign) = self.peek(0)? {
-                    if sign == PLUS {
-                        self.advance(1);
-                    } else if sign == MINUS {
-                        exp_neg = true;
+                    if sign == PLUS || sign == MINUS {
+                        self.output_buffer.push(sign);
                         self.advance(1);
                     }
                 }
 
                 while let Some(c) = self.peek(0)? {
-                    if let Some(d) = from_digit(c) {
-                        exp_part.push(d);
+                    if is_digit(c) {
+                        self.output_buffer.push(c);
                         self.advance(1);
                     } else {
                         break;
@@ -641,24 +635,25 @@ impl<R: Read> Lexer<R> {
             }
         }
 
-        if has_exp && exp_part.is_empty() {
-            return Err(err_msg("malformed number"));
+        if !has_exp && !has_radix {
+            if is_hex {
+                if let Some(i) = read_hex_integer(&self.output_buffer) {
+                    return Ok(Token::Integer(i));
+                }
+            } else {
+                if let Some(i) = read_integer(&self.output_buffer) {
+                    return Ok(Token::Integer(i));
+                }
+            }
         }
 
-        Ok(if has_exp || has_radix {
-            Token::Float {
-                is_hex,
-                whole_part: whole_part.into_boxed_slice(),
-                fractional_part: frac_part.into_boxed_slice(),
-                exponent_part: exp_part.into_boxed_slice(),
-                exponent_negative: exp_neg,
-            }
+        Ok(Token::Float(if is_hex {
+            read_hex_float(&self.output_buffer)
         } else {
-            Token::Integer {
-                is_hex,
-                digits: whole_part.into_boxed_slice(),
-            }
-        })
+            read_float(&self.output_buffer)
+        }.ok_or_else(|| {
+            err_msg("malformed number")
+        })?))
     }
 
     fn peek(&mut self, n: usize) -> Result<Option<u8>, io::Error> {
@@ -705,6 +700,152 @@ impl<R: Read> Lexer<R> {
             "cannot advance over un-peeked characters"
         );
         self.peek_buffer.drain(0..n);
+    }
+
+    fn take_output(&mut self) -> Box<[u8]> {
+        mem::replace(&mut self.output_buffer, Vec::new()).into_boxed_slice()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Numeral {
+    Integer(i64),
+    Float(f64),
+}
+
+pub fn read_integer(s: &[u8]) -> Option<i64> {
+    let (is_neg, s) = read_neg(s);
+
+    let mut i: i64 = 0;
+    for &c in s {
+        let d = from_digit(c)? as i64;
+        i = i.checked_mul(10)?.checked_add(d)?;
+    }
+
+    if is_neg {
+        i = i.checked_neg()?;
+    }
+
+    if i == i64::MIN {
+        None
+    } else {
+        Some(i)
+    }
+}
+
+pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
+    let (is_neg, s) = read_neg(s);
+
+    if s[0] != NUM_0 || (s[1] != LOWER_X && s[1] != UPPER_X) {
+        return None;
+    }
+
+    let mut i: i64 = 0;
+    for &c in &s[2..] {
+        let d = from_hex_digit(c)? as i64;
+        i = i.checked_mul(16)?.checked_add(d)?;
+    }
+
+    if is_neg {
+        i = i.checked_neg()?;
+    }
+
+    if i == i64::MIN {
+        None
+    } else {
+        Some(i)
+    }
+}
+
+pub fn read_float(s: &[u8]) -> Option<f64> {
+    let s = str::from_utf8(s).ok()?;
+    str::parse(s).ok()
+}
+
+pub fn read_hex_float(s: &[u8]) -> Option<f64> {
+    const MAX_SIGNIFICANT_DIGITS: u32 = 30;
+
+    let (is_neg, s) = read_neg(s);
+
+    if s.len() < 2 {
+        return None;
+    }
+
+    if s[0] != NUM_0 || (s[1] != LOWER_X && s[1] != UPPER_X) {
+        return None;
+    }
+
+    let mut significant_digits: u32 = 0;
+    let mut non_significant_digits: u32 = 0;
+    let mut found_dot = false;
+    let mut r: f64 = 0.0;
+    let mut e: i32 = 0;
+    let mut i = 2;
+
+    while i < s.len() {
+        let c = s[i];
+        if c == PERIOD {
+            if found_dot {
+                return None;
+            }
+            found_dot = true;
+        } else if let Some(d) = from_hex_digit(c) {
+            if significant_digits == 0 && d == 0 {
+                non_significant_digits += 1;
+            } else if significant_digits < MAX_SIGNIFICANT_DIGITS {
+                significant_digits += 1;
+                r = (r * 16.0) + d as f64;
+            } else {
+                e = e.checked_add(1)?;
+            }
+            if found_dot {
+                e = e.checked_sub(1)?;
+            }
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    if non_significant_digits + significant_digits == 0 {
+        return None;
+    }
+
+    e = e.checked_mul(4)?;
+
+    if i + 1 < s.len() && (s[i] == LOWER_P || s[i] == UPPER_P) {
+        let (exp_neg, exp_s) = read_neg(&s[i + 1..]);
+        let mut exp1: i32 = 0;
+        for &c in exp_s {
+            let d = from_digit(c)?;
+            exp1 = exp1.saturating_mul(10).saturating_add(d as i32);
+        }
+        if exp_neg {
+            exp1 = -exp1;
+        }
+        e = e.saturating_add(exp1);
+    } else if i != s.len() {
+        return None;
+    }
+
+    if is_neg {
+        r = -r;
+    }
+
+    Some(r * (e as f64).exp2())
+}
+
+fn read_neg(s: &[u8]) -> (bool, &[u8]) {
+    if s.len() > 0 {
+        if s[0] == MINUS {
+            (true, &s[1..])
+        } else if s[0] == PLUS {
+            (false, &s[1..])
+        } else {
+            (false, s)
+        }
+    } else {
+        (false, s)
     }
 }
 

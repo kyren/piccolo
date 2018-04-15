@@ -1,3 +1,5 @@
+use std::f64;
+
 use lexer::{Lexer, Token};
 
 fn test_tokens(source: &str, tokens: &[Token]) {
@@ -35,29 +37,6 @@ fn str_token(s: &str) -> Token {
 
 fn name_token(s: &str) -> Token {
     Token::Name(s.as_bytes().to_vec().into_boxed_slice())
-}
-
-fn int_token(is_hex: bool, digits: &[u8]) -> Token {
-    Token::Integer {
-        is_hex,
-        digits: digits.to_vec().into_boxed_slice(),
-    }
-}
-
-fn float_token<'a>(
-    is_hex: bool,
-    whole_part: &[u8],
-    frac_part: &[u8],
-    exp_part: &[u8],
-    exp_neg: bool,
-) -> Token {
-    Token::Float {
-        is_hex,
-        whole_part: whole_part.to_vec().into_boxed_slice(),
-        fractional_part: frac_part.to_vec().into_boxed_slice(),
-        exponent_part: exp_part.to_vec().into_boxed_slice(),
-        exponent_negative: exp_neg,
-    }
 }
 
 #[test]
@@ -129,18 +108,26 @@ fn numerals() {
             12345
             12345.
             3.1415e-2
-            0xdead.beefp+1
-            0Xaa.bbP2
+            0x22.4p+1
+            0Xaa.8P-2
+            0x8.4P0
             .123E-10
+            0x99999999999999999999999999999999p999999999999999999999999999999
+            9223372036854775807
+            9223372036854775808
         "#,
         &[
-            int_token(true, &[13, 14, 10, 13, 11, 14, 14, 15]),
-            int_token(false, &[1, 2, 3, 4, 5]),
-            float_token(false, &[1, 2, 3, 4, 5], &[], &[], false),
-            float_token(false, &[3], &[1, 4, 1, 5], &[2], true),
-            float_token(true, &[13, 14, 10, 13], &[11, 14, 14, 15], &[1], false),
-            float_token(true, &[10, 10], &[11, 11], &[2], false),
-            float_token(false, &[], &[1, 2, 3], &[1, 0], true),
+            Token::Integer(0xdeadbeef),
+            Token::Integer(12345),
+            Token::Float(12345.0),
+            Token::Float(3.1415e-2),
+            Token::Float(68.5),
+            Token::Float(42.625),
+            Token::Float(8.25),
+            Token::Float(0.123e-10),
+            Token::Float(f64::INFINITY),
+            Token::Integer(9223372036854775807),
+            Token::Float(9223372036854775808.0),
         ],
     );
 }
