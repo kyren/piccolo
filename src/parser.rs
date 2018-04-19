@@ -76,8 +76,7 @@ pub struct GotoStatement {
 
 pub struct FunctionStatement {
     pub name: FunctionName,
-    pub parameters: Vec<FunctionParameter>,
-    pub body: Block,
+    pub definition: FunctionDefinition,
 }
 
 pub struct LocalStatement {
@@ -86,25 +85,25 @@ pub struct LocalStatement {
 }
 
 pub struct Expression {
-    pub prefix: Box<PrefixExpression>,
+    pub head: Box<HeadExpression>,
     pub tail: Vec<(BinaryOperator, Expression)>,
 }
 
-pub enum PrefixExpression {
+pub enum HeadExpression {
     Simple(SimpleExpression),
     UnaryOperator(UnaryOperator, Expression),
 }
 
 pub enum SimpleExpression {
     Float(f64),
-    Int(i64),
+    Integer(i64),
     String(Box<[u8]>),
     Nil,
     True,
     False,
     VarArgs,
     TableConstructor(TableConstructor),
-    Function(FunctionExpression),
+    Function(FunctionDefinition),
     Suffixed(SuffixedExpression),
 }
 
@@ -113,9 +112,9 @@ pub enum PrimaryExpression {
     GroupedExpression(Expression),
 }
 
-pub enum VarSuffix {
-    Field(Box<[u8]>),
-    Table(Expression),
+pub enum FieldSuffix {
+    Named(Box<[u8]>),
+    Indexed(Expression),
 }
 
 pub enum CallSuffix {
@@ -124,7 +123,7 @@ pub enum CallSuffix {
 }
 
 pub enum SuffixPart {
-    Var(VarSuffix),
+    Field(FieldSuffix),
     Call(CallSuffix),
 }
 
@@ -133,8 +132,9 @@ pub struct SuffixedExpression {
     pub suffixes: Vec<SuffixPart>,
 }
 
-pub struct FunctionExpression {
-    pub parameter_list: Vec<FunctionParameter>,
+pub struct FunctionDefinition {
+    pub parameters: Vec<Box<[u8]>>,
+    pub has_varargs: bool,
     pub body: Block,
 }
 
@@ -150,23 +150,13 @@ pub struct AssignmentStatement {
 
 pub enum AssignmentTarget {
     Name(Box<[u8]>),
-    Suffixed(SuffixedExpression, VarSuffix),
+    Field(SuffixedExpression, FieldSuffix),
 }
 
 pub struct FunctionName {
     pub name: Box<[u8]>,
-    pub fields: Vec<FieldSelector>,
-    pub self_field: Option<Box<[u8]>>,
-}
-
-pub struct FieldSelector {
-    pub is_method: bool,
-    pub field_name: Box<[u8]>,
-}
-
-pub enum FunctionParameter {
-    Name(Box<[u8]>),
-    VarArgs,
+    pub fields: Vec<Box<[u8]>>,
+    pub method: Option<Box<[u8]>>,
 }
 
 pub struct TableConstructor {
@@ -174,13 +164,13 @@ pub struct TableConstructor {
 }
 
 pub enum ConstructorField {
-    List(Expression),
-    Record(RecordField, Expression),
+    Array(Expression),
+    Record(RecordKey, Expression),
 }
 
-pub enum RecordField {
-    Name(Box<[u8]>),
-    Expression(Expression),
+pub enum RecordKey {
+    Named(Box<[u8]>),
+    Indexed(Expression),
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -392,7 +382,7 @@ impl<R: Read> Parser<R> {
             }
 
             token => Err(format_err!(
-                "unexpected token {:?} expectede '=' or 'in'",
+                "unexpected token {:?} expected '=' or 'in'",
                 token,
             )),
         }
@@ -409,22 +399,9 @@ impl<R: Read> Parser<R> {
     fn parse_function_statement(&mut self) -> Result<FunctionStatement, Error> {
         self.expect_next(Token::Function)?;
         let name = self.parse_function_name()?;
-        self.expect_next(Token::LeftParen)?;
+        let definition = self.parse_function_definition()?;
 
-        let mut parameters = Vec::new();
-        while !self.check_ahead(0, Token::RightParen)? {
-            parameters.push(self.parse_function_parameter()?);
-        }
-        self.take_next()?;
-
-        let body = self.parse_block()?;
-        self.expect_next(Token::End)?;
-
-        Ok(FunctionStatement {
-            name,
-            parameters,
-            body,
-        })
+        Ok(FunctionStatement { name, definition })
     }
 
     fn parse_local_statement(&mut self) -> Result<LocalStatement, Error> {
@@ -466,8 +443,8 @@ impl<R: Read> Parser<R> {
             loop {
                 let assignment_target = if let Some(suffix) = suffixed_expression.suffixes.pop() {
                     match suffix {
-                        SuffixPart::Var(var_suffix) => {
-                            AssignmentTarget::Suffixed(suffixed_expression, var_suffix)
+                        SuffixPart::Field(field_suffix) => {
+                            AssignmentTarget::Field(suffixed_expression, field_suffix)
                         }
                         SuffixPart::Call(_) => {
                             return Err(err_msg("cannot assign to expression"));
@@ -504,7 +481,7 @@ impl<R: Read> Parser<R> {
                             call: call_suffix,
                         }))
                     }
-                    SuffixPart::Var(_) => Err(err_msg("expression is not a statement")),
+                    SuffixPart::Field(_) => Err(err_msg("expression is not a statement")),
                 }
             } else {
                 Err(err_msg("expression is not a statement"))
@@ -526,11 +503,11 @@ impl<R: Read> Parser<R> {
     }
 
     fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression, Error> {
-        let prefix = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
+        let head = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
             self.take_next()?;
-            PrefixExpression::UnaryOperator(unary_op, self.parse_sub_expression(UNARY_PRIORITY)?)
+            HeadExpression::UnaryOperator(unary_op, self.parse_sub_expression(UNARY_PRIORITY)?)
         } else {
-            PrefixExpression::Simple(self.parse_simple_expression()?)
+            HeadExpression::Simple(self.parse_simple_expression()?)
         };
 
         let mut tail = Vec::new();
@@ -546,61 +523,265 @@ impl<R: Read> Parser<R> {
         }
 
         Ok(Expression {
-            prefix: Box::new(prefix),
+            head: Box::new(head),
             tail,
         })
     }
 
     fn parse_simple_expression(&mut self) -> Result<SimpleExpression, Error> {
-        unimplemented!()
+        Ok(match *self.get_next()? {
+            Token::Float(f) => {
+                self.take_next()?;
+                SimpleExpression::Float(f)
+            }
+            Token::Integer(i) => {
+                self.take_next()?;
+                SimpleExpression::Integer(i)
+            }
+            Token::String(_) => SimpleExpression::String(self.expect_string()?),
+            Token::Nil => {
+                self.take_next()?;
+                SimpleExpression::Nil
+            }
+            Token::True => {
+                self.take_next()?;
+                SimpleExpression::True
+            }
+            Token::False => {
+                self.take_next()?;
+                SimpleExpression::False
+            }
+            Token::Dots => {
+                self.take_next()?;
+                SimpleExpression::VarArgs
+            }
+            Token::LeftBrace => SimpleExpression::TableConstructor(self.parse_table_constructor()?),
+            Token::Function => {
+                self.take_next()?;
+                SimpleExpression::Function(self.parse_function_definition()?)
+            }
+            _ => SimpleExpression::Suffixed(self.parse_suffixed_expression()?),
+        })
     }
 
     fn parse_primary_expression(&mut self) -> Result<PrimaryExpression, Error> {
-        unimplemented!()
+        match self.take_next()? {
+            Token::LeftParen => {
+                self.take_next()?;
+                let expr = self.parse_expression()?;
+                self.expect_next(Token::RightParen)?;
+                Ok(PrimaryExpression::GroupedExpression(expr))
+            }
+            Token::Name(n) => Ok(PrimaryExpression::Name(n)),
+            t => Err(format_err!(
+                "unexpected token {:?} expected grouped expression or name",
+                t
+            )),
+        }
     }
 
-    fn parse_var_suffix(&mut self) -> Result<VarSuffix, Error> {
-        unimplemented!()
+    fn parse_field_suffix(&mut self) -> Result<FieldSuffix, Error> {
+        match *self.get_next()? {
+            Token::Dot => {
+                self.take_next()?;
+                Ok(FieldSuffix::Named(self.expect_name()?))
+            }
+            Token::LeftBracket => {
+                self.take_next()?;
+                let expr = self.parse_expression()?;
+                self.expect_next(Token::RightBracket)?;
+                Ok(FieldSuffix::Indexed(expr))
+            }
+            _ => Err(format_err!(
+                "unexpected token {:?} expected field suffix",
+                self.take_next()?
+            )),
+        }
     }
 
     fn parse_call_suffix(&mut self) -> Result<CallSuffix, Error> {
-        unimplemented!()
+        let method_name = match *self.get_next()? {
+            Token::Colon => {
+                self.take_next()?;
+                Some(self.expect_name()?)
+            }
+            _ => None,
+        };
+
+        let args = match *self.get_next()? {
+            Token::LeftParen => {
+                self.take_next()?;
+                let args = if *self.get_next()? != Token::RightParen {
+                    self.parse_expression_list()?
+                } else {
+                    Vec::new()
+                };
+                self.expect_next(Token::RightParen)?;
+                args
+            }
+            Token::LeftBrace => vec![
+                Expression {
+                    head: Box::new(HeadExpression::Simple(SimpleExpression::TableConstructor(
+                        self.parse_table_constructor()?,
+                    ))),
+                    tail: vec![],
+                },
+            ],
+            Token::String(_) => vec![
+                Expression {
+                    head: Box::new(HeadExpression::Simple(SimpleExpression::String(
+                        self.expect_string()?,
+                    ))),
+                    tail: vec![],
+                },
+            ],
+            _ => {
+                return Err(format_err!(
+                    "unexpected token {:?} expected function arguments",
+                    self.take_next()?
+                ));
+            }
+        };
+
+        Ok(if let Some(method_name) = method_name {
+            CallSuffix::Method(method_name, args)
+        } else {
+            CallSuffix::Function(args)
+        })
     }
 
     fn parse_suffix_part(&mut self) -> Result<SuffixPart, Error> {
-        unimplemented!()
+        match *self.get_next()? {
+            Token::Dot | Token::LeftBracket => Ok(SuffixPart::Field(self.parse_field_suffix()?)),
+            Token::Colon | Token::LeftParen => Ok(SuffixPart::Call(self.parse_call_suffix()?)),
+            _ => Err(format_err!(
+                "unexpected token {:?} expected expression suffix",
+                self.take_next()?
+            )),
+        }
     }
 
     fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression, Error> {
-        unimplemented!()
-    }
+        let primary = self.parse_primary_expression()?;
+        let mut suffixes = Vec::new();
+        loop {
+            match *self.get_next()? {
+                Token::Dot | Token::LeftBracket | Token::Colon | Token::LeftParen => {
+                    suffixes.push(self.parse_suffix_part()?);
+                }
+                _ => break,
+            }
+        }
 
-    fn parse_function_expression(&mut self) -> Result<FunctionExpression, Error> {
-        unimplemented!()
+        Ok(SuffixedExpression { primary, suffixes })
     }
 
     fn parse_function_name(&mut self) -> Result<FunctionName, Error> {
-        unimplemented!()
+        let name = self.expect_name()?;
+        let mut fields = Vec::new();
+        let mut method = None;
+        loop {
+            match *self.get_next()? {
+                Token::Dot => {
+                    self.take_next()?;
+                    fields.push(self.expect_name()?);
+                }
+                Token::Colon => {
+                    self.take_next()?;
+                    method = Some(self.expect_name()?);
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(FunctionName {
+            name,
+            fields,
+            method,
+        })
     }
 
-    fn parse_field_selector(&mut self) -> Result<FieldSelector, Error> {
-        unimplemented!()
-    }
+    fn parse_function_definition(&mut self) -> Result<FunctionDefinition, Error> {
+        self.expect_next(Token::LeftParen)?;
 
-    fn parse_function_parameter(&mut self) -> Result<FunctionParameter, Error> {
-        unimplemented!()
+        let mut parameters = Vec::new();
+        let mut has_varargs = false;
+        if !self.check_ahead(0, Token::RightParen)? {
+            loop {
+                match self.take_next()? {
+                    Token::Name(name) => parameters.push(name),
+                    Token::Dots => {
+                        has_varargs = true;
+                        break;
+                    }
+                    token => {
+                        return Err(format_err!(
+                            "unexpected token {:?} expected parameter name or '...'",
+                            token,
+                        ))
+                    }
+                }
+                if self.check_ahead(0, Token::Comma)? {
+                    self.take_next()?;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_next(Token::RightParen)?;
+
+        let body = self.parse_block()?;
+        self.expect_next(Token::End)?;
+
+        Ok(FunctionDefinition {
+            parameters,
+            has_varargs,
+            body,
+        })
     }
 
     fn parse_table_constructor(&mut self) -> Result<TableConstructor, Error> {
-        unimplemented!()
+        self.expect_next(Token::LeftBrace)?;
+        let mut fields = Vec::new();
+        loop {
+            if self.check_ahead(0, Token::RightBrace)? {
+                break;
+            }
+            fields.push(self.parse_constructor_field()?);
+            match *self.get_next()? {
+                Token::Comma | Token::SemiColon => {
+                    self.take_next()?;
+                }
+                _ => break,
+            }
+        }
+        self.expect_next(Token::RightBrace)?;
+        Ok(TableConstructor { fields })
     }
 
     fn parse_constructor_field(&mut self) -> Result<ConstructorField, Error> {
-        unimplemented!()
-    }
-
-    fn parse_record_field(&mut self) -> Result<RecordField, Error> {
-        unimplemented!()
+        Ok(match *self.get_next()? {
+            Token::Name(_) => {
+                let key = self.expect_name()?;
+                if self.check_ahead(0, Token::Assign)? {
+                    self.take_next()?;
+                    let value = self.parse_expression()?;
+                    ConstructorField::Record(RecordKey::Named(key), value)
+                } else {
+                    ConstructorField::Array(self.parse_expression()?)
+                }
+            }
+            Token::LeftBracket => {
+                self.take_next()?;
+                let key = self.parse_expression()?;
+                self.expect_next(Token::RightBracket)?;
+                self.expect_next(Token::Assign)?;
+                let value = self.parse_expression()?;
+                return Ok(ConstructorField::Record(RecordKey::Indexed(key), value));
+            }
+            _ => ConstructorField::Array(self.parse_expression()?),
+        })
     }
 
     // Return true if there are no more tokens left in the token stream.
@@ -649,7 +830,20 @@ impl<R: Read> Parser<R> {
         } else {
             match self.read_buffer.remove(0) {
                 Token::Name(name) => Ok(name),
-                token => Err(format_err!("expected name found {:?}", token,)),
+                token => Err(format_err!("expected name found {:?}", token)),
+            }
+        }
+    }
+
+    // Consume the next token which should be a string, and return it, otherwise error.
+    fn expect_string(&mut self) -> Result<Box<[u8]>, Error> {
+        self.read_ahead(1)?;
+        if self.read_buffer.is_empty() {
+            Err(err_msg("unexpected end of token stream, expected string"))
+        } else {
+            match self.read_buffer.remove(0) {
+                Token::String(string) => Ok(string),
+                token => Err(format_err!("expected string found {:?}", token)),
             }
         }
     }
