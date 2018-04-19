@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use std::io::Read;
+use std::rc::Rc;
 
 use failure::{err_msg, Error};
 
@@ -213,6 +214,7 @@ pub fn parse_chunk<R: Read>(source: R) -> Result<Chunk, Error> {
 struct Parser<R: Read> {
     lexer: Lexer<R>,
     read_buffer: Vec<Token>,
+    recursion_guard: Rc<()>,
 }
 
 impl<R: Read> Parser<R> {
@@ -220,6 +222,7 @@ impl<R: Read> Parser<R> {
         Parser {
             lexer: Lexer::new(source),
             read_buffer: Vec::new(),
+            recursion_guard: Rc::new(()),
         }
     }
 
@@ -258,6 +261,8 @@ impl<R: Read> Parser<R> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement, Error> {
+        let _recursion_guard = self.recursion_guard()?;
+
         Ok(match *self.get_next()? {
             Token::If => Statement::If(self.parse_if_statement()?),
             Token::While => Statement::While(self.parse_while_statement()?),
@@ -503,6 +508,8 @@ impl<R: Read> Parser<R> {
     }
 
     fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression, Error> {
+        let _recursion_guard = self.recursion_guard()?;
+
         let head = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
             self.take_next()?;
             HeadExpression::UnaryOperator(unary_op, self.parse_sub_expression(UNARY_PRIORITY)?)
@@ -784,6 +791,14 @@ impl<R: Read> Parser<R> {
         })
     }
 
+    fn recursion_guard(&self) -> Result<Rc<()>, Error> {
+        if Rc::strong_count(&self.recursion_guard) < MAX_RECURSION {
+            Ok(self.recursion_guard.clone())
+        } else {
+            Err(err_msg("recursion limit reached"))
+        }
+    }
+
     // Return true if there are no more tokens left in the token stream.
     fn at_end(&mut self) -> Result<bool, Error> {
         self.read_ahead(1)?;
@@ -882,6 +897,8 @@ impl<R: Read> Parser<R> {
         Ok(())
     }
 }
+
+const MAX_RECURSION: usize = 200;
 
 // Priority lower than any unary or binary operator.
 const MIN_PRIORITY: u8 = 0;
