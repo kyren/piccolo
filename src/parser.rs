@@ -275,6 +275,7 @@ impl<R: Read> Parser<R> {
                     return_statement = Some(self.parse_return_statement()?);
                     break;
                 }
+                None => break,
                 _ => {
                     statements.push(self.parse_statement()?);
                 }
