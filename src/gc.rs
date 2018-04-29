@@ -200,12 +200,11 @@ pub struct Gc<T: GcObject + ?Sized + 'static> {
     marker: PhantomData<Rc<T>>,
 }
 
+impl<T: GcObject + ?Sized + 'static> Copy for Gc<T> {}
+
 impl<T: GcObject + ?Sized + 'static> Clone for Gc<T> {
     fn clone(&self) -> Gc<T> {
-        Gc {
-            gc_box: self.gc_box,
-            marker: PhantomData,
-        }
+        *self
     }
 }
 
