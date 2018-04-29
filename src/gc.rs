@@ -33,6 +33,7 @@ pub struct GcContext {
 
     total_allocated: Cell<usize>,
     phase: Cell<GcPhase>,
+    current_white: Cell<GcColor>,
 
     // All garbage collected objects are kept in the all list
     all: Cell<Option<NonNull<GcBox<GcObject>>>>,
@@ -49,9 +50,7 @@ pub struct GcContext {
     secondary_gray: Cell<Option<NonNull<GcBox<GcObject>>>>,
 
     // During the sweep phase, the `all` list is scanned.  Black objects are turned white and white
-    // objects are freed.  There is no need for a second white color during sweeping, because during
-    // sweeping, newly created objects will be created as light-gray, and cannot become white until
-    // the next mark phase.
+    // objects are freed.
     sweep_position: Cell<Option<NonNull<NonNull<GcBox<GcObject>>>>>,
 }
 
@@ -65,6 +64,7 @@ impl GcContext {
             timing_multiplier,
             total_allocated: Cell::new(0),
             phase: Cell::new(GcPhase::Sleeping),
+            current_white: Cell::new(GcColor::White1),
             all: Cell::new(None),
             primary_gray: Cell::new(None),
             secondary_gray: Cell::new(None),
@@ -78,7 +78,7 @@ impl GcContext {
     pub fn allocate<T: GcObject + 'static>(&self, value: T) -> Gc<T> {
         let gc_box = GcBox {
             header: GcBoxHeader {
-                flags: GcFlags::new(),
+                flags: GcFlags::new(self.current_white.get()),
                 root_count: RootCount::new(),
                 borrow_state: BorrowState::new(),
                 next_all: Cell::new(None),
@@ -111,7 +111,7 @@ impl GcContext {
     pub unsafe fn root<T: GcObject + 'static>(&self, gc: Gc<T>) -> Rgc<T> {
         {
             let header = &gc.gc_box.as_ref().header;
-            if header.flags.color() == GcColor::White {
+            if header.flags.color() == self.current_white.get() {
                 // If our object is white, rooting it should turn it light-gray and place it into the
                 // secondary gray queue.
                 header.flags.set_color(GcColor::LightGray);
@@ -306,8 +306,10 @@ struct GcFlags(Cell<u8>);
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum GcColor {
     // White objects are unmarked and un-rooted.  At the end of the mark phase, all white objects
-    // are unused and may be freed in the sweep phase.
-    White,
+    // are unused and may be freed in the sweep phase.  The white color is swapped during sweeping
+    // to distinguish between newly created white objects and unreachable white objects.
+    White1,
+    White2,
     // When a white object is rooted, it becomes light-gray and placed in the gray queue.  When it
     // is processed in the gray queue, if it is still rooted at the time of processing, its
     // sub-objects are traced and it becomes black.  If it is not rooted at the time of processing
@@ -324,28 +326,31 @@ enum GcColor {
 }
 
 impl GcFlags {
-    // Creates a new GcFlags with white color.
-    fn new() -> GcFlags {
-        GcFlags(Cell::new(0))
+    fn new(color: GcColor) -> GcFlags {
+        let flags = GcFlags(Cell::new(0));
+        flags.set_color(color);
+        flags
     }
 
     fn color(&self) -> GcColor {
-        match self.0.get() & 0x3 {
-            0x0 => GcColor::White,
-            0x1 => GcColor::LightGray,
-            0x2 => GcColor::DarkGray,
-            0x3 => GcColor::Black,
+        match self.0.get() & 0x7 {
+            0x0 => GcColor::White1,
+            0x1 => GcColor::White2,
+            0x2 => GcColor::LightGray,
+            0x3 => GcColor::DarkGray,
+            0x4 => GcColor::Black,
             _ => unreachable!(),
         }
     }
 
     fn set_color(&self, color: GcColor) {
         self.0.set(
-            (self.0.get() & !0x3) | match color {
-                GcColor::White => 0x0,
-                GcColor::LightGray => 0x1,
-                GcColor::DarkGray => 0x2,
-                GcColor::Black => 0x3,
+            (self.0.get() & !0x7) | match color {
+                GcColor::White1 => 0x0,
+                GcColor::White2 => 0x1,
+                GcColor::LightGray => 0x2,
+                GcColor::DarkGray => 0x3,
+                GcColor::Black => 0x4,
             },
         )
     }
