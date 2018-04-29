@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::io::Read;
 use std::rc::Rc;
 
