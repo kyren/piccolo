@@ -47,8 +47,7 @@ pub struct GcContext {
     // processing.  Also, if an object is taken from the primary queue but is mutably locked, it is
     // moved to the secondary queue to be processed later.  If the primary queue is empty, the
     // primary and secondary queue are swapped so that the secondary queue can be re-scanned.
-    primary_gray: Cell<Option<NonNull<GcBox<GcObject>>>>,
-    secondary_gray: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    gray_queue: NonNull<GrayQueue>,
 
     // During the sweep phase, the `all` list is scanned.  Black objects are turned white and white
     // objects are freed.
@@ -60,6 +59,13 @@ impl GcContext {
         assert!(pause_multiplier >= 1.0);
         assert!(timing_multiplier >= 0.0);
 
+        let gray_queue = GrayQueue {
+            uphold_invariant: false,
+            primary: Cell::new(None),
+            secondary: Cell::new(None),
+        };
+        let gray_queue = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(gray_queue))) };
+
         GcContext {
             pause_multiplier,
             timing_multiplier,
@@ -67,8 +73,7 @@ impl GcContext {
             phase: Cell::new(GcPhase::Sleeping),
             current_white: Cell::new(GcColor::White1),
             all: Cell::new(None),
-            primary_gray: Cell::new(None),
-            secondary_gray: Cell::new(None),
+            gray_queue,
             sweep_position: Cell::new(None),
         }
     }
@@ -85,7 +90,9 @@ impl GcContext {
                 root_count: RootCount::new(),
                 borrow_state: BorrowState::new(),
                 next_all: Cell::new(None),
-                next_gray: Cell::new(None),
+                gray_link: Cell::new(GrayLink {
+                    queue: self.gray_queue,
+                }),
             },
             data: UnsafeCell::new(value),
         };
@@ -109,77 +116,7 @@ impl GcContext {
 
     /// Safely allocate a rooted Rgc<T>.
     pub fn allocate_root<T: GcObject + 'static>(&self, value: T) -> Rgc<T> {
-        unsafe { self.root(self.allocate(value)) }
-    }
-
-    /// Root this Gc pointer, unsafe if this Gc pointer is dangling, and it must be created from the
-    /// same GcContext.
-    pub unsafe fn root<T: GcObject + 'static>(&self, gc: Gc<T>) -> Rgc<T> {
-        {
-            let header = &gc.gc_box.as_ref().header;
-            if header.flags.color() == self.current_white.get() {
-                // If our object is white, rooting it should turn it light-gray and place it into the
-                // secondary gray queue.
-                header.flags.set_color(GcColor::LightGray);
-                header.next_gray.set(self.secondary_gray.get());
-                self.secondary_gray.set(Some(gc.gc_box))
-            }
-            header.root_count.increment();
-        }
-
-        Rgc(gc)
-    }
-
-    /// Write to the contents of this Gc / Rgc.  Unsafe, because the contents must not be collected
-    /// while the `GcWrite` is live, and the Gc / Rgc MUST be created from the same GcContext.
-    /// Panics if the contents are already read or written on this or another cloned Gc.  Writing to
-    /// a Gc will potentially execute a write barrier on the object, and will block tracing of the
-    /// object for the lifetime of the `GcWrite`.
-    pub unsafe fn write<'a, T: GcObject + 'static, R: AsRef<Gc<T>>>(
-        &self,
-        gc: &'a R,
-    ) -> GcWrite<'a, T> {
-        let gc = gc.as_ref();
-        let gc_box = gc.gc_box.as_ref();
-        // During the propagate phase, if we are writing to a black object, we need it to become
-        // dark gray to uphold the black invariant.
-        if self.phase.get() == GcPhase::Propagate && gc_box.header.flags.color() == GcColor::Black {
-            gc_box.header.flags.set_color(GcColor::DarkGray);
-            gc_box.header.next_gray.set(self.primary_gray.get());
-            self.primary_gray.set(Some(gc.gc_box));
-        }
-
-        let borrow_state = &gc_box.header.borrow_state;
-        assert!(
-            borrow_state.mode() == BorrowMode::Unused,
-            "cannot borrow Gc for writing, already borrowed"
-        );
-        borrow_state.set_writing();
-        let value = &mut *gc_box.data.get();
-        GcWrite {
-            borrow_state,
-            value,
-        }
-    }
-
-    /// Only call inside `GcObject::trace`, and only on Gcs created from this GcContext.
-    pub unsafe fn trace<T: GcObject + 'static>(&self, gc: &Gc<T>) {
-        let gc_box = gc.gc_box.as_ref();
-        match gc_box.header.flags.color() {
-            GcColor::Black | GcColor::DarkGray => {}
-            GcColor::LightGray => {
-                // A light-gray object is already in the gray queue, just turn it dark gray.
-                gc_box.header.flags.set_color(GcColor::DarkGray);
-            }
-            white @ GcColor::White1 | white @ GcColor::White2 => {
-                // A white object is not in the gray queue, and dark-gray objects enter in the
-                // primary queue.
-                debug_assert_eq!(white, self.current_white.get());
-                gc_box.header.flags.set_color(GcColor::DarkGray);
-                gc_box.header.next_gray.set(self.primary_gray.get());
-                self.primary_gray.set(Some(gc.gc_box));
-            }
-        }
+        unsafe { self.allocate(value).root() }
     }
 }
 
@@ -193,20 +130,38 @@ impl Default for GcContext {
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub struct Gc<T: GcObject + ?Sized + 'static> {
+pub struct Gc<T: GcObject + 'static> {
     gc_box: NonNull<GcBox<T>>,
     marker: PhantomData<Rc<T>>,
 }
 
-impl<T: GcObject + ?Sized + 'static> Copy for Gc<T> {}
+impl<T: GcObject + 'static> Copy for Gc<T> {}
 
-impl<T: GcObject + ?Sized + 'static> Clone for Gc<T> {
+impl<T: GcObject + 'static> Clone for Gc<T> {
     fn clone(&self) -> Gc<T> {
         *self
     }
 }
 
-impl<T: GcObject + ?Sized + 'static> Gc<T> {
+impl<T: GcObject + 'static> Gc<T> {
+    /// Root this Gc pointer, unsafe if this Gc pointer is dangling.
+    pub unsafe fn root(&self) -> Rgc<T> {
+        let header = &self.gc_box.as_ref().header;
+        if header.flags.color().is_white() {
+            // If our object is white, rooting it should turn it light-gray and place it into the
+            // secondary gray queue.
+            header.flags.set_color(GcColor::LightGray);
+            let gray_queue = header.gray_link.get().queue;
+            header.gray_link.set(GrayLink {
+                next: gray_queue.as_ref().secondary.get(),
+            });
+            gray_queue.as_ref().secondary.set(Some(self.gc_box));
+        }
+        header.root_count.increment();
+
+        Rgc(*self)
+    }
+
     /// Read the contents of this Gc.  Unsafe, because the contents must not be collected while the
     /// `GcRead` is live.  Panics if the contents are also being written on this or another cloned
     /// Gc.
@@ -224,12 +179,78 @@ impl<T: GcObject + ?Sized + 'static> Gc<T> {
             value,
         }
     }
+
+    /// Write to the contents of this Gc / Rgc.  Unsafe, because the contents must not be collected
+    /// while the `GcWrite` is live.  Panics if the contents are already read or written on this or
+    /// another cloned Gc.  Writing to a Gc will potentially execute a write barrier on the object,
+    /// and will block tracing of the object for the lifetime of the `GcWrite`.
+    pub unsafe fn write(&self) -> GcWrite<T> {
+        let gc_box = self.gc_box.as_ref();
+        // During the propagate phase, if we are writing to a black object, we need it to become
+        // dark gray to uphold the black invariant.
+        if gc_box.header.flags.color() == GcColor::Black {
+            let gray_queue = gc_box.header.gray_link.get().queue;
+            if gray_queue.as_ref().uphold_invariant {
+                gc_box.header.flags.set_color(GcColor::DarkGray);
+                gc_box.header.gray_link.set(GrayLink {
+                    next: gray_queue.as_ref().primary.get(),
+                });
+                gray_queue.as_ref().primary.set(Some(self.gc_box));
+            }
+        }
+
+        let borrow_state = &gc_box.header.borrow_state;
+        assert!(
+            borrow_state.mode() == BorrowMode::Unused,
+            "cannot borrow Gc for writing, already borrowed"
+        );
+        borrow_state.set_writing();
+        let value = &mut *gc_box.data.get();
+        GcWrite {
+            borrow_state,
+            value,
+        }
+    }
+
+    /// Only call inside `GcObject::trace`.
+    pub unsafe fn trace(&self) {
+        let gc_box = self.gc_box.as_ref();
+        match gc_box.header.flags.color() {
+            GcColor::Black | GcColor::DarkGray => {}
+            GcColor::LightGray => {
+                // A light-gray object is already in the gray queue, just turn it dark gray.
+                gc_box.header.flags.set_color(GcColor::DarkGray);
+            }
+            GcColor::White1 | GcColor::White2 => {
+                // A white object is not in the gray queue, becomes dark-gray and enters in the
+                // primary queue.
+                gc_box.header.flags.set_color(GcColor::DarkGray);
+                let gray_queue = gc_box.header.gray_link.get().queue;
+                gc_box.header.gray_link.set(GrayLink {
+                    next: gray_queue.as_ref().primary.get(),
+                });
+                gray_queue.as_ref().primary.set(Some(self.gc_box));
+            }
+        }
+    }
+
+    pub fn collect_garbage(&self) {
+        unimplemented!()
+    }
+}
+
+impl Drop for GcContext {
+    fn drop(&mut self) {
+        // Unimplemented, does nothing right now.  Once garbage collection is enabled, this should
+        // run a full gc cycle and then check for any live objects.  If there are live objects, this
+        // is an error, and this should panic and leak memory to maintain safety.
+    }
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub struct Rgc<T: GcObject + ?Sized + 'static>(Gc<T>);
+pub struct Rgc<T: GcObject + 'static>(Gc<T>);
 
-impl<T: GcObject + ?Sized + 'static> Clone for Rgc<T> {
+impl<T: GcObject + 'static> Clone for Rgc<T> {
     fn clone(&self) -> Rgc<T> {
         unsafe {
             let header = &self.0.gc_box.as_ref().header;
@@ -239,7 +260,7 @@ impl<T: GcObject + ?Sized + 'static> Clone for Rgc<T> {
     }
 }
 
-impl<T: GcObject + ?Sized + 'static> Drop for Rgc<T> {
+impl<T: GcObject + 'static> Drop for Rgc<T> {
     fn drop(&mut self) {
         unsafe {
             self.0.gc_box.as_ref().header.root_count.decrement();
@@ -247,13 +268,7 @@ impl<T: GcObject + ?Sized + 'static> Drop for Rgc<T> {
     }
 }
 
-impl<T: GcObject + ?Sized + 'static> AsRef<Gc<T>> for Rgc<T> {
-    fn as_ref(&self) -> &Gc<T> {
-        &self.0
-    }
-}
-
-impl<T: GcObject + ?Sized + 'static> Rgc<T> {
+impl<T: GcObject + 'static> Rgc<T> {
     pub fn unroot(&self) -> Gc<T> {
         self.0
     }
@@ -262,14 +277,19 @@ impl<T: GcObject + ?Sized + 'static> Rgc<T> {
     pub fn read(&self) -> GcRead<T> {
         unsafe { self.0.read() }
     }
+
+    /// Safe version of `Gc::write`, as we know that the pointer cannot be collected.
+    pub fn write(&self) -> GcWrite<T> {
+        unsafe { self.0.write() }
+    }
 }
 
-pub struct GcRead<'a, T: GcObject + ?Sized + 'static> {
+pub struct GcRead<'a, T: GcObject + 'static> {
     borrow_state: &'a BorrowState,
     value: &'a T,
 }
 
-impl<'a, T: GcObject + ?Sized> Deref for GcRead<'a, T> {
+impl<'a, T: GcObject> Deref for GcRead<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -277,18 +297,18 @@ impl<'a, T: GcObject + ?Sized> Deref for GcRead<'a, T> {
     }
 }
 
-impl<'a, T: GcObject + ?Sized> Drop for GcRead<'a, T> {
+impl<'a, T: GcObject> Drop for GcRead<'a, T> {
     fn drop(&mut self) {
         self.borrow_state.dec_reading();
     }
 }
 
-pub struct GcWrite<'a, T: GcObject + ?Sized + 'static> {
+pub struct GcWrite<'a, T: GcObject + 'static> {
     borrow_state: &'a BorrowState,
     value: &'a mut T,
 }
 
-impl<'a, T: GcObject + ?Sized> Deref for GcWrite<'a, T> {
+impl<'a, T: GcObject> Deref for GcWrite<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -296,15 +316,21 @@ impl<'a, T: GcObject + ?Sized> Deref for GcWrite<'a, T> {
     }
 }
 
-impl<'a, T: GcObject + ?Sized> DerefMut for GcWrite<'a, T> {
+impl<'a, T: GcObject> DerefMut for GcWrite<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.value
     }
 }
 
-impl<'a, T: GcObject + ?Sized> Drop for GcWrite<'a, T> {
+impl<'a, T: GcObject> Drop for GcWrite<'a, T> {
     fn drop(&mut self) {
         self.borrow_state.set_unused();
+    }
+}
+
+impl GcContext {
+    fn do_work(&self) {
+        // unimplemented
     }
 }
 
@@ -316,10 +342,18 @@ enum GcPhase {
     Sweeping,
 }
 
-impl GcContext {
-    fn do_work(&self) {
-        // Unimplemented
-    }
+struct GrayQueue {
+    uphold_invariant: bool,
+    primary: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    secondary: Cell<Option<NonNull<GcBox<GcObject>>>>,
+}
+
+// If the color of a GcBox is white or black, holds a pointer to the GrayQueue.  If the color of the
+// GcBox is light-gray or dark-gray, holds the next pointer for the gray list it is on.
+#[derive(Copy, Clone)]
+union GrayLink {
+    queue: NonNull<GrayQueue>,
+    next: Option<NonNull<GcBox<GcObject>>>,
 }
 
 struct GcBox<T: GcObject + ?Sized + 'static> {
@@ -332,7 +366,7 @@ struct GcBoxHeader {
     root_count: RootCount,
     borrow_state: BorrowState,
     next_all: Cell<Option<NonNull<GcBox<GcObject>>>>,
-    next_gray: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    gray_link: Cell<GrayLink>,
 }
 
 struct GcFlags(Cell<u8>);
@@ -357,6 +391,15 @@ enum GcColor {
     // currently being held), a write barrier must be executed that either turns that child
     // dark-gray (forward) or turns the black object back dark-gray (back).
     Black,
+}
+
+impl GcColor {
+    fn is_white(self) -> bool {
+        match self {
+            GcColor::White1 | GcColor::White2 => true,
+            _ => false,
+        }
+    }
 }
 
 impl GcFlags {

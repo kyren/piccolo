@@ -8,6 +8,6 @@ fn test_simple_allocate() {
     let gc_context = GcContext::default();
     let r = gc_context.allocate_root(Simple(1));
     assert_eq!(r.read().0, 1);
-    unsafe { gc_context.write(&r).0 = 42 };
+    r.write().0 = 42;
     assert_eq!(r.read().0, 42);
 }
