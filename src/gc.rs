@@ -5,16 +5,17 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::usize;
+use std::{mem, usize};
 
 /// GcObject impls must not access Gc pointers during their Drop impls, as they may be dangling, and
-/// also must not change their held Gc pointers without borrowing mutably through a `Gc` pointer, so
-/// that any necessary write barrier is executed.  Tracing of GcObject instances will not occur
-/// until the instance is itself allocated into a Gc / Rgc pointer, so allocated Gc pointers must
-/// immediately (without interleaving allocations) be placed into a GcObject which is itself also
-/// held by a Gc / Rgc pointer.
+/// also must not change their held Gc pointers without writing through GcContext, so that any
+/// necessary write barrier is executed.  Tracing of GcObject instances will not occur until the
+/// instance is itself allocated into a Gc / Rgc pointer, so allocated Gc pointers must immediately
+/// (without interleaving allocations) be placed into a GcObject which is itself also held by a Gc /
+/// Rgc pointer.
 pub unsafe trait GcObject {
-    /// The `trace` method MUST trace through all owned Gc pointers.
+    /// The `trace` method MUST trace through all owned Gc pointers, and every owned Gc pointer must
+    /// be created from the same GcContext that holds this GcObject.
     unsafe fn trace(&self, context: &GcContext) {}
 }
 
@@ -76,6 +77,8 @@ impl GcContext {
     /// general you must place this Gc into a GcObject before allocating again so that it does not
     /// become dangling.
     pub fn allocate<T: GcObject + 'static>(&self, value: T) -> Gc<T> {
+        self.do_work();
+
         let gc_box = GcBox {
             header: GcBoxHeader {
                 flags: GcFlags::new(self.current_white.get()),
@@ -91,6 +94,13 @@ impl GcContext {
         let gc_box = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(gc_box))) };
         self.all.set(Some(gc_box));
 
+        self.total_allocated.set(
+            self.total_allocated
+                .get()
+                .checked_add(mem::size_of::<GcBox<T>>())
+                .unwrap(),
+        );
+
         Gc {
             gc_box,
             marker: PhantomData,
@@ -102,12 +112,8 @@ impl GcContext {
         unsafe { self.root(self.allocate(value)) }
     }
 
-    /// Only call inside `GcObject::trace`
-    pub unsafe fn trace<T: GcObject + ?Sized + 'static>(&self, gc: &Gc<T>) {
-        unimplemented!()
-    }
-
-    /// Root this Gc pointer, unsafe if this Gc pointer is dangling.
+    /// Root this Gc pointer, unsafe if this Gc pointer is dangling, and it must be created from the
+    /// same GcContext.
     pub unsafe fn root<T: GcObject + 'static>(&self, gc: Gc<T>) -> Rgc<T> {
         {
             let header = &gc.gc_box.as_ref().header;
@@ -124,35 +130,17 @@ impl GcContext {
         Rgc(gc)
     }
 
-    pub fn unroot<T: GcObject + 'static>(&self, rgc: Rgc<T>) -> Gc<T> {
-        // Drop impl takes care of decrementing the root count
-        rgc.0.clone()
-    }
-
-    /// Borrow immutably the contents of this Gc.  Unsafe, because the contents must not be
-    /// collected while the GcRef is live.  Panics if the contents are also borrowed mutably by this
-    /// or another cloned Gc.
-    pub unsafe fn borrow<'a, T: GcObject + 'static>(&self, gc: &'a Gc<T>) -> GcRef<'a, T> {
-        let gc_box = &*gc.gc_box.as_ptr();
-        let borrow_state = &gc_box.header.borrow_state;
-        assert!(
-            borrow_state.mode() != BorrowMode::Writing,
-            "cannot borrow Gc for reading, already borrowed for writing"
-        );
-        borrow_state.inc_reading();
-        let value = &*gc_box.data.get();
-        GcRef {
-            borrow_state,
-            value,
-        }
-    }
-
-    /// Borrow mutably the contents of this Gc.  Unsafe, because the contents must not be
-    /// collected while the GcRef is live.  Panics if the contents are already borrowed mutably by
-    /// this or another cloned Gc.  Borrowing mutably potentially will execute a write barrier on the
-    /// object, and will block tracing of the object for the lifetime of the `GcRefMut`.
-    pub unsafe fn borrow_mut<'a, T: GcObject + 'static>(&self, gc: &'a Gc<T>) -> GcRefMut<'a, T> {
-        let gc_box = &*gc.gc_box.as_ptr();
+    /// Write to the contents of this Gc / Rgc.  Unsafe, because the contents must not be collected
+    /// while the `GcWrite` is live, and the Gc / Rgc MUST be created from the same GcContext.
+    /// Panics if the contents are already read or written on this or another cloned Gc.  Writing to
+    /// a Gc will potentially execute a write barrier on the object, and will block tracing of the
+    /// object for the lifetime of the `GcWrite`.
+    pub unsafe fn write<'a, T: GcObject + 'static, R: AsRef<Gc<T>>>(
+        &self,
+        gc: &'a R,
+    ) -> GcWrite<'a, T> {
+        let gc = gc.as_ref();
+        let gc_box = gc.gc_box.as_ref();
         // During the propagate phase, if we are writing to a black object, we need it to become
         // dark gray to uphold the black invariant.
         if self.phase.get() == GcPhase::Propagate && gc_box.header.flags.color() == GcColor::Black {
@@ -168,20 +156,30 @@ impl GcContext {
         );
         borrow_state.set_writing();
         let value = &mut *gc_box.data.get();
-        GcRefMut {
+        GcWrite {
             borrow_state,
             value,
         }
     }
 
-    /// Safe version of `borrow`, as we know that the pointer cannot be collected.
-    pub fn borrow_root<'a, T: GcObject + 'static>(&self, rgc: &'a Rgc<T>) -> GcRef<'a, T> {
-        unsafe { self.borrow(&rgc.0) }
-    }
-
-    /// Safe version of `borrow_mut`, as we know that the pointer cannot be collected.
-    pub fn borrow_root_mut<'a, T: GcObject + 'static>(&self, rgc: &'a Rgc<T>) -> GcRefMut<'a, T> {
-        unsafe { self.borrow_mut(&rgc.0) }
+    /// Only call inside `GcObject::trace`, and only on Gcs created from this GcContext.
+    pub unsafe fn trace<T: GcObject + 'static>(&self, gc: &Gc<T>) {
+        let gc_box = gc.gc_box.as_ref();
+        match gc_box.header.flags.color() {
+            GcColor::Black | GcColor::DarkGray => {}
+            GcColor::LightGray => {
+                // A light-gray object is already in the gray queue, just turn it dark gray.
+                gc_box.header.flags.set_color(GcColor::DarkGray);
+            }
+            white @ GcColor::White1 | white @ GcColor::White2 => {
+                // A white object is not in the gray queue, and dark-gray objects enter in the
+                // primary queue.
+                debug_assert_eq!(white, self.current_white.get());
+                gc_box.header.flags.set_color(GcColor::DarkGray);
+                gc_box.header.next_gray.set(self.primary_gray.get());
+                self.primary_gray.set(Some(gc.gc_box));
+            }
+        }
     }
 }
 
@@ -208,47 +206,23 @@ impl<T: GcObject + ?Sized + 'static> Clone for Gc<T> {
     }
 }
 
-pub struct GcRef<'a, T: GcObject + ?Sized + 'static> {
-    borrow_state: &'a BorrowState,
-    value: &'a T,
-}
-
-impl<'a, T: GcObject + ?Sized> Deref for GcRef<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject + ?Sized> Drop for GcRef<'a, T> {
-    fn drop(&mut self) {
-        self.borrow_state.dec_reading();
-    }
-}
-
-pub struct GcRefMut<'a, T: GcObject + ?Sized + 'static> {
-    borrow_state: &'a BorrowState,
-    value: &'a mut T,
-}
-
-impl<'a, T: GcObject + ?Sized> Deref for GcRefMut<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject + ?Sized> DerefMut for GcRefMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject + ?Sized> Drop for GcRefMut<'a, T> {
-    fn drop(&mut self) {
-        self.borrow_state.set_unused();
+impl<T: GcObject + ?Sized + 'static> Gc<T> {
+    /// Read the contents of this Gc.  Unsafe, because the contents must not be collected while the
+    /// `GcRead` is live.  Panics if the contents are also being written on this or another cloned
+    /// Gc.
+    pub unsafe fn read(&self) -> GcRead<T> {
+        let gc_box = self.gc_box.as_ref();
+        let borrow_state = &gc_box.header.borrow_state;
+        assert!(
+            borrow_state.mode() != BorrowMode::Writing,
+            "cannot borrow Gc for reading, already borrowed for writing"
+        );
+        borrow_state.inc_reading();
+        let value = &*gc_box.data.get();
+        GcRead {
+            borrow_state,
+            value,
+        }
     }
 }
 
@@ -273,6 +247,67 @@ impl<T: GcObject + ?Sized + 'static> Drop for Rgc<T> {
     }
 }
 
+impl<T: GcObject + ?Sized + 'static> AsRef<Gc<T>> for Rgc<T> {
+    fn as_ref(&self) -> &Gc<T> {
+        &self.0
+    }
+}
+
+impl<T: GcObject + ?Sized + 'static> Rgc<T> {
+    pub fn unroot(&self) -> Gc<T> {
+        self.0
+    }
+
+    /// Safe version of `Gc::read`, as we know that the pointer cannot be collected.
+    pub fn read(&self) -> GcRead<T> {
+        unsafe { self.0.read() }
+    }
+}
+
+pub struct GcRead<'a, T: GcObject + ?Sized + 'static> {
+    borrow_state: &'a BorrowState,
+    value: &'a T,
+}
+
+impl<'a, T: GcObject + ?Sized> Deref for GcRead<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
+impl<'a, T: GcObject + ?Sized> Drop for GcRead<'a, T> {
+    fn drop(&mut self) {
+        self.borrow_state.dec_reading();
+    }
+}
+
+pub struct GcWrite<'a, T: GcObject + ?Sized + 'static> {
+    borrow_state: &'a BorrowState,
+    value: &'a mut T,
+}
+
+impl<'a, T: GcObject + ?Sized> Deref for GcWrite<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
+impl<'a, T: GcObject + ?Sized> DerefMut for GcWrite<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.value
+    }
+}
+
+impl<'a, T: GcObject + ?Sized> Drop for GcWrite<'a, T> {
+    fn drop(&mut self) {
+        self.borrow_state.set_unused();
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum GcPhase {
     Sleeping,
@@ -283,7 +318,7 @@ enum GcPhase {
 
 impl GcContext {
     fn do_work(&self) {
-        unimplemented!()
+        // Unimplemented
     }
 }
 
@@ -302,7 +337,7 @@ struct GcBoxHeader {
 
 struct GcFlags(Cell<u8>);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum GcColor {
     // White objects are unmarked and un-rooted.  At the end of the mark phase, all white objects
     // are unused and may be freed in the sweep phase.  The white color is swapped during sweeping
