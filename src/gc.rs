@@ -1,256 +1,258 @@
 #![allow(unused)]
 
-use std::cell::{Cell, UnsafeCell};
+use std::collections::VecDeque;
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::{mem, process, usize};
+use std::{mem, process, usize, f64};
 
-/// A trait for garbage collected objects that contain `Gc` pointers.  It should not be possible to
-/// cause unsafety by implementing this method incorrectly, but implementing it incorrectly may
-/// cause held `Gc` pointers to be improperly collected.  Collected pointers cannot cause unsafety,
-/// but they can cause panics.  `Gc` pointers may also be collected during drop, so `GcObject`
-/// should not access held `Gc` pointers there.
-pub trait GcObject: 'static {
-    /// The `trace` should must trace through all owned Gc pointers, and every owned Gc pointer
-    /// should be created from the same GcContext that holds this GcObject.
-    fn trace(&self, context: &GcContext) {}
-}
-
-pub struct GcContext {
-    // The garbage collector will wait until the live size reaches <previous live size> *
-    // pause_multiplier before beginning a new collection.  Must be >= 1.0, setting this to 1.0
-    // causes the collector to run continuously.
+pub struct GcParameters {
     pause_multiplier: f64,
-    // The garbage collector will try and finish a collection by the time <current live size> *
-    // timing_multiplier additional bytes are allocated.  For example, if the collection is started
-    // when the GcContext has 100KB live data, and the timing_multiplier is 1.0, the collector
-    // should finish its final phase of this collection when another 100KB has been allocated.  Must
-    // be >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world mark and
-    // sweep.
     timing_multiplier: f64,
-
-    total_allocated: Cell<usize>,
-    phase: Cell<GcPhase>,
-    current_white: Cell<GcColor>,
-
-    // All potentially live garbage collected objects are kept in the live list, known dead objects
-    // are kept in the dead list until their last Gc is dropped.
-    live: Cell<Option<NonNull<GcBox<GcObject>>>>,
-    dead: Cell<Option<NonNull<GcBox<GcObject>>>>,
-
-    // All light-gray or dark-gray objects must be held in the gray queue, and the gray queue will
-    // hold no white or black objects.  The gray queue is split into two parts, the primary part
-    // primarly holds objects that enter the queue by becoming dark-gray and are processed with
-    // first priority.  The secondary part holds objects that enter the queue by becoming rooted,
-    // and are processed secondarily, to give rooted objects the time to become un-rooted before
-    // processing.  Also, if an object is taken from the primary queue but is mutably locked, it is
-    // moved to the secondary queue to be processed later.  If the primary queue is empty, the
-    // primary and secondary queue are swapped so that the secondary queue can be re-scanned.
-    gray_queue: NonNull<GrayQueue>,
-
-    // During the sweep phase, the `all` list is scanned.  Black objects are turned white and white
-    // objects are freed.
-    sweep_position: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    allocation_granularity: f64,
+    min_wakeup: usize,
 }
 
-impl Default for GcContext {
-    fn default() -> GcContext {
+impl Default for GcParameters {
+    fn default() -> GcParameters {
         const PAUSE_MULTIPLIER: f64 = 1.5;
         const TIMING_MULTIPLIER: f64 = 1.0;
+        const ALLOCATION_GRANULARITY: f64 = 50.0;
+        const MIN_WAKEUP: usize = 512;
 
-        GcContext::new(PAUSE_MULTIPLIER, TIMING_MULTIPLIER)
+        GcParameters {
+            pause_multiplier: PAUSE_MULTIPLIER,
+            timing_multiplier: TIMING_MULTIPLIER,
+            allocation_granularity: ALLOCATION_GRANULARITY,
+            min_wakeup: MIN_WAKEUP,
+        }
     }
 }
 
-impl Drop for GcContext {
+/// A trait for garbage collected objects that can be placed into `Gc` pointers, and may hold `Gc`
+/// pointers from the same parent `GcContext`.  Held `Gc` pointers must not be accessed in drop
+/// impls, as the drop order on sweep is not predictable and it is impossible to know whether they
+/// are dangling.  A `GcObject` may have internal mutability, but any internal mutability that
+/// causes new `Gc` pointers to be contained *must* be accompanied by triggering the write barrier
+/// on this object.
+pub trait GcObject: 'static + Sized {
+    /// Must call `tracer.trace` on all held Gc pointers to ensure that they are not collected.
+    /// Unsafe, because held `Gc` pointers may be dangling (even if this trait is implemented
+    /// correctly, they may be dangling by breaking other rules).  Return true if the object was
+    /// successfully traced, false if tracing was blocked for some reason (such as locking for
+    /// internal mutability).  A locked trace method will delay the sweep phase, so an object should
+    /// remain locked for as little time as possible.
+    unsafe fn trace<'a>(&self, tracer: &GcTracer<'a, Self>) -> bool {
+        true
+    }
+}
+
+pub struct GcTracer<'a, T: GcObject> {
+    context: &'a GcContext<T>,
+}
+
+impl<'a, T: GcObject> GcTracer<'a, T> {
+    pub unsafe fn trace(&self, gc: Gc<T>) {
+        let gc_box = gc.gc_box.as_ref();
+        match gc_box.flags.color() {
+            GcColor::Black | GcColor::DarkGray => {}
+            GcColor::LightGray => {
+                // A light-gray object is already in the gray queue, just turn it dark gray.
+                gc_box.flags.set_color(GcColor::DarkGray);
+            }
+            GcColor::White => {
+                // A white object is not in the gray queue, becomes dark-gray and enters in the
+                // queue at the front.
+                gc_box.flags.set_color(GcColor::DarkGray);
+                self.context.gray.borrow_mut().push_front(gc.gc_box);
+            }
+        }
+    }
+}
+
+/// A collection of objects of type T that may contain garbage collected `Gc<T>` pointers.  The
+/// garbage collector is designed to be as low overhead as possible, so much of the functionality
+/// around garbage collection is unsafe.
+pub struct GcContext<T: GcObject> {
+    parameters: GcParameters,
+
+    phase: Cell<GcPhase>,
+    total_allocated: Cell<usize>,
+    wakeup_total: Cell<usize>,
+    allocation_debt: Cell<f64>,
+
+    all: Cell<Option<NonNull<GcBox<T>>>>,
+    sweep: Cell<Option<NonNull<GcBox<T>>>>,
+    sweep_prev: Cell<Option<NonNull<GcBox<T>>>>,
+
+    gray: RefCell<VecDeque<NonNull<GcBox<T>>>>,
+}
+
+impl<T: GcObject> Drop for GcContext<T> {
     fn drop(&mut self) {
-        // Unimplemented, does nothing right now.  Once garbage collection is enabled, this should
-        // run a full gc cycle and then check for any live objects.  If there are live objects, this
-        // is an error, and this should panic and leak memory to maintain safety.
+        unsafe {
+            let mut next = self.all.get();
+            while let Some(p) = next {
+                let gc_box = p.as_ref();
+                next = gc_box.next.get();
+                if gc_box.root_count.is_rooted() {
+                    gc_box.flags.set_detached(true);
+                } else {
+                    Box::from_raw(p.as_ptr());
+                }
+            }
+        }
     }
 }
 
-impl GcContext {
-    pub fn new(pause_multiplier: f64, timing_multiplier: f64) -> GcContext {
-        assert!(pause_multiplier >= 1.0);
-        assert!(timing_multiplier >= 0.0);
-
-        let gray_queue = GrayQueue {
-            uphold_invariant: false,
-            primary: Cell::new(None),
-            secondary: Cell::new(None),
-        };
-        let gray_queue = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(gray_queue))) };
-
+impl<T: GcObject> GcContext<T> {
+    pub fn new(parameters: GcParameters) -> GcContext<T> {
+        let start_wakeup = parameters.min_wakeup;
         GcContext {
-            pause_multiplier,
-            timing_multiplier,
-            total_allocated: Cell::new(0),
+            parameters,
             phase: Cell::new(GcPhase::Sleeping),
-            current_white: Cell::new(GcColor::White1),
-            live: Cell::new(None),
-            dead: Cell::new(None),
-            gray_queue,
-            sweep_position: Cell::new(None),
+            total_allocated: Cell::new(0),
+            wakeup_total: Cell::new(start_wakeup),
+            allocation_debt: Cell::new(0.0),
+            all: Cell::new(None),
+            sweep: Cell::new(None),
+            sweep_prev: Cell::new(None),
+            gray: RefCell::new(VecDeque::new()),
         }
     }
 
-    /// Move a value of type T into a Gc<T>.  Any further allocation may trigger a collection, so in
-    /// general you should either root this Gc or place it into a managed GcObject before allocating
-    /// again so that it does not become invalid.
-    pub fn allocate<T: GcObject>(&self, value: T) -> Gc<T> {
-        self.do_work();
+    /// Allocate space for a value of type T, and move it into a `Gc<T>` pointer.  May trigger
+    /// collection of other unreachable Gc pointers.  In order to ensure that the returned `Gc<T>`
+    /// is not collected before use, it must be placed into a managed `GcObject` impl before any
+    /// additional collection is triggered, either through allocating again or other methods that
+    /// trigger collection.
+    pub fn allocate(&self, value: T) -> Gc<T> {
+        self.total_allocated.set(self.total_allocated.get() + 1);
+        if self.phase.get() == GcPhase::Sleeping {
+            if self.total_allocated.get() > self.wakeup_total.get() {
+                self.phase.set(GcPhase::Propagating);
+            }
+        }
+
+        if self.phase.get() != GcPhase::Sleeping {
+            self.allocation_debt
+                .set(self.allocation_debt.get() + 1.0 + 1.0 / self.parameters.timing_multiplier);
+            if self.allocation_debt.get() >= self.parameters.allocation_granularity {
+                self.do_collection(self.parameters.allocation_granularity);
+            }
+        }
 
         let gc_box = GcBox {
-            header: GcBoxHeader {
-                flags: GcFlags::new(self.current_white.get()),
-                ptr_count: RefCount::new(),
-                root_count: RefCount::new(),
-                borrow_state: BorrowState::new(),
-                next: Cell::new(None),
-                gray_link: Cell::new(GrayLink {
-                    queue: self.gray_queue,
-                }),
-            },
-            data: UnsafeCell::new(value),
+            flags: GcFlags::new(),
+            root_count: RootCount::new(),
+            next: Cell::new(self.all.get()),
+            value: UnsafeCell::new(value),
         };
-        gc_box.header.next.set(self.live.get());
-        gc_box.header.ptr_count.increment();
-
         let gc_box = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(gc_box))) };
-        self.live.set(Some(gc_box));
+        self.all.set(Some(gc_box));
+        if self.phase.get() == GcPhase::Sweeping {
+            if self.sweep_prev.get().is_none() {
+                self.sweep_prev.set(Some(gc_box));
+            }
+        }
 
         Gc {
             gc_box,
             marker: PhantomData,
         }
     }
+
+    /// Allocate a T and return a root `Rgc` pointer.
+    pub fn allocate_root(&self, value: T) -> Rgc<T> {
+        unsafe { self.root(self.allocate(value)) }
+    }
+
+    /// "Root" the given `Gc` pointer, turning it into an `Rgc`.  Root pointers are never collected,
+    /// and `Gc` pointers are considered "reachable" only if they can be traced from a root pointer.
+    pub unsafe fn root(&self, gc: Gc<T>) -> Rgc<T> {
+        let gc_box = gc.gc_box.as_ref();
+        gc_box.root_count.increment();
+        if gc_box.flags.color() == GcColor::White {
+            // If our object is white, rooting it should turn it light-gray and place it into the
+            // gray queue at the end.  This is done to give the object the maximum amount of time to
+            // potentially become un-rooted.
+            gc_box.flags.set_color(GcColor::LightGray);
+            self.gray.borrow_mut().push_back(gc.gc_box);
+        }
+        Rgc(gc)
+    }
+
+    /// Trigger a "write barrier" on the given object.  If an object is being mutated in such a way
+    /// that it may contain a `Gc` pointer that it did not before, you must call this method on a
+    /// pointer to that object.  This method may be called before or after the addition, as long as
+    /// there are no collections triggered between either when the addition occurs and the call to
+    /// `write_barrier`, or if tracing is blocked during mutation, between the period where calls to
+    /// `GcObject::trace` on the containing object return false and the call to `write_barrier`.
+    pub unsafe fn write_barrier(&self, gc: Gc<T>) {
+        // During the propagating phase, if we are adding a white or light-gray object to a black
+        // object, we need it to become dark gray to uphold the black invariant.
+        if self.phase.get() == GcPhase::Propagating {
+            let gc_box = gc.gc_box.as_ref();
+            gc_box.flags.set_color(GcColor::DarkGray);
+            if gc_box.flags.color() == GcColor::Black {
+                self.gray.borrow_mut().push_back(gc.gc_box);
+            }
+        }
+    }
+
+    /// Run the current garbage collection cycle to completion.  If the garbage collector is
+    /// currently sleeping, starts a new cycle and runs it to completion.
+    pub fn collect_garbage(&self) {
+        if self.phase.get() == GcPhase::Sleeping {
+            self.phase.set(GcPhase::Propagating);
+            self.do_collection(f64::INFINITY);
+        }
+    }
 }
 
+/// A garbage collected pointer to a value of type T.  Implements Copy, and is a zero-overhead
+/// wrapper around a raw pointer.  Any access is generally unsafe because in order to guarantee that
+/// it is not collected, it must be held inside a correct `GcObject` implementation, which is itself
+/// held inside a `Gc` or `Rgc` pointer, and the parent `GcContext` must not have been dropped.
 #[derive(Eq, PartialEq, Debug)]
 pub struct Gc<T: GcObject> {
     gc_box: NonNull<GcBox<T>>,
     marker: PhantomData<Rc<T>>,
 }
 
+impl<T: GcObject> Copy for Gc<T> {}
+
 impl<T: GcObject> Clone for Gc<T> {
     fn clone(&self) -> Gc<T> {
-        unsafe {
-            self.gc_box.as_ref().header.ptr_count.increment();
-        }
-        Gc {
-            gc_box: self.gc_box,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<T: GcObject> Drop for Gc<T> {
-    fn drop(&mut self) {
-        unsafe {
-            self.gc_box.as_ref().header.ptr_count.decrement();
-        }
+        *self
     }
 }
 
 impl<T: GcObject> Gc<T> {
-    /// Root this Gc pointer, panics if this Gc has been collected.
-    pub fn root(&self) -> Rgc<T> {
-        unsafe {
-            let header = &self.gc_box.as_ref().header;
-            assert!(header.flags.is_live(), "Gc has been collected");
-            if header.flags.color().is_white() {
-                // If our object is white, rooting it should turn it light-gray and place it into the
-                // secondary gray queue.
-                header.flags.set_color(GcColor::LightGray);
-                let gray_queue = header.gray_link.get().queue;
-                header.gray_link.set(GrayLink {
-                    next: gray_queue.as_ref().secondary.get(),
-                });
-                gray_queue.as_ref().secondary.set(Some(self.gc_box));
-            }
-            header.root_count.increment();
-        }
-
-        Rgc {
-            gc_box: self.gc_box,
-            marker: PhantomData,
-        }
+    pub unsafe fn as_ptr(&self) -> *mut T {
+        self.gc_box.as_ref().value.get()
     }
 
-    /// Read the contents of this Gc.  Panics if the Gc has been collected or if this Gc is
-    /// currently being written to.
-    pub fn read(&self) -> GcRead<T> {
-        unsafe {
-            assert!(
-                self.gc_box.as_ref().header.flags.is_live(),
-                "Gc has been collected"
-            );
-            read_gc(&self.gc_box)
-        }
-    }
-
-    /// Write to the contents of this Gc / Rgc.  Panics if the Gc has been collected, or the
-    /// contents are already read or written on this or another cloned Gc.  Writing to a Gc will
-    /// potentially execute a write barrier on the object, and will block tracing of the object for
-    /// the lifetime of the `GcWrite`.
-    pub fn write(&self) -> GcWrite<T> {
-        unsafe {
-            assert!(
-                self.gc_box.as_ref().header.flags.is_live(),
-                "Gc has been collected"
-            );
-            write_gc(&self.gc_box)
-        }
-    }
-
-    /// Only call from `GcObject::trace`.
-    pub fn trace(&self) {
-        unsafe {
-            let gc_box = self.gc_box.as_ref();
-            assert!(gc_box.header.flags.is_live(), "Gc has been collected");
-            match gc_box.header.flags.color() {
-                GcColor::Black | GcColor::DarkGray => {}
-                GcColor::LightGray => {
-                    // A light-gray object is already in the gray queue, just turn it dark gray.
-                    gc_box.header.flags.set_color(GcColor::DarkGray);
-                }
-                GcColor::White1 | GcColor::White2 => {
-                    // A white object is not in the gray queue, becomes dark-gray and enters in the
-                    // primary queue.
-                    gc_box.header.flags.set_color(GcColor::DarkGray);
-                    let gray_queue = gc_box.header.gray_link.get().queue;
-                    gc_box.header.gray_link.set(GrayLink {
-                        next: gray_queue.as_ref().primary.get(),
-                    });
-                    gray_queue.as_ref().primary.set(Some(self.gc_box));
-                }
-            }
-        }
-    }
-
-    pub fn collect_garbage(&self) {
-        unimplemented!()
+    pub unsafe fn as_ref(&self) -> &T {
+        &*self.gc_box.as_ref().value.get()
     }
 }
 
+/// A "root pointer" into a `GcContext`.  This is guaranteed never to be dangling, so it is always
+/// safe to access.  After the parent `GcContext` is dropped, `Rgc` behaves similar to an Rc, so the
+/// contents will be dropped only when the final `Rgc` pointing to it is dropped.  This is mostly
+/// useful for Drop safety, normally `Rgc` pointers should not outlive the parent `GcContext`, as
+/// any held `Gc` pointers would no longer be valid.
 #[derive(Eq, PartialEq, Debug)]
-pub struct Rgc<T: GcObject> {
-    gc_box: NonNull<GcBox<T>>,
-    marker: PhantomData<Rc<T>>,
-}
+pub struct Rgc<T: GcObject>(Gc<T>);
 
 impl<T: GcObject> Clone for Rgc<T> {
     fn clone(&self) -> Rgc<T> {
         unsafe {
-            let header = &self.gc_box.as_ref().header;
-            header.root_count.increment();
-            Rgc {
-                gc_box: self.gc_box,
-                marker: PhantomData,
-            }
+            self.0.gc_box.as_ref().root_count.increment();
+            Rgc(self.0)
         }
     }
 }
@@ -258,177 +260,111 @@ impl<T: GcObject> Clone for Rgc<T> {
 impl<T: GcObject> Drop for Rgc<T> {
     fn drop(&mut self) {
         unsafe {
-            self.gc_box.as_ref().header.root_count.decrement();
+            let gc_box = self.0.gc_box.as_ref();
+            gc_box.root_count.decrement();
+            if !gc_box.root_count.is_rooted() && gc_box.flags.is_detached() {
+                // If the managed GcBox is detached (the parent GcContext has been dropped), and we
+                // are the last Rgc pointer, delete the contents.
+                Box::from_raw(self.0.gc_box.as_ptr());
+            }
         }
     }
 }
 
 impl<T: GcObject> Rgc<T> {
-    pub fn unroot(&self) -> Gc<T> {
-        unsafe {
-            self.gc_box.as_ref().header.ptr_count.increment();
-        }
-        Gc {
-            gc_box: self.gc_box,
-            marker: PhantomData,
-        }
+    pub fn gc(&self) -> Gc<T> {
+        self.0
     }
 
-    /// Safe version of `Gc::read`, as we know that the pointer cannot be collected.
-    pub fn read(&self) -> GcRead<T> {
-        unsafe {
-            debug_assert!(self.gc_box.as_ref().header.flags.is_live());
-            read_gc(&self.gc_box)
-        }
+    pub fn as_ptr(&self) -> *mut T {
+        unsafe { self.0.as_ptr() }
     }
 
-    /// Safe version of `Gc::write`, as we know that the pointer cannot be collected.
-    pub fn write(&self) -> GcWrite<T> {
-        unsafe {
-            debug_assert!(self.gc_box.as_ref().header.flags.is_live());
-            write_gc(&self.gc_box)
-        }
+    pub fn as_ref(&self) -> &T {
+        unsafe { self.0.as_ref() }
     }
 }
 
-pub struct GcRead<'a, T: GcObject> {
-    borrow_state: &'a BorrowState,
-    value: &'a T,
-}
+impl<T: GcObject> GcContext<T> {
+    // Do some collection work until we have either reached the target amount of work or have
+    // entered the sleeping gc phase.  The unit of "work" here is a count of objects either turned
+    // black or freed, so to completely collect a heap with 100 objects should take 100 units of
+    // work, whatever percentage of them are live or not.
+    fn do_collection(&self, mut work: f64) {
+        let tracer = GcTracer { context: self };
+        let mut blocked_gray_count = 0;
 
-impl<'a, T: GcObject> Deref for GcRead<'a, T> {
-    type Target = T;
+        while work > 0.0 {
+            match self.phase.get() {
+                GcPhase::Sleeping => break,
+                GcPhase::Propagating => unsafe {
+                    if let Some(gc_box_ptr) = self.gray.borrow_mut().pop_front() {
+                        let gc_box = gc_box_ptr.as_ref();
+                        if gc_box.flags.color() == GcColor::DarkGray
+                            || gc_box.root_count.is_rooted()
+                        {
+                            if (*gc_box.value.get()).trace(&tracer) {
+                                // Once an object is successfully traced, we turn it black and
+                                // remove it from the queue.
+                                gc_box.flags.set_color(GcColor::Black);
+                                work -= 1.0;
+                                blocked_gray_count = 0;
+                            } else {
+                                let mut gray = self.gray.borrow_mut();
+                                // If an object is blocked from tracing, place it on the back of the
+                                // queue to give it the maximum amount of time to un-block.
+                                gray.push_back(gc_box_ptr);
+                                blocked_gray_count += 1;
+                                if blocked_gray_count == gray.len() {
+                                    // If the entirety of the gray queue is un-traceable, we can't
+                                    // make any progress so just stop.
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Once all the grays objects have been processed, we enter the sweeping
+                        // phase.
+                        self.phase.set(GcPhase::Sweeping);
+                        self.sweep.set(self.all.get());
+                    }
+                },
+                GcPhase::Sweeping => unsafe {
+                    if let Some(sweep_ptr) = self.sweep.get() {
+                        let next_ptr = sweep_ptr.as_ref().next.get();
+                        self.sweep.set(next_ptr);
 
-    fn deref(&self) -> &T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject> Drop for GcRead<'a, T> {
-    fn drop(&mut self) {
-        self.borrow_state.dec_reading();
-    }
-}
-
-pub struct GcWrite<'a, T: GcObject> {
-    borrow_state: &'a BorrowState,
-    value: &'a mut T,
-}
-
-impl<'a, T: GcObject> Deref for GcWrite<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject> DerefMut for GcWrite<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.value
-    }
-}
-
-impl<'a, T: GcObject> Drop for GcWrite<'a, T> {
-    fn drop(&mut self) {
-        self.borrow_state.set_unused();
-    }
-}
-
-impl GcContext {
-    fn do_work(&self) {
-        // unimplemented
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum GcPhase {
-    Sleeping,
-    Propagate,
-    Atomic,
-    Sweeping,
-}
-
-struct GrayQueue {
-    uphold_invariant: bool,
-    primary: Cell<Option<NonNull<GcBox<GcObject>>>>,
-    secondary: Cell<Option<NonNull<GcBox<GcObject>>>>,
-}
-
-// If the color of a GcBox is white or black, holds a pointer to the GrayQueue.  If the color of the
-// GcBox is light-gray or dark-gray, holds the next pointer for the gray list it is on.
-#[derive(Copy, Clone)]
-union GrayLink {
-    queue: NonNull<GrayQueue>,
-    next: Option<NonNull<GcBox<GcObject>>>,
-}
-
-struct GcBoxHeader {
-    flags: GcFlags,
-    ptr_count: RefCount,
-    root_count: RefCount,
-    borrow_state: BorrowState,
-    next: Cell<Option<NonNull<GcBox<GcObject>>>>,
-    gray_link: Cell<GrayLink>,
-}
-
-struct GcBox<T: GcObject + ?Sized> {
-    header: GcBoxHeader,
-    data: UnsafeCell<T>,
-}
-
-unsafe fn read_gc<T: GcObject>(gc_box: &NonNull<GcBox<T>>) -> GcRead<T> {
-    let gc_box = gc_box.as_ref();
-    let borrow_state = &gc_box.header.borrow_state;
-    assert!(
-        borrow_state.mode() != BorrowMode::Writing,
-        "cannot borrow Gc for reading, already borrowed for writing"
-    );
-    borrow_state.inc_reading();
-    let value = &*gc_box.data.get();
-    GcRead {
-        borrow_state,
-        value,
-    }
-}
-
-unsafe fn write_gc<T: GcObject>(gc_box_ptr: &NonNull<GcBox<T>>) -> GcWrite<T> {
-    let gc_box = gc_box_ptr.as_ref();
-    // During the propagate phase, if we are writing to a black object, we need it to become
-    // dark gray to uphold the black invariant.
-    if gc_box.header.flags.color() == GcColor::Black {
-        let gray_queue = gc_box.header.gray_link.get().queue;
-        if gray_queue.as_ref().uphold_invariant {
-            gc_box.header.flags.set_color(GcColor::DarkGray);
-            gc_box.header.gray_link.set(GrayLink {
-                next: gray_queue.as_ref().primary.get(),
-            });
-            gray_queue.as_ref().primary.set(Some(*gc_box_ptr));
+                        if sweep_ptr.as_ref().flags.color() == GcColor::White {
+                            // We need to remove this object from the main object list.
+                            if let Some(sweep_prev) = self.sweep_prev.get() {
+                                sweep_prev.as_ref().next.set(next_ptr);
+                            } else {
+                                // sweep_prev is None, then the sweep pointer is also the beginning of
+                                // the main object list, so we don't have to adjust next pointers.
+                                debug_assert_eq!(self.all.get(), Some(sweep_ptr));
+                            }
+                            Box::from_raw(sweep_ptr.as_ptr());
+                        } else {
+                            // No gray objects should be in the swept portion of the list.
+                            debug_assert_eq!(sweep_ptr.as_ref().flags.color(), GcColor::Black);
+                            self.sweep_prev.set(Some(sweep_ptr));
+                        }
+                    } else {
+                        // We are done sweeping, so enter the sleeping phase.
+                        self.sweep_prev.set(None);
+                        self.phase.set(GcPhase::Sleeping);
+                    }
+                },
+            }
         }
     }
-
-    let borrow_state = &gc_box.header.borrow_state;
-    assert!(
-        borrow_state.mode() == BorrowMode::Unused,
-        "cannot borrow Gc for writing, already borrowed"
-    );
-    borrow_state.set_writing();
-    let value = &mut *gc_box.data.get();
-    GcWrite {
-        borrow_state,
-        value,
-    }
 }
-
-struct GcFlags(Cell<u8>);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum GcColor {
     // White objects are unmarked and un-rooted.  At the end of the mark phase, all white objects
-    // are unused and may be freed in the sweep phase.  The white color is swapped during sweeping
-    // to distinguish between newly created white objects and unreachable white objects.
-    White1,
-    White2,
+    // are unused and may be freed in the sweep phase.
+    White,
     // When a white object is rooted, it becomes light-gray and placed in the gray queue.  When it
     // is processed in the gray queue, if it is still rooted at the time of processing, its
     // sub-objects are traced and it becomes black.  If it is not rooted at the time of processing
@@ -444,126 +380,77 @@ enum GcColor {
     Black,
 }
 
-impl GcColor {
-    fn is_white(self) -> bool {
-        match self {
-            GcColor::White1 | GcColor::White2 => true,
-            _ => false,
-        }
-    }
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum GcPhase {
+    Sleeping,
+    Propagating,
+    Sweeping,
 }
 
+struct GcBox<T: GcObject> {
+    flags: GcFlags,
+    root_count: RootCount,
+    next: Cell<Option<NonNull<GcBox<T>>>>,
+
+    value: UnsafeCell<T>,
+}
+
+struct GcFlags(Cell<u8>);
+
 impl GcFlags {
-    fn new(color: GcColor) -> GcFlags {
-        let flags = GcFlags(Cell::new(0));
-        flags.set_color(color);
-        flags
+    fn new() -> GcFlags {
+        GcFlags(Cell::new(0))
     }
 
     fn color(&self) -> GcColor {
-        match self.0.get() & 0x7 {
-            0x0 => GcColor::White1,
-            0x1 => GcColor::White2,
-            0x2 => GcColor::LightGray,
-            0x3 => GcColor::DarkGray,
-            0x4 => GcColor::Black,
+        match self.0.get() & 0x3 {
+            0x0 => GcColor::White,
+            0x1 => GcColor::LightGray,
+            0x2 => GcColor::DarkGray,
+            0x3 => GcColor::Black,
             _ => unreachable!(),
         }
     }
 
     fn set_color(&self, color: GcColor) {
         self.0.set(
-            (self.0.get() & !0x7) | match color {
-                GcColor::White1 => 0x0,
-                GcColor::White2 => 0x1,
-                GcColor::LightGray => 0x2,
-                GcColor::DarkGray => 0x3,
-                GcColor::Black => 0x4,
+            (self.0.get() & !0x3) | match color {
+                GcColor::White => 0x0,
+                GcColor::LightGray => 0x1,
+                GcColor::DarkGray => 0x2,
+                GcColor::Black => 0x3,
             },
         )
     }
 
-    fn is_live(&self) -> bool {
-        self.0.get() & 0x80 == 0
+    fn is_detached(&self) -> bool {
+        self.0.get() | 0x4 != 0x0
     }
 
-    fn set_dead(&self) {
-        self.0.set(self.0.get() & !0x80)
+    fn set_detached(&self, detached: bool) {
+        self.0
+            .set((self.0.get() & !0x4) | if detached { 0x4 } else { 0x0 });
     }
 }
 
-struct RefCount(Cell<usize>);
+struct RootCount(Cell<usize>);
 
-impl RefCount {
-    // Creates new zero RefCount
-    fn new() -> RefCount {
-        RefCount(Cell::new(0))
+impl RootCount {
+    fn new() -> RootCount {
+        RootCount(Cell::new(0))
     }
 
-    fn is_zero(&self) -> bool {
-        self.0.get() == 0
-    }
-
-    fn is_nonzero(&self) -> bool {
+    fn is_rooted(&self) -> bool {
         self.0.get() != 0
     }
 
     fn increment(&self) {
-        if self.0.get() == usize::MAX {
-            process::abort();
-        }
+        assert!(self.0.get() != usize::MAX, "overflow on root count");
         self.0.set(self.0.get() + 1);
     }
 
     fn decrement(&self) {
         debug_assert!(self.0.get() > 0, "underflow on root count");
-        self.0.set(self.0.get() - 1);
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum BorrowMode {
-    Reading,
-    Writing,
-    Unused,
-}
-
-struct BorrowState(Cell<usize>);
-
-impl BorrowState {
-    // Creates a new BorrowState in mode Unused
-    fn new() -> BorrowState {
-        BorrowState(Cell::new(0))
-    }
-
-    fn mode(&self) -> BorrowMode {
-        match self.0.get() {
-            0 => BorrowMode::Unused,
-            usize::MAX => BorrowMode::Writing,
-            _ => BorrowMode::Reading,
-        }
-    }
-
-    fn set_unused(&self) {
-        self.0.set(0)
-    }
-
-    fn set_writing(&self) {
-        self.0.set(usize::MAX)
-    }
-
-    // Only call when the mode is not `BorrowMode::Writing`
-    fn inc_reading(&self) {
-        debug_assert!(self.mode() != BorrowMode::Writing);
-        if self.0.get() == usize::MAX {
-            process::abort();
-        }
-        self.0.set(self.0.get() + 1);
-    }
-
-    // Only call when the mode is `BorrowMode::Reading`
-    fn dec_reading(&self) {
-        debug_assert!(self.mode() == BorrowMode::Reading);
         self.0.set(self.0.get() - 1);
     }
 }
