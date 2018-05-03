@@ -34,24 +34,31 @@ impl Default for GcParameters {
 /// are dangling.  A `GcObject` may have internal mutability, but any internal mutability that
 /// causes new `Gc` pointers to be contained *must* be accompanied by triggering the write barrier
 /// on this object.
-pub trait GcObject: 'static + Sized {
+pub trait GcObject: 'static {
+    fn needs_trace() -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+
     /// Must call `tracer.trace` on all held Gc pointers to ensure that they are not collected.
     /// Unsafe, because held `Gc` pointers may be dangling (even if this trait is implemented
     /// correctly, they may be dangling by breaking other rules).  Return true if the object was
     /// successfully traced, false if tracing was blocked for some reason (such as locking for
     /// internal mutability).  A locked trace method will delay the sweep phase, so an object should
     /// remain locked for as little time as possible.
-    unsafe fn trace<'a>(&self, _tracer: &GcTracer<'a, Self>) -> bool {
+    unsafe fn trace<'a>(&self, _tracer: &GcTracer<'a>) -> bool {
         true
     }
 }
 
-pub struct GcTracer<'a, T: GcObject> {
-    context: &'a GcContext<T>,
+pub struct GcTracer<'a> {
+    context: &'a GcContext,
 }
 
-impl<'a, T: GcObject> GcTracer<'a, T> {
-    pub unsafe fn trace(&self, gc: Gc<T>) {
+impl<'a> GcTracer<'a> {
+    pub unsafe fn trace<T: GcObject>(&self, gc: Gc<T>) {
         let gc_box = gc.gc_box.as_ref();
         match gc_box.flags.color() {
             GcColor::Black | GcColor::DarkGray => {}
@@ -60,19 +67,24 @@ impl<'a, T: GcObject> GcTracer<'a, T> {
                 gc_box.flags.set_color(GcColor::DarkGray);
             }
             GcColor::White => {
-                // A white object is not in the gray queue, becomes dark-gray and enters in the
-                // queue at the front.
-                gc_box.flags.set_color(GcColor::DarkGray);
-                self.context.gray.borrow_mut().push_front(gc.gc_box);
+                if gc_box.flags.needs_trace() {
+                    // A white traceable object is not in the gray queue, becomes dark-gray and
+                    // enters in the queue at the front.
+                    gc_box.flags.set_color(GcColor::DarkGray);
+                    self.context.gray.borrow_mut().push_front(gc.gc_box);
+                } else {
+                    // A white un-traceable object simply becomes black.
+                    gc_box.flags.set_color(GcColor::Black);
+                }
             }
         }
     }
 }
 
-/// A collection of objects of type T that may contain garbage collected `Gc<T>` pointers.  The
-/// garbage collector is designed to be as low overhead as possible, so much of the functionality
-/// around garbage collection is unsafe.
-pub struct GcContext<T: GcObject> {
+/// A collection of objects that may contain garbage collected `Gc<T>` pointers.  The garbage
+/// collector is designed to be as low overhead as possible, so much of the functionality around
+/// garbage collection is unsafe.
+pub struct GcContext {
     parameters: GcParameters,
 
     phase: Cell<GcPhase>,
@@ -82,14 +94,14 @@ pub struct GcContext<T: GcObject> {
     allocation_debt: Cell<f64>,
     granularity_timer: Cell<usize>,
 
-    all: Cell<Option<NonNull<GcBox<T>>>>,
-    sweep: Cell<Option<NonNull<GcBox<T>>>>,
-    sweep_prev: Cell<Option<NonNull<GcBox<T>>>>,
+    all: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    sweep: Cell<Option<NonNull<GcBox<GcObject>>>>,
+    sweep_prev: Cell<Option<NonNull<GcBox<GcObject>>>>,
 
-    gray: RefCell<VecDeque<NonNull<GcBox<T>>>>,
+    gray: RefCell<VecDeque<NonNull<GcBox<GcObject>>>>,
 }
 
-impl<T: GcObject> Drop for GcContext<T> {
+impl Drop for GcContext {
     fn drop(&mut self) {
         unsafe {
             let mut next = self.all.get();
@@ -106,8 +118,8 @@ impl<T: GcObject> Drop for GcContext<T> {
     }
 }
 
-impl<T: GcObject> GcContext<T> {
-    pub fn new(parameters: GcParameters) -> GcContext<T> {
+impl GcContext {
+    pub fn new(parameters: GcParameters) -> GcContext {
         let min_sleep = parameters.min_sleep;
         let allocation_granularity = parameters.allocation_granularity;
         GcContext {
@@ -130,7 +142,7 @@ impl<T: GcObject> GcContext<T> {
     /// is not collected before use, it must be placed into a managed `GcObject` impl before any
     /// additional collection is triggered, either through allocating again or other methods that
     /// trigger collection.
-    pub fn allocate(&self, value: T) -> Gc<T> {
+    pub fn allocate<T: GcObject>(&self, value: T) -> Gc<T> {
         self.total_allocated.set(self.total_allocated.get() + 1);
         if self.phase.get() == GcPhase::Sleeping {
             if self.total_allocated.get() > self.wakeup_total.get() {
@@ -157,6 +169,7 @@ impl<T: GcObject> GcContext<T> {
             next: Cell::new(self.all.get()),
             value: UnsafeCell::new(value),
         };
+        gc_box.flags.set_needs_trace(T::needs_trace());
         let gc_box = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(gc_box))) };
         self.all.set(Some(gc_box));
         if self.phase.get() == GcPhase::Sweeping {
@@ -172,13 +185,13 @@ impl<T: GcObject> GcContext<T> {
     }
 
     /// Allocate a T and return a root `Rgc` pointer.
-    pub fn allocate_root(&self, value: T) -> Rgc<T> {
+    pub fn allocate_root<T: GcObject>(&self, value: T) -> Rgc<T> {
         unsafe { self.root(self.allocate(value)) }
     }
 
     /// "Root" the given `Gc` pointer, turning it into an `Rgc`.  Root pointers are never collected,
     /// and `Gc` pointers are considered "reachable" only if they can be traced from a root pointer.
-    pub unsafe fn root(&self, gc: Gc<T>) -> Rgc<T> {
+    pub unsafe fn root<T: GcObject>(&self, gc: Gc<T>) -> Rgc<T> {
         let gc_box = gc.gc_box.as_ref();
         gc_box.root_count.increment();
         if gc_box.flags.color() == GcColor::White {
@@ -197,7 +210,7 @@ impl<T: GcObject> GcContext<T> {
     /// there are no collections triggered between either when the addition occurs and the call to
     /// `write_barrier`, or if tracing is blocked during mutation, between the period where calls to
     /// `GcObject::trace` on the containing object return false and the call to `write_barrier`.
-    pub unsafe fn write_barrier(&self, gc: Gc<T>) {
+    pub unsafe fn write_barrier<T: GcObject>(&self, gc: Gc<T>) {
         // During the propagating phase, if we are adding a white or light-gray object to a black
         // object, we need it to become dark gray to uphold the black invariant.
         if self.phase.get() == GcPhase::Propagating {
@@ -224,7 +237,7 @@ impl<T: GcObject> GcContext<T> {
 /// it is not collected, it must be held inside a correct `GcObject` implementation, which is itself
 /// held inside a `Gc` or `Rgc` pointer, and the parent `GcContext` must not have been dropped.
 #[derive(Eq, PartialEq, Debug)]
-pub struct Gc<T: GcObject> {
+pub struct Gc<T: GcObject + ?Sized> {
     gc_box: NonNull<GcBox<T>>,
     marker: PhantomData<Rc<T>>,
 }
@@ -292,7 +305,7 @@ impl<T: GcObject> Rgc<T> {
     }
 }
 
-impl<T: GcObject> GcContext<T> {
+impl GcContext {
     // Do some collection work until we have either reached the target amount of work or have
     // entered the sleeping gc phase.  The unit of "work" here is a count of objects either turned
     // black or freed, so to completely collect a heap with 100 objects should take 100 units of
@@ -430,10 +443,10 @@ enum GcPhase {
     Sweeping,
 }
 
-struct GcBox<T: GcObject> {
+struct GcBox<T: GcObject + ?Sized> {
     flags: GcFlags,
     root_count: RootCount,
-    next: Cell<Option<NonNull<GcBox<T>>>>,
+    next: Cell<Option<NonNull<GcBox<GcObject>>>>,
 
     value: UnsafeCell<T>,
 }
@@ -473,6 +486,15 @@ impl GcFlags {
     fn set_detached(&self, detached: bool) {
         self.0
             .set((self.0.get() & !0x4) | if detached { 0x4 } else { 0x0 });
+    }
+
+    fn needs_trace(&self) -> bool {
+        self.0.get() | 0x8 != 0x0
+    }
+
+    fn set_needs_trace(&self, needs_trace: bool) {
+        self.0
+            .set((self.0.get() & !0x8) | if needs_trace { 0x8 } else { 0x0 });
     }
 }
 

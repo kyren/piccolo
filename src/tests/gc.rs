@@ -5,7 +5,11 @@ use gc::{GcContext, GcObject, GcParameters, GcTracer};
 #[test]
 fn test_simple_allocate() {
     struct Simple(i64, Rc<()>);
-    impl GcObject for Simple {}
+    impl GcObject for Simple {
+        fn needs_trace() -> bool {
+            false
+        }
+    }
 
     let rc = Rc::new(());
     {
@@ -19,7 +23,11 @@ fn test_simple_allocate() {
 #[test]
 fn test_repeated_allocations() {
     struct Simple(i64);
-    impl GcObject for Simple {}
+    impl GcObject for Simple {
+        fn needs_trace() -> bool {
+            false
+        }
+    }
 
     let gc_context = GcContext::new(GcParameters::default());
     let mut v = Vec::new();
@@ -36,7 +44,7 @@ fn test_repeated_allocations() {
 fn test_locked_tracing() {
     struct Blocking(bool);
     impl GcObject for Blocking {
-        unsafe fn trace<'a>(&self, _: &GcTracer<'a, Self>) -> bool {
+        unsafe fn trace<'a>(&self, _: &GcTracer<'a>) -> bool {
             self.0
         }
     }
