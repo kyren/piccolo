@@ -1,32 +1,29 @@
-#![allow(unused)]
-
 use std::collections::VecDeque;
 use std::cell::{Cell, RefCell, UnsafeCell};
-use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::{mem, process, usize, f64};
+use std::{usize, f64};
 
 pub struct GcParameters {
-    pause_multiplier: f64,
-    timing_multiplier: f64,
-    allocation_granularity: f64,
-    min_wakeup: usize,
+    pause_factor: f64,
+    timing_factor: f64,
+    allocation_granularity: usize,
+    min_sleep: usize,
 }
 
 impl Default for GcParameters {
     fn default() -> GcParameters {
-        const PAUSE_MULTIPLIER: f64 = 1.5;
-        const TIMING_MULTIPLIER: f64 = 1.0;
-        const ALLOCATION_GRANULARITY: f64 = 50.0;
-        const MIN_WAKEUP: usize = 512;
+        const PAUSE_FACTOR: f64 = 0.5;
+        const TIMING_FACTOR: f64 = 1.5;
+        const ALLOCATION_GRANULARITY: usize = 50;
+        const MIN_SLEEP: usize = 100;
 
         GcParameters {
-            pause_multiplier: PAUSE_MULTIPLIER,
-            timing_multiplier: TIMING_MULTIPLIER,
+            pause_factor: PAUSE_FACTOR,
+            timing_factor: TIMING_FACTOR,
             allocation_granularity: ALLOCATION_GRANULARITY,
-            min_wakeup: MIN_WAKEUP,
+            min_sleep: MIN_SLEEP,
         }
     }
 }
@@ -44,7 +41,7 @@ pub trait GcObject: 'static + Sized {
     /// successfully traced, false if tracing was blocked for some reason (such as locking for
     /// internal mutability).  A locked trace method will delay the sweep phase, so an object should
     /// remain locked for as little time as possible.
-    unsafe fn trace<'a>(&self, tracer: &GcTracer<'a, Self>) -> bool {
+    unsafe fn trace<'a>(&self, _tracer: &GcTracer<'a, Self>) -> bool {
         true
     }
 }
@@ -80,8 +77,10 @@ pub struct GcContext<T: GcObject> {
 
     phase: Cell<GcPhase>,
     total_allocated: Cell<usize>,
+    remembered_count: Cell<usize>,
     wakeup_total: Cell<usize>,
     allocation_debt: Cell<f64>,
+    granularity_timer: Cell<usize>,
 
     all: Cell<Option<NonNull<GcBox<T>>>>,
     sweep: Cell<Option<NonNull<GcBox<T>>>>,
@@ -109,13 +108,16 @@ impl<T: GcObject> Drop for GcContext<T> {
 
 impl<T: GcObject> GcContext<T> {
     pub fn new(parameters: GcParameters) -> GcContext<T> {
-        let start_wakeup = parameters.min_wakeup;
+        let min_sleep = parameters.min_sleep;
+        let allocation_granularity = parameters.allocation_granularity;
         GcContext {
             parameters,
             phase: Cell::new(GcPhase::Sleeping),
             total_allocated: Cell::new(0),
-            wakeup_total: Cell::new(start_wakeup),
+            remembered_count: Cell::new(0),
+            wakeup_total: Cell::new(min_sleep),
             allocation_debt: Cell::new(0.0),
+            granularity_timer: Cell::new(allocation_granularity),
             all: Cell::new(None),
             sweep: Cell::new(None),
             sweep_prev: Cell::new(None),
@@ -138,9 +140,14 @@ impl<T: GcObject> GcContext<T> {
 
         if self.phase.get() != GcPhase::Sleeping {
             self.allocation_debt
-                .set(self.allocation_debt.get() + 1.0 + 1.0 / self.parameters.timing_multiplier);
-            if self.allocation_debt.get() >= self.parameters.allocation_granularity {
-                self.do_collection(self.parameters.allocation_granularity);
+                .set(self.allocation_debt.get() + 1.0 + 1.0 / self.parameters.timing_factor);
+
+            let granularity_timer = self.granularity_timer.get();
+            if granularity_timer + 1 >= self.parameters.allocation_granularity {
+                self.granularity_timer.set(0);
+                self.do_collection(self.allocation_debt.get());
+            } else {
+                self.granularity_timer.set(granularity_timer + 1);
             }
         }
 
@@ -154,7 +161,7 @@ impl<T: GcObject> GcContext<T> {
         self.all.set(Some(gc_box));
         if self.phase.get() == GcPhase::Sweeping {
             if self.sweep_prev.get().is_none() {
-                self.sweep_prev.set(Some(gc_box));
+                self.sweep_prev.set(self.all.get());
             }
         }
 
@@ -207,8 +214,8 @@ impl<T: GcObject> GcContext<T> {
     pub fn collect_garbage(&self) {
         if self.phase.get() == GcPhase::Sleeping {
             self.phase.set(GcPhase::Propagating);
-            self.do_collection(f64::INFINITY);
         }
+        self.do_collection(f64::INFINITY);
     }
 }
 
@@ -290,15 +297,23 @@ impl<T: GcObject> GcContext<T> {
     // entered the sleeping gc phase.  The unit of "work" here is a count of objects either turned
     // black or freed, so to completely collect a heap with 100 objects should take 100 units of
     // work, whatever percentage of them are live or not.
-    fn do_collection(&self, mut work: f64) {
+    fn do_collection(&self, work: f64) {
+        println!(
+            "collection start {:?} total {}",
+            self.phase.get(),
+            self.total_allocated.get()
+        );
+
+        let mut work_left = work;
         let tracer = GcTracer { context: self };
         let mut blocked_gray_count = 0;
 
-        while work > 0.0 {
+        while work_left > 0.0 {
             match self.phase.get() {
                 GcPhase::Sleeping => break,
                 GcPhase::Propagating => unsafe {
-                    if let Some(gc_box_ptr) = self.gray.borrow_mut().pop_front() {
+                    let next_gray = self.gray.borrow_mut().pop_front();
+                    if let Some(gc_box_ptr) = next_gray {
                         let gc_box = gc_box_ptr.as_ref();
                         if gc_box.flags.color() == GcColor::DarkGray
                             || gc_box.root_count.is_rooted()
@@ -307,7 +322,7 @@ impl<T: GcObject> GcContext<T> {
                                 // Once an object is successfully traced, we turn it black and
                                 // remove it from the queue.
                                 gc_box.flags.set_color(GcColor::Black);
-                                work -= 1.0;
+                                work_left -= 1.0;
                                 blocked_gray_count = 0;
                             } else {
                                 let mut gray = self.gray.borrow_mut();
@@ -327,6 +342,7 @@ impl<T: GcObject> GcContext<T> {
                         // phase.
                         self.phase.set(GcPhase::Sweeping);
                         self.sweep.set(self.all.get());
+                        self.remembered_count.set(0);
                     }
                 },
                 GcPhase::Sweeping => unsafe {
@@ -339,24 +355,51 @@ impl<T: GcObject> GcContext<T> {
                             if let Some(sweep_prev) = self.sweep_prev.get() {
                                 sweep_prev.as_ref().next.set(next_ptr);
                             } else {
-                                // sweep_prev is None, then the sweep pointer is also the beginning of
-                                // the main object list, so we don't have to adjust next pointers.
+                                // If `sweep_prev` is None, then the sweep pointer is also the
+                                // beginning of the main object list, so we need to adjust it.
                                 debug_assert_eq!(self.all.get(), Some(sweep_ptr));
+                                self.all.set(next_ptr);
                             }
+                            self.total_allocated.set(self.total_allocated.get() - 1);
+                            work_left -= 1.0;
                             Box::from_raw(sweep_ptr.as_ptr());
                         } else {
                             // No gray objects should be in the swept portion of the list.
                             debug_assert_eq!(sweep_ptr.as_ref().flags.color(), GcColor::Black);
                             self.sweep_prev.set(Some(sweep_ptr));
+                            self.remembered_count.set(self.remembered_count.get() + 1);
                         }
                     } else {
                         // We are done sweeping, so enter the sleeping phase.
                         self.sweep_prev.set(None);
                         self.phase.set(GcPhase::Sleeping);
+                        self.wakeup_total.set(
+                            self.total_allocated.get()
+                                + ((self.remembered_count.get() as f64
+                                    * self.parameters.pause_factor)
+                                    .round()
+                                    .min(usize::MAX as f64)
+                                    as usize)
+                                    .max(self.parameters.min_sleep),
+                        );
                     }
                 },
             }
         }
+
+        if self.phase.get() == GcPhase::Sleeping {
+            // Do not let debt accumulate across cycles
+            self.allocation_debt.set(0.0);
+        } else {
+            self.allocation_debt
+                .set((self.allocation_debt.get() - work + work_left).max(0.0));
+        }
+
+        println!(
+            "collection end {:?} total {}",
+            self.phase.get(),
+            self.total_allocated.get()
+        );
     }
 }
 
@@ -380,7 +423,7 @@ enum GcColor {
     Black,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum GcPhase {
     Sleeping,
     Propagating,
@@ -424,7 +467,7 @@ impl GcFlags {
     }
 
     fn is_detached(&self) -> bool {
-        self.0.get() | 0x4 != 0x0
+        self.0.get() & 0x4 != 0x0
     }
 
     fn set_detached(&self, detached: bool) {
