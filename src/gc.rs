@@ -234,12 +234,10 @@ impl GcArena {
     pub unsafe fn write_barrier<T: GcObject>(&self, gc: Gc<T>) {
         // During the propagating phase, if we are adding a white or light-gray object to a black
         // object, we need it to become dark gray to uphold the black invariant.
-        if self.phase.get() == GcPhase::Propagating {
-            let gc_box = gc.gc_box.as_ref();
+        let gc_box = gc.gc_box.as_ref();
+        if self.phase.get() == GcPhase::Propagating && gc_box.flags.color() == GcColor::Black {
             gc_box.flags.set_color(GcColor::DarkGray);
-            if gc_box.flags.color() == GcColor::Black {
-                self.gray.borrow_mut().push_back(gc.gc_box);
-            }
+            self.gray.borrow_mut().push_back(gc.gc_box);
         }
     }
 
