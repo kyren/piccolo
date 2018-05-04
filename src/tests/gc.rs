@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gc::{GcContext, GcObject, GcParameters, GcTracer};
+use gc::{GcArena, GcObject, GcParameters, GcTracer};
 
 #[test]
 fn test_simple_allocate() {
@@ -13,7 +13,7 @@ fn test_simple_allocate() {
 
     let rc = Rc::new(());
     {
-        let gc_context = GcContext::new(GcParameters::default());
+        let gc_context = GcArena::new(GcParameters::default());
         let r = gc_context.allocate_root(Simple(42, rc.clone()));
         assert_eq!(r.as_ref().0, 42);
     }
@@ -29,7 +29,7 @@ fn test_repeated_allocations() {
         }
     }
 
-    let gc_context = GcContext::new(GcParameters::default());
+    let gc_context = GcArena::new(GcParameters::default());
     let mut v = Vec::new();
     for i in 0..20000 {
         if i < 5000 && i % 10 == 0 {
@@ -49,7 +49,7 @@ fn test_locked_tracing() {
         }
     }
 
-    let gc_context = GcContext::new(GcParameters::default());
+    let gc_context = GcArena::new(GcParameters::default());
     let _lock = gc_context.allocate_root(Blocking(false));
     for _ in 0..1000 {
         gc_context.allocate(Blocking(true));

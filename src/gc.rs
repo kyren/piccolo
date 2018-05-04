@@ -3,12 +3,25 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::{usize, f64};
+use std::{mem, usize, f64};
 
 pub struct GcParameters {
+    // The garbage collector will wait until the live size reaches <current heap size> + <previous
+    // retained size> * `pause_multiplier` before beginning a new collection.  Must be >= 0.0,
+    // setting this to 0.0 causes the collector to run continuously.
     pause_factor: f64,
+    // The garbage collector will try and finish a collection by the time <current heap size> *
+    // `timing_factor` additional bytes are allocated.  For example, if the collection is started
+    // when the `GcArena` has 100KB live data, and the timing_multiplier is 1.0, the collector
+    // should finish its final phase of this collection when another 100KB has been allocated.  Must
+    // be >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world mark and
+    // sweep.
     timing_factor: f64,
-    allocation_granularity: usize,
+    // The garbage collector will try to collect no fewer than this many bytes as a single unit of
+    // work.
+    collection_granularity: usize,
+    // The minimum allocations before the `GcArena` transitions away from sleeping.  This is mostly
+    // useful when the heap is very small to prevent rapidly restarting collections.
     min_sleep: usize,
 }
 
@@ -16,25 +29,27 @@ impl Default for GcParameters {
     fn default() -> GcParameters {
         const PAUSE_FACTOR: f64 = 0.5;
         const TIMING_FACTOR: f64 = 1.5;
-        const ALLOCATION_GRANULARITY: usize = 50;
-        const MIN_SLEEP: usize = 100;
+        const COLLECTION_GRANULARITY: usize = 1024;
+        const MIN_SLEEP: usize = 4096;
 
         GcParameters {
             pause_factor: PAUSE_FACTOR,
             timing_factor: TIMING_FACTOR,
-            allocation_granularity: ALLOCATION_GRANULARITY,
+            collection_granularity: COLLECTION_GRANULARITY,
             min_sleep: MIN_SLEEP,
         }
     }
 }
 
 /// A trait for garbage collected objects that can be placed into `Gc` pointers, and may hold `Gc`
-/// pointers from the same parent `GcContext`.  Held `Gc` pointers must not be accessed in drop
-/// impls, as the drop order on sweep is not predictable and it is impossible to know whether they
-/// are dangling.  A `GcObject` may have internal mutability, but any internal mutability that
-/// causes new `Gc` pointers to be contained *must* be accompanied by triggering the write barrier
+/// pointers from the same parent `GcArena`.  Held `Gc` pointers must not be accessed in drop impls,
+/// as the drop order on sweep is not predictable and it is impossible to know whether they are
+/// dangling.  A `GcObject` may have internal mutability, but any internal mutability that causes
+/// new `Gc` pointers to be contained *must* be accompanied by triggering the write barrier
 /// on this object.
 pub trait GcObject: 'static {
+    /// Return false if this type will never contain Gc pointers.  This object will skip the gray
+    /// object queue during tracing, and never have `GcObject::trace` called on it.
     fn needs_trace() -> bool
     where
         Self: Sized,
@@ -54,7 +69,7 @@ pub trait GcObject: 'static {
 }
 
 pub struct GcTracer<'a> {
-    context: &'a GcContext,
+    arena: &'a GcArena,
 }
 
 impl<'a> GcTracer<'a> {
@@ -71,7 +86,7 @@ impl<'a> GcTracer<'a> {
                     // A white traceable object is not in the gray queue, becomes dark-gray and
                     // enters in the queue at the front.
                     gc_box.flags.set_color(GcColor::DarkGray);
-                    self.context.gray.borrow_mut().push_front(gc.gc_box);
+                    self.arena.gray.borrow_mut().push_front(gc.gc_box);
                 } else {
                     // A white un-traceable object simply becomes black.
                     gc_box.flags.set_color(GcColor::Black);
@@ -84,12 +99,12 @@ impl<'a> GcTracer<'a> {
 /// A collection of objects that may contain garbage collected `Gc<T>` pointers.  The garbage
 /// collector is designed to be as low overhead as possible, so much of the functionality around
 /// garbage collection is unsafe.
-pub struct GcContext {
+pub struct GcArena {
     parameters: GcParameters,
 
     phase: Cell<GcPhase>,
     total_allocated: Cell<usize>,
-    remembered_count: Cell<usize>,
+    remembered_size: Cell<usize>,
     wakeup_total: Cell<usize>,
     allocation_debt: Cell<f64>,
     granularity_timer: Cell<usize>,
@@ -101,7 +116,7 @@ pub struct GcContext {
     gray: RefCell<VecDeque<NonNull<GcBox<GcObject>>>>,
 }
 
-impl Drop for GcContext {
+impl Drop for GcArena {
     fn drop(&mut self) {
         unsafe {
             let mut next = self.all.get();
@@ -118,18 +133,18 @@ impl Drop for GcContext {
     }
 }
 
-impl GcContext {
-    pub fn new(parameters: GcParameters) -> GcContext {
+impl GcArena {
+    pub fn new(parameters: GcParameters) -> GcArena {
         let min_sleep = parameters.min_sleep;
-        let allocation_granularity = parameters.allocation_granularity;
-        GcContext {
+        let collection_granularity = parameters.collection_granularity;
+        GcArena {
             parameters,
             phase: Cell::new(GcPhase::Sleeping),
             total_allocated: Cell::new(0),
-            remembered_count: Cell::new(0),
+            remembered_size: Cell::new(0),
             wakeup_total: Cell::new(min_sleep),
             allocation_debt: Cell::new(0.0),
-            granularity_timer: Cell::new(allocation_granularity),
+            granularity_timer: Cell::new(collection_granularity),
             all: Cell::new(None),
             sweep: Cell::new(None),
             sweep_prev: Cell::new(None),
@@ -143,7 +158,9 @@ impl GcContext {
     /// additional collection is triggered, either through allocating again or other methods that
     /// trigger collection.
     pub fn allocate<T: GcObject>(&self, value: T) -> Gc<T> {
-        self.total_allocated.set(self.total_allocated.get() + 1);
+        let alloc_size = mem::size_of::<GcBox<T>>();
+        self.total_allocated
+            .set(self.total_allocated.get() + alloc_size);
         if self.phase.get() == GcPhase::Sleeping {
             if self.total_allocated.get() > self.wakeup_total.get() {
                 self.phase.set(GcPhase::Propagating);
@@ -151,15 +168,17 @@ impl GcContext {
         }
 
         if self.phase.get() != GcPhase::Sleeping {
-            self.allocation_debt
-                .set(self.allocation_debt.get() + 1.0 + 1.0 / self.parameters.timing_factor);
+            self.allocation_debt.set(
+                self.allocation_debt.get() + alloc_size as f64
+                    + alloc_size as f64 / self.parameters.timing_factor,
+            );
 
             let granularity_timer = self.granularity_timer.get();
-            if granularity_timer + 1 >= self.parameters.allocation_granularity {
+            if granularity_timer + alloc_size >= self.parameters.collection_granularity {
                 self.granularity_timer.set(0);
                 self.do_collection(self.allocation_debt.get());
             } else {
-                self.granularity_timer.set(granularity_timer + 1);
+                self.granularity_timer.set(granularity_timer + alloc_size);
             }
         }
 
@@ -191,6 +210,7 @@ impl GcContext {
 
     /// "Root" the given `Gc` pointer, turning it into an `Rgc`.  Root pointers are never collected,
     /// and `Gc` pointers are considered "reachable" only if they can be traced from a root pointer.
+    /// Must not be called on a dangling pointer.
     pub unsafe fn root<T: GcObject>(&self, gc: Gc<T>) -> Rgc<T> {
         let gc_box = gc.gc_box.as_ref();
         gc_box.root_count.increment();
@@ -210,6 +230,7 @@ impl GcContext {
     /// there are no collections triggered between either when the addition occurs and the call to
     /// `write_barrier`, or if tracing is blocked during mutation, between the period where calls to
     /// `GcObject::trace` on the containing object return false and the call to `write_barrier`.
+    /// Must not be called on a dangling `Gc` pointer.
     pub unsafe fn write_barrier<T: GcObject>(&self, gc: Gc<T>) {
         // During the propagating phase, if we are adding a white or light-gray object to a black
         // object, we need it to become dark gray to uphold the black invariant.
@@ -234,8 +255,8 @@ impl GcContext {
 
 /// A garbage collected pointer to a value of type T.  Implements Copy, and is a zero-overhead
 /// wrapper around a raw pointer.  Any access is generally unsafe because in order to guarantee that
-/// it is not collected, it must be held inside a correct `GcObject` implementation, which is itself
-/// held inside a `Gc` or `Rgc` pointer, and the parent `GcContext` must not have been dropped.
+/// it is not dangling, it must be held inside a correct `GcObject` implementation, which is itself
+/// held inside a `Gc` or `Rgc` pointer, and the parent `GcArena` must not have been dropped.
 #[derive(Eq, PartialEq, Debug)]
 pub struct Gc<T: GcObject + ?Sized> {
     gc_box: NonNull<GcBox<T>>,
@@ -260,10 +281,10 @@ impl<T: GcObject> Gc<T> {
     }
 }
 
-/// A "root pointer" into a `GcContext`.  This is guaranteed never to be dangling, so it is always
-/// safe to access.  After the parent `GcContext` is dropped, `Rgc` behaves similar to an Rc, so the
+/// A "root pointer" into a `GcArena`.  This is guaranteed never to be dangling, so it is always
+/// safe to access.  After the parent `GcArena` is dropped, `Rgc` behaves similar to an Rc, so the
 /// contents will be dropped only when the final `Rgc` pointing to it is dropped.  This is mostly
-/// useful for Drop safety, normally `Rgc` pointers should not outlive the parent `GcContext`, as
+/// useful for Drop safety, normally `Rgc` pointers should not outlive the parent `GcArena`, as
 /// any held `Gc` pointers would no longer be valid.
 #[derive(Eq, PartialEq, Debug)]
 pub struct Rgc<T: GcObject>(Gc<T>);
@@ -283,7 +304,7 @@ impl<T: GcObject> Drop for Rgc<T> {
             let gc_box = self.0.gc_box.as_ref();
             gc_box.root_count.decrement();
             if !gc_box.root_count.is_rooted() && gc_box.flags.is_detached() {
-                // If the managed GcBox is detached (the parent GcContext has been dropped), and we
+                // If the managed GcBox is detached (the parent GcArena has been dropped), and we
                 // are the last Rgc pointer, delete the contents.
                 Box::from_raw(self.0.gc_box.as_ptr());
             }
@@ -305,20 +326,14 @@ impl<T: GcObject> Rgc<T> {
     }
 }
 
-impl GcContext {
+impl GcArena {
     // Do some collection work until we have either reached the target amount of work or have
     // entered the sleeping gc phase.  The unit of "work" here is a count of objects either turned
     // black or freed, so to completely collect a heap with 100 objects should take 100 units of
     // work, whatever percentage of them are live or not.
     fn do_collection(&self, work: f64) {
-        println!(
-            "collection start {:?} total {}",
-            self.phase.get(),
-            self.total_allocated.get()
-        );
-
         let mut work_left = work;
-        let tracer = GcTracer { context: self };
+        let tracer = GcTracer { arena: self };
         let mut blocked_gray_count = 0;
 
         while work_left > 0.0 {
@@ -335,7 +350,7 @@ impl GcContext {
                                 // Once an object is successfully traced, we turn it black and
                                 // remove it from the queue.
                                 gc_box.flags.set_color(GcColor::Black);
-                                work_left -= 1.0;
+                                work_left -= mem::size_of_val(gc_box) as f64;
                                 blocked_gray_count = 0;
                             } else {
                                 let mut gray = self.gray.borrow_mut();
@@ -355,15 +370,18 @@ impl GcContext {
                         // phase.
                         self.phase.set(GcPhase::Sweeping);
                         self.sweep.set(self.all.get());
-                        self.remembered_count.set(0);
+                        self.remembered_size.set(0);
                     }
                 },
                 GcPhase::Sweeping => unsafe {
                     if let Some(sweep_ptr) = self.sweep.get() {
-                        let next_ptr = sweep_ptr.as_ref().next.get();
+                        let sweep = sweep_ptr.as_ref();
+                        let sweep_size = mem::size_of_val(sweep);
+
+                        let next_ptr = sweep.next.get();
                         self.sweep.set(next_ptr);
 
-                        if sweep_ptr.as_ref().flags.color() == GcColor::White {
+                        if sweep.flags.color() == GcColor::White {
                             // We need to remove this object from the main object list.
                             if let Some(sweep_prev) = self.sweep_prev.get() {
                                 sweep_prev.as_ref().next.set(next_ptr);
@@ -373,14 +391,16 @@ impl GcContext {
                                 debug_assert_eq!(self.all.get(), Some(sweep_ptr));
                                 self.all.set(next_ptr);
                             }
-                            self.total_allocated.set(self.total_allocated.get() - 1);
-                            work_left -= 1.0;
+                            self.total_allocated
+                                .set(self.total_allocated.get() - sweep_size);
+                            work_left -= sweep_size as f64;
                             Box::from_raw(sweep_ptr.as_ptr());
                         } else {
                             // No gray objects should be in the swept portion of the list.
-                            debug_assert_eq!(sweep_ptr.as_ref().flags.color(), GcColor::Black);
+                            debug_assert_eq!(sweep.flags.color(), GcColor::Black);
                             self.sweep_prev.set(Some(sweep_ptr));
-                            self.remembered_count.set(self.remembered_count.get() + 1);
+                            self.remembered_size
+                                .set(self.remembered_size.get() + sweep_size);
                         }
                     } else {
                         // We are done sweeping, so enter the sleeping phase.
@@ -388,7 +408,7 @@ impl GcContext {
                         self.phase.set(GcPhase::Sleeping);
                         self.wakeup_total.set(
                             self.total_allocated.get()
-                                + ((self.remembered_count.get() as f64
+                                + ((self.remembered_size.get() as f64
                                     * self.parameters.pause_factor)
                                     .round()
                                     .min(usize::MAX as f64)
@@ -407,12 +427,6 @@ impl GcContext {
             self.allocation_debt
                 .set((self.allocation_debt.get() - work + work_left).max(0.0));
         }
-
-        println!(
-            "collection end {:?} total {}",
-            self.phase.get(),
-            self.total_allocated.get()
-        );
     }
 }
 
