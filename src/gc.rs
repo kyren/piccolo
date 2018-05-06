@@ -8,20 +8,21 @@ use std::{mem, usize, f64};
 pub struct GcParameters {
     // The garbage collector will wait until the live size reaches <current heap size> + <previous
     // retained size> * `pause_multiplier` before beginning a new collection.  Must be >= 0.0,
-    // setting this to 0.0 causes the collector to run continuously.
+    // setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
+    // beginning a new collection.
     pause_factor: f64,
     // The garbage collector will try and finish a collection by the time <current heap size> *
     // `timing_factor` additional bytes are allocated.  For example, if the collection is started
     // when the `GcArena` has 100KB live data, and the timing_multiplier is 1.0, the collector
-    // should finish its final phase of this collection when another 100KB has been allocated.  Must
-    // be >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world mark and
-    // sweep.
+    // should finish its final phase of this collection after another 100KB has been allocated.
+    // Must be >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world
+    // collector.
     timing_factor: f64,
     // The garbage collector will try to collect no fewer than this many bytes as a single unit of
     // work.
     collection_granularity: usize,
-    // The minimum allocations before the `GcArena` transitions away from sleeping.  This is mostly
-    // useful when the heap is very small to prevent rapidly restarting collections.
+    // The minimum allocation amount during sleep before the `GcArena` starts collecting again.
+    // This is mostly useful when the heap is very small to prevent rapidly restarting collections.
     min_sleep: usize,
 }
 
