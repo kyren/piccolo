@@ -327,9 +327,9 @@ impl<T: GcObject> Rgc<T> {
 
 impl GcArena {
     // Do some collection work until we have either reached the target amount of work or have
-    // entered the sleeping gc phase.  The unit of "work" here is a count of objects either turned
-    // black or freed, so to completely collect a heap with 100 objects should take 100 units of
-    // work, whatever percentage of them are live or not.
+    // entered the sleeping gc phase.  The unit of "work" here is a byte count of objects either
+    // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
+    // 1000 units of work, whatever percentage of them are live or not.
     fn do_collection(&self, work: f64) {
         let mut work_left = work;
         let tracer = GcTracer { arena: self };
@@ -400,6 +400,14 @@ impl GcArena {
                             self.sweep_prev.set(Some(sweep_ptr));
                             self.remembered_size
                                 .set(self.remembered_size.get() + sweep_size);
+                            // If the object we encounter is rooted, it needs to become light-gray
+                            // and enter the gray queue, otherwise it just becomes white again.
+                            if sweep.root_count.is_rooted() {
+                                sweep.flags.set_color(GcColor::LightGray);
+                                self.gray.borrow_mut().push_back(sweep_ptr);
+                            } else {
+                                sweep.flags.set_color(GcColor::White);
+                            }
                         }
                     } else {
                         // We are done sweeping, so enter the sleeping phase.
