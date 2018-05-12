@@ -7,7 +7,7 @@ use arena::ArenaParameters;
 use collect::Collect;
 use util::{GcBox, GcColor, GcFlags, Invariant};
 
-/// Handle value given by arena callbacks during construction / mutation.  Allows allocating new
+/// Handle value given by arena callbacks during construction and mutation.  Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
 #[derive(Copy, Clone)]
 pub struct MutationContext<'gc> {
@@ -123,37 +123,30 @@ impl Context {
                     self.phase.set(Phase::Propagate);
                 }
                 Phase::Propagate => {
-                    if let Some(ptr) = self.gray.borrow_mut().pop() {
-                        // If we have objects in the normal gray queue, take one, trace it, and turn
-                        // it black.
-                        let gc_box = ptr.as_ref();
-                        (*gc_box.value.get()).trace(cc);
-                        gc_box.flags.set_color(GcColor::Black);
-                        work_left -= mem::size_of_val(gc_box) as f64;
+                    // We look for an object first in the normal gray queue, then the "gray again"
+                    // queue.  Objects from the normal gray queue count as regular work, but objects
+                    // which are gray a second time have already been counted as work, so we don't
+                    // double count them.  Processing "gray again" objects later also gives them
+                    // more time to be mutated again without triggering another write barrier.
+                    let next_gray = if let Some(ptr) = self.gray.borrow_mut().pop() {
+                        work_left -= mem::size_of_val(ptr.as_ref()) as f64;
+                        Some(ptr)
+                    } else if let Some(ptr) = self.gray_again.borrow_mut().pop() {
+                        Some(ptr)
                     } else {
-                        // If we have no objects left in the normal gray queue, we enter the atomic
-                        // phase.
-                        self.phase.set(Phase::Atomic);
-                    }
-                }
-                Phase::Atomic => {
-                    // During the atomic phase, the normal gray queue should be cleared but the
-                    // 'gray again' queue may have values in it.  We need to process this queue, and
-                    // any new gray values that enter the normal gray queue until both are empty.
-                    loop {
-                        let ptr = if let Some(ptr) = self.gray_again.borrow_mut().pop() {
-                            ptr
-                        } else if let Some(ptr) = self.gray.borrow_mut().pop() {
-                            ptr
-                        } else {
-                            // If we have no gray values left, we can enter the sweep phase.
-                            self.phase.set(Phase::Sweep);
-                            break;
-                        };
+                        None
+                    };
 
+                    if let Some(ptr) = next_gray {
+                        // If we have an object in the gray queue, take one, trace it, and turn it
+                        // black.
                         let gc_box = ptr.as_ref();
                         (*gc_box.value.get()).trace(cc);
                         gc_box.flags.set_color(GcColor::Black);
+                    } else {
+                        // If we have no objects left in the normal gray queue, we enter the sleep
+                        // phase.
+                        self.phase.set(Phase::Sweep);
                     }
                 }
                 Phase::Sweep => {
@@ -214,7 +207,7 @@ impl Context {
         }
 
         if self.phase.get() == Phase::Sleep {
-            // Debt should not accumulate during sleep
+            // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
             self.allocation_debt.set(0.0);
         } else {
             self.allocation_debt
@@ -290,7 +283,6 @@ impl Context {
 enum Phase {
     Wake,
     Propagate,
-    Atomic,
     Sweep,
     Sleep,
 }

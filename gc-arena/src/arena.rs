@@ -1,11 +1,14 @@
 use std::{usize, f64};
 
+#[derive(Debug, Clone)]
 pub struct ArenaParameters {
     pub(crate) pause_factor: f64,
     pub(crate) timing_factor: f64,
     pub(crate) min_sleep: usize,
 }
 
+/// Creates a default ArenaParameters with `pause_factor` set to 0.5, `timing_factor` set to 1.5,
+/// and `min_sleep` set to 4096.
 impl Default for ArenaParameters {
     fn default() -> ArenaParameters {
         const PAUSE_FACTOR: f64 = 0.5;
@@ -20,6 +23,72 @@ impl Default for ArenaParameters {
     }
 }
 
+impl ArenaParameters {
+    /// The garbage collector will wait until the live size reaches <current heap size> + <previous
+    /// retained size> * `pause_multiplier` before beginning a new collection.  Must be >= 0.0,
+    /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
+    /// beginning a new collection.
+    pub fn set_pause_factor(mut self, pause_factor: f64) -> ArenaParameters {
+        self.pause_factor = pause_factor;
+        self
+    }
+
+    /// The garbage collector will try and finish a collection by the time <current heap size> *
+    /// `timing_factor` additional bytes are allocated.  For example, if the collection is started
+    /// when the arena has 100KB live data, and the timing_multiplier is 1.0, the collector should
+    /// finish its final phase of this collection after another 100KB has been allocated.  Must be
+    /// >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
+    pub fn set_timing_factor(mut self, timing_factor: f64) -> ArenaParameters {
+        self.timing_factor = timing_factor;
+        self
+    }
+
+    /// The minimum allocation amount during sleep before the arena starts collecting again.  This
+    /// is mostly useful when the heap is very small to prevent rapidly restarting collections.
+    pub fn set_min_sleep(mut self, min_sleep: usize) -> ArenaParameters {
+        self.min_sleep = min_sleep;
+        self
+    }
+}
+
+/// Creates a new "garbage collected arena" type.  The macro takes two parameters, the name you
+/// would like to give the arena type, and the type of the arena root.  The root type must implement
+/// the `Collect` trait, and be a type that takes a single generic lifetime parameter which is used
+/// for any held `Gc` pointer types.
+///
+/// An eample:
+/// ```
+/// # #[macro_use]
+/// # extern crate gc_arena;
+/// #
+/// # use gc_arena::Gc;
+/// #
+/// # fn main() {
+/// #[derive(Collect)]
+/// struct MyRoot<'gc> {
+///     ptr: Gc<'gc, i32>,
+/// }
+/// make_arena!(MyArena, MyRoot);
+/// # }
+/// ```
+///
+/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
+/// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
+/// must be manually triggered outside the `mutate` method, and works best when units of work inside
+/// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
+/// scripted language runtimes.
+///
+/// The arena API is able to provide an extremely cheap Gc pointer API because it is based around
+/// "generativity".  During construction and access, the root type is branded by a unique, invariant
+/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
+/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
+/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
+/// to come from, and that they're all either reachable from root or have been allocated during
+/// *this* `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
+/// pointers must be either reachable from root or they are unreachable and safe to collect.  In
+/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
+/// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
+/// pointers and manually ensuring that invariants are held.
 #[macro_export]
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
@@ -43,6 +112,10 @@ macro_rules! make_arena {
         where
             for<'gc> $root<'gc>: $crate::Collect,
         {
+            /// Create a new arena with the given garbage collector tuning parameters.  You must
+            /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
+            /// The held root type is immutable inside the arena, in order to provide mutation, you
+            /// must use `GcCell` types inside the root.
             #[allow(unused)]
             pub fn new<F>(arena_parameters: $crate::ArenaParameters, f: F) -> $arena
             where
@@ -55,8 +128,13 @@ macro_rules! make_arena {
                 }
             }
 
+            /// The primary means of interacting with a garbage collected arena.  Accepts a callback
+            /// which receives a `MutationContext` and a reference to the root, and can return any
+            /// non garbage collected value.  The callback may "mutate" any part of the object graph
+            /// during this call, but no garbage collection can take place during this method.
             #[allow(unused)]
-            pub fn mutate<F, R>(&self, f: F) -> R
+            #[inline]
+            pub fn mutate<F, R>(&mut self, f: F) -> R
             where
                 F: for<'gc> FnOnce($crate::MutationContext<'gc>, &$root<'gc>) -> R,
             {
@@ -68,21 +146,36 @@ macro_rules! make_arena {
                 }
             }
 
+            /// When the garbage collector is not sleeping, all allocated objects cause the arena to
+            /// accumulate "allocation debt".  This debt is then be used to time incremental garbage
+            /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
+            /// debt is measured in bytes, but will generally increase at a rate faster than that of
+            /// allocation, so that collection cycles will always complete.
             #[allow(unused)]
+            #[inline]
             pub fn allocation_debt(&self) -> f64 {
                 self.context.allocation_debt()
             }
 
+            /// Run the incremental garbage collector until the allocation debt is <= 0.0.  There is
+            /// no minimum unit of work enforced here, so it may be faster to only call this method
+            /// when the allocation debt is above some threshold.
             #[allow(unused)]
-            pub fn collect_debt(&self) {
+            #[inline]
+            pub fn collect_debt(&mut self) {
                 unsafe {
-                    self.context
-                        .do_collection(&self.root, self.context.allocation_debt());
+                    let debt = self.context.allocation_debt();
+                    if debt > 0.0 {
+                        self.context.do_collection(&self.root, debt);
+                    }
                 }
             }
 
+            /// Run the current garbage collection cycle to completion, stopping once the garbage
+            /// collector has entered the sleeping phase.  If the garbage collector is currently
+            /// sleeping, starts a new cycle and runs that cycle to completion.
             #[allow(unused)]
-            pub fn collect_all(&self) {
+            pub fn collect_all(&mut self) {
                 unsafe {
                     self.context.do_collection(&self.root, ::std::f64::INFINITY);
                 }

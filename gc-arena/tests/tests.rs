@@ -12,7 +12,7 @@ fn simple_allocation() {
 
     make_arena!(TestArena, TestRoot);
 
-    let arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
         test: Gc::allocate(mc, 42),
     });
 
