@@ -105,6 +105,13 @@ impl Context {
         self.allocation_debt.get()
     }
 
+    // If the garbage collector is currently in the sleep phase, transition to the wake phase.
+    pub fn wake(&self) {
+        if self.phase.get() == Phase::Sleep {
+            self.phase.set(Phase::Wake);
+        }
+    }
+
     // Do some collection work until we have either reached the target amount of work or are in the
     // sleeping gc phase.  The unit of "work" here is a byte count of objects either turned black or
     // freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units of

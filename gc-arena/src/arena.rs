@@ -29,6 +29,7 @@ impl ArenaParameters {
     /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
     /// beginning a new collection.
     pub fn set_pause_factor(mut self, pause_factor: f64) -> ArenaParameters {
+        assert!(pause_factor >= 0.0);
         self.pause_factor = pause_factor;
         self
     }
@@ -39,6 +40,7 @@ impl ArenaParameters {
     /// finish its final phase of this collection after another 100KB has been allocated.  Must be
     /// >= 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
     pub fn set_timing_factor(mut self, timing_factor: f64) -> ArenaParameters {
+        assert!(timing_factor >= 0.0);
         self.timing_factor = timing_factor;
         self
     }
@@ -78,13 +80,13 @@ impl ArenaParameters {
 /// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
 /// scripted language runtimes.
 ///
-/// The arena API is able to provide an extremely cheap Gc pointer API because it is based around
+/// The arena API is able to provide extremely cheap Gc pointers because it is based around
 /// "generativity".  During construction and access, the root type is branded by a unique, invariant
 /// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
 /// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
 /// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
-/// to come from, and that they're all either reachable from root or have been allocated during
-/// *this* `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
+/// to come from, and that they're all either reachable from root or have been allocated during the
+/// current `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
 /// pointers must be either reachable from root or they are unreachable and safe to collect.  In
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
 /// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
@@ -150,7 +152,7 @@ macro_rules! make_arena {
             /// accumulate "allocation debt".  This debt is then be used to time incremental garbage
             /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
             /// debt is measured in bytes, but will generally increase at a rate faster than that of
-            /// allocation, so that collection cycles will always complete.
+            /// allocation so that collection will always complete.
             #[allow(unused)]
             #[inline]
             pub fn allocation_debt(&self) -> f64 {
@@ -176,6 +178,7 @@ macro_rules! make_arena {
             /// sleeping, starts a new cycle and runs that cycle to completion.
             #[allow(unused)]
             pub fn collect_all(&mut self) {
+                self.context.wake();
                 unsafe {
                     self.context.do_collection(&self.root, ::std::f64::INFINITY);
                 }
