@@ -1,0 +1,12 @@
+[package]
+name = "gc-arena-derive"
+version = "0.1.0"
+authors = ["kyren <kerriganw@gmail.com>"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "0.13"
+quote = "0.5"
+synstructure = "0.8"

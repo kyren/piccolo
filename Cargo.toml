@@ -5,11 +5,11 @@ authors = ["kyren <kerriganw@gmail.com>"]
 
 [workspace]
 members = [
-    "./lib/gc-arena/",
+    "./gc-arena/",
 ]
 
 [dependencies]
 failure = "0.1"
 lazy_static = "1.0"
 
-gc-arena = { path = "./lib/gc-arena" }
+gc-arena = { path = "./gc-arena" }

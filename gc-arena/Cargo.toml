@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 
 [dependencies]
+gc-arena-derive = { path = "./gc-arena-derive" }
