@@ -3,6 +3,13 @@ name = "luster"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 
+[workspace]
+members = [
+    "./lib/gc-arena/",
+]
+
 [dependencies]
 failure = "0.1"
 lazy_static = "1.0"
+
+gc-arena = { path = "./lib/gc-arena" }
