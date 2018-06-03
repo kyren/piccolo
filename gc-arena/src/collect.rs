@@ -36,29 +36,3 @@ pub unsafe trait Collect {
     #[inline]
     fn trace(&self, _cc: CollectionContext) {}
 }
-
-/// If a type will never hold `Gc` pointers, you can use this macro to provide a simple empty
-/// `Collect` implementation.
-#[macro_export]
-macro_rules! unsafe_empty_collect {
-    ($type:ty) => {
-        unsafe impl Collect for $type {
-            #[inline]
-            fn needs_trace() -> bool {
-                false
-            }
-        }
-    };
-}
-
-unsafe_empty_collect!(());
-unsafe_empty_collect!(u8);
-unsafe_empty_collect!(u16);
-unsafe_empty_collect!(u32);
-unsafe_empty_collect!(u64);
-unsafe_empty_collect!(i8);
-unsafe_empty_collect!(i16);
-unsafe_empty_collect!(i32);
-unsafe_empty_collect!(i64);
-unsafe_empty_collect!(bool);
-unsafe_empty_collect!(String);

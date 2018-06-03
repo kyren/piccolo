@@ -7,6 +7,7 @@ pub use gc_arena_derive::*;
 
 mod arena;
 mod collect;
+mod collect_impl;
 mod context;
 mod gc;
 mod gc_cell;

@@ -1,3 +1,4 @@
+use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -14,6 +15,12 @@ use util::{GcBox, Invariant};
 pub struct Gc<'gc, T: 'gc + Collect> {
     pub(crate) ptr: NonNull<GcBox<T>>,
     _invariant: Invariant<'gc>,
+}
+
+impl<'gc, T: Collect + 'gc> Debug for Gc<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Gc").field("ptr", &self.ptr).finish()
+    }
 }
 
 impl<'gc, T: Collect + 'gc> Copy for Gc<'gc, T> {}
