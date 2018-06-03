@@ -1,4 +1,5 @@
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 
 use gc_arena::{Gc, MutationContext};
 
@@ -32,6 +33,14 @@ impl<'gc> String<'gc> {
             String::Short32(l, b) => &b[0..*l as usize],
             String::Long(b) => b,
         }
+    }
+}
+
+impl<'gc> Deref for String<'gc> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 
