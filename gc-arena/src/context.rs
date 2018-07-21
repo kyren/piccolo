@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::{mem, usize, f64};
+use std::{f64, mem, usize};
 
 use arena::ArenaParameters;
 use collect::Collect;
@@ -16,12 +16,12 @@ pub struct MutationContext<'gc> {
 }
 
 impl<'gc> MutationContext<'gc> {
-    pub(crate) fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBox<T>> {
-        unsafe { self.context.allocate(t) }
+    pub(crate) unsafe fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBox<T>> {
+        self.context.allocate(t)
     }
 
-    pub(crate) fn write_barrier<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
-        unsafe { self.context.write_barrier(ptr) }
+    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
+        self.context.write_barrier(ptr)
     }
 }
 
@@ -33,8 +33,8 @@ pub struct CollectionContext<'gc> {
 }
 
 impl<'gc> CollectionContext<'gc> {
-    pub(crate) fn trace<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
-        unsafe { self.context.trace(ptr) }
+    pub(crate) unsafe fn trace<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
+        self.context.trace(ptr)
     }
 }
 
@@ -234,7 +234,8 @@ impl Context {
 
         if self.phase.get() != Phase::Sleep {
             self.allocation_debt.set(
-                self.allocation_debt.get() + alloc_size as f64
+                self.allocation_debt.get()
+                    + alloc_size as f64
                     + alloc_size as f64 / self.parameters.timing_factor,
             );
         }

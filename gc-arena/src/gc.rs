@@ -33,7 +33,9 @@ impl<'gc, T: Collect + 'gc> Clone for Gc<'gc, T> {
 
 unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
-        cc.trace(self.ptr);
+        unsafe {
+            cc.trace(self.ptr);
+        }
     }
 }
 
@@ -48,7 +50,7 @@ impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
 impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc>, t: T) -> Gc<'gc, T> {
         Gc {
-            ptr: mc.allocate(t),
+            ptr: unsafe { mc.allocate(t) },
             _invariant: PhantomData,
         }
     }
@@ -57,6 +59,8 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     /// method must be used to ensure safe mutability.  Safe to call, but only necessary from unsafe
     /// code.
     pub fn write_barrier(mc: MutationContext<'gc>, gc: Self) {
-        mc.write_barrier(gc.ptr);
+        unsafe {
+            mc.write_barrier(gc.ptr);
+        }
     }
 }
