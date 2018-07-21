@@ -3,6 +3,7 @@ extern crate failure;
 extern crate fnv;
 #[macro_use]
 extern crate lazy_static;
+extern crate num_traits;
 
 #[macro_use]
 extern crate gc_arena;
