@@ -54,6 +54,7 @@ impl<'gc> Table<'gc> {
 }
 
 #[derive(Debug, Collect, Default)]
+#[collect(empty_drop)]
 struct TableState<'gc> {
     array: Vec<Value<'gc>>,
     map: FnvHashMap<HashValue<'gc>, Value<'gc>>,
@@ -179,6 +180,7 @@ impl<'gc> TableState<'gc> {
 
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
 #[derive(Debug, Collect, PartialEq)]
+#[collect(empty_drop)]
 struct HashValue<'gc>(Value<'gc>);
 
 impl<'gc> Eq for HashValue<'gc> {}

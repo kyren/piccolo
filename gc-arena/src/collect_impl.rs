@@ -32,6 +32,16 @@ unsafe_empty_collect!(f32);
 unsafe_empty_collect!(f64);
 unsafe_empty_collect!(String);
 
+unsafe impl<T: ?Sized> Collect for &'static T {
+    #[inline]
+    fn needs_trace() -> bool {
+        false
+    }
+
+    #[inline]
+    fn trace(&self, _cc: CollectionContext) {}
+}
+
 unsafe impl<T: Collect> Collect for Box<T> {
     #[inline]
     fn needs_trace() -> bool {
