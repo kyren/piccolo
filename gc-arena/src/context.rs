@@ -96,11 +96,6 @@ impl Context {
     }
 
     #[inline]
-    pub unsafe fn collection_context<'gc>(&'gc self) -> CollectionContext<'gc> {
-        CollectionContext { context: self }
-    }
-
-    #[inline]
     pub fn allocation_debt(&self) -> f64 {
         self.allocation_debt.get()
     }
@@ -118,7 +113,7 @@ impl Context {
     // work, whatever percentage of them are live or not.
     pub unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
         let mut work_left = work;
-        let cc = self.collection_context();
+        let cc = CollectionContext { context: self };
 
         while work_left > 0.0 {
             match self.phase.get() {

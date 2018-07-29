@@ -1,4 +1,4 @@
-use std::{usize, f64};
+use std::{f64, usize};
 
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {
@@ -67,6 +67,7 @@ impl ArenaParameters {
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
+/// #[collect(empty_drop)]
 /// struct MyRoot<'gc> {
 ///     ptr: Gc<'gc, i32>,
 /// }
@@ -98,7 +99,7 @@ macro_rules! make_arena {
             context: $crate::Context,
             root: $root<'static>,
         }
-        make_arena!(@methods $arena, $root)
+        make_arena!(@methods $arena, $root);
     };
 
     (pub $arena:ident, $root:ident) => {
@@ -106,7 +107,7 @@ macro_rules! make_arena {
             context: $crate::Context,
             root: $root<'static>,
         }
-        make_arena!(@methods $arena, $root)
+        make_arena!(@methods $arena, $root);
     };
 
     (@methods $arena:ident, $root:ident) => {

@@ -18,19 +18,39 @@ macro_rules! unsafe_empty_collect {
     };
 }
 
-unsafe_empty_collect!(());
-unsafe_empty_collect!(bool);
-unsafe_empty_collect!(u8);
-unsafe_empty_collect!(u16);
-unsafe_empty_collect!(u32);
-unsafe_empty_collect!(u64);
-unsafe_empty_collect!(i8);
-unsafe_empty_collect!(i16);
-unsafe_empty_collect!(i32);
-unsafe_empty_collect!(i64);
-unsafe_empty_collect!(f32);
-unsafe_empty_collect!(f64);
-unsafe_empty_collect!(String);
+/// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
+/// simple empty `Collect` implementation.
+/// `Collect` implementation.
+#[macro_export]
+macro_rules! static_collect {
+    ($type:ty) => {
+        unsafe impl Collect for $type
+        where
+            $type: 'static,
+        {
+            #[inline]
+            fn needs_trace() -> bool {
+                false
+            }
+        }
+    };
+}
+
+static_collect!(());
+static_collect!(bool);
+static_collect!(u8);
+static_collect!(u16);
+static_collect!(u32);
+static_collect!(u64);
+static_collect!(usize);
+static_collect!(i8);
+static_collect!(i16);
+static_collect!(i32);
+static_collect!(i64);
+static_collect!(isize);
+static_collect!(f32);
+static_collect!(f64);
+static_collect!(String);
 
 unsafe impl<T: ?Sized> Collect for &'static T {
     #[inline]
@@ -63,6 +83,20 @@ unsafe impl<T: Collect> Collect for Box<[T]> {
     #[inline]
     fn trace(&self, cc: CollectionContext) {
         for t in self.iter() {
+            t.trace(cc)
+        }
+    }
+}
+
+unsafe impl<T: Collect> Collect for Option<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        if let Some(t) = self.as_ref() {
             t.trace(cc)
         }
     }
