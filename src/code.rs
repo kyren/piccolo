@@ -77,6 +77,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 start: ret_start,
                 count: VarCount::make_count(ret_count).unwrap(),
             });
+        } else {
+            self.opcodes.push(OpCode::Return {
+                start: 0,
+                count: VarCount::make_count(0).unwrap(),
+            });
         }
 
         Ok(())

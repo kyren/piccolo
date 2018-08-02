@@ -1,7 +1,7 @@
 use opcode::OpCode;
 use value::Value;
 
-#[derive(Collect)]
+#[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,

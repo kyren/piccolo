@@ -545,7 +545,7 @@ impl<R: Read> Parser<R> {
         };
 
         let mut tail = Vec::new();
-        while let Some(binary_op) = get_binary_operator(self.get_next()?) {
+        while let Some(binary_op) = self.look_ahead(0)?.and_then(get_binary_operator) {
             let (left_priority, right_priority) = binary_priority(binary_op);
             if left_priority <= priority_limit {
                 break;
@@ -653,22 +653,18 @@ impl<R: Read> Parser<R> {
                 self.expect_next(Token::RightParen)?;
                 args
             }
-            Token::LeftBrace => vec![
-                Expression {
-                    head: Box::new(HeadExpression::Simple(SimpleExpression::TableConstructor(
-                        self.parse_table_constructor()?,
-                    ))),
-                    tail: vec![],
-                },
-            ],
-            Token::String(_) => vec![
-                Expression {
-                    head: Box::new(HeadExpression::Simple(SimpleExpression::String(
-                        self.expect_string()?,
-                    ))),
-                    tail: vec![],
-                },
-            ],
+            Token::LeftBrace => vec![Expression {
+                head: Box::new(HeadExpression::Simple(SimpleExpression::TableConstructor(
+                    self.parse_table_constructor()?,
+                ))),
+                tail: vec![],
+            }],
+            Token::String(_) => vec![Expression {
+                head: Box::new(HeadExpression::Simple(SimpleExpression::String(
+                    self.expect_string()?,
+                ))),
+                tail: vec![],
+            }],
             _ => {
                 return Err(format_err!(
                     "unexpected token {:?} expected function arguments",

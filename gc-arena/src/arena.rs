@@ -131,6 +131,23 @@ macro_rules! make_arena {
                 }
             }
 
+            /// Similar to `new`, but allows for a root creation function that can fail.
+            #[allow(unused)]
+            pub fn try_new<F, E>(
+                arena_parameters: $crate::ArenaParameters,
+                f: F,
+            ) -> Result<$arena, E>
+            where
+                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>) -> Result<$root<'gc>, E>,
+            {
+                unsafe {
+                    let context = $crate::Context::new(arena_parameters);
+                    let root: $root = f(context.mutation_context())?;
+                    let root: $root<'static> = ::std::mem::transmute(root);
+                    Ok($arena { context, root })
+                }
+            }
+
             /// The primary means of interacting with a garbage collected arena.  Accepts a callback
             /// which receives a `MutationContext` and a reference to the root, and can return any
             /// non garbage collected value.  The callback may "mutate" any part of the object graph
