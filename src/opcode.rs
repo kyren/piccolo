@@ -1,8 +1,10 @@
 pub type Register = u8;
 pub type Constant = u16;
 
+pub const MAX_VAR_COUNT: u8 = 254;
+
 /// Count of arguments or return values which can be 0-254 or a special "variable" value.
-#[derive(Debug, Collect)]
+#[derive(Debug, Collect, Copy, Clone)]
 pub struct VarCount(u8);
 
 impl VarCount {
@@ -31,7 +33,7 @@ impl VarCount {
     }
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Collect, Copy, Clone)]
 pub enum OpCode {
     Move {
         dest: Register,
@@ -48,15 +50,10 @@ pub enum OpCode {
     },
     LoadNil {
         dest: Register,
-        length: u8,
-    },
-    Call {
-        func: Register,
-        arg_count: VarCount,
-        ret_count: VarCount,
+        count: u8,
     },
     Return {
-        ret_start: Register,
-        ret_count: VarCount,
+        start: Register,
+        count: VarCount,
     },
 }

@@ -8,6 +8,7 @@ extern crate num_traits;
 #[macro_use]
 extern crate gc_arena;
 
+pub mod code;
 pub mod function;
 pub mod lexer;
 pub mod opcode;

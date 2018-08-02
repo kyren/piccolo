@@ -122,7 +122,7 @@ macro_rules! make_arena {
             #[allow(unused)]
             pub fn new<F>(arena_parameters: $crate::ArenaParameters, f: F) -> $arena
             where
-                F: for<'gc> FnOnce($crate::MutationContext<'gc>) -> $root<'gc>,
+                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>) -> $root<'gc>,
             {
                 unsafe {
                     let context = $crate::Context::new(arena_parameters);
@@ -134,12 +134,12 @@ macro_rules! make_arena {
             /// The primary means of interacting with a garbage collected arena.  Accepts a callback
             /// which receives a `MutationContext` and a reference to the root, and can return any
             /// non garbage collected value.  The callback may "mutate" any part of the object graph
-            /// during this call, but no garbage collection can take place during this method.
+            /// during this call, but no garbage collection will take place during this method.
             #[allow(unused)]
             #[inline]
             pub fn mutate<F, R>(&mut self, f: F) -> R
             where
-                F: for<'gc> FnOnce($crate::MutationContext<'gc>, &$root<'gc>) -> R,
+                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>, &$root<'gc>) -> R,
             {
                 unsafe {
                     f(

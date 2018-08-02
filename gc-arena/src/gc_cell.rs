@@ -27,7 +27,7 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for GcCell<'gc, T> {
 }
 
 impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
-    pub fn allocate(mc: MutationContext<'gc>, t: T) -> GcCell<'gc, T> {
+    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
         GcCell(Gc::allocate(mc, GcRefCell(RefCell::new(t))))
     }
 
@@ -39,7 +39,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         (*self.0).0.borrow()
     }
 
-    pub fn write<'a>(&'a self, mc: MutationContext<'gc>) -> RefMut<'a, T>
+    pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T>
     where
         'gc: 'a,
     {

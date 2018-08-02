@@ -10,12 +10,12 @@ use util::{GcBox, GcColor, GcFlags, Invariant};
 /// Handle value given by arena callbacks during construction and mutation.  Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
 #[derive(Copy, Clone)]
-pub struct MutationContext<'gc> {
+pub struct MutationContext<'gc, 'context> {
     _invariant: Invariant<'gc>,
-    context: &'gc Context,
+    context: &'context Context,
 }
 
-impl<'gc> MutationContext<'gc> {
+impl<'gc, 'context> MutationContext<'gc, 'context> {
     pub(crate) unsafe fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBox<T>> {
         self.context.allocate(t)
     }
@@ -28,12 +28,12 @@ impl<'gc> MutationContext<'gc> {
 /// Handle value given by arena callbacks during garbage collection, which must be passed through
 /// `Collect::trace` implementations.
 #[derive(Copy, Clone)]
-pub struct CollectionContext<'gc> {
-    context: &'gc Context,
+pub struct CollectionContext<'context> {
+    context: &'context Context,
 }
 
-impl<'gc> CollectionContext<'gc> {
-    pub(crate) unsafe fn trace<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
+impl<'context> CollectionContext<'context> {
+    pub(crate) unsafe fn trace<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
         self.context.trace(ptr)
     }
 }
@@ -88,7 +88,9 @@ impl Context {
     }
 
     #[inline]
-    pub unsafe fn mutation_context<'gc>(&'gc self) -> MutationContext<'gc> {
+    pub unsafe fn mutation_context<'gc, 'context>(
+        &'context self,
+    ) -> MutationContext<'gc, 'context> {
         MutationContext {
             _invariant: PhantomData,
             context: self,

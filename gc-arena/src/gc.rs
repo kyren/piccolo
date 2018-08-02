@@ -48,7 +48,7 @@ impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
 }
 
 impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
-    pub fn allocate(mc: MutationContext<'gc>, t: T) -> Gc<'gc, T> {
+    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
         Gc {
             ptr: unsafe { mc.allocate(t) },
             _invariant: PhantomData,
@@ -58,7 +58,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
     /// method must be used to ensure safe mutability.  Safe to call, but only necessary from unsafe
     /// code.
-    pub fn write_barrier(mc: MutationContext<'gc>, gc: Self) {
+    pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {
             mc.write_barrier(gc.ptr);
         }

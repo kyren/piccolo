@@ -13,7 +13,7 @@ pub enum String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn new(&self, mc: MutationContext<'gc>, s: &[u8]) -> String<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
         let len = s.len();
         if len <= 8 {
             let mut b = [0; 8];

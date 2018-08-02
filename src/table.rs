@@ -35,7 +35,7 @@ impl<'gc> Hash for Table<'gc> {
 }
 
 impl<'gc> Table<'gc> {
-    pub fn new(&self, mc: MutationContext<'gc>) -> Table<'gc> {
+    pub fn new(&self, mc: MutationContext<'gc, '_>) -> Table<'gc> {
         Table(GcCell::allocate(mc, TableState::default()))
     }
 
@@ -45,7 +45,7 @@ impl<'gc> Table<'gc> {
 
     pub fn set(
         &self,
-        mc: MutationContext<'gc>,
+        mc: MutationContext<'gc, '_>,
         key: Value<'gc>,
         value: Value<'gc>,
     ) -> Result<Value<'gc>, InvalidTableKey> {
@@ -57,7 +57,7 @@ impl<'gc> Table<'gc> {
 #[collect(empty_drop)]
 struct TableState<'gc> {
     array: Vec<Value<'gc>>,
-    map: FnvHashMap<HashValue<'gc>, Value<'gc>>,
+    map: FnvHashMap<TableKey<'gc>, Value<'gc>>,
 }
 
 impl<'gc> TableState<'gc> {
@@ -68,7 +68,7 @@ impl<'gc> TableState<'gc> {
             }
         }
 
-        if let Ok(key) = HashValue::new(key) {
+        if let Ok(key) = TableKey::new(key) {
             self.map.get(&key).cloned().unwrap_or(Value::Nil)
         } else {
             Value::Nil
@@ -83,7 +83,7 @@ impl<'gc> TableState<'gc> {
             }
         }
 
-        let hash_key = HashValue::new(key)?;
+        let hash_key = TableKey::new(key)?;
         if value == Value::Nil {
             Ok(self.map.remove(&hash_key).unwrap_or(Value::Nil))
         } else if self.map.len() < self.map.capacity() {
@@ -181,11 +181,11 @@ impl<'gc> TableState<'gc> {
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
 #[derive(Debug, Collect, PartialEq)]
 #[collect(empty_drop)]
-struct HashValue<'gc>(Value<'gc>);
+struct TableKey<'gc>(Value<'gc>);
 
-impl<'gc> Eq for HashValue<'gc> {}
+impl<'gc> Eq for TableKey<'gc> {}
 
-impl<'gc> Hash for HashValue<'gc> {
+impl<'gc> Hash for TableKey<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match &self.0 {
             Value::Nil => unreachable!(),
@@ -213,12 +213,12 @@ impl<'gc> Hash for HashValue<'gc> {
     }
 }
 
-impl<'gc> HashValue<'gc> {
-    fn new(value: Value<'gc>) -> Result<HashValue<'gc>, InvalidTableKey> {
+impl<'gc> TableKey<'gc> {
+    fn new(value: Value<'gc>) -> Result<TableKey<'gc>, InvalidTableKey> {
         match value {
             Value::Nil => Err(InvalidTableKey::IsNil),
             Value::Number(n) if n.is_nan() => Err(InvalidTableKey::IsNaN),
-            v => Ok(HashValue(v)),
+            v => Ok(TableKey(v)),
         }
     }
 }
