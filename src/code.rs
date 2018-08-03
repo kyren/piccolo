@@ -19,13 +19,17 @@ pub fn compile_chunk<'gc>(
     Compiler::compile(mc, &chunk)
 }
 
+#[derive(Fail, Debug)]
+#[fail(display = "insufficient available registers")]
+struct InsufficientRegisters;
+
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
 
     constants: Vec<Value<'gc>>,
     constant_table: HashMap<ConstantValue<'gc>, Constant>,
 
-    register_allocator: RegisterAllocator,
+    last_allocated_register: Option<u8>,
     locals: Vec<(&'a [u8], Register)>,
 
     opcodes: Vec<OpCode>,
@@ -40,7 +44,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             mutation_context: mc,
             constants: Vec::new(),
             constant_table: HashMap::new(),
-            register_allocator: RegisterAllocator::new(),
+            last_allocated_register: None,
             locals: Vec::new(),
             opcodes: Vec::new(),
         };
@@ -69,7 +73,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             if ret_count > MAX_VAR_COUNT {
                 bail!("too many return expressions");
             }
-            let ret_start = self.register_allocator.allocate_block(ret_count)?;
+            let ret_start = self.allocate_registers(ret_count)?;
             for i in 0..ret_count {
                 self.expression(&return_statement.returns[i as usize], Some(ret_start + i))?;
             }
@@ -90,7 +94,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn local_statement(&mut self, local_statement: &'a LocalStatement) -> Result<(), Error> {
         for (i, expr) in local_statement.values.iter().enumerate() {
             if local_statement.names.len() > i {
-                let reg = self.register_allocator.allocate()?;
+                let reg = self.allocate_registers(1)?;
                 self.expression(expr, Some(reg))?;
                 self.locals.push((&local_statement.names[i], reg));
             } else {
@@ -98,7 +102,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
         for i in local_statement.values.len()..local_statement.names.len() {
-            let reg = self.register_allocator.allocate()?;
+            let reg = self.allocate_registers(1)?;
             self.load_nil(reg)?;
             self.locals.push((&local_statement.names[i], reg));
         }
@@ -229,6 +233,40 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
     }
+
+    fn allocate_registers(&mut self, count: u8) -> Result<Register, Error> {
+        assert_ne!(count, 0, "cannot allocate 0 registers");
+
+        let start = if let Some(last_allocated) = self.last_allocated_register {
+            if count > 255 - last_allocated {
+                return Err(InsufficientRegisters.into());
+            }
+            last_allocated + 1
+        } else {
+            0
+        };
+
+        self.last_allocated_register = Some(start + (count - 1));
+        Ok(start)
+    }
+
+    #[allow(unused)]
+    fn free_registers(&mut self, start: Register, count: u8) {
+        assert_ne!(count, 0, "cannot free 0 registers");
+        let last_allocated = self
+            .last_allocated_register
+            .expect("no registers allocated to free");
+        assert_eq!(
+            start + count - 1,
+            last_allocated,
+            "Only most recently allocated registers can be freed"
+        );
+        if start == 0 {
+            self.last_allocated_register = None;
+        } else {
+            self.last_allocated_register = Some(start - 1);
+        }
+    }
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit
@@ -283,81 +321,4 @@ impl<'gc> Hash for ConstantValue<'gc> {
 
 fn float_bytes(f: f64) -> u64 {
     unsafe { mem::transmute(f) }
-}
-
-struct RegisterAllocator {
-    allocated: [bool; 256],
-    // A search hint for free registers, there must be no free registers < search_begin.
-    search_begin: u8,
-}
-
-#[derive(Fail, Debug)]
-#[fail(display = "insufficient available registers")]
-struct InsufficientRegisters;
-
-impl RegisterAllocator {
-    fn new() -> RegisterAllocator {
-        RegisterAllocator {
-            allocated: [false; 256],
-            search_begin: 0,
-        }
-    }
-
-    fn allocate(&mut self) -> Result<Register, InsufficientRegisters> {
-        for i in self.search_begin..=255 {
-            if !self.allocated[i as usize] {
-                self.allocated[i as usize] = true;
-                self.search_begin = i.saturating_add(1);
-                return Ok(i);
-            }
-        }
-        Err(InsufficientRegisters)
-    }
-
-    #[allow(unused)]
-    fn free(&mut self, register: Register) {
-        self.allocated[register as usize] = false;
-        if register < self.search_begin {
-            self.search_begin = register;
-        }
-    }
-
-    fn allocate_block(&mut self, count: u8) -> Result<Register, InsufficientRegisters> {
-        assert_ne!(count, 0, "cannot allocate 0 registers");
-
-        let mut range_start = 0;
-        let mut range_free = 0;
-        for i in self.search_begin..=255 {
-            if self.allocated[i as usize] {
-                if self.search_begin == i {
-                    self.search_begin = i.saturating_add(1);
-                }
-                range_start = i.saturating_add(1);
-                range_free = 0;
-            } else {
-                range_free += 1;
-                if range_free >= count {
-                    for j in range_start..range_start + count {
-                        self.allocated[j as usize] = true;
-                    }
-                    return Ok(range_start);
-                }
-            }
-        }
-
-        Err(InsufficientRegisters)
-    }
-
-    #[allow(unused)]
-    fn free_block(&mut self, begin: Register, count: u8) {
-        assert_ne!(count, 0, "cannot deallocate 0 registers");
-
-        if begin < self.search_begin {
-            self.search_begin = begin;
-        }
-
-        for i in begin..begin.checked_add(count).unwrap() {
-            self.allocated[i as usize] = false;
-        }
-    }
 }
