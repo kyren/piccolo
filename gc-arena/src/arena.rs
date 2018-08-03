@@ -1,5 +1,7 @@
 use std::{f64, usize};
 
+use context::{Context, MutationContext};
+
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {
     pub(crate) pause_factor: f64,
@@ -203,4 +205,17 @@ macro_rules! make_arena {
             }
         }
     };
+}
+
+/// Create a temporary arena without a root object perform the given operation on it.  No garbage
+/// collection will be done until the very end of the call, at which point all allocations will be
+/// collected.
+pub fn rootless_arena<F, R>(f: F) -> R
+where
+    F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> R,
+{
+    unsafe {
+        let context = Context::new(ArenaParameters::default());
+        f(context.mutation_context())
+    }
 }

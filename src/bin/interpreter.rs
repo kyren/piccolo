@@ -17,7 +17,12 @@ fn main() -> Result<(), Error> {
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)?;
 
-    let _lua = Lua::load(&contents)?;
+    let mut lua = Lua::load(&contents)?;
+    while !lua.run(Some(1024)) {}
+
+    lua.visit_results(|results| {
+        println!("results: {:?}", results.unwrap());
+    });
 
     Ok(())
 }

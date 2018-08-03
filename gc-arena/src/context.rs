@@ -87,6 +87,7 @@ impl Context {
         }
     }
 
+    // Creates a MutationContext with an unbounded 'gc lifetime.
     #[inline]
     pub unsafe fn mutation_context<'gc, 'context>(
         &'context self,
@@ -113,6 +114,9 @@ impl Context {
     // sleeping gc phase.  The unit of "work" here is a byte count of objects either turned black or
     // freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units of
     // work, whatever percentage of them are live or not.
+    //
+    // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
+    // reachable from the given root object.
     pub unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
         let mut work_left = work;
         let cc = CollectionContext { context: self };
