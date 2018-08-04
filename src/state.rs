@@ -1,8 +1,9 @@
-use failure::Error;
+use failure::{err_msg, Error};
 
 use gc_arena::{ArenaParameters, GcCell};
 
 use code::compile_chunk;
+use conversion::FromLua;
 use function::FunctionProto;
 use opcode::OpCode;
 use parser::parse_chunk;
@@ -114,4 +115,17 @@ impl Lua {
         self.arena
             .mutate(move |_, lua_root| f(lua_root.state.read().main_results.as_ref()))
     }
+}
+
+pub fn run_lua<T: FromLua>(src: &[u8]) -> Result<T, Error> {
+    let mut lua = Lua::load(src)?;
+    while !lua.run(Some(1024)) {}
+    lua.visit_results(|results| {
+        let results = results.unwrap();
+        if let Some(first) = results.first() {
+            T::from_lua(*first)
+        } else {
+            Err(err_msg("script did not return a result"))
+        }
+    })
 }

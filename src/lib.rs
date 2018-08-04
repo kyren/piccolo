@@ -9,6 +9,7 @@ extern crate num_traits;
 extern crate gc_arena;
 
 pub mod code;
+pub mod conversion;
 pub mod function;
 pub mod lexer;
 pub mod opcode;
