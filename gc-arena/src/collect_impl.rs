@@ -36,7 +36,6 @@ macro_rules! static_collect {
     };
 }
 
-static_collect!(());
 static_collect!(bool);
 static_collect!(u8);
 static_collect!(u16);
@@ -186,3 +185,46 @@ impl_array_collect!(29);
 impl_array_collect!(30);
 impl_array_collect!(31);
 impl_array_collect!(32);
+
+macro_rules! impl_tuple {
+    () => (
+        unsafe impl Collect for () {
+            #[inline]
+            fn needs_trace() -> bool {
+                false
+            }
+        }
+    );
+
+    ($($name:ident)+) => (
+        unsafe impl<$($name,)*> Collect for ($($name,)*)
+            where $($name: Collect,)*
+        {
+            #[inline]
+            fn needs_trace() -> bool {
+                $($name::needs_trace() ||)* false
+            }
+
+            #[allow(non_snake_case)]
+            #[inline]
+            fn trace(&self, cc: CollectionContext) {
+                let ($($name,)*) = self;
+                $($name.trace(cc);)*
+            }
+        }
+    );
+}
+
+impl_tuple!{}
+impl_tuple!{A}
+impl_tuple!{A B}
+impl_tuple!{A B C}
+impl_tuple!{A B C D}
+impl_tuple!{A B C D E}
+impl_tuple!{A B C D E F}
+impl_tuple!{A B C D E F G}
+impl_tuple!{A B C D E F G H}
+impl_tuple!{A B C D E F G H I}
+impl_tuple!{A B C D E F G H I J}
+impl_tuple!{A B C D E F G H I J K}
+impl_tuple!{A B C D E F G H I J K L}

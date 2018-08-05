@@ -9,7 +9,7 @@ use context::CollectionContext;
 ///   2. Held `Gc` pointers must not be accessed inside `Drop::drop` since during drop any such
 ///      pointer may be dangling.
 ///   3. Internal mutability *must* not be used to adopt new `Gc` pointers without calling
-///      `Allocator::write_barrier` during the same arena mutation.
+///      `Gc::write_barrier` during the same arena mutation.
 ///
 /// It is, however, possible to implement this trait safely by procedurally deriving it, which
 /// requires that every field in the structure also implement `Collect`, and implements a safe,

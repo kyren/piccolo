@@ -53,6 +53,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         Ok(FunctionProto {
             fixed_params: 0,
+            has_varargs: false,
             constants: compiler.constants,
             opcodes: compiler.opcodes,
         })
@@ -277,12 +278,25 @@ impl<'gc> PartialEq for ConstantValue<'gc> {
     fn eq(&self, other: &ConstantValue<'gc>) -> bool {
         match (self.0, other.0) {
             (Value::Nil, Value::Nil) => true,
+            (Value::Nil, _) => false,
+
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Boolean(_), _) => false,
+
             (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::Table(a), Value::Table(b)) => a == b,
+            (Value::Integer(_), _) => false,
+
             (Value::Number(a), Value::Number(b)) => float_bytes(a) == float_bytes(b),
-            _ => false,
+            (Value::Number(_), _) => false,
+
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::String(_), _) => false,
+
+            (Value::Table(a), Value::Table(b)) => a == b,
+            (Value::Table(_), _) => false,
+
+            (Value::Function(a), Value::Function(b)) => a == b,
+            (Value::Function(_), _) => false,
         }
     }
 }
@@ -314,6 +328,10 @@ impl<'gc> Hash for ConstantValue<'gc> {
             Value::Table(t) => {
                 Hash::hash(&5, state);
                 t.hash(state);
+            }
+            Value::Function(f) => {
+                Hash::hash(&6, state);
+                f.hash(state);
             }
         }
     }

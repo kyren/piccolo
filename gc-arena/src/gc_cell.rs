@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
 
 use collect::Collect;
 use context::{CollectionContext, MutationContext};
@@ -28,15 +28,24 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for GcCell<'gc, T> {
 
 impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
-        GcCell(Gc::allocate(mc, GcRefCell(RefCell::new(t))))
+        GcCell(Gc::allocate(
+            mc,
+            GcRefCell {
+                cell: RefCell::new(t),
+            },
+        ))
     }
 
     pub fn as_ptr(&self) -> *mut T {
-        (*self.0).0.as_ptr()
+        self.0.cell.as_ptr()
     }
 
     pub fn read(&self) -> Ref<T> {
-        (*self.0).0.borrow()
+        self.0.cell.borrow()
+    }
+
+    pub fn try_read<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
+        self.0.cell.try_borrow()
     }
 
     pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T>
@@ -44,15 +53,26 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         'gc: 'a,
     {
         Gc::write_barrier(mc, self.0);
-        (*self.0).0.borrow_mut()
+        self.0.cell.borrow_mut()
+    }
+
+    pub fn try_write<'a>(
+        &'a self,
+        mc: MutationContext<'gc, '_>,
+    ) -> Result<RefMut<'a, T>, BorrowMutError> {
+        let mb = self.0.cell.try_borrow_mut()?;
+        Gc::write_barrier(mc, self.0);
+        Ok(mb)
     }
 }
 
 #[derive(Debug)]
-struct GcRefCell<T: Collect>(RefCell<T>);
+struct GcRefCell<T: Collect> {
+    cell: RefCell<T>,
+}
 
 unsafe impl<'gc, T: Collect + 'gc> Collect for GcRefCell<T> {
     fn trace(&self, cc: CollectionContext) {
-        self.0.borrow().trace(cc);
+        self.cell.borrow().trace(cc);
     }
 }
