@@ -81,12 +81,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             self.opcodes.push(OpCode::Return {
                 start: ret_start,
-                count: VarCount::make_count(ret_count).unwrap(),
+                count: VarCount::make_constant(ret_count).unwrap(),
             });
         } else {
             self.opcodes.push(OpCode::Return {
                 start: 0,
-                count: VarCount::make_count(0).unwrap(),
+                count: VarCount::make_constant(0).unwrap(),
             });
         }
 

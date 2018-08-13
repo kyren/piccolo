@@ -3,7 +3,8 @@ pub type Constant = u16;
 
 pub const MAX_VAR_COUNT: u8 = 254;
 
-/// Count of arguments or return values which can be 0-254 or a special "variable" value.
+/// Count of arguments or return values which can either be a constant between 0-254 or a special
+/// "variable" value.
 #[derive(Debug, Copy, Clone, Collect)]
 pub struct VarCount(u8);
 
@@ -12,11 +13,11 @@ impl VarCount {
         VarCount(0)
     }
 
-    pub fn make_count(count: u8) -> Option<VarCount> {
-        if count == 255 {
+    pub fn make_constant(constant: u8) -> Option<VarCount> {
+        if constant == 255 {
             None
         } else {
-            Some(VarCount(count + 1))
+            Some(VarCount(constant + 1))
         }
     }
 
@@ -24,7 +25,7 @@ impl VarCount {
         self.0 == 0
     }
 
-    pub fn get_count(&self) -> Option<u8> {
+    pub fn get_constant(&self) -> Option<u8> {
         if self.0 == 0 {
             None
         } else {
@@ -55,7 +56,7 @@ pub enum OpCode {
     Call {
         func: Register,
         args: VarCount,
-        results: VarCount,
+        returns: VarCount,
     },
     Return {
         start: Register,
