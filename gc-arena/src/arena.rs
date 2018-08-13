@@ -81,7 +81,7 @@ impl ArenaParameters {
 /// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
 /// must be manually triggered outside the `mutate` method, and works best when units of work inside
 /// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
-/// scripted language runtimes.
+/// scripting language runtimes.
 ///
 /// The arena API is able to provide extremely cheap Gc pointers because it is based around
 /// "generativity".  During construction and access, the root type is branded by a unique, invariant

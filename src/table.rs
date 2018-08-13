@@ -209,9 +209,9 @@ impl<'gc> Hash for TableKey<'gc> {
                 Hash::hash(&5, state);
                 t.hash(state);
             }
-            Value::Function(f) => {
+            Value::Closure(c) => {
                 Hash::hash(&6, state);
-                f.hash(state);
+                c.hash(state);
             }
         }
     }

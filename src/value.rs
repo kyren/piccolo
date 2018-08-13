@@ -1,6 +1,6 @@
 use std::i64;
 
-use function::Function;
+use function::Closure;
 use string::String;
 use table::Table;
 
@@ -13,7 +13,7 @@ pub enum Value<'gc> {
     Number(f64),
     String(String<'gc>),
     Table(Table<'gc>),
-    Function(Function<'gc>),
+    Closure(Closure<'gc>),
 }
 
 impl<'gc> PartialEq for Value<'gc> {
@@ -39,8 +39,8 @@ impl<'gc> PartialEq for Value<'gc> {
             (Value::Table(a), Value::Table(b)) => a == b,
             (Value::Table(_), _) => false,
 
-            (Value::Function(a), Value::Function(b)) => a == b,
-            (Value::Function(_), _) => false,
+            (Value::Closure(a), Value::Closure(b)) => a == b,
+            (Value::Closure(_), _) => false,
         }
     }
 }

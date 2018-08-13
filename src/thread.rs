@@ -26,98 +26,129 @@ impl<'gc> Thread<'gc> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Collect)]
+struct Frame {
+    pc: usize,
+    bottom: usize,
+    base: usize,
+}
+
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 struct ThreadState<'gc> {
-    closure: Closure<'gc>,
     stack: Vec<Value<'gc>>,
-    pc: usize,
-    base: usize,
-    result: Option<(usize, usize)>,
+    frames: Vec<Frame>,
 }
 
 impl<'gc> ThreadState<'gc> {
     fn new(closure: Closure<'gc>, args: &[Value<'gc>]) -> ThreadState<'gc> {
-        let mut stack = vec![Value::Nil; args.len() + 256];
-
-        let base = if closure.proto.has_varargs && args.len() > closure.proto.fixed_params as usize
-        {
-            let vararg_count = args.len() - closure.proto.fixed_params as usize;
-            for i in 0..vararg_count {
-                stack[i] = args[closure.proto.fixed_params as usize + i];
-            }
-            vararg_count
+        let proto = closure.0.proto;
+        let fixed_params = proto.fixed_params as usize;
+        let var_params = if args.len() > fixed_params {
+            args.len() - fixed_params
         } else {
             0
         };
 
-        for i in 0..closure.proto.fixed_params as usize {
-            stack[base + i] = args.get(i).cloned().unwrap_or(Value::Nil);
+        let mut stack =
+            vec![Value::Nil; 1 + var_params + fixed_params + proto.max_register as usize + 1];
+
+        stack[0] = Value::Closure(closure);
+
+        for i in 0..var_params {
+            stack[1 + i] = args[fixed_params + i];
         }
 
-        ThreadState {
-            closure,
-            stack,
-            pc: 0,
-            base,
-            result: None,
+        for i in 0..fixed_params {
+            stack[1 + var_params + i] = args.get(i).cloned().unwrap_or(Value::Nil);
         }
+
+        let frames = vec![Frame {
+            pc: 0,
+            bottom: 0,
+            base: 1 + var_params,
+        }];
+
+        ThreadState { stack, frames }
     }
 
     fn run(&mut self, mut instruction_limit: Option<u64>) -> bool {
-        if self.result.is_some() {
-            return true;
-        }
+        'function_start: loop {
+            let mut current_frame = if let Some(top) = self.frames.last().cloned() {
+                top
+            } else {
+                return true;
+            };
 
-        let frame = &mut self.stack[self.base..self.base + 256];
-        loop {
-            match self.closure.proto.opcodes[self.pc] {
-                OpCode::Move { dest, source } => {
-                    frame[dest as usize] = frame[source as usize];
-                }
-                OpCode::LoadConstant { dest, constant } => {
-                    frame[dest as usize] = self.closure.proto.constants[constant as usize];
-                }
-                OpCode::LoadBool {
-                    dest,
-                    value,
-                    skip_next,
-                } => {
-                    frame[dest as usize] = Value::Boolean(value);
-                    if skip_next {
-                        self.pc += 1;
+            let current_function = match self.stack[current_frame.bottom] {
+                Value::Closure(c) => c,
+                _ => unreachable!(),
+            };
+
+            loop {
+                match current_function.0.proto.opcodes[current_frame.pc] {
+                    OpCode::Move { dest, source } => {
+                        self.stack[current_frame.base + dest as usize] =
+                            self.stack[current_frame.base + source as usize];
+                    }
+                    OpCode::LoadConstant { dest, constant } => {
+                        self.stack[current_frame.base + dest as usize] =
+                            current_function.0.proto.constants[constant as usize];
+                    }
+                    OpCode::LoadBool {
+                        dest,
+                        value,
+                        skip_next,
+                    } => {
+                        self.stack[current_frame.base + dest as usize] = Value::Boolean(value);
+                        if skip_next {
+                            current_frame.pc += 1;
+                        }
+                    }
+                    OpCode::LoadNil { dest, count } => {
+                        for i in dest..dest + count {
+                            self.stack[current_frame.base + i as usize] = Value::Nil;
+                        }
+                    }
+                    OpCode::Call {
+                        func,
+                        args,
+                        results,
+                    } => {
+                        unimplemented!("no function call");
+                    }
+                    OpCode::Return { start, count } => {
+                        if let Some(count) = count.get_count() {
+                            for i in 0..count {
+                                self.stack[current_frame.bottom + i as usize] =
+                                    self.stack[current_frame.base + start as usize + i as usize]
+                            }
+                            self.stack.truncate(current_frame.bottom + count as usize);
+                        } else {
+                            unimplemented!("no variable return");
+                        }
+                        self.frames.pop();
+                        continue 'function_start;
                     }
                 }
-                OpCode::LoadNil { dest, count } => {
-                    for i in dest..dest + count {
-                        frame[i as usize] = Value::Nil;
-                    }
-                }
-                OpCode::Return { start, count } => {
-                    if let Some(count) = count.get_count() {
-                        self.result = Some((self.base + start as usize, count as usize));
+                current_frame.pc += 1;
+
+                if let Some(instruction_limit) = instruction_limit.as_mut() {
+                    if *instruction_limit == 0 {
+                        return false;
                     } else {
-                        unimplemented!("no variable return");
+                        *instruction_limit -= 1
                     }
-                    break;
-                }
-            }
-            self.pc += 1;
-
-            if let Some(instruction_limit) = instruction_limit.as_mut() {
-                if *instruction_limit == 0 {
-                    break;
-                } else {
-                    *instruction_limit -= 1
                 }
             }
         }
-
-        self.result.is_some()
     }
 
     fn results(&self) -> Option<&[Value<'gc>]> {
-        self.result
-            .map(|(beg, count)| &self.stack[beg..beg + count])
+        if self.frames.is_empty() {
+            Some(&self.stack)
+        } else {
+            None
+        }
     }
 }

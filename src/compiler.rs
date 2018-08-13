@@ -54,6 +54,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(FunctionProto {
             fixed_params: 0,
             has_varargs: false,
+            max_register: compiler.last_allocated_register.unwrap_or(0),
             constants: compiler.constants,
             opcodes: compiler.opcodes,
         })
@@ -295,8 +296,8 @@ impl<'gc> PartialEq for ConstantValue<'gc> {
             (Value::Table(a), Value::Table(b)) => a == b,
             (Value::Table(_), _) => false,
 
-            (Value::Function(a), Value::Function(b)) => a == b,
-            (Value::Function(_), _) => false,
+            (Value::Closure(a), Value::Closure(b)) => a == b,
+            (Value::Closure(_), _) => false,
         }
     }
 }
@@ -329,9 +330,9 @@ impl<'gc> Hash for ConstantValue<'gc> {
                 Hash::hash(&5, state);
                 t.hash(state);
             }
-            Value::Function(f) => {
+            Value::Closure(c) => {
                 Hash::hash(&6, state);
-                f.hash(state);
+                c.hash(state);
             }
         }
     }
