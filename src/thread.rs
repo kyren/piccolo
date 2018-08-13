@@ -111,9 +111,9 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
                     OpCode::Call {
-                        func,
-                        args,
-                        results,
+                        func: _func,
+                        args: _args,
+                        results: _results,
                     } => {
                         unimplemented!("no function call");
                     }
