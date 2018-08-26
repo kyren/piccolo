@@ -8,7 +8,10 @@ use gc_arena::MutationContext;
 
 use function::FunctionProto;
 use opcode::{Constant, OpCode, Register, VarCount, MAX_VAR_COUNT};
-use parser::{Chunk, Expression, HeadExpression, LocalStatement, SimpleExpression, Statement};
+use parser::{
+    Chunk, Expression, HeadExpression, LocalStatement, PrimaryExpression, SimpleExpression,
+    Statement, SuffixedExpression,
+};
 use string::String;
 use value::Value;
 
@@ -75,14 +78,31 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             if ret_count > MAX_VAR_COUNT {
                 bail!("too many return expressions");
             }
-            let ret_start = self.allocate_registers(ret_count)?;
-            for i in 0..ret_count {
-                self.expression(&return_statement.returns[i as usize], Some(ret_start + i))?;
+
+            if ret_count == 0 {
+                self.opcodes.push(OpCode::Return {
+                    start: 0,
+                    count: VarCount::make_constant(0).unwrap(),
+                });
+            } else if ret_count == 1 {
+                let mut expr = self.expression(&return_statement.returns[0])?;
+                let reg = self.expr_any_register(&mut expr)?;
+                self.opcodes.push(OpCode::Return {
+                    start: reg,
+                    count: VarCount::make_constant(1).unwrap(),
+                });
+            } else {
+                let expr_start = self.expression(&return_statement.returns[0])?;
+                let ret_start = self.expr_allocate_register(expr_start)?;
+                for i in 1..ret_count {
+                    let expr = self.expression(&return_statement.returns[i as usize])?;
+                    self.expr_allocate_register(expr)?;
+                }
+                self.opcodes.push(OpCode::Return {
+                    start: ret_start,
+                    count: VarCount::make_constant(ret_count).unwrap(),
+                });
             }
-            self.opcodes.push(OpCode::Return {
-                start: ret_start,
-                count: VarCount::make_constant(ret_count).unwrap(),
-            });
         } else {
             self.opcodes.push(OpCode::Return {
                 start: 0,
@@ -96,41 +116,35 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn local_statement(&mut self, local_statement: &'a LocalStatement) -> Result<(), Error> {
         for (i, expr) in local_statement.values.iter().enumerate() {
             if local_statement.names.len() > i {
-                let reg = self.allocate_registers(1)?;
-                self.expression(expr, Some(reg))?;
+                let expr = self.expression(expr)?;
+                let reg = self.expr_allocate_register(expr)?;
                 self.locals.push((&local_statement.names[i], reg));
             } else {
-                self.expression(expr, None)?;
+                let expr = self.expression(expr)?;
+                self.free_expr(expr);
             }
         }
         for i in local_statement.values.len()..local_statement.names.len() {
-            let reg = self.allocate_registers(1)?;
+            let reg = self.allocate_register()?;
             self.load_nil(reg)?;
             self.locals.push((&local_statement.names[i], reg));
         }
         Ok(())
     }
 
-    fn expression(
-        &mut self,
-        expression: &'a Expression,
-        dest_register: Option<Register>,
-    ) -> Result<(), Error> {
+    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor, Error> {
         if expression.tail.len() > 0 {
             bail!("no binary operator support yet");
         }
-        self.head_expression(&expression.head, dest_register)
+        self.head_expression(&expression.head)
     }
 
     fn head_expression(
         &mut self,
         head_expression: &'a HeadExpression,
-        dest_register: Option<Register>,
-    ) -> Result<(), Error> {
+    ) -> Result<ExprDescriptor, Error> {
         match head_expression {
-            HeadExpression::Simple(simple_expression) => {
-                self.simple_expression(simple_expression, dest_register)
-            }
+            HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(_, _) => bail!("no unary operator support yet"),
         }
     }
@@ -138,66 +152,51 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn simple_expression(
         &mut self,
         simple_expression: &'a SimpleExpression,
-        dest_register: Option<Register>,
-    ) -> Result<(), Error> {
-        match simple_expression {
+    ) -> Result<ExprDescriptor, Error> {
+        Ok(match simple_expression {
             SimpleExpression::Float(f) => {
-                if let Some(dest_register) = dest_register {
-                    let op = OpCode::LoadConstant {
-                        dest: dest_register,
-                        constant: self.get_constant(Value::Number(*f))?,
-                    };
-                    self.opcodes.push(op);
-                }
+                ExprDescriptor::Constant(self.get_constant(Value::Number(*f))?)
             }
             SimpleExpression::Integer(i) => {
-                if let Some(dest_register) = dest_register {
-                    let op = OpCode::LoadConstant {
-                        dest: dest_register,
-                        constant: self.get_constant(Value::Integer(*i))?,
-                    };
-                    self.opcodes.push(op);
-                }
+                ExprDescriptor::Constant(self.get_constant(Value::Integer(*i))?)
             }
             SimpleExpression::String(s) => {
-                if let Some(dest_register) = dest_register {
-                    let string = String::new(self.mutation_context, &*s);
-                    let op = OpCode::LoadConstant {
-                        dest: dest_register,
-                        constant: self.get_constant(Value::String(string))?,
-                    };
-                    self.opcodes.push(op);
-                }
+                let string = String::new(self.mutation_context, &*s);
+                ExprDescriptor::Constant(self.get_constant(Value::String(string))?)
             }
-            SimpleExpression::Nil => {
-                if let Some(dest_register) = dest_register {
-                    self.load_nil(dest_register)?;
-                }
-            }
-            SimpleExpression::True => {
-                if let Some(dest_register) = dest_register {
-                    let op = OpCode::LoadBool {
-                        dest: dest_register,
-                        value: true,
-                        skip_next: false,
-                    };
-                    self.opcodes.push(op);
-                }
-            }
-            SimpleExpression::False => {
-                if let Some(dest_register) = dest_register {
-                    let op = OpCode::LoadBool {
-                        dest: dest_register,
-                        value: false,
-                        skip_next: false,
-                    };
-                    self.opcodes.push(op);
-                }
-            }
+            SimpleExpression::Nil => ExprDescriptor::Nil,
+            SimpleExpression::True => ExprDescriptor::Bool(true),
+            SimpleExpression::False => ExprDescriptor::Bool(false),
+            SimpleExpression::Suffixed(suffixed) => self.suffixed_expression(suffixed)?,
             _ => bail!("unsupported simple expression"),
-        }
+        })
+    }
 
-        Ok(())
+    fn suffixed_expression(
+        &mut self,
+        suffixed_expression: &'a SuffixedExpression,
+    ) -> Result<ExprDescriptor, Error> {
+        if !suffixed_expression.suffixes.is_empty() {
+            bail!("no support for expression suffixes yet");
+        }
+        self.primary_expression(&suffixed_expression.primary)
+    }
+
+    fn primary_expression(
+        &mut self,
+        primary_expression: &'a PrimaryExpression,
+    ) -> Result<ExprDescriptor, Error> {
+        match primary_expression {
+            PrimaryExpression::Name(name) => {
+                for &(local, register) in self.locals.iter().rev() {
+                    if name.as_ref() == local {
+                        return Ok(ExprDescriptor::Local(register));
+                    }
+                }
+                bail!("no support for _ENV yet");
+            }
+            PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
+        }
     }
 
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
@@ -236,11 +235,76 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn allocate_registers(&mut self, count: u8) -> Result<Register, Error> {
-        assert_ne!(count, 0, "cannot allocate 0 registers");
+    // Modify an expression to contain its result in any register, and return that register
+    fn expr_any_register(&mut self, expr: &mut ExprDescriptor) -> Result<Register, Error> {
+        let (new_expr, reg) = match *expr {
+            ExprDescriptor::Register(reg) => (ExprDescriptor::Register(reg), reg),
+            ExprDescriptor::Constant(constant) => {
+                let dest = self.allocate_register()?;
+                self.opcodes.push(OpCode::LoadConstant { dest, constant });
+                (ExprDescriptor::Register(dest), dest)
+            }
+            ExprDescriptor::Local(reg) => (ExprDescriptor::Local(reg), reg),
+            ExprDescriptor::Bool(value) => {
+                let dest = self.allocate_register()?;
+                self.opcodes.push(OpCode::LoadBool {
+                    dest,
+                    value,
+                    skip_next: false,
+                });
+                (ExprDescriptor::Register(dest), dest)
+            }
+            ExprDescriptor::Nil => {
+                let dest = self.allocate_register()?;
+                self.load_nil(dest)?;
+                (ExprDescriptor::Register(dest), dest)
+            }
+        };
 
-        let start = if let Some(last_allocated) = self.last_allocated_register {
-            if count > 255 - last_allocated {
+        *expr = new_expr;
+        Ok(reg)
+    }
+
+    // Consume an expression, ensuring that its result is stored in an allocated register
+    fn expr_allocate_register(&mut self, expr: ExprDescriptor) -> Result<Register, Error> {
+        match expr {
+            ExprDescriptor::Register(register) => Ok(register),
+            ExprDescriptor::Constant(constant) => {
+                let dest = self.allocate_register()?;
+                self.opcodes.push(OpCode::LoadConstant { dest, constant });
+                Ok(dest)
+            }
+            ExprDescriptor::Local(source) => {
+                let dest = self.allocate_register()?;
+                self.opcodes.push(OpCode::Move { source, dest });
+                Ok(dest)
+            }
+            ExprDescriptor::Bool(value) => {
+                let dest = self.allocate_register()?;
+                self.opcodes.push(OpCode::LoadBool {
+                    dest,
+                    value,
+                    skip_next: false,
+                });
+                Ok(dest)
+            }
+            ExprDescriptor::Nil => {
+                let dest = self.allocate_register()?;
+                self.load_nil(dest)?;
+                Ok(dest)
+            }
+        }
+    }
+
+    fn free_expr(&mut self, expr: ExprDescriptor) {
+        if let ExprDescriptor::Register(r) = expr {
+            self.free_register(r);
+        }
+    }
+
+    fn allocate_register(&mut self) -> Result<Register, Error> {
+        let reg = if let Some(last_allocated) = self.last_allocated_register {
+            if last_allocated == 255 {
                 return Err(InsufficientRegisters.into());
             }
             last_allocated + 1
@@ -248,27 +312,33 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             0
         };
 
-        self.last_allocated_register = Some(start + (count - 1));
-        Ok(start)
+        self.last_allocated_register = Some(reg);
+        Ok(reg)
     }
 
     #[allow(unused)]
-    fn free_registers(&mut self, start: Register, count: u8) {
-        assert_ne!(count, 0, "cannot free 0 registers");
+    fn free_register(&mut self, reg: Register) {
         let last_allocated = self
             .last_allocated_register
             .expect("no registers allocated to free");
         assert_eq!(
-            start + count - 1,
-            last_allocated,
-            "Only most recently allocated registers can be freed"
+            reg, last_allocated,
+            "Only the most recently allocated register can be freed"
         );
-        if start == 0 {
+        if reg == 0 {
             self.last_allocated_register = None;
         } else {
-            self.last_allocated_register = Some(start - 1);
+            self.last_allocated_register = Some(reg - 1);
         }
     }
+}
+
+enum ExprDescriptor {
+    Register(Register),
+    Local(Register),
+    Constant(Constant),
+    Bool(bool),
+    Nil,
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit

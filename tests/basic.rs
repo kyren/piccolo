@@ -19,3 +19,16 @@ fn test_return() {
         3,
     );
 }
+
+#[test]
+fn test_local() {
+    test_script(
+        r#"
+            local i = 7
+            local j = 30
+            local i = 42
+            return i
+        "#.as_bytes(),
+        42,
+    );
+}
