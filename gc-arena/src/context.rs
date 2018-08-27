@@ -69,7 +69,7 @@ impl Drop for Context {
                         while let Some(ptr) = drop_resume.0.take() {
                             let gc_box = ptr.as_ref();
                             drop_resume.0 = gc_box.next.get();
-                            Box::from_raw(gc_box.value.get());
+                            Box::from_raw(ptr.as_ptr());
                         }
                     }
                 }
@@ -314,6 +314,6 @@ enum Phase {
     Sleep,
 }
 
-unsafe fn static_gc_box<'gc, T: 'gc + Collect>(ptr: NonNull<GcBox<T>>) -> NonNull<GcBox<Collect>> {
-    mem::transmute::<_, NonNull<GcBox<Collect>>>(ptr as NonNull<GcBox<Collect + 'gc>>)
+unsafe fn static_gc_box<'gc>(ptr: NonNull<GcBox<Collect + 'gc>>) -> NonNull<GcBox<Collect>> {
+    mem::transmute(ptr)
 }
