@@ -98,7 +98,7 @@ impl ArenaParameters {
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
         struct $arena {
-            context: ::std::mem::ManuallyDrop<$crate::Context>,
+            context: $crate::Context,
             root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
         make_arena!(@impl $arena, $root);
@@ -106,7 +106,7 @@ macro_rules! make_arena {
 
     (pub $arena:ident, $root:ident) => {
         pub struct $arena {
-            context: ::std::mem::ManuallyDrop<$crate::Context>,
+            context: $crate::Context,
             root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
         make_arena!(@impl $arena, $root);
@@ -127,7 +127,7 @@ macro_rules! make_arena {
                     let context = $crate::Context::new(arena_parameters);
                     let root: $root<'static> = ::std::mem::transmute(f(context.mutation_context()));
                     $arena {
-                        context: ::std::mem::ManuallyDrop::new(context),
+                        context: context,
                         root: ::std::mem::ManuallyDrop::new(root),
                     }
                 }
@@ -147,7 +147,7 @@ macro_rules! make_arena {
                     let root: $root = f(context.mutation_context())?;
                     let root: $root<'static> = ::std::mem::transmute(root);
                     Ok($arena {
-                        context: ::std::mem::ManuallyDrop::new(context),
+                        context: context,
                         root: ::std::mem::ManuallyDrop::new(root),
                     })
                 }
@@ -213,7 +213,6 @@ macro_rules! make_arena {
             fn drop(&mut self) {
                 unsafe {
                     ::std::mem::ManuallyDrop::drop(&mut self.root);
-                    ::std::mem::ManuallyDrop::drop(&mut self.context);
                 }
             }
         }
