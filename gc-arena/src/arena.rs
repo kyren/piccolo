@@ -98,25 +98,22 @@ impl ArenaParameters {
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
         struct $arena {
-            context: $crate::Context,
-            root: $root<'static>,
+            context: ::std::mem::ManuallyDrop<$crate::Context>,
+            root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
-        make_arena!(@methods $arena, $root);
+        make_arena!(@impl $arena, $root);
     };
 
     (pub $arena:ident, $root:ident) => {
         pub struct $arena {
-            context: $crate::Context,
-            root: $root<'static>,
+            context: ::std::mem::ManuallyDrop<$crate::Context>,
+            root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
-        make_arena!(@methods $arena, $root);
+        make_arena!(@impl $arena, $root);
     };
 
-    (@methods $arena:ident, $root:ident) => {
-        impl $arena
-        where
-            for<'gc> $root<'gc>: $crate::Collect,
-        {
+    (@impl $arena:ident, $root:ident) => {
+        impl $arena {
             /// Create a new arena with the given garbage collector tuning parameters.  You must
             /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
             /// The held root type is immutable inside the arena, in order to provide mutation, you
@@ -129,7 +126,10 @@ macro_rules! make_arena {
                 unsafe {
                     let context = $crate::Context::new(arena_parameters);
                     let root: $root<'static> = ::std::mem::transmute(f(context.mutation_context()));
-                    $arena { context, root }
+                    $arena {
+                        context: ::std::mem::ManuallyDrop::new(context),
+                        root: ::std::mem::ManuallyDrop::new(root),
+                    }
                 }
             }
 
@@ -146,7 +146,10 @@ macro_rules! make_arena {
                     let context = $crate::Context::new(arena_parameters);
                     let root: $root = f(context.mutation_context())?;
                     let root: $root<'static> = ::std::mem::transmute(root);
-                    Ok($arena { context, root })
+                    Ok($arena {
+                        context: ::std::mem::ManuallyDrop::new(context),
+                        root: ::std::mem::ManuallyDrop::new(root),
+                    })
                 }
             }
 
@@ -163,7 +166,7 @@ macro_rules! make_arena {
                 unsafe {
                     f(
                         self.context.mutation_context(),
-                        ::std::mem::transmute(&self.root),
+                        ::std::mem::transmute::<&$root<'static>, _>(&*self.root),
                     )
                 }
             }
@@ -188,7 +191,7 @@ macro_rules! make_arena {
                 unsafe {
                     let debt = self.context.allocation_debt();
                     if debt > 0.0 {
-                        self.context.do_collection(&self.root, debt);
+                        self.context.do_collection(&*self.root, debt);
                     }
                 }
             }
@@ -200,7 +203,17 @@ macro_rules! make_arena {
             pub fn collect_all(&mut self) {
                 self.context.wake();
                 unsafe {
-                    self.context.do_collection(&self.root, ::std::f64::INFINITY);
+                    self.context
+                        .do_collection(&*self.root, ::std::f64::INFINITY);
+                }
+            }
+        }
+
+        impl Drop for $arena {
+            fn drop(&mut self) {
+                unsafe {
+                    ::std::mem::ManuallyDrop::drop(&mut self.root);
+                    ::std::mem::ManuallyDrop::drop(&mut self.context);
                 }
             }
         }

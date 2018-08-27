@@ -5,3 +5,6 @@ authors = ["kyren <kerriganw@gmail.com>"]
 
 [dependencies]
 gc-arena-derive = { path = "./gc-arena-derive" }
+
+[dev-dependencies]
+rand = "0.5"

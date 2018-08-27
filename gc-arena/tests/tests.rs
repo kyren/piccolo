@@ -1,7 +1,11 @@
+extern crate rand;
+
 #[macro_use]
 extern crate gc_arena;
 
-use gc_arena::{ArenaParameters, Collect, Gc};
+use std::collections::HashMap;
+
+use gc_arena::{ArenaParameters, Collect, Gc, GcCell};
 
 #[test]
 fn simple_allocation() {
@@ -20,6 +24,39 @@ fn simple_allocation() {
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
     });
+}
+
+#[test]
+fn repeated_allocation_deallocation() {
+    #[derive(Collect)]
+    #[collect(empty_drop)]
+    struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, i32>>>);
+    make_arena!(TestArena, TestRoot);
+
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+        TestRoot(GcCell::allocate(mc, HashMap::new()))
+    });
+
+    for _ in 0..100 {
+        arena.mutate(|mc, root| {
+            let mut map = root.0.write(mc);
+            for _ in 0..100 {
+                let i: i32 = rand::random();
+                if let Some(old) = map.insert(i, Gc::allocate(mc, i)) {
+                    assert_eq!(*old, i);
+                }
+            }
+
+            for _ in 0..50 {
+                let i: i32 = rand::random();
+                if let Some(old) = map.remove(&i) {
+                    assert_eq!(*old, i);
+                }
+            }
+        });
+
+        arena.collect_debt();
+    }
 }
 
 #[test]
