@@ -7,7 +7,7 @@ use failure::{err_msg, Error};
 use gc_arena::MutationContext;
 
 use function::FunctionProto;
-use opcode::{Constant, OpCode, Register, VarCount, MAX_VAR_COUNT};
+use opcode::{Constant, OpCode, Register, VarCount};
 use parser::{
     Chunk, Expression, HeadExpression, LocalStatement, PrimaryExpression, SimpleExpression,
     Statement, SuffixedExpression,
@@ -60,6 +60,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             max_register: compiler.last_allocated_register.unwrap_or(0),
             constants: compiler.constants,
             opcodes: compiler.opcodes,
+            upvalues: Vec::new(),
+            functions: Vec::new(),
         })
     }
 
@@ -75,21 +77,20 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         if let Some(return_statement) = &chunk.block.return_statement {
             let ret_count = return_statement.returns.len() as u8;
-            if ret_count > MAX_VAR_COUNT {
-                bail!("too many return expressions");
-            }
+            let var_count =
+                VarCount::make_constant(ret_count).ok_or_else(|| err_msg("too many expressions"))?;
 
             if ret_count == 0 {
                 self.opcodes.push(OpCode::Return {
                     start: 0,
-                    count: VarCount::make_constant(0).unwrap(),
+                    count: var_count,
                 });
             } else if ret_count == 1 {
                 let mut expr = self.expression(&return_statement.returns[0])?;
                 let reg = self.expr_any_register(&mut expr)?;
                 self.opcodes.push(OpCode::Return {
                     start: reg,
-                    count: VarCount::make_constant(1).unwrap(),
+                    count: var_count,
                 });
             } else {
                 let expr_start = self.expression(&return_statement.returns[0])?;
@@ -100,7 +101,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
                 self.opcodes.push(OpCode::Return {
                     start: ret_start,
-                    count: VarCount::make_constant(ret_count).unwrap(),
+                    count: var_count,
                 });
             }
         } else {

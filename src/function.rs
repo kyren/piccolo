@@ -2,8 +2,16 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Gc, MutationContext};
 
-use opcode::OpCode;
+use opcode::{OpCode, Register};
 use value::Value;
+
+pub type UpValIndex = u8;
+
+#[derive(Debug, Collect)]
+pub enum UpValDesc {
+    ParentLocal(Register),
+    Outer(UpValIndex),
+}
 
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
@@ -14,12 +22,22 @@ pub struct FunctionProto<'gc> {
     pub max_register: u8,
     pub constants: Vec<Value<'gc>>,
     pub opcodes: Vec<OpCode>,
+    pub upvalues: Vec<UpValDesc>,
+    pub functions: Vec<FunctionProto<'gc>>,
+}
+
+#[derive(Debug, Collect, Copy, Clone)]
+#[collect(require_copy)]
+pub enum UpValue<'gc> {
+    Open(usize),
+    Closed(Value<'gc>),
 }
 
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct ClosureState<'gc> {
     pub proto: Gc<'gc, FunctionProto<'gc>>,
+    pub upvalues: Vec<Gc<'gc, UpValue<'gc>>>,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -46,6 +64,7 @@ impl<'gc> Closure<'gc> {
             mc,
             ClosureState {
                 proto: Gc::allocate(mc, proto),
+                upvalues: Vec::new(),
             },
         ))
     }
