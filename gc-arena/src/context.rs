@@ -59,14 +59,24 @@ pub struct Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        unsafe {
-            let mut all = self.all.get();
-            while let Some(ptr) = all {
-                let gc_box = ptr.as_ref();
-                Box::from_raw(gc_box.value.get());
-                all = gc_box.next.get();
+        struct DropAll(Option<NonNull<GcBox<Collect>>>);
+
+        impl Drop for DropAll {
+            fn drop(&mut self) {
+                unsafe {
+                    if let Some(ptr) = self.0.take() {
+                        let mut drop_resume = DropAll(Some(ptr));
+                        while let Some(ptr) = drop_resume.0.take() {
+                            let gc_box = ptr.as_ref();
+                            drop_resume.0 = gc_box.next.get();
+                            Box::from_raw(gc_box.value.get());
+                        }
+                    }
+                }
             }
         }
+
+        DropAll(self.all.get());
     }
 }
 
@@ -113,21 +123,27 @@ impl Context {
     // Do some collection work until we have either reached the target amount of work or are in the
     // sleeping gc phase.  The unit of "work" here is a byte count of objects either turned black or
     // freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units of
-    // work, whatever percentage of them are live or not.
+    // work, whatever percentage of them are live or not.  Returns the amount of work actually
+    // performed, which may be less if we have entered the sleep phase early.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
-        let mut work_left = work;
+    pub unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
+        let mut work_done = 0.0;
         let cc = CollectionContext { context: self };
 
-        while work_left > 0.0 {
+        while work > work_done {
             match self.phase.get() {
                 Phase::Wake => {
                     // In the Wake phase, we trace the root object and add its children to the gray
                     // queue, and transition to the propagate phase.
                     root.trace(cc);
-                    work_left -= mem::size_of::<R>() as f64;
+
+                    let root_size = mem::size_of::<R>() as f64;
+                    work_done += root_size;
+                    self.allocation_debt
+                        .set((self.allocation_debt.get() - root_size).max(0.0));
+
                     self.phase.set(Phase::Propagate);
                 }
                 Phase::Propagate => {
@@ -137,7 +153,10 @@ impl Context {
                     // double count them.  Processing "gray again" objects later also gives them
                     // more time to be mutated again without triggering another write barrier.
                     let next_gray = if let Some(ptr) = self.gray.borrow_mut().pop() {
-                        work_left -= mem::size_of_val(ptr.as_ref()) as f64;
+                        let gray_size = mem::size_of_val(ptr.as_ref()) as f64;
+                        work_done += gray_size;
+                        self.allocation_debt
+                            .set((self.allocation_debt.get() - gray_size).max(0.0));
                         Some(ptr)
                     } else if let Some(ptr) = self.gray_again.borrow_mut().pop() {
                         Some(ptr)
@@ -155,6 +174,7 @@ impl Context {
                         // If we have no objects left in the normal gray queue, we enter the sleep
                         // phase.
                         self.phase.set(Phase::Sweep);
+                        self.sweep.set(self.all.get());
                     }
                 }
                 Phase::Sweep => {
@@ -181,7 +201,9 @@ impl Context {
                             }
                             self.total_allocated
                                 .set(self.total_allocated.get() - sweep_size);
-                            work_left -= sweep_size as f64;
+                            work_done += sweep_size as f64;
+                            self.allocation_debt
+                                .set((self.allocation_debt.get() - sweep_size as f64).max(0.0));
                             Box::from_raw(sweep_ptr.as_ptr());
                         } else {
                             // If the next object in the sweep portion of the main list is black, we
@@ -199,6 +221,10 @@ impl Context {
                         // We are done sweeping, so enter the sleeping phase.
                         self.sweep_prev.set(None);
                         self.phase.set(Phase::Sleep);
+
+                        // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
+                        self.allocation_debt.set(0.0);
+
                         self.wakeup_total.set(
                             self.total_allocated.get()
                                 + ((self.remembered_size.get() as f64
@@ -214,13 +240,7 @@ impl Context {
             }
         }
 
-        if self.phase.get() == Phase::Sleep {
-            // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
-            self.allocation_debt.set(0.0);
-        } else {
-            self.allocation_debt
-                .set((self.allocation_debt.get() - work + work_left).max(0.0));
-        }
+        work_done
     }
 
     unsafe fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBox<T>> {
@@ -249,10 +269,8 @@ impl Context {
         gc_box.flags.set_needs_trace(T::needs_trace());
         let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(gc_box)));
         self.all.set(Some(static_gc_box(ptr)));
-        if self.phase.get() == Phase::Sweep {
-            if self.sweep_prev.get().is_none() {
-                self.sweep_prev.set(self.all.get());
-            }
+        if self.phase.get() == Phase::Sweep && self.sweep_prev.get().is_none() {
+            self.sweep_prev.set(self.all.get());
         }
 
         ptr

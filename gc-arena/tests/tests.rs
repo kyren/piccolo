@@ -4,6 +4,7 @@ extern crate rand;
 extern crate gc_arena;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gc_arena::{ArenaParameters, Collect, Gc, GcCell};
 
@@ -57,6 +58,64 @@ fn repeated_allocation_deallocation() {
 
         arena.collect_debt();
     }
+}
+
+#[test]
+fn all_dropped() {
+    #[derive(Clone)]
+    struct RefCounter(Rc<()>);
+    unsafe_empty_collect!(RefCounter);
+
+    #[derive(Collect)]
+    #[collect(empty_drop)]
+    struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
+    make_arena!(TestArena, TestRoot);
+
+    let r = RefCounter(Rc::new(()));
+
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+        TestRoot(GcCell::allocate(mc, Vec::new()))
+    });
+
+    arena.mutate(|mc, root| {
+        let mut v = root.0.write(mc);
+        for _ in 0..100 {
+            v.push(Gc::allocate(mc, r.clone()));
+        }
+    });
+    drop(arena);
+    assert_eq!(Rc::strong_count(&r.0), 1);
+}
+
+#[test]
+fn all_garbage_collected() {
+    #[derive(Clone)]
+    struct RefCounter(Rc<()>);
+    unsafe_empty_collect!(RefCounter);
+
+    #[derive(Collect)]
+    #[collect(empty_drop)]
+    struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
+    make_arena!(TestArena, TestRoot);
+
+    let r = RefCounter(Rc::new(()));
+
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+        TestRoot(GcCell::allocate(mc, Vec::new()))
+    });
+
+    arena.mutate(|mc, root| {
+        let mut v = root.0.write(mc);
+        for _ in 0..100 {
+            v.push(Gc::allocate(mc, r.clone()));
+        }
+    });
+    arena.mutate(|mc, root| {
+        root.0.write(mc).clear();
+    });
+    arena.collect_all();
+    arena.collect_all();
+    assert_eq!(Rc::strong_count(&r.0), 1);
 }
 
 #[test]
