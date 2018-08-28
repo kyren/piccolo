@@ -113,6 +113,11 @@ impl Context {
         self.allocation_debt.get()
     }
 
+    #[inline]
+    pub fn total_allocated(&self) -> usize {
+        self.total_allocated.get()
+    }
+
     // If the garbage collector is currently in the sleep phase, transition to the wake phase.
     pub fn wake(&self) {
         if self.phase.get() == Phase::Sleep {

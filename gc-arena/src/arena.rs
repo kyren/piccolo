@@ -171,6 +171,13 @@ macro_rules! make_arena {
                 }
             }
 
+            /// Return total currently used memory
+            #[allow(unused)]
+            #[inline]
+            pub fn total_allocated(&self) -> usize {
+                self.context.total_allocated()
+            }
+
             /// When the garbage collector is not sleeping, all allocated objects cause the arena to
             /// accumulate "allocation debt".  This debt is then be used to time incremental garbage
             /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation

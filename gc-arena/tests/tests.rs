@@ -29,35 +29,49 @@ fn simple_allocation() {
 
 #[test]
 fn repeated_allocation_deallocation() {
+    #[derive(Clone)]
+    struct RefCounter(Rc<()>);
+    unsafe_empty_collect!(RefCounter);
+
     #[derive(Collect)]
     #[collect(empty_drop)]
-    struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, i32>>>);
+    struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, (i32, RefCounter)>>>);
     make_arena!(TestArena, TestRoot);
+
+    let r = RefCounter(Rc::new(()));
 
     let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, HashMap::new()))
     });
 
-    for _ in 0..100 {
+    for _ in 0..200 {
         arena.mutate(|mc, root| {
             let mut map = root.0.write(mc);
             for _ in 0..100 {
-                let i: i32 = rand::random();
-                if let Some(old) = map.insert(i, Gc::allocate(mc, i)) {
-                    assert_eq!(*old, i);
+                let i = rand::random::<i32>() % 10000;
+                if let Some(old) = map.insert(i, Gc::allocate(mc, (i, r.clone()))) {
+                    assert_eq!(old.0, i);
                 }
             }
 
-            for _ in 0..50 {
-                let i: i32 = rand::random();
+            for _ in 0..100 {
+                let i = rand::random::<i32>() % 10000;
                 if let Some(old) = map.remove(&i) {
-                    assert_eq!(*old, i);
+                    assert_eq!(old.0, i);
                 }
             }
         });
 
         arena.collect_debt();
     }
+
+    arena.collect_all();
+    arena.collect_all();
+
+    let live_size = arena.mutate(|_, root| root.0.read().len());
+
+    println!("{}", live_size);
+    assert_eq!(Rc::strong_count(&r.0), live_size + 1);
 }
 
 #[test]
