@@ -6,6 +6,8 @@ extern crate gc_arena;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use rand::distributions::Distribution;
+
 use gc_arena::{ArenaParameters, Collect, Gc, GcCell};
 
 #[test]
@@ -44,18 +46,21 @@ fn repeated_allocation_deallocation() {
         TestRoot(GcCell::allocate(mc, HashMap::new()))
     });
 
+    let key_range = rand::distributions::Uniform::from(0..10000);
+    let mut rng = rand::thread_rng();
+
     for _ in 0..200 {
         arena.mutate(|mc, root| {
             let mut map = root.0.write(mc);
             for _ in 0..100 {
-                let i = rand::random::<i32>() % 10000;
+                let i = key_range.sample(&mut rng);
                 if let Some(old) = map.insert(i, Gc::allocate(mc, (i, r.clone()))) {
                     assert_eq!(old.0, i);
                 }
             }
 
             for _ in 0..100 {
-                let i = rand::random::<i32>() % 10000;
+                let i = key_range.sample(&mut rng);
                 if let Some(old) = map.remove(&i) {
                     assert_eq!(old.0, i);
                 }
@@ -69,7 +74,6 @@ fn repeated_allocation_deallocation() {
     arena.collect_all();
 
     let live_size = arena.mutate(|_, root| root.0.read().len());
-
     assert_eq!(Rc::strong_count(&r.0), live_size + 1);
 }
 
