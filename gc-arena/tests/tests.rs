@@ -70,7 +70,6 @@ fn repeated_allocation_deallocation() {
 
     let live_size = arena.mutate(|_, root| root.0.read().len());
 
-    println!("{}", live_size);
     assert_eq!(Rc::strong_count(&r.0), live_size + 1);
 }
 
