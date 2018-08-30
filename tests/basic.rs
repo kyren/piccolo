@@ -32,3 +32,16 @@ fn test_local() {
         42,
     );
 }
+
+#[test]
+fn test_assignment() {
+    test_script(
+        r#"
+            local i = 7
+            local i = 30
+            i = 35
+            return i
+        "#.as_bytes(),
+        35,
+    );
+}

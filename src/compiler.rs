@@ -10,8 +10,9 @@ use gc_arena::MutationContext;
 use function::{FunctionProto, UpValueDescriptor};
 use opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
 use parser::{
-    Block, Chunk, Expression, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
-    ReturnStatement, SimpleExpression, Statement, SuffixedExpression,
+    AssignmentStatement, AssignmentTarget, Block, Chunk, Expression, FunctionStatement,
+    HeadExpression, LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression,
+    Statement, SuffixedExpression,
 };
 use string::String;
 use value::Value;
@@ -93,6 +94,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Statement::LocalFunction(local_function) => {
                 self.local_function(local_function)?;
             }
+            Statement::Assignment(assignment) => {
+                self.assignment_statement(assignment)?;
+            }
             _ => bail!("unsupported statement type"),
         }
 
@@ -151,6 +155,35 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .locals
                 .push((&local_statement.names[i], reg));
         }
+        Ok(())
+    }
+
+    fn assignment_statement(&mut self, assignment: &'a AssignmentStatement) -> Result<(), Error> {
+        for (i, target) in assignment.targets.iter().enumerate() {
+            let mut expr = if i < assignment.values.len() {
+                self.expression(&assignment.values[i])?
+            } else {
+                ExprDescriptor::Nil
+            };
+
+            match target {
+                AssignmentTarget::Name(name) => match self.find_variable(name)? {
+                    VariableDescriptor::Local(dest) => {
+                        self.expr_to_register(expr, dest)?;
+                    }
+                    VariableDescriptor::UpValue(dest) => {
+                        let source = self.expr_any_register(&mut expr)?;
+                        self.current_function()
+                            .opcodes
+                            .push(OpCode::SetUpValue { source, dest });
+                        self.free_expr(expr);
+                    }
+                    VariableDescriptor::Global(_) => bail!("global variables unsupported"),
+                },
+                AssignmentTarget::Field(_, _) => bail!("unimplemented assignment target"),
+            }
+        }
+
         Ok(())
     }
 
@@ -402,43 +435,52 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(reg)
     }
 
-    // Consume an expression, ensuring that its result is stored in an allocated register
-    fn expr_allocate_register(&mut self, expr: ExprDescriptor) -> Result<Register, Error> {
+    // Consume an expression and store the result in the given register
+    fn expr_to_register(&mut self, expr: ExprDescriptor, dest: Register) -> Result<(), Error> {
         match expr {
-            ExprDescriptor::Register(register) => Ok(register),
+            ExprDescriptor::Register(register) => {
+                self.current_function().opcodes.push(OpCode::Move {
+                    dest,
+                    source: register,
+                });
+            }
             ExprDescriptor::Constant(constant) => {
-                let dest = self.allocate_register()?;
                 self.current_function()
                     .opcodes
                     .push(OpCode::LoadConstant { dest, constant });
-                Ok(dest)
             }
             ExprDescriptor::Local(source) => {
-                let dest = self.allocate_register()?;
                 self.current_function()
                     .opcodes
                     .push(OpCode::Move { source, dest });
-                Ok(dest)
             }
             ExprDescriptor::UpValue(source) => {
-                let dest = self.allocate_register()?;
                 self.current_function()
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
-                Ok(dest)
             }
             ExprDescriptor::Bool(value) => {
-                let dest = self.allocate_register()?;
                 self.current_function().opcodes.push(OpCode::LoadBool {
                     dest,
                     value,
                     skip_next: false,
                 });
-                Ok(dest)
             }
             ExprDescriptor::Nil => {
-                let dest = self.allocate_register()?;
                 self.load_nil(dest)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // Consume an expression, ensuring that its result is stored in a newly allocated register
+    fn expr_allocate_register(&mut self, expr: ExprDescriptor) -> Result<Register, Error> {
+        match expr {
+            ExprDescriptor::Register(register) => Ok(register),
+            expr => {
+                let dest = self.allocate_register()?;
+                self.expr_to_register(expr, dest)?;
                 Ok(dest)
             }
         }

@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 use fnv::FnvHashMap;
-use num_traits;
+use num_traits::cast;
 
 use gc_arena::{GcCell, MutationContext};
 
@@ -244,9 +244,9 @@ fn canonical_float_bytes(f: f64) -> u64 {
 // usize::MAX), returns the associated array index.
 fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
     let i = match key {
-        Value::Integer(i) => num_traits::cast::<_, usize>(i)?,
+        Value::Integer(i) => cast::<_, usize>(i)?,
         Value::Number(f) => {
-            let i = num_traits::cast::<_, usize>(f)?;
+            let i = cast::<_, usize>(f)?;
             if i as f64 != f {
                 return None;
             }
