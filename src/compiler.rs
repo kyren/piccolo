@@ -10,9 +10,9 @@ use gc_arena::MutationContext;
 use function::{FunctionProto, UpValueDescriptor};
 use opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
 use parser::{
-    AssignmentStatement, AssignmentTarget, Block, Chunk, Expression, FunctionStatement,
-    HeadExpression, LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression,
-    Statement, SuffixedExpression,
+    AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
+    FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
+    ReturnStatement, SimpleExpression, Statement, SuffixedExpression,
 };
 use string::String;
 use value::Value;
@@ -56,17 +56,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         };
 
         compiler.block(&chunk.block)?;
-        let function = compiler.function_stack.pop().unwrap();
-
-        Ok(FunctionProto {
-            fixed_params: 0,
-            has_varargs: false,
-            stack_size: function.stack_size,
-            constants: function.constants,
-            opcodes: function.opcodes,
-            upvalues: function.upvalues.iter().map(|(_, d)| *d).collect(),
-            functions: function.functions,
-        })
+        Ok(compiler.pop_function_proto())
     }
 
     fn block(&mut self, block: &'a Block) -> Result<(), Error> {
@@ -79,7 +69,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         } else {
             self.current_function().opcodes.push(OpCode::Return {
                 start: 0,
-                count: VarCount::make_constant(0).unwrap(),
+                count: VarCount::make_zero(),
             });
         }
 
@@ -94,8 +84,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Statement::LocalFunction(local_function) => {
                 self.local_function(local_function)?;
             }
+            Statement::FunctionCall(function_call) => {
+                self.function_call(function_call)?;
+            }
             Statement::Assignment(assignment) => {
-                self.assignment_statement(assignment)?;
+                self.assignment(assignment)?;
             }
             _ => bail!("unsupported statement type"),
         }
@@ -119,6 +112,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 start: reg,
                 count: var_count,
             });
+            self.free_expr(expr);
         } else {
             let expr_start = self.expression(&return_statement.returns[0])?;
             let ret_start = self.expr_allocate_register(expr_start)?;
@@ -130,6 +124,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 start: ret_start,
                 count: var_count,
             });
+            for i in (0..ret_count).rev() {
+                self.free_register(ret_start + i);
+            }
         }
 
         Ok(())
@@ -158,7 +155,35 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn assignment_statement(&mut self, assignment: &'a AssignmentStatement) -> Result<(), Error> {
+    fn function_call(&mut self, function_call: &'a FunctionCallStatement) -> Result<(), Error> {
+        let func_expr = self.suffixed_expression(&function_call.head)?;
+        let f_reg = self.expr_allocate_register(func_expr)?;
+
+        match &function_call.call {
+            CallSuffix::Function(exprs) => {
+                let arg_count: u8 = cast(exprs.len()).ok_or(CompilerLimit::FixedParameters)?;
+                for expr in exprs {
+                    let expr = self.expression(expr)?;
+                    self.expr_allocate_register(expr)?;
+                }
+                self.current_function().opcodes.push(OpCode::Call {
+                    func: f_reg,
+                    args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
+                    returns: VarCount::make_zero(),
+                });
+                for i in (1..=arg_count).rev() {
+                    self.free_register(f_reg + i);
+                }
+            }
+            CallSuffix::Method(_, _) => bail!("method unsupported"),
+        }
+
+        self.free_register(f_reg);
+
+        Ok(())
+    }
+
+    fn assignment(&mut self, assignment: &'a AssignmentStatement) -> Result<(), Error> {
         for (i, target) in assignment.targets.iter().enumerate() {
             let mut expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
@@ -206,6 +231,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             let current_function = self.current_function();
             current_function.stack_top = fixed_params as u16;
             current_function.stack_size = current_function.stack_top;
+            current_function.fixed_params = fixed_params;
             for (i, name) in local_function.definition.parameters.iter().enumerate() {
                 current_function.locals.push((name, cast(i).unwrap()));
             }
@@ -213,17 +239,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.block(&local_function.definition.body)?;
 
-        let new_function = self.function_stack.pop().unwrap();
-        let new_function = FunctionProto {
-            fixed_params,
-            has_varargs: false,
-            stack_size: new_function.stack_size,
-            constants: new_function.constants,
-            opcodes: new_function.opcodes,
-            upvalues: new_function.upvalues.iter().map(|(_, d)| *d).collect(),
-            functions: new_function.functions,
-        };
-
+        let new_function = self.pop_function_proto();
         self.current_function().functions.push(new_function);
         let dest = self.allocate_register()?;
 
@@ -352,6 +368,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         Ok(VariableDescriptor::Global(name))
+    }
+
+    fn pop_function_proto(&mut self) -> FunctionProto<'gc> {
+        let function = self.function_stack.pop().unwrap();
+        assert_eq!(
+            function.stack_top as usize,
+            function.locals.len(),
+            "register leak"
+        );
+        FunctionProto {
+            fixed_params: function.fixed_params,
+            has_varargs: false,
+            stack_size: function.stack_size,
+            constants: function.constants,
+            opcodes: function.opcodes,
+            upvalues: function.upvalues.iter().map(|(_, d)| *d).collect(),
+            functions: function.functions,
+        }
     }
 
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
@@ -525,6 +559,8 @@ struct CompilerFunction<'gc, 'a> {
 
     stack_top: u16,
     stack_size: u16,
+
+    fixed_params: u8,
     locals: Vec<(&'a [u8], Register)>,
 
     opcodes: Vec<OpCode>,

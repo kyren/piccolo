@@ -23,6 +23,10 @@ impl VarCount {
         }
     }
 
+    pub fn make_zero() -> VarCount {
+        VarCount(1)
+    }
+
     pub fn is_variable(&self) -> bool {
         self.0 == 0
     }
