@@ -80,4 +80,19 @@ pub enum OpCode {
         proto: FunctionProtoIndex,
         dest: Register,
     },
+    AddRR {
+        dest: Register,
+        left: Register,
+        right: Register,
+    },
+    AddRC {
+        dest: Register,
+        left: Register,
+        right: Constant,
+    },
+    AddCR {
+        dest: Register,
+        left: Constant,
+        right: Register,
+    },
 }

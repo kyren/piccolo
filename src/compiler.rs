@@ -10,7 +10,7 @@ use gc_arena::MutationContext;
 use function::{FunctionProto, UpValueDescriptor};
 use opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
 use parser::{
-    AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
+    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
     ReturnStatement, SimpleExpression, Statement, SuffixedExpression,
 };
@@ -188,7 +188,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             let mut expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
             } else {
-                ExprDescriptor::Nil
+                ExprDescriptor::Value(Value::Nil)
             };
 
             match target {
@@ -257,17 +257,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor, Error> {
-        if expression.tail.len() > 0 {
-            bail!("no binary operator support yet");
+    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc>, Error> {
+        let mut expr = self.head_expression(&expression.head)?;
+        for (binop, right) in &expression.tail {
+            let right = self.expression(&right)?;
+            expr = self.binop(expr, *binop, right)?;
         }
-        self.head_expression(&expression.head)
+        Ok(expr)
     }
 
     fn head_expression(
         &mut self,
         head_expression: &'a HeadExpression,
-    ) -> Result<ExprDescriptor, Error> {
+    ) -> Result<ExprDescriptor<'gc>, Error> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(_, _) => bail!("no unary operator support yet"),
@@ -277,21 +279,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn simple_expression(
         &mut self,
         simple_expression: &'a SimpleExpression,
-    ) -> Result<ExprDescriptor, Error> {
+    ) -> Result<ExprDescriptor<'gc>, Error> {
         Ok(match simple_expression {
-            SimpleExpression::Float(f) => {
-                ExprDescriptor::Constant(self.get_constant(Value::Number(*f))?)
-            }
-            SimpleExpression::Integer(i) => {
-                ExprDescriptor::Constant(self.get_constant(Value::Integer(*i))?)
-            }
+            SimpleExpression::Float(f) => ExprDescriptor::Value(Value::Number(*f)),
+            SimpleExpression::Integer(i) => ExprDescriptor::Value(Value::Integer(*i)),
             SimpleExpression::String(s) => {
                 let string = String::new(self.mutation_context, &*s);
-                ExprDescriptor::Constant(self.get_constant(Value::String(string))?)
+                ExprDescriptor::Value(Value::String(string))
             }
-            SimpleExpression::Nil => ExprDescriptor::Nil,
-            SimpleExpression::True => ExprDescriptor::Bool(true),
-            SimpleExpression::False => ExprDescriptor::Bool(false),
+            SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
+            SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
+            SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
             SimpleExpression::Suffixed(suffixed) => self.suffixed_expression(suffixed)?,
             _ => bail!("unsupported simple expression"),
         })
@@ -300,7 +298,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn suffixed_expression(
         &mut self,
         suffixed_expression: &'a SuffixedExpression,
-    ) -> Result<ExprDescriptor, Error> {
+    ) -> Result<ExprDescriptor<'gc>, Error> {
         if !suffixed_expression.suffixes.is_empty() {
             bail!("no support for expression suffixes yet");
         }
@@ -310,7 +308,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn primary_expression(
         &mut self,
         primary_expression: &'a PrimaryExpression,
-    ) -> Result<ExprDescriptor, Error> {
+    ) -> Result<ExprDescriptor<'gc>, Error> {
         match primary_expression {
             PrimaryExpression::Name(name) => Ok(match self.find_variable(name)? {
                 VariableDescriptor::Local(reg) => ExprDescriptor::Local(reg),
@@ -320,6 +318,64 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }),
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
+        }
+    }
+
+    fn binop(
+        &mut self,
+        left: ExprDescriptor<'gc>,
+        binop: BinaryOperator,
+        right: ExprDescriptor<'gc>,
+    ) -> Result<ExprDescriptor<'gc>, Error> {
+        match binop {
+            BinaryOperator::Add => {
+                if let (ExprDescriptor::Value(a), ExprDescriptor::Value(b)) = (left, right) {
+                    if let Some(v) = match (a, b) {
+                        (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
+                        (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
+                        (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
+                        (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
+                        _ => None,
+                    } {
+                        return Ok(ExprDescriptor::Value(v));
+                    }
+                }
+
+                match (left, right) {
+                    (mut left_expr, ExprDescriptor::Value(right_const)) => {
+                        let left = self.expr_any_register(&mut left_expr)?;
+                        let right = self.get_constant(right_const)?;
+                        self.free_expr(left_expr);
+                        let dest = self.allocate_register()?;
+                        self.current_function()
+                            .opcodes
+                            .push(OpCode::AddRC { dest, left, right });
+                        Ok(ExprDescriptor::Temporary(dest))
+                    }
+                    (ExprDescriptor::Value(left_const), mut right_expr) => {
+                        let left = self.get_constant(left_const)?;
+                        let right = self.expr_any_register(&mut right_expr)?;
+                        self.free_expr(right_expr);
+                        let dest = self.allocate_register()?;
+                        self.current_function()
+                            .opcodes
+                            .push(OpCode::AddCR { dest, left, right });
+                        Ok(ExprDescriptor::Temporary(dest))
+                    }
+                    (mut left_expr, mut right_expr) => {
+                        let left = self.expr_any_register(&mut left_expr)?;
+                        let right = self.expr_any_register(&mut right_expr)?;
+                        self.free_expr(left_expr);
+                        self.free_expr(right_expr);
+                        let dest = self.allocate_register()?;
+                        self.current_function()
+                            .opcodes
+                            .push(OpCode::AddRR { dest, left, right });
+                        Ok(ExprDescriptor::Temporary(dest))
+                    }
+                }
+            }
+            _ => bail!("unsupported binary operator"),
         }
     }
 
@@ -431,37 +487,38 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Modify an expression to contain its result in any register, and return that register
-    fn expr_any_register(&mut self, expr: &mut ExprDescriptor) -> Result<Register, Error> {
+    fn expr_any_register(&mut self, expr: &mut ExprDescriptor<'gc>) -> Result<Register, Error> {
         let (new_expr, reg) = match *expr {
-            ExprDescriptor::Register(reg) => (ExprDescriptor::Register(reg), reg),
-            ExprDescriptor::Constant(constant) => {
-                let dest = self.allocate_register()?;
-                self.current_function()
-                    .opcodes
-                    .push(OpCode::LoadConstant { dest, constant });
-                (ExprDescriptor::Register(dest), dest)
-            }
+            ExprDescriptor::Temporary(reg) => (ExprDescriptor::Temporary(reg), reg),
             ExprDescriptor::Local(reg) => (ExprDescriptor::Local(reg), reg),
             ExprDescriptor::UpValue(source) => {
                 let dest = self.allocate_register()?;
                 self.current_function()
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
-                (ExprDescriptor::Register(dest), dest)
+                (ExprDescriptor::Temporary(dest), dest)
             }
-            ExprDescriptor::Bool(value) => {
+            ExprDescriptor::Value(value) => {
                 let dest = self.allocate_register()?;
-                self.current_function().opcodes.push(OpCode::LoadBool {
-                    dest,
-                    value,
-                    skip_next: false,
-                });
-                (ExprDescriptor::Register(dest), dest)
-            }
-            ExprDescriptor::Nil => {
-                let dest = self.allocate_register()?;
-                self.load_nil(dest)?;
-                (ExprDescriptor::Register(dest), dest)
+                match value {
+                    Value::Nil => {
+                        self.load_nil(dest)?;
+                    }
+                    Value::Boolean(value) => {
+                        self.current_function().opcodes.push(OpCode::LoadBool {
+                            dest,
+                            value,
+                            skip_next: false,
+                        });
+                    }
+                    val => {
+                        let constant = self.get_constant(val)?;
+                        self.current_function()
+                            .opcodes
+                            .push(OpCode::LoadConstant { dest, constant });
+                    }
+                }
+                (ExprDescriptor::Temporary(dest), dest)
             }
         };
 
@@ -470,48 +527,58 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Consume an expression and store the result in the given register
-    fn expr_to_register(&mut self, expr: ExprDescriptor, dest: Register) -> Result<(), Error> {
+    fn expr_to_register(&mut self, expr: ExprDescriptor<'gc>, dest: Register) -> Result<(), Error> {
         match expr {
-            ExprDescriptor::Register(register) => {
-                self.current_function().opcodes.push(OpCode::Move {
-                    dest,
-                    source: register,
-                });
-            }
-            ExprDescriptor::Constant(constant) => {
+            ExprDescriptor::Temporary(source) => {
                 self.current_function()
                     .opcodes
-                    .push(OpCode::LoadConstant { dest, constant });
+                    .push(OpCode::Move { dest, source });
             }
             ExprDescriptor::Local(source) => {
                 self.current_function()
                     .opcodes
-                    .push(OpCode::Move { source, dest });
+                    .push(OpCode::Move { dest, source });
             }
             ExprDescriptor::UpValue(source) => {
                 self.current_function()
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
             }
-            ExprDescriptor::Bool(value) => {
-                self.current_function().opcodes.push(OpCode::LoadBool {
-                    dest,
-                    value,
-                    skip_next: false,
-                });
-            }
-            ExprDescriptor::Nil => {
-                self.load_nil(dest)?;
-            }
+            ExprDescriptor::Value(value) => match value {
+                Value::Nil => {
+                    self.load_nil(dest)?;
+                }
+                Value::Boolean(value) => {
+                    self.current_function().opcodes.push(OpCode::LoadBool {
+                        dest,
+                        value,
+                        skip_next: false,
+                    });
+                }
+                val => {
+                    let constant = self.get_constant(val)?;
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::LoadConstant { dest, constant });
+                }
+            },
         }
+
+        self.free_expr(expr);
 
         Ok(())
     }
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register
-    fn expr_allocate_register(&mut self, expr: ExprDescriptor) -> Result<Register, Error> {
+    fn expr_allocate_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
         match expr {
-            ExprDescriptor::Register(register) => Ok(register),
+            ExprDescriptor::Temporary(register) => {
+                assert!(
+                    register as u16 == self.current_function().stack_top - 1,
+                    "only top expression can be converted to register"
+                );
+                Ok(register)
+            }
             expr => {
                 let dest = self.allocate_register()?;
                 self.expr_to_register(expr, dest)?;
@@ -520,8 +587,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn free_expr(&mut self, expr: ExprDescriptor) {
-        if let ExprDescriptor::Register(r) = expr {
+    fn free_expr(&mut self, expr: ExprDescriptor<'gc>) {
+        if let ExprDescriptor::Temporary(r) = expr {
             self.free_register(r);
         }
     }
@@ -572,13 +639,12 @@ enum VariableDescriptor<'a> {
     Global(&'a [u8]),
 }
 
-enum ExprDescriptor {
-    Register(Register),
+#[derive(Copy, Clone)]
+enum ExprDescriptor<'gc> {
+    Temporary(Register),
     Local(Register),
     UpValue(UpValueIndex),
-    Constant(Constant),
-    Bool(bool),
-    Nil,
+    Value(Value<'gc>),
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit
