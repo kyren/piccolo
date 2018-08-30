@@ -1,5 +1,7 @@
 pub type Register = u8;
 pub type Constant = u16;
+pub type UpValueIndex = u8;
+pub type FunctionProtoIndex = u8;
 
 pub const MAX_VAR_COUNT: u8 = 254;
 
@@ -61,5 +63,17 @@ pub enum OpCode {
     Return {
         start: Register,
         count: VarCount,
+    },
+    GetUpValue {
+        source: UpValueIndex,
+        dest: Register,
+    },
+    SetUpValue {
+        source: Register,
+        dest: UpValueIndex,
+    },
+    Closure {
+        proto: FunctionProtoIndex,
+        dest: Register,
     },
 }

@@ -130,6 +130,8 @@ impl<'gc> ThreadState<'gc> {
                         self.frames.pop();
                         continue 'function_start;
                     }
+
+                    _ => panic!("unsupported opcode"),
                 }
 
                 current_frame.pc += 1;
@@ -180,7 +182,7 @@ impl<'gc> ThreadState<'gc> {
             }
         }
 
-        let stack_top = self.stack.len() + proto.max_register as usize + 1;
+        let stack_top = self.stack.len() + proto.stack_size as usize;
         self.stack.resize(stack_top, Value::Nil);
 
         self.frames.push(Frame {

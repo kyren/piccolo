@@ -23,7 +23,7 @@ fn main() -> Result<(), Error> {
     rootless_arena(|mc| -> Result<(), Error> {
         let chunk = parse_chunk(file)?;
         let function = compile_chunk(mc, &chunk)?;
-        println!("output: {:?}", function);
+        println!("output: {:#?}", function);
         Ok(())
     })?;
 

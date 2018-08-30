@@ -2,15 +2,13 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Gc, MutationContext};
 
-use opcode::{OpCode, Register};
+use opcode::{OpCode, Register, UpValueIndex};
 use value::Value;
 
-pub type UpValIndex = u8;
-
-#[derive(Debug, Collect)]
-pub enum UpValDesc {
+#[derive(Debug, Collect, Clone, Copy)]
+pub enum UpValueDescriptor {
     ParentLocal(Register),
-    Outer(UpValIndex),
+    Outer(UpValueIndex),
 }
 
 #[derive(Debug, Collect)]
@@ -18,11 +16,10 @@ pub enum UpValDesc {
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
     pub has_varargs: bool,
-    // Max used register (all functions are assumed to require at least one register)
-    pub max_register: u8,
+    pub stack_size: u16,
     pub constants: Vec<Value<'gc>>,
     pub opcodes: Vec<OpCode>,
-    pub upvalues: Vec<UpValDesc>,
+    pub upvalues: Vec<UpValueDescriptor>,
     pub functions: Vec<FunctionProto<'gc>>,
 }
 
