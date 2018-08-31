@@ -68,6 +68,10 @@ pub enum OpCode {
         start: Register,
         count: VarCount,
     },
+    Closure {
+        proto: FunctionProtoIndex,
+        dest: Register,
+    },
     GetUpValue {
         source: UpValueIndex,
         dest: Register,
@@ -75,10 +79,6 @@ pub enum OpCode {
     SetUpValue {
         source: Register,
         dest: UpValueIndex,
-    },
-    Closure {
-        proto: FunctionProtoIndex,
-        dest: Register,
     },
     AddRR {
         dest: Register,

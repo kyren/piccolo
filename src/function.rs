@@ -1,6 +1,8 @@
 use std::hash::{Hash, Hasher};
 
-use gc_arena::{Gc, MutationContext};
+use failure::{err_msg, Error};
+
+use gc_arena::{Gc, GcCell, MutationContext};
 
 use opcode::{OpCode, Register, UpValueIndex};
 use value::Value;
@@ -20,21 +22,25 @@ pub struct FunctionProto<'gc> {
     pub constants: Vec<Value<'gc>>,
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,
-    pub functions: Vec<FunctionProto<'gc>>,
+    pub prototypes: Vec<Gc<'gc, FunctionProto<'gc>>>,
 }
 
 #[derive(Debug, Collect, Copy, Clone)]
 #[collect(require_copy)]
-pub enum UpValue<'gc> {
+pub enum UpValueState<'gc> {
     Open(usize),
     Closed(Value<'gc>),
 }
+
+#[derive(Debug, Collect, Copy, Clone)]
+#[collect(require_copy)]
+pub struct UpValue<'gc>(pub GcCell<'gc, UpValueState<'gc>>);
 
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct ClosureState<'gc> {
     pub proto: Gc<'gc, FunctionProto<'gc>>,
-    pub upvalues: Vec<Gc<'gc, UpValue<'gc>>>,
+    pub upvalues: Vec<UpValue<'gc>>,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -56,13 +62,23 @@ impl<'gc> Hash for Closure<'gc> {
 }
 
 impl<'gc> Closure<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>, proto: FunctionProto<'gc>) -> Closure<'gc> {
-        Closure(Gc::allocate(
-            mc,
-            ClosureState {
-                proto: Gc::allocate(mc, proto),
-                upvalues: Vec::new(),
-            },
-        ))
+    // Create a top-level closure, prototype must not have any upvalues
+    pub fn new(
+        mc: MutationContext<'gc, '_>,
+        proto: FunctionProto<'gc>,
+    ) -> Result<Closure<'gc>, Error> {
+        if !proto.upvalues.is_empty() {
+            Err(err_msg(
+                "cannot use prototype with upvalues to create top-level closure",
+            ))
+        } else {
+            Ok(Closure(Gc::allocate(
+                mc,
+                ClosureState {
+                    proto: Gc::allocate(mc, proto),
+                    upvalues: Vec::new(),
+                },
+            )))
+        }
     }
 }

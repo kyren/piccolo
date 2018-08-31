@@ -5,12 +5,13 @@ use std::mem;
 use failure::Error;
 use num_traits::cast;
 
-use gc_arena::MutationContext;
+use gc_arena::{Gc, MutationContext};
 
 use function::{FunctionProto, UpValueDescriptor};
 use opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
+use operators::{apply_binop, BinaryOperator};
 use parser::{
-    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
+    AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
     ReturnStatement, SimpleExpression, Statement, SuffixedExpression,
 };
@@ -240,12 +241,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.block(&local_function.definition.body)?;
 
         let new_function = self.pop_function_proto();
-        self.current_function().functions.push(new_function);
+        self.current_function().prototypes.push(new_function);
         let dest = self.allocate_register()?;
 
         {
             let current_function = self.current_function();
-            let proto = cast(current_function.functions.len() - 1).ok_or(CompilerLimit::Functions)?;
+            let proto =
+                cast(current_function.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?;
             current_function
                 .opcodes
                 .push(OpCode::Closure { proto, dest });
@@ -327,54 +329,46 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         binop: BinaryOperator,
         right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        match binop {
-            BinaryOperator::Add => {
-                if let (ExprDescriptor::Value(a), ExprDescriptor::Value(b)) = (left, right) {
-                    if let Some(v) = match (a, b) {
-                        (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
-                        (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
-                        (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
-                        (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
-                        _ => None,
-                    } {
-                        return Ok(ExprDescriptor::Value(v));
-                    }
-                }
-
-                match (left, right) {
-                    (mut left_expr, ExprDescriptor::Value(right_const)) => {
-                        let left = self.expr_any_register(&mut left_expr)?;
-                        let right = self.get_constant(right_const)?;
-                        self.free_expr(left_expr);
-                        let dest = self.allocate_register()?;
-                        self.current_function()
-                            .opcodes
-                            .push(OpCode::AddRC { dest, left, right });
-                        Ok(ExprDescriptor::Temporary(dest))
-                    }
-                    (ExprDescriptor::Value(left_const), mut right_expr) => {
-                        let left = self.get_constant(left_const)?;
-                        let right = self.expr_any_register(&mut right_expr)?;
-                        self.free_expr(right_expr);
-                        let dest = self.allocate_register()?;
-                        self.current_function()
-                            .opcodes
-                            .push(OpCode::AddCR { dest, left, right });
-                        Ok(ExprDescriptor::Temporary(dest))
-                    }
-                    (mut left_expr, mut right_expr) => {
-                        let left = self.expr_any_register(&mut left_expr)?;
-                        let right = self.expr_any_register(&mut right_expr)?;
-                        self.free_expr(left_expr);
-                        self.free_expr(right_expr);
-                        let dest = self.allocate_register()?;
-                        self.current_function()
-                            .opcodes
-                            .push(OpCode::AddRR { dest, left, right });
-                        Ok(ExprDescriptor::Temporary(dest))
-                    }
-                }
+        if let (ExprDescriptor::Value(a), ExprDescriptor::Value(b)) = (left, right) {
+            if let Some(v) = apply_binop(binop, a, b) {
+                return Ok(ExprDescriptor::Value(v));
             }
+        }
+
+        match binop {
+            BinaryOperator::Add => match (left, right) {
+                (mut left_expr, ExprDescriptor::Value(right_const)) => {
+                    let left = self.expr_any_register(&mut left_expr)?;
+                    let right = self.get_constant(right_const)?;
+                    self.free_expr(left_expr);
+                    let dest = self.allocate_register()?;
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::AddRC { dest, left, right });
+                    Ok(ExprDescriptor::Temporary(dest))
+                }
+                (ExprDescriptor::Value(left_const), mut right_expr) => {
+                    let left = self.get_constant(left_const)?;
+                    let right = self.expr_any_register(&mut right_expr)?;
+                    self.free_expr(right_expr);
+                    let dest = self.allocate_register()?;
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::AddCR { dest, left, right });
+                    Ok(ExprDescriptor::Temporary(dest))
+                }
+                (mut left_expr, mut right_expr) => {
+                    let left = self.expr_any_register(&mut left_expr)?;
+                    let right = self.expr_any_register(&mut right_expr)?;
+                    self.free_expr(right_expr);
+                    self.free_expr(left_expr);
+                    let dest = self.allocate_register()?;
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::AddRR { dest, left, right });
+                    Ok(ExprDescriptor::Temporary(dest))
+                }
+            },
             _ => bail!("unsupported binary operator"),
         }
     }
@@ -440,7 +434,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             constants: function.constants,
             opcodes: function.opcodes,
             upvalues: function.upvalues.iter().map(|(_, d)| *d).collect(),
-            functions: function.functions,
+            prototypes: function
+                .prototypes
+                .into_iter()
+                .map(|f| Gc::allocate(self.mutation_context, f))
+                .collect(),
         }
     }
 
@@ -622,7 +620,7 @@ struct CompilerFunction<'gc, 'a> {
     constant_table: HashMap<ConstantValue<'gc>, Constant>,
 
     upvalues: Vec<(&'a [u8], UpValueDescriptor)>,
-    functions: Vec<FunctionProto<'gc>>,
+    prototypes: Vec<FunctionProto<'gc>>,
 
     stack_top: u16,
     stack_size: u16,

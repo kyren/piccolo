@@ -26,7 +26,7 @@ impl Lua {
             LuaArena::try_new(ArenaParameters::default(), |mc| -> Result<LuaRoot, Error> {
                 let chunk = parse_chunk(src)?;
                 let main_proto = compile_chunk(mc, &chunk)?;
-                let main_closure = Closure::new(mc, main_proto);
+                let main_closure = Closure::new(mc, main_proto)?;
                 Ok(LuaRoot {
                     main_thread: Thread::new(mc, main_closure, &[]),
                 })

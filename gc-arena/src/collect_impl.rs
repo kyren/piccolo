@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hash};
 
 use collect::Collect;
@@ -120,6 +120,25 @@ where
     K: Eq + Hash + Collect,
     V: Collect,
     S: BuildHasher,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        K::needs_trace() || V::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        for (k, v) in self {
+            k.trace(cc);
+            v.trace(cc);
+        }
+    }
+}
+
+unsafe impl<K, V> Collect for BTreeMap<K, V>
+where
+    K: Eq + Ord + Collect,
+    V: Collect,
 {
     #[inline]
     fn needs_trace() -> bool {

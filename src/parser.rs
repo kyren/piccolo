@@ -4,6 +4,7 @@ use std::rc::Rc;
 use failure::{err_msg, Error};
 
 use lexer::{Lexer, Token};
+use operators::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk {
@@ -198,39 +199,6 @@ pub enum ConstructorField {
 pub enum RecordKey {
     Named(Box<[u8]>),
     Indexed(Expression),
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum UnaryOperator {
-    Not,
-    Minus,
-    BitNot,
-    Len,
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum BinaryOperator {
-    Add,
-    Sub,
-    Mul,
-    Mod,
-    Pow,
-    Div,
-    IDiv,
-    BitAnd,
-    BitOr,
-    BitXor,
-    ShiftLeft,
-    ShiftRight,
-    Concat,
-    NotEqual,
-    Equal,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
-    And,
-    Or,
 }
 
 pub fn parse_chunk<R: Read>(source: R) -> Result<Chunk, Error> {
