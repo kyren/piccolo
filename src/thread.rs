@@ -78,10 +78,6 @@ impl<'gc> ThreadState<'gc> {
             };
 
             loop {
-                println!(
-                    "executing opcode {:?}",
-                    current_function.0.proto.opcodes[self.pc]
-                );
                 match current_function.0.proto.opcodes[self.pc] {
                     OpCode::Move { dest, source } => {
                         self.stack[current_frame.base + dest as usize] =
