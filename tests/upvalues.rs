@@ -13,7 +13,7 @@ fn test_upvalue() {
             inc(2)
             inc(3)
             return i
-        "#.as_bytes(),
+        "#,
         6,
     );
 }
@@ -34,7 +34,7 @@ fn test_upvalue_multi() {
             inc(2)
             inc(3)
             return i + j + k
-        "#.as_bytes(),
+        "#,
         15,
     );
 }
@@ -58,7 +58,7 @@ fn test_upvalue_outer() {
             inc()
             inc()
             return i
-        "#.as_bytes(),
+        "#,
         12,
     );
 }

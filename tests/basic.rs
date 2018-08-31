@@ -6,7 +6,7 @@ fn test_return() {
     test_script(
         r#"
             return 3
-        "#.as_bytes(),
+        "#,
         3,
     );
 }
@@ -19,7 +19,7 @@ fn test_local() {
             local j = 30
             local i = 42
             return i
-        "#.as_bytes(),
+        "#,
         42,
     );
 }
@@ -32,7 +32,7 @@ fn test_assignment() {
             local i = 30
             i = 35
             return i
-        "#.as_bytes(),
+        "#,
         35,
     );
 }
