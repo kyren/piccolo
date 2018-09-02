@@ -43,7 +43,7 @@ enum CompilerLimit {
 
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
-    function_stack: Vec<CompilerFunction<'gc, 'a>>,
+    functions: TopStack<CompilerFunction<'gc, 'a>>,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
@@ -53,11 +53,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<FunctionProto<'gc>, Error> {
         let mut compiler = Compiler {
             mutation_context: mc,
-            function_stack: vec![CompilerFunction::default()],
+            functions: TopStack::new(CompilerFunction::default()),
         };
 
         compiler.block(&chunk.block)?;
-        Ok(compiler.pop_function_proto())
+        Ok(compiler.functions.top.to_proto(mc))
     }
 
     fn block(&mut self, block: &'a Block) -> Result<(), Error> {
@@ -68,7 +68,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         if let Some(return_statement) = &block.return_statement {
             self.return_statement(return_statement)?;
         } else {
-            self.current_function().opcodes.push(OpCode::Return {
+            self.functions.top.opcodes.push(OpCode::Return {
                 start: 0,
                 count: VarCount::make_zero(),
             });
@@ -102,29 +102,29 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let var_count = VarCount::make_constant(ret_count).ok_or(CompilerLimit::Returns)?;
 
         if ret_count == 0 {
-            self.current_function().opcodes.push(OpCode::Return {
+            self.functions.top.opcodes.push(OpCode::Return {
                 start: 0,
                 count: var_count,
             });
         } else if ret_count == 1 {
             let mut expr = self.expression(&return_statement.returns[0])?;
             let reg = self.expr_any_register(&mut expr)?;
-            self.current_function().opcodes.push(OpCode::Return {
+            self.functions.top.opcodes.push(OpCode::Return {
                 start: reg,
                 count: var_count,
             });
             self.free_expr(expr);
         } else {
-            let ret_start = self.current_function().register_allocator.stack_top;
+            let ret_start = self.functions.top.register_allocator.stack_top;
             for i in 0..ret_count {
                 let expr = self.expression(&return_statement.returns[i as usize])?;
                 self.expr_push_register(expr)?;
             }
-            self.current_function().opcodes.push(OpCode::Return {
+            self.functions.top.opcodes.push(OpCode::Return {
                 start: ret_start as u8,
                 count: var_count,
             });
-            self.current_function().register_allocator.pop(ret_count);
+            self.functions.top.register_allocator.pop(ret_count);
         }
 
         Ok(())
@@ -135,7 +135,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             if local_statement.names.len() > i {
                 let expr = self.expression(expr)?;
                 let reg = self.expr_allocate_register(expr)?;
-                self.current_function()
+                self.functions
+                    .top
                     .locals
                     .push((&local_statement.names[i], reg));
             } else {
@@ -145,12 +146,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
         for i in local_statement.values.len()..local_statement.names.len() {
             let reg = self
-                .current_function()
+                .functions
+                .top
                 .register_allocator
                 .allocate()
                 .ok_or(CompilerLimit::Registers)?;
             self.load_nil(reg)?;
-            self.current_function()
+            self.functions
+                .top
                 .locals
                 .push((&local_statement.names[i], reg));
         }
@@ -168,17 +171,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let expr = self.expression(expr)?;
                     self.expr_push_register(expr)?;
                 }
-                self.current_function().opcodes.push(OpCode::Call {
+                self.functions.top.opcodes.push(OpCode::Call {
                     func: f_reg,
                     args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
                     returns: VarCount::make_zero(),
                 });
-                self.current_function().register_allocator.pop(arg_count);
+                self.functions.top.register_allocator.pop(arg_count);
             }
             CallSuffix::Method(_, _) => bail!("method unsupported"),
         }
 
-        self.current_function().register_allocator.pop(1);
+        self.functions.top.register_allocator.pop(1);
 
         Ok(())
     }
@@ -198,7 +201,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                     VariableDescriptor::UpValue(dest) => {
                         let source = self.expr_any_register(&mut expr)?;
-                        self.current_function()
+                        self.functions
+                            .top
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
                         self.free_expr(expr);
@@ -223,37 +227,41 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             bail!("no method support");
         }
 
-        self.function_stack.push(CompilerFunction::default());
+        self.functions.push(CompilerFunction::default());
 
         let fixed_params: u8 =
             cast(local_function.definition.parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
         {
-            let current_function = self.current_function();
-            current_function.register_allocator.push(fixed_params);
-            current_function.fixed_params = fixed_params;
+            self.functions.top.register_allocator.push(fixed_params);
+            self.functions.top.fixed_params = fixed_params;
             for (i, name) in local_function.definition.parameters.iter().enumerate() {
-                current_function.locals.push((name, cast(i).unwrap()));
+                self.functions.top.locals.push((name, cast(i).unwrap()));
             }
         }
 
         self.block(&local_function.definition.body)?;
 
-        let new_function = self.pop_function_proto();
-        self.current_function().prototypes.push(new_function);
+        let new_function = self.functions.pop();
+        self.functions
+            .top
+            .prototypes
+            .push(new_function.to_proto(self.mutation_context));
         let dest = self
-            .current_function()
+            .functions
+            .top
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
 
         {
-            let current_function = self.current_function();
             let proto =
-                cast(current_function.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?;
-            current_function
+                cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?;
+            self.functions
+                .top
                 .opcodes
                 .push(OpCode::Closure { proto, dest });
-            current_function
+            self.functions
+                .top
                 .locals
                 .push((&local_function.name.name, dest));
         }
@@ -344,11 +352,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let right = self.get_constant(right_const)?;
                     self.free_expr(left_expr);
                     let dest = self
-                        .current_function()
+                        .functions
+                        .top
                         .register_allocator
                         .allocate()
                         .ok_or(CompilerLimit::Registers)?;
-                    self.current_function()
+                    self.functions
+                        .top
                         .opcodes
                         .push(OpCode::AddRC { dest, left, right });
                     Ok(ExprDescriptor::Temporary(dest))
@@ -358,11 +368,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let right = self.expr_any_register(&mut right_expr)?;
                     self.free_expr(right_expr);
                     let dest = self
-                        .current_function()
+                        .functions
+                        .top
                         .register_allocator
                         .allocate()
                         .ok_or(CompilerLimit::Registers)?;
-                    self.current_function()
+                    self.functions
+                        .top
                         .opcodes
                         .push(OpCode::AddCR { dest, left, right });
                     Ok(ExprDescriptor::Temporary(dest))
@@ -373,11 +385,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.free_expr(right_expr);
                     self.free_expr(left_expr);
                     let dest = self
-                        .current_function()
+                        .functions
+                        .top
                         .register_allocator
                         .allocate()
                         .ok_or(CompilerLimit::Registers)?;
-                    self.current_function()
+                    self.functions
+                        .top
                         .opcodes
                         .push(OpCode::AddRR { dest, left, right });
                     Ok(ExprDescriptor::Temporary(dest))
@@ -388,23 +402,27 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, Error> {
-        for i in (0..self.function_stack.len()).rev() {
-            for j in (0..self.function_stack[i].locals.len()).rev() {
-                let (local_name, register) = self.function_stack[i].locals[j];
+        let function_len = self.functions.len();
+
+        for i in (0..function_len).rev() {
+            for j in (0..self.functions.get(i).locals.len()).rev() {
+                let (local_name, register) = self.functions.get(i).locals[j];
                 if name == local_name {
-                    if i == self.function_stack.len() - 1 {
+                    if i == function_len - 1 {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
-                        self.function_stack[i + 1]
+                        self.functions
+                            .get_mut(i + 1)
                             .upvalues
                             .push((name, UpValueDescriptor::ParentLocal(register)));
-                        let mut upvalue_index = cast(self.function_stack[i + 1].upvalues.len() - 1)
+                        let mut upvalue_index = cast(self.functions.get(i + 1).upvalues.len() - 1)
                             .ok_or(CompilerLimit::UpValues)?;
-                        for k in i + 2..self.function_stack.len() {
-                            self.function_stack[k]
+                        for k in i + 2..function_len {
+                            self.functions
+                                .get_mut(k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
-                            upvalue_index = cast(self.function_stack[k].upvalues.len() - 1)
+                            upvalue_index = cast(self.functions.get(k).upvalues.len() - 1)
                                 .ok_or(CompilerLimit::UpValues)?;
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -412,17 +430,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
-            for j in 0..self.function_stack[i].upvalues.len() {
-                if name == self.function_stack[i].upvalues[j].0 {
-                    if i == self.function_stack.len() - 1 {
+            for j in 0..self.functions.get(i).upvalues.len() {
+                if name == self.functions.get(i).upvalues[j].0 {
+                    if i == function_len - 1 {
                         return Ok(VariableDescriptor::UpValue(cast(j).unwrap()));
                     } else {
                         let mut upvalue_index = cast(j).unwrap();
-                        for k in i + 1..self.function_stack.len() {
-                            self.function_stack[k]
+                        for k in i + 1..function_len {
+                            self.functions
+                                .get_mut(k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
-                            upvalue_index = cast(self.function_stack[k].upvalues.len() - 1)
+                            upvalue_index = cast(self.functions.get(k).upvalues.len() - 1)
                                 .ok_or(CompilerLimit::UpValues)?;
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -434,44 +453,22 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(VariableDescriptor::Global(name))
     }
 
-    fn pop_function_proto(&mut self) -> FunctionProto<'gc> {
-        let function = self.function_stack.pop().unwrap();
-        assert_eq!(
-            function.register_allocator.stack_top as usize,
-            function.locals.len(),
-            "register leak detected"
-        );
-        FunctionProto {
-            fixed_params: function.fixed_params,
-            has_varargs: false,
-            stack_size: function.register_allocator.stack_size,
-            constants: function.constants,
-            opcodes: function.opcodes,
-            upvalues: function.upvalues.iter().map(|(_, d)| *d).collect(),
-            prototypes: function
-                .prototypes
-                .into_iter()
-                .map(|f| Gc::allocate(self.mutation_context, f))
-                .collect(),
-        }
-    }
-
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
     fn load_nil(&mut self, dest: Register) -> Result<(), Error> {
-        let current_function = self.current_function();
-        match current_function.opcodes.last().cloned() {
+        match self.functions.top.opcodes.last().cloned() {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
                 count: prev_count,
             }) if prev_dest + prev_count == dest =>
             {
-                current_function.opcodes.push(OpCode::LoadNil {
+                self.functions.top.opcodes.push(OpCode::LoadNil {
                     dest: prev_dest,
                     count: prev_count + 1,
                 });
             }
             _ => {
-                current_function
+                self.functions
+                    .top
                     .opcodes
                     .push(OpCode::LoadNil { dest, count: 1 });
             }
@@ -480,8 +477,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn get_constant(&mut self, constant: Value<'gc>) -> Result<Constant, Error> {
-        let current_function = self.current_function();
-        if let Some(constant) = current_function
+        if let Some(constant) = self
+            .functions
+            .top
             .constant_table
             .get(&ConstantValue(constant))
             .cloned()
@@ -489,9 +487,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(constant)
         } else {
             let c: Constant =
-                cast(current_function.constants.len()).ok_or(CompilerLimit::Constants)?;
-            current_function.constants.push(constant);
-            current_function
+                cast(self.functions.top.constants.len()).ok_or(CompilerLimit::Constants)?;
+            self.functions.top.constants.push(constant);
+            self.functions
+                .top
                 .constant_table
                 .insert(ConstantValue(constant), c);
             Ok(c)
@@ -505,18 +504,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDescriptor::Local(reg) => (ExprDescriptor::Local(reg), reg),
             ExprDescriptor::UpValue(source) => {
                 let dest = self
-                    .current_function()
+                    .functions
+                    .top
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerLimit::Registers)?;
-                self.current_function()
+                self.functions
+                    .top
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
                 (ExprDescriptor::Temporary(dest), dest)
             }
             ExprDescriptor::Value(value) => {
                 let dest = self
-                    .current_function()
+                    .functions
+                    .top
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerLimit::Registers)?;
@@ -525,7 +527,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.load_nil(dest)?;
                     }
                     Value::Boolean(value) => {
-                        self.current_function().opcodes.push(OpCode::LoadBool {
+                        self.functions.top.opcodes.push(OpCode::LoadBool {
                             dest,
                             value,
                             skip_next: false,
@@ -533,7 +535,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                     val => {
                         let constant = self.get_constant(val)?;
-                        self.current_function()
+                        self.functions
+                            .top
                             .opcodes
                             .push(OpCode::LoadConstant { dest, constant });
                     }
@@ -550,17 +553,20 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn expr_to_register(&mut self, expr: ExprDescriptor<'gc>, dest: Register) -> Result<(), Error> {
         match expr {
             ExprDescriptor::Temporary(source) => {
-                self.current_function()
+                self.functions
+                    .top
                     .opcodes
                     .push(OpCode::Move { dest, source });
             }
             ExprDescriptor::Local(source) => {
-                self.current_function()
+                self.functions
+                    .top
                     .opcodes
                     .push(OpCode::Move { dest, source });
             }
             ExprDescriptor::UpValue(source) => {
-                self.current_function()
+                self.functions
+                    .top
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
             }
@@ -569,7 +575,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.load_nil(dest)?;
                 }
                 Value::Boolean(value) => {
-                    self.current_function().opcodes.push(OpCode::LoadBool {
+                    self.functions.top.opcodes.push(OpCode::LoadBool {
                         dest,
                         value,
                         skip_next: false,
@@ -577,7 +583,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
                 val => {
                     let constant = self.get_constant(val)?;
-                    self.current_function()
+                    self.functions
+                        .top
                         .opcodes
                         .push(OpCode::LoadConstant { dest, constant });
                 }
@@ -595,7 +602,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDescriptor::Temporary(register) => Ok(register),
             expr => {
                 let dest = self
-                    .current_function()
+                    .functions
+                    .top
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerLimit::Registers)?;
@@ -609,13 +617,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // the top of the stack.
     fn expr_push_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
         if let ExprDescriptor::Temporary(register) = expr {
-            if register as u16 + 1 == self.current_function().register_allocator.stack_top {
+            if register as u16 + 1 == self.functions.top.register_allocator.stack_top {
                 return Ok(register);
             }
         }
 
         let dest = self
-            .current_function()
+            .functions
+            .top
             .register_allocator
             .push(1)
             .ok_or(CompilerLimit::Registers)?;
@@ -625,12 +634,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn free_expr(&mut self, expr: ExprDescriptor<'gc>) {
         if let ExprDescriptor::Temporary(r) = expr {
-            self.current_function().register_allocator.free(r);
+            self.functions.top.register_allocator.free(r);
         }
-    }
-
-    fn current_function(&mut self) -> &mut CompilerFunction<'gc, 'a> {
-        self.function_stack.last_mut().unwrap()
     }
 }
 
@@ -648,6 +653,29 @@ struct CompilerFunction<'gc, 'a> {
     locals: Vec<(&'a [u8], Register)>,
 
     opcodes: Vec<OpCode>,
+}
+
+impl<'gc, 'a> CompilerFunction<'gc, 'a> {
+    fn to_proto(self, mc: MutationContext<'gc, 'a>) -> FunctionProto<'gc> {
+        assert_eq!(
+            self.register_allocator.stack_top as usize,
+            self.locals.len(),
+            "register leak detected"
+        );
+        FunctionProto {
+            fixed_params: self.fixed_params,
+            has_varargs: false,
+            stack_size: self.register_allocator.stack_size,
+            constants: self.constants,
+            opcodes: self.opcodes,
+            upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
+            prototypes: self
+                .prototypes
+                .into_iter()
+                .map(|f| Gc::allocate(mc, f))
+                .collect(),
+        }
+    }
 }
 
 enum VariableDescriptor<'a> {
@@ -763,6 +791,60 @@ impl RegisterAllocator {
                 self.registers[i as usize] = false;
             }
             self.first_free = self.first_free.min(self.stack_top);
+        }
+    }
+}
+
+// A stack which is guaranteed always to have a top value
+struct TopStack<T> {
+    top: T,
+    lower: Vec<T>,
+}
+
+impl<T> TopStack<T> {
+    fn new(top: T) -> TopStack<T> {
+        TopStack {
+            top,
+            lower: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, t: T) {
+        self.lower.push(mem::replace(&mut self.top, t));
+    }
+
+    fn pop(&mut self) -> T {
+        mem::replace(
+            &mut self.top,
+            self.lower
+                .pop()
+                .expect("TopStack must always have one entry"),
+        )
+    }
+
+    fn len(&self) -> usize {
+        self.lower.len() + 1
+    }
+
+    fn get(&self, i: usize) -> &T {
+        let lower_len = self.lower.len();
+        if i < lower_len {
+            &self.lower[i]
+        } else if i == lower_len {
+            &self.top
+        } else {
+            panic!("TopStack index {} out of range", i);
+        }
+    }
+
+    fn get_mut(&mut self, i: usize) -> &mut T {
+        let lower_len = self.lower.len();
+        if i < lower_len {
+            &mut self.lower[i]
+        } else if i == lower_len {
+            &mut self.top
+        } else {
+            panic!("TopStack index {} out of range", i);
         }
     }
 }
