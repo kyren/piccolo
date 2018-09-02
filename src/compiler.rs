@@ -115,19 +115,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             });
             self.free_expr(expr);
         } else {
-            let expr_start = self.expression(&return_statement.returns[0])?;
-            let ret_start = self.expr_allocate_register(expr_start)?;
-            for i in 1..ret_count {
+            let ret_start = self.current_function().register_allocator.stack_top;
+            for i in 0..ret_count {
                 let expr = self.expression(&return_statement.returns[i as usize])?;
-                self.expr_allocate_register(expr)?;
+                self.expr_push_register(expr)?;
             }
             self.current_function().opcodes.push(OpCode::Return {
-                start: ret_start,
+                start: ret_start as u8,
                 count: var_count,
             });
-            for i in (0..ret_count).rev() {
-                self.free_register(ret_start + i);
-            }
+            self.current_function().register_allocator.pop(ret_count);
         }
 
         Ok(())
@@ -147,7 +144,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
         for i in local_statement.values.len()..local_statement.names.len() {
-            let reg = self.allocate_register()?;
+            let reg = self
+                .current_function()
+                .register_allocator
+                .allocate()
+                .ok_or(CompilerLimit::Registers)?;
             self.load_nil(reg)?;
             self.current_function()
                 .locals
@@ -158,28 +159,26 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn function_call(&mut self, function_call: &'a FunctionCallStatement) -> Result<(), Error> {
         let func_expr = self.suffixed_expression(&function_call.head)?;
-        let f_reg = self.expr_allocate_register(func_expr)?;
+        let f_reg = self.expr_push_register(func_expr)?;
 
         match &function_call.call {
             CallSuffix::Function(exprs) => {
                 let arg_count: u8 = cast(exprs.len()).ok_or(CompilerLimit::FixedParameters)?;
                 for expr in exprs {
                     let expr = self.expression(expr)?;
-                    self.expr_allocate_register(expr)?;
+                    self.expr_push_register(expr)?;
                 }
                 self.current_function().opcodes.push(OpCode::Call {
                     func: f_reg,
                     args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
                     returns: VarCount::make_zero(),
                 });
-                for i in (1..=arg_count).rev() {
-                    self.free_register(f_reg + i);
-                }
+                self.current_function().register_allocator.pop(arg_count);
             }
             CallSuffix::Method(_, _) => bail!("method unsupported"),
         }
 
-        self.free_register(f_reg);
+        self.current_function().register_allocator.pop(1);
 
         Ok(())
     }
@@ -230,8 +229,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             cast(local_function.definition.parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
         {
             let current_function = self.current_function();
-            current_function.stack_top = fixed_params as u16;
-            current_function.stack_size = current_function.stack_top;
+            current_function.register_allocator.push(fixed_params);
             current_function.fixed_params = fixed_params;
             for (i, name) in local_function.definition.parameters.iter().enumerate() {
                 current_function.locals.push((name, cast(i).unwrap()));
@@ -242,7 +240,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         let new_function = self.pop_function_proto();
         self.current_function().prototypes.push(new_function);
-        let dest = self.allocate_register()?;
+        let dest = self
+            .current_function()
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
 
         {
             let current_function = self.current_function();
@@ -341,7 +343,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let left = self.expr_any_register(&mut left_expr)?;
                     let right = self.get_constant(right_const)?;
                     self.free_expr(left_expr);
-                    let dest = self.allocate_register()?;
+                    let dest = self
+                        .current_function()
+                        .register_allocator
+                        .allocate()
+                        .ok_or(CompilerLimit::Registers)?;
                     self.current_function()
                         .opcodes
                         .push(OpCode::AddRC { dest, left, right });
@@ -351,7 +357,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let left = self.get_constant(left_const)?;
                     let right = self.expr_any_register(&mut right_expr)?;
                     self.free_expr(right_expr);
-                    let dest = self.allocate_register()?;
+                    let dest = self
+                        .current_function()
+                        .register_allocator
+                        .allocate()
+                        .ok_or(CompilerLimit::Registers)?;
                     self.current_function()
                         .opcodes
                         .push(OpCode::AddCR { dest, left, right });
@@ -362,7 +372,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let right = self.expr_any_register(&mut right_expr)?;
                     self.free_expr(right_expr);
                     self.free_expr(left_expr);
-                    let dest = self.allocate_register()?;
+                    let dest = self
+                        .current_function()
+                        .register_allocator
+                        .allocate()
+                        .ok_or(CompilerLimit::Registers)?;
                     self.current_function()
                         .opcodes
                         .push(OpCode::AddRR { dest, left, right });
@@ -423,14 +437,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn pop_function_proto(&mut self) -> FunctionProto<'gc> {
         let function = self.function_stack.pop().unwrap();
         assert_eq!(
-            function.stack_top as usize,
+            function.register_allocator.stack_top as usize,
             function.locals.len(),
-            "register leak"
+            "register leak detected"
         );
         FunctionProto {
             fixed_params: function.fixed_params,
             has_varargs: false,
-            stack_size: function.stack_size,
+            stack_size: function.register_allocator.stack_size,
             constants: function.constants,
             opcodes: function.opcodes,
             upvalues: function.upvalues.iter().map(|(_, d)| *d).collect(),
@@ -490,14 +504,22 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDescriptor::Temporary(reg) => (ExprDescriptor::Temporary(reg), reg),
             ExprDescriptor::Local(reg) => (ExprDescriptor::Local(reg), reg),
             ExprDescriptor::UpValue(source) => {
-                let dest = self.allocate_register()?;
+                let dest = self
+                    .current_function()
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
                 self.current_function()
                     .opcodes
                     .push(OpCode::GetUpValue { source, dest });
                 (ExprDescriptor::Temporary(dest), dest)
             }
             ExprDescriptor::Value(value) => {
-                let dest = self.allocate_register()?;
+                let dest = self
+                    .current_function()
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
                 match value {
                     Value::Nil => {
                         self.load_nil(dest)?;
@@ -570,43 +592,41 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // Consume an expression, ensuring that its result is stored in a newly allocated register
     fn expr_allocate_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
         match expr {
-            ExprDescriptor::Temporary(register) => {
-                assert!(
-                    register as u16 == self.current_function().stack_top - 1,
-                    "only top expression can be converted to register"
-                );
-                Ok(register)
-            }
+            ExprDescriptor::Temporary(register) => Ok(register),
             expr => {
-                let dest = self.allocate_register()?;
+                let dest = self
+                    .current_function()
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
                 self.expr_to_register(expr, dest)?;
                 Ok(dest)
             }
         }
     }
 
+    // Consume an expression, ensuring that its result is stored in a newly allocated register at
+    // the top of the stack.
+    fn expr_push_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
+        if let ExprDescriptor::Temporary(register) = expr {
+            if register as u16 + 1 == self.current_function().register_allocator.stack_top {
+                return Ok(register);
+            }
+        }
+
+        let dest = self
+            .current_function()
+            .register_allocator
+            .push(1)
+            .ok_or(CompilerLimit::Registers)?;
+        self.expr_to_register(expr, dest)?;
+        Ok(dest)
+    }
+
     fn free_expr(&mut self, expr: ExprDescriptor<'gc>) {
         if let ExprDescriptor::Temporary(r) = expr {
-            self.free_register(r);
+            self.current_function().register_allocator.free(r);
         }
-    }
-
-    fn allocate_register(&mut self) -> Result<Register, Error> {
-        let current_function = self.current_function();
-        let r = cast(current_function.stack_top).ok_or(CompilerLimit::Registers)?;
-        current_function.stack_top += 1;
-        current_function.stack_size = current_function.stack_size.max(current_function.stack_top);
-        Ok(r)
-    }
-
-    fn free_register(&mut self, reg: Register) {
-        let current_function = self.current_function();
-        assert_eq!(
-            reg as u16 + 1,
-            current_function.stack_top,
-            "Only the most recently allocated register can be freed"
-        );
-        current_function.stack_top -= 1;
     }
 
     fn current_function(&mut self) -> &mut CompilerFunction<'gc, 'a> {
@@ -622,8 +642,7 @@ struct CompilerFunction<'gc, 'a> {
     upvalues: Vec<(&'a [u8], UpValueDescriptor)>,
     prototypes: Vec<FunctionProto<'gc>>,
 
-    stack_top: u16,
-    stack_size: u16,
+    register_allocator: RegisterAllocator,
 
     fixed_params: u8,
     locals: Vec<(&'a [u8], Register)>,
@@ -643,6 +662,109 @@ enum ExprDescriptor<'gc> {
     Local(Register),
     UpValue(UpValueIndex),
     Value(Value<'gc>),
+}
+
+struct RegisterAllocator {
+    // The total array of registers, marking whether they are allocated
+    registers: [bool; 256],
+    // The first free register
+    first_free: u16,
+    // The free register after the last used register
+    stack_top: u16,
+    // The index of the largest used register + 1 (e.g. the stack size required for the function)
+    stack_size: u16,
+}
+
+impl Default for RegisterAllocator {
+    fn default() -> RegisterAllocator {
+        RegisterAllocator {
+            registers: [false; 256],
+            first_free: 0,
+            stack_top: 0,
+            stack_size: 0,
+        }
+    }
+}
+
+impl RegisterAllocator {
+    // Allocates any single available register, returns it if one is available.
+    fn allocate(&mut self) -> Option<Register> {
+        if self.first_free < 256 {
+            let register = self.first_free as u8;
+            self.registers[register as usize] = true;
+
+            if self.first_free == self.stack_top {
+                self.stack_top += 1;
+            }
+            self.stack_size = self.stack_size.max(self.stack_top);
+
+            let mut i = self.first_free;
+            self.first_free = loop {
+                if i == 256 || !self.registers[i as usize] {
+                    break i;
+                }
+                i += 1;
+            };
+
+            Some(register)
+        } else {
+            None
+        }
+    }
+
+    // Free a single register.
+    fn free(&mut self, register: Register) {
+        assert!(
+            self.registers[register as usize],
+            "cannot free unallocated register"
+        );
+        self.registers[register as usize] = false;
+        self.first_free = self.first_free.min(register as u16);
+        if register as u16 + 1 == self.stack_top {
+            self.stack_top -= 1;
+        }
+    }
+
+    // Allocates a block of registers of the given size (which must be > 0) always at the end of the
+    // allocated area.  If successful, returns the starting register of the block.
+    fn push(&mut self, size: u8) -> Option<Register> {
+        if size == 0 {
+            None
+        } else if size as u16 <= 256 - self.stack_top {
+            let rbegin = self.stack_top as u8;
+            for i in rbegin..rbegin + size {
+                self.registers[i as usize] = true;
+            }
+            if self.first_free == self.stack_top {
+                self.first_free += size as u16;
+            }
+            self.stack_top += size as u16;
+            self.stack_size = self.stack_size.max(self.stack_top);
+            Some(rbegin)
+        } else {
+            None
+        }
+    }
+
+    // Free a contiguous block of registers which have been just been pushed (so only a block at the
+    // end of the allocated area).
+    fn pop(&mut self, size: u8) {
+        if size > 0 {
+            assert!(
+                self.stack_top >= size as u16,
+                "cannot pop more registers than were allocated"
+            );
+            self.stack_top = self.stack_top - size as u16;
+            for i in self.stack_top..self.stack_top + size as u16 {
+                assert!(
+                    self.registers[i as usize],
+                    "not all popped registers were allocated"
+                );
+                self.registers[i as usize] = false;
+            }
+            self.first_free = self.first_free.min(self.stack_top);
+        }
+    }
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit
