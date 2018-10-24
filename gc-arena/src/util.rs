@@ -54,4 +54,4 @@ impl GcFlags {
 }
 
 // Phantom type that holds a lifetime and ensures that it is invariant.
-pub(crate) type Invariant<'gc> = PhantomData<::std::cell::Cell<&'gc mut ()>>;
+pub(crate) type Invariant<'gc> = PhantomData<Cell<&'gc ()>>;
