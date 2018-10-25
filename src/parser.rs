@@ -289,8 +289,16 @@ impl<R: Read> Parser<R> {
 
     fn parse_return_statement(&mut self) -> Result<ReturnStatement, Error> {
         self.expect_next(Token::Return)?;
+        let returns = match self.look_ahead(0)? {
+            None | Some(Token::End) | Some(Token::SemiColon) | Some(Token::Else) |
+            Some(Token::ElseIf) | Some(Token::Until) => Vec::new(),
+            _ => self.parse_expression_list()?
+        };
+        if self.check_ahead(0, Token::SemiColon)? {
+            self.take_next()?;
+        }
         Ok(ReturnStatement {
-            returns: self.parse_expression_list()?,
+            returns,
         })
     }
 
@@ -310,6 +318,7 @@ impl<R: Read> Parser<R> {
         }
 
         let else_part = if self.check_ahead(0, Token::Else)? {
+            self.take_next()?;
             Some(self.parse_block()?)
         } else {
             None
@@ -338,8 +347,9 @@ impl<R: Read> Parser<R> {
         self.expect_next(Token::For)?;
         let name = self.expect_name()?;
 
-        match self.take_next()? {
+        match self.get_next()? {
             Token::Assign => {
+                self.take_next()?;
                 let initial = self.parse_expression()?;
                 self.expect_next(Token::Comma)?;
                 let limit = self.parse_expression()?;
@@ -380,9 +390,9 @@ impl<R: Read> Parser<R> {
                 Ok(ForStatement::List { names, lists, body })
             }
 
-            token => Err(format_err!(
+            _ => Err(format_err!(
                 "unexpected token {:?} expected '=' or 'in'",
-                token,
+                self.take_next()?,
             )),
         }
     }
@@ -460,6 +470,7 @@ impl<R: Read> Parser<R> {
                 if !self.check_ahead(0, Token::Comma)? {
                     break;
                 } else {
+                    self.take_next()?;
                     suffixed_expression = self.parse_suffixed_expression()?;
                 }
             }
@@ -569,7 +580,6 @@ impl<R: Read> Parser<R> {
     fn parse_primary_expression(&mut self) -> Result<PrimaryExpression, Error> {
         match self.take_next()? {
             Token::LeftParen => {
-                self.take_next()?;
                 let expr = self.parse_expression()?;
                 self.expect_next(Token::RightParen)?;
                 Ok(PrimaryExpression::GroupedExpression(expr))
@@ -768,9 +778,9 @@ impl<R: Read> Parser<R> {
     fn parse_constructor_field(&mut self) -> Result<ConstructorField, Error> {
         Ok(match *self.get_next()? {
             Token::Name(_) => {
-                let key = self.expect_name()?;
-                if self.check_ahead(0, Token::Assign)? {
-                    self.take_next()?;
+                if self.check_ahead(1, Token::Assign)? {
+                    let key = self.expect_name()?;
+                    self.expect_next(Token::Assign)?;
                     let value = self.parse_expression()?;
                     ConstructorField::Record(RecordKey::Named(key), value)
                 } else {
