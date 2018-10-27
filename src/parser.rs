@@ -290,16 +290,18 @@ impl<R: Read> Parser<R> {
     fn parse_return_statement(&mut self) -> Result<ReturnStatement, Error> {
         self.expect_next(Token::Return)?;
         let returns = match self.look_ahead(0)? {
-            None | Some(Token::End) | Some(Token::SemiColon) | Some(Token::Else) |
-            Some(Token::ElseIf) | Some(Token::Until) => Vec::new(),
-            _ => self.parse_expression_list()?
+            None
+            | Some(Token::End)
+            | Some(Token::SemiColon)
+            | Some(Token::Else)
+            | Some(Token::ElseIf)
+            | Some(Token::Until) => Vec::new(),
+            _ => self.parse_expression_list()?,
         };
         if self.check_ahead(0, Token::SemiColon)? {
             self.take_next()?;
         }
-        Ok(ReturnStatement {
-            returns,
-        })
+        Ok(ReturnStatement { returns })
     }
 
     fn parse_if_statement(&mut self) -> Result<IfStatement, Error> {

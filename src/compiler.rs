@@ -173,7 +173,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
                 self.functions.top.opcodes.push(OpCode::Call {
                     func: f_reg,
-                    args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
+                    args: VarCount::make_constant(arg_count)
+                        .ok_or(CompilerLimit::FixedParameters)?,
                     returns: VarCount::make_zero(),
                 });
                 self.functions.top.register_allocator.pop(arg_count);
@@ -229,8 +230,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.functions.push(CompilerFunction::default());
 
-        let fixed_params: u8 =
-            cast(local_function.definition.parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
+        let fixed_params: u8 = cast(local_function.definition.parameters.len())
+            .ok_or(CompilerLimit::FixedParameters)?;
         {
             self.functions.top.register_allocator.push(fixed_params);
             self.functions.top.fixed_params = fixed_params;
@@ -459,7 +460,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
                 count: prev_count,
-            }) if prev_dest + prev_count == dest =>
+            })
+                if prev_dest + prev_count == dest =>
             {
                 self.functions.top.opcodes.push(OpCode::LoadNil {
                     dest: prev_dest,

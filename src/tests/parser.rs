@@ -1,6 +1,8 @@
-use parser::{parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression,
-             FunctionCallStatement, HeadExpression, PrimaryExpression, SimpleExpression,
-             Statement, SuffixedExpression, TableConstructor};
+use parser::{
+    parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression, FunctionCallStatement,
+    HeadExpression, PrimaryExpression, SimpleExpression, Statement, SuffixedExpression,
+    TableConstructor,
+};
 
 #[test]
 fn test_function_call() {
@@ -38,14 +40,12 @@ fn test_function_call() {
                             ),
                             suffixes: vec![],
                         },
-                        call: CallSuffix::Function(vec![
-                            Expression {
-                                head: Box::new(HeadExpression::Simple(SimpleExpression::String(
-                                    "foo".as_bytes().to_vec().into_boxed_slice(),
-                                ))),
-                                tail: vec![],
-                            },
-                        ]),
+                        call: CallSuffix::Function(vec![Expression {
+                            head: Box::new(HeadExpression::Simple(SimpleExpression::String(
+                                "foo".as_bytes().to_vec().into_boxed_slice(),
+                            ))),
+                            tail: vec![],
+                        },]),
                     }),
                     Statement::FunctionCall(FunctionCallStatement {
                         head: SuffixedExpression {
@@ -54,23 +54,19 @@ fn test_function_call() {
                             ),
                             suffixes: vec![],
                         },
-                        call: CallSuffix::Function(vec![
-                            Expression {
-                                head: Box::new(HeadExpression::Simple(
-                                    SimpleExpression::TableConstructor(TableConstructor {
-                                        fields: vec![
-                                            ConstructorField::Array(Expression {
-                                                head: Box::new(HeadExpression::Simple(
-                                                    SimpleExpression::Float(30.0),
-                                                )),
-                                                tail: vec![],
-                                            }),
-                                        ],
-                                    }),
-                                )),
-                                tail: vec![],
-                            },
-                        ]),
+                        call: CallSuffix::Function(vec![Expression {
+                            head: Box::new(HeadExpression::Simple(
+                                SimpleExpression::TableConstructor(TableConstructor {
+                                    fields: vec![ConstructorField::Array(Expression {
+                                        head: Box::new(HeadExpression::Simple(
+                                            SimpleExpression::Float(30.0),
+                                        )),
+                                        tail: vec![],
+                                    }),],
+                                }),
+                            )),
+                            tail: vec![],
+                        },]),
                     }),
                 ],
                 return_statement: None,

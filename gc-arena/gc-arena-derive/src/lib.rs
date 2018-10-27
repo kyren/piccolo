@@ -42,25 +42,21 @@ fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
                     }
 
                     if let Some(syn::punctuated::Pair::End(nmeta)) = nested.first() {
-                        if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
-                                "require_static",
-                            ))) {
+                        if nmeta == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
+                            "require_static",
+                        ))) {
                             mode = Some(Mode::RequireStatic);
-                        } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
-                                "require_copy",
-                            ))) {
+                        } else if nmeta == &syn::NestedMeta::Meta(syn::Meta::Word(
+                            syn::Ident::from("require_copy"),
+                        )) {
                             mode = Some(Mode::RequireCopy);
-                        } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
-                                "empty_drop",
-                            ))) {
+                        } else if nmeta == &syn::NestedMeta::Meta(syn::Meta::Word(
+                            syn::Ident::from("empty_drop"),
+                        )) {
                             mode = Some(Mode::EmptyDrop);
-                        } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
-                                "unsafe_drop",
-                            ))) {
+                        } else if nmeta == &syn::NestedMeta::Meta(syn::Meta::Word(
+                            syn::Ident::from("unsafe_drop"),
+                        )) {
                             mode = Some(Mode::UnsafeDrop);
                         } else {
                             panic!("`#[collect]` requires one of: \"require_static\", \"require_copy\", \"empty_drop\", or \"unsafe_drop\" as an argument");

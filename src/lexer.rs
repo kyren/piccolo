@@ -1,6 +1,6 @@
-use std::{char, mem, str, i32, i64};
 use std::collections::HashMap;
 use std::io::{self, Read};
+use std::{char, i32, i64, mem, str};
 
 use failure::{err_msg, Error};
 
@@ -132,8 +132,8 @@ impl<R: Read> Lexer<R> {
                         self.advance(2);
 
                         match (self.peek(0)?, self.peek(1)?) {
-                            (Some(LEFT_BRACKET), Some(EQUALS)) |
-                            (Some(LEFT_BRACKET), Some(LEFT_BRACKET)) => {
+                            (Some(LEFT_BRACKET), Some(EQUALS))
+                            | (Some(LEFT_BRACKET), Some(LEFT_BRACKET)) => {
                                 // long comment
                                 self.read_long_string(false)?;
                             }
@@ -300,7 +300,8 @@ impl<R: Read> Lexer<R> {
                             }
                         }
 
-                        if let Some(t) = self.reserved_words
+                        if let Some(t) = self
+                            .reserved_words
                             .get(self.output_buffer.as_slice())
                             .cloned()
                         {
@@ -366,7 +367,8 @@ impl<R: Read> Lexer<R> {
 
             self.advance(1);
             if c == BACKSLASH {
-                match self.peek(0)?
+                match self
+                    .peek(0)?
                     .ok_or_else(|| err_msg("unfinished short string"))?
                 {
                     LOWER_A => {
@@ -425,10 +427,12 @@ impl<R: Read> Lexer<R> {
 
                     LOWER_X => {
                         self.advance(1);
-                        let first = self.peek(0)?
+                        let first = self
+                            .peek(0)?
                             .and_then(from_hex_digit)
                             .ok_or_else(|| err_msg("hexadecimal digit expected"))?;
-                        let second = self.peek(1)?
+                        let second = self
+                            .peek(1)?
                             .and_then(from_hex_digit)
                             .ok_or_else(|| err_msg("hexadecimal digit expected"))?;
                         self.output_buffer.push(first << 4 | second);
@@ -650,13 +654,13 @@ impl<R: Read> Lexer<R> {
             }
         }
 
-        Ok(Token::Float(if is_hex {
-            read_hex_float(&self.output_buffer)
-        } else {
-            read_float(&self.output_buffer)
-        }.ok_or_else(|| {
-            err_msg("malformed number")
-        })?))
+        Ok(Token::Float(
+            if is_hex {
+                read_hex_float(&self.output_buffer)
+            } else {
+                read_float(&self.output_buffer)
+            }.ok_or_else(|| err_msg("malformed number"))?,
+        ))
     }
 
     fn peek(&mut self, n: usize) -> Result<Option<u8>, io::Error> {
