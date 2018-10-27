@@ -9,9 +9,9 @@ fn test_skip_prefix() {
     ];
     let mut reader = BufReader::with_capacity(3, &test_file[..]);
 
-    skip_prefix(&mut reader);
+    skip_prefix(&mut reader).unwrap();
 
     let mut v = Vec::new();
-    reader.read_to_end(&mut v);
+    reader.read_to_end(&mut v).unwrap();
     assert_eq!(v, vec![b'\n', 0x1, 0x2, 0x3]);
 }
