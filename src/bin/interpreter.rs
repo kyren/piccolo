@@ -12,12 +12,14 @@ use luster::state::Lua;
 fn main() -> Result<(), Error> {
     let mut args = env::args();
     args.next();
-    let mut file = File::open(args.next()
-        .ok_or_else(|| err_msg("no file argument given"))?)?;
+    let mut file = File::open(
+        args.next()
+            .ok_or_else(|| err_msg("no file argument given"))?,
+    )?;
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)?;
 
-    let mut lua = Lua::load(&contents)?;
+    let mut lua = Lua::load(contents.as_slice())?;
     while !lua.run(Some(1024)) {}
 
     lua.visit_results(|results| {

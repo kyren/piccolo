@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use failure::{err_msg, Error};
 
 use gc_arena::ArenaParameters;
@@ -21,7 +23,7 @@ pub struct Lua {
 }
 
 impl Lua {
-    pub fn load(src: &[u8]) -> Result<Lua, Error> {
+    pub fn load<R: Read>(src: R) -> Result<Lua, Error> {
         let arena =
             LuaArena::try_new(ArenaParameters::default(), |mc| -> Result<LuaRoot, Error> {
                 let chunk = parse_chunk(src)?;
@@ -48,7 +50,7 @@ impl Lua {
     }
 }
 
-pub fn run_lua<T: FromLua>(src: &[u8]) -> Result<T, Error> {
+pub fn run_lua<R: Read, T: FromLua>(src: R) -> Result<T, Error> {
     let mut lua = Lua::load(src)?;
     while !lua.run(Some(1024)) {}
     lua.visit_results(|results| {

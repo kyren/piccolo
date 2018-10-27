@@ -11,6 +11,7 @@ extern crate gc_arena;
 pub mod compiler;
 pub mod conversion;
 pub mod function;
+pub mod io;
 pub mod lexer;
 pub mod opcode;
 pub mod operators;

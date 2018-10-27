@@ -76,7 +76,6 @@ pub struct Lexer<R: Read> {
     line_number: u64,
     char_tokens: &'static HashMap<u8, Token>,
     reserved_words: &'static HashMap<&'static [u8], Token>,
-    first_whitespace: bool,
 }
 
 impl<R: Read> Lexer<R> {
@@ -89,7 +88,6 @@ impl<R: Read> Lexer<R> {
                 }
                 m
             };
-
             static ref RESERVED_WORD_MAP: HashMap<&'static [u8], Token> = {
                 let mut m = HashMap::new();
                 for &(n, ref t) in RESERVED_WORDS {
@@ -106,7 +104,6 @@ impl<R: Read> Lexer<R> {
             line_number: 0,
             char_tokens: &*CHAR_TOKEN_MAP,
             reserved_words: &*RESERVED_WORD_MAP,
-            first_whitespace: true,
         }
     }
 
@@ -118,18 +115,6 @@ impl<R: Read> Lexer<R> {
     /// Consumes any whitespace that is next in the stream, the line number will now be the starting
     /// line number of the next token.
     pub fn skip_whitespace(&mut self) -> Result<(), Error> {
-        if self.first_whitespace {
-            if self.peek(0)? == Some(OCTOTHORPE) {
-                while let Some(c) = self.peek(0)? {
-                    if is_newline(c) {
-                        break;
-                    } else {
-                        self.advance(1);
-                    }
-                }
-            }
-            self.first_whitespace = false;
-        }
         while let Some(c) = self.peek(0)? {
             match c {
                 SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED => {
