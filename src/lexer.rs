@@ -117,23 +117,22 @@ impl<R: Read> Lexer<R> {
     pub fn skip_whitespace(&mut self) -> Result<(), Error> {
         while let Some(c) = self.peek(0)? {
             match c {
-                SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED => {
+                b' ' | b'\t' | VERTICAL_TAB | FORM_FEED => {
                     self.advance(1);
                 }
 
-                NEWLINE | CARRIAGE_RETURN => {
+                b'\n' | b'\r' => {
                     self.read_line_end(false)?;
                 }
 
-                MINUS => {
-                    if self.peek(1)? != Some(MINUS) {
+                b'-' => {
+                    if self.peek(1)? != Some(b'-') {
                         break;
                     } else {
                         self.advance(2);
 
                         match (self.peek(0)?, self.peek(1)?) {
-                            (Some(LEFT_BRACKET), Some(EQUALS))
-                            | (Some(LEFT_BRACKET), Some(LEFT_BRACKET)) => {
+                            (Some(b'['), Some(b'=')) | (Some(b'['), Some(b'[')) => {
                                 // long comment
                                 self.read_long_string(false)?;
                             }
@@ -164,12 +163,12 @@ impl<R: Read> Lexer<R> {
 
         if let Some(c) = self.peek(0)? {
             Ok(Some(match c {
-                SPACE | HORIZONTAL_TAB | VERTICAL_TAB | FORM_FEED | NEWLINE | CARRIAGE_RETURN => {
+                b' ' | b'\t' | VERTICAL_TAB | FORM_FEED | b'\n' | b'\r' => {
                     unreachable!("whitespace should have been skipped");
                 }
 
-                MINUS => {
-                    if self.peek(1)? != Some(MINUS) {
+                b'-' => {
+                    if self.peek(1)? != Some(b'-') {
                         self.advance(1);
                         Token::Minus
                     } else {
@@ -177,9 +176,9 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                LEFT_BRACKET => {
+                b'[' => {
                     let next = self.peek(1)?;
-                    if next == Some(EQUALS) || next == Some(LEFT_BRACKET) {
+                    if next == Some(b'=') || next == Some(b'[') {
                         self.read_long_string(true)?;
                         Token::String(self.take_output())
                     } else {
@@ -188,9 +187,9 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                EQUALS => {
+                b'=' => {
                     self.advance(1);
-                    if self.peek(0)? == Some(EQUALS) {
+                    if self.peek(0)? == Some(b'=') {
                         self.advance(1);
                         Token::Equal
                     } else {
@@ -198,13 +197,13 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                LESS_THAN => {
+                b'<' => {
                     self.advance(1);
                     let next = self.peek(0)?;
-                    if next == Some(EQUALS) {
+                    if next == Some(b'=') {
                         self.advance(1);
                         Token::LessEqual
-                    } else if next == Some(LESS_THAN) {
+                    } else if next == Some(b'<') {
                         self.advance(1);
                         Token::ShiftLeft
                     } else {
@@ -212,13 +211,13 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                GREATER_THAN => {
+                b'>' => {
                     self.advance(1);
                     let next = self.peek(0)?;
-                    if next == Some(EQUALS) {
+                    if next == Some(b'=') {
                         self.advance(1);
                         Token::GreaterEqual
-                    } else if next == Some(GREATER_THAN) {
+                    } else if next == Some(b'>') {
                         self.advance(1);
                         Token::ShiftRight
                     } else {
@@ -226,9 +225,9 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                FORWARD_SLASH => {
+                b'/' => {
                     self.advance(1);
-                    if self.peek(0)? == Some(FORWARD_SLASH) {
+                    if self.peek(0)? == Some(b'/') {
                         self.advance(1);
                         Token::IDiv
                     } else {
@@ -236,9 +235,9 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                TILDE => {
+                b'~' => {
                     self.advance(1);
-                    if self.peek(0)? == Some(EQUALS) {
+                    if self.peek(0)? == Some(b'=') {
                         self.advance(1);
                         Token::NotEqual
                     } else {
@@ -246,9 +245,9 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                COLON => {
+                b':' => {
                     self.advance(1);
-                    if self.peek(0)? == Some(COLON) {
+                    if self.peek(0)? == Some(b':') {
                         self.advance(1);
                         Token::DoubleColon
                     } else {
@@ -256,14 +255,14 @@ impl<R: Read> Lexer<R> {
                     }
                 }
 
-                DOUBLE_QUOTE | SINGLE_QUOTE => {
+                b'"' | b'\'' => {
                     self.read_short_string()?;
                     Token::String(self.take_output())
                 }
 
-                PERIOD => {
-                    if self.peek(1)? == Some(PERIOD) {
-                        if self.peek(2)? == Some(PERIOD) {
+                b'.' => {
+                    if self.peek(1)? == Some(b'.') {
+                        if self.peek(2)? == Some(b'.') {
                             self.advance(3);
                             Token::Dots
                         } else {
@@ -349,7 +348,7 @@ impl<R: Read> Lexer<R> {
     // characters.  Always reads the contained string into the output buffer.
     fn read_short_string(&mut self) -> Result<(), Error> {
         let start_quote = self.peek(0).unwrap().unwrap();
-        assert!(start_quote == SINGLE_QUOTE || start_quote == DOUBLE_QUOTE);
+        assert!(start_quote == b'\'' || start_quote == b'"');
         self.advance(1);
 
         self.output_buffer.clear();
@@ -366,66 +365,66 @@ impl<R: Read> Lexer<R> {
             }
 
             self.advance(1);
-            if c == BACKSLASH {
+            if c == b'\\' {
                 match self
                     .peek(0)?
                     .ok_or_else(|| err_msg("unfinished short string"))?
                 {
-                    LOWER_A => {
+                    b'a' => {
                         self.advance(1);
                         self.output_buffer.push(ALERT_BEEP);
                     }
 
-                    LOWER_B => {
+                    b'b' => {
                         self.advance(1);
                         self.output_buffer.push(BACKSPACE);
                     }
 
-                    LOWER_F => {
+                    b'f' => {
                         self.advance(1);
                         self.output_buffer.push(FORM_FEED);
                     }
 
-                    LOWER_N => {
+                    b'n' => {
                         self.advance(1);
-                        self.output_buffer.push(NEWLINE);
+                        self.output_buffer.push(b'\n');
                     }
 
-                    LOWER_R => {
+                    b'r' => {
                         self.advance(1);
-                        self.output_buffer.push(CARRIAGE_RETURN);
+                        self.output_buffer.push(b'\r');
                     }
 
-                    LOWER_T => {
+                    b't' => {
                         self.advance(1);
-                        self.output_buffer.push(HORIZONTAL_TAB);
+                        self.output_buffer.push(b'\t');
                     }
 
-                    LOWER_V => {
+                    b'v' => {
                         self.advance(1);
                         self.output_buffer.push(VERTICAL_TAB);
                     }
 
-                    BACKSLASH => {
+                    b'\\' => {
                         self.advance(1);
-                        self.output_buffer.push(BACKSLASH);
+                        self.output_buffer.push(b'\\');
                     }
 
-                    SINGLE_QUOTE => {
+                    b'\'' => {
                         self.advance(1);
-                        self.output_buffer.push(SINGLE_QUOTE);
+                        self.output_buffer.push(b'\'');
                     }
 
-                    DOUBLE_QUOTE => {
+                    b'"' => {
                         self.advance(1);
-                        self.output_buffer.push(DOUBLE_QUOTE);
+                        self.output_buffer.push(b'"');
                     }
 
-                    NEWLINE | CARRIAGE_RETURN => {
+                    b'\n' | b'\r' => {
                         self.read_line_end(true)?;
                     }
 
-                    LOWER_X => {
+                    b'x' => {
                         self.advance(1);
                         let first = self
                             .peek(0)?
@@ -439,8 +438,8 @@ impl<R: Read> Lexer<R> {
                         self.advance(2);
                     }
 
-                    LOWER_U => {
-                        if self.peek(1)? != Some(LEFT_BRACE) {
+                    b'u' => {
+                        if self.peek(1)? != Some(b'{') {
                             return Err(err_msg("missing '{'"));
                         }
                         self.advance(2);
@@ -448,7 +447,7 @@ impl<R: Read> Lexer<R> {
                         let mut u: u32 = 0;
                         loop {
                             if let Some(c) = self.peek(0)? {
-                                if c == RIGHT_BRACE {
+                                if c == b'}' {
                                     self.advance(1);
                                     break;
                                 } else if let Some(h) = from_hex_digit(c) {
@@ -469,7 +468,7 @@ impl<R: Read> Lexer<R> {
                         }
                     }
 
-                    LOWER_Z => {
+                    b'z' => {
                         self.advance(1);
                         while let Some(c) = self.peek(0)? {
                             if is_newline(c) {
@@ -516,7 +515,7 @@ impl<R: Read> Lexer<R> {
     // Read a [=*[...]=*] sequence with matching numbers of '='.  If `into_output` is true, writes
     // the contained string into the output buffer.
     fn read_long_string(&mut self, into_output: bool) -> Result<(), Error> {
-        assert_eq!(self.peek(0).unwrap().unwrap(), LEFT_BRACKET);
+        assert_eq!(self.peek(0).unwrap().unwrap(), b'[');
         self.advance(1);
 
         if into_output {
@@ -524,12 +523,12 @@ impl<R: Read> Lexer<R> {
         }
 
         let mut open_sep_length = 0;
-        while self.peek(0)? == Some(EQUALS) {
+        while self.peek(0)? == Some(b'=') {
             self.advance(1);
             open_sep_length += 1;
         }
 
-        if self.peek(0)? != Some(LEFT_BRACKET) {
+        if self.peek(0)? != Some(b'[') {
             return Err(err_msg("invalid long string delimiter"));
         }
         self.advance(1);
@@ -542,28 +541,28 @@ impl<R: Read> Lexer<R> {
             };
 
             match c {
-                NEWLINE | CARRIAGE_RETURN => {
+                b'\n' | b'\r' => {
                     self.read_line_end(into_output)?;
                 }
 
-                RIGHT_BRACKET => {
+                b']' => {
                     let mut close_sep_length = 0;
                     self.advance(1);
-                    while self.peek(0)? == Some(EQUALS) {
+                    while self.peek(0)? == Some(b'=') {
                         self.advance(1);
                         close_sep_length += 1;
                     }
 
-                    if open_sep_length == close_sep_length && self.peek(0)? == Some(RIGHT_BRACKET) {
+                    if open_sep_length == close_sep_length && self.peek(0)? == Some(b']') {
                         self.advance(1);
                         break;
                     } else {
                         // If it turns out this is not a valid long string close delimiter, we need
                         // to add the invalid close delimiter to the output.
                         if into_output {
-                            self.output_buffer.push(RIGHT_BRACKET);
+                            self.output_buffer.push(b']');
                             for _ in 0..close_sep_length {
-                                self.output_buffer.push(EQUALS);
+                                self.output_buffer.push(b'=');
                             }
                         }
                     }
@@ -586,12 +585,12 @@ impl<R: Read> Lexer<R> {
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
     fn read_numeral(&mut self) -> Result<Token, Error> {
         let p1 = self.peek(0).unwrap().unwrap();
-        assert!(p1 == PERIOD || is_digit(p1));
+        assert!(p1 == b'.' || is_digit(p1));
 
         self.output_buffer.clear();
 
         let p2 = self.peek(1)?;
-        let is_hex = p1 == NUM_0 && (p2 == Some(LOWER_X) || p2 == Some(UPPER_X));
+        let is_hex = p1 == b'0' && (p2 == Some(b'x') || p2 == Some(b'X'));
         if is_hex {
             self.output_buffer.push(p1);
             self.output_buffer.push(p2.unwrap());
@@ -600,8 +599,8 @@ impl<R: Read> Lexer<R> {
 
         let mut has_radix = false;
         while let Some(c) = self.peek(0)? {
-            if c == PERIOD && !has_radix {
-                self.output_buffer.push(PERIOD);
+            if c == b'.' && !has_radix {
+                self.output_buffer.push(b'.');
                 has_radix = true;
                 self.advance(1);
             } else if !is_hex && is_digit(c) {
@@ -617,15 +616,15 @@ impl<R: Read> Lexer<R> {
 
         let mut has_exp = false;
         if let Some(exp_begin) = self.peek(0)? {
-            if (is_hex && (exp_begin == LOWER_P || exp_begin == UPPER_P))
-                || (!is_hex && (exp_begin == LOWER_E || exp_begin == UPPER_E))
+            if (is_hex && (exp_begin == b'p' || exp_begin == b'P'))
+                || (!is_hex && (exp_begin == b'e' || exp_begin == b'E'))
             {
                 self.output_buffer.push(exp_begin);
                 has_exp = true;
                 self.advance(1);
 
                 if let Some(sign) = self.peek(0)? {
-                    if sign == PLUS || sign == MINUS {
+                    if sign == b'+' || sign == b'-' {
                         self.output_buffer.push(sign);
                         self.advance(1);
                     }
@@ -743,7 +742,7 @@ pub fn read_integer(s: &[u8]) -> Option<i64> {
 pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
     let (is_neg, s) = read_neg(s);
 
-    if s[0] != NUM_0 || (s[1] != LOWER_X && s[1] != UPPER_X) {
+    if s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
         return None;
     }
 
@@ -778,7 +777,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
         return None;
     }
 
-    if s[0] != NUM_0 || (s[1] != LOWER_X && s[1] != UPPER_X) {
+    if s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
         return None;
     }
 
@@ -791,7 +790,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
 
     while i < s.len() {
         let c = s[i];
-        if c == PERIOD {
+        if c == b'.' {
             if found_dot {
                 return None;
             }
@@ -820,7 +819,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
 
     e = e.checked_mul(4)?;
 
-    if i + 1 < s.len() && (s[i] == LOWER_P || s[i] == UPPER_P) {
+    if i + 1 < s.len() && (s[i] == b'p' || s[i] == b'P') {
         let (exp_neg, exp_s) = read_neg(&s[i + 1..]);
         let mut exp1: i32 = 0;
         for &c in exp_s {
@@ -844,9 +843,9 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
 
 fn read_neg(s: &[u8]) -> (bool, &[u8]) {
     if s.len() > 0 {
-        if s[0] == MINUS {
+        if s[0] == b'-' {
             (true, &s[1..])
-        } else if s[0] == PLUS {
+        } else if s[0] == b'+' {
             (false, &s[1..])
         } else {
             (false, s)
@@ -856,79 +855,28 @@ fn read_neg(s: &[u8]) -> (bool, &[u8]) {
     }
 }
 
-const SPACE: u8 = ' ' as u8;
-const NEWLINE: u8 = '\n' as u8;
-const CARRIAGE_RETURN: u8 = '\r' as u8;
-const HORIZONTAL_TAB: u8 = '\t' as u8;
 const ALERT_BEEP: u8 = 0x07;
 const BACKSPACE: u8 = 0x08;
 const VERTICAL_TAB: u8 = 0x0b;
 const FORM_FEED: u8 = 0x0c;
-const LEFT_PAREN: u8 = '(' as u8;
-const RIGHT_PAREN: u8 = ')' as u8;
-const LEFT_BRACKET: u8 = '[' as u8;
-const RIGHT_BRACKET: u8 = ']' as u8;
-const LEFT_BRACE: u8 = '{' as u8;
-const RIGHT_BRACE: u8 = '}' as u8;
-const EQUALS: u8 = '=' as u8;
-const LESS_THAN: u8 = '<' as u8;
-const GREATER_THAN: u8 = '>' as u8;
-const FORWARD_SLASH: u8 = '/' as u8;
-const BACKSLASH: u8 = '\\' as u8;
-const TILDE: u8 = '~' as u8;
-const COLON: u8 = ':' as u8;
-const SEMICOLON: u8 = ';' as u8;
-const DOUBLE_QUOTE: u8 = '"' as u8;
-const SINGLE_QUOTE: u8 = '\'' as u8;
-const PERIOD: u8 = '.' as u8;
-const COMMA: u8 = ',' as u8;
-const PLUS: u8 = '+' as u8;
-const MINUS: u8 = '-' as u8;
-const ASTERISK: u8 = '*' as u8;
-const CARET: u8 = '^' as u8;
-const PERCENT: u8 = '%' as u8;
-const AMPERSAND: u8 = '&' as u8;
-const OCTOTHORPE: u8 = '#' as u8;
-const PIPE: u8 = '|' as u8;
-const UNDERSCORE: u8 = '_' as u8;
-const LOWER_A: u8 = 'a' as u8;
-const LOWER_B: u8 = 'b' as u8;
-const LOWER_E: u8 = 'e' as u8;
-const LOWER_F: u8 = 'f' as u8;
-const LOWER_N: u8 = 'n' as u8;
-const LOWER_P: u8 = 'p' as u8;
-const LOWER_R: u8 = 'r' as u8;
-const LOWER_T: u8 = 't' as u8;
-const LOWER_U: u8 = 'u' as u8;
-const LOWER_V: u8 = 'v' as u8;
-const LOWER_X: u8 = 'x' as u8;
-const LOWER_Z: u8 = 'z' as u8;
-const UPPER_A: u8 = 'A' as u8;
-const UPPER_E: u8 = 'E' as u8;
-const UPPER_F: u8 = 'F' as u8;
-const UPPER_P: u8 = 'P' as u8;
-const UPPER_X: u8 = 'X' as u8;
-const UPPER_Z: u8 = 'Z' as u8;
-const NUM_0: u8 = '0' as u8;
-const NUM_9: u8 = '9' as u8;
 
 // Tokens that are a single character and never the beginning of another longer token
 const SINGLE_CHAR_TOKENS: &[(u8, Token)] = &[
-    (MINUS, Token::Minus),
-    (PLUS, Token::Add),
-    (ASTERISK, Token::Mul),
-    (CARET, Token::Pow),
-    (PERCENT, Token::Mod),
-    (AMPERSAND, Token::BitAnd),
-    (PIPE, Token::BitOr),
-    (COMMA, Token::Comma),
-    (SEMICOLON, Token::SemiColon),
-    (OCTOTHORPE, Token::Len),
-    (LEFT_PAREN, Token::LeftParen),
-    (RIGHT_PAREN, Token::RightParen),
-    (RIGHT_BRACKET, Token::RightBracket),
-    (LEFT_BRACE, Token::LeftBrace),
-    (RIGHT_BRACE, Token::RightBrace),
+    (b'-', Token::Minus),
+    (b'+', Token::Add),
+    (b'*', Token::Mul),
+    (b'^', Token::Pow),
+    (b'%', Token::Mod),
+    (b'&', Token::BitAnd),
+    (b'|', Token::BitOr),
+    (b',', Token::Comma),
+    (b';', Token::SemiColon),
+    (b'#', Token::Len),
+    (b'(', Token::LeftParen),
+    (b')', Token::RightParen),
+    (b']', Token::RightBracket),
+    (b'{', Token::LeftBrace),
+    (b'}', Token::RightBrace),
 ];
 
 // Identifiers which should be interpreted as keyword tokens
@@ -958,21 +906,21 @@ const RESERVED_WORDS: &[(&str, Token)] = &[
 ];
 
 fn is_newline(c: u8) -> bool {
-    c == NEWLINE || c == CARRIAGE_RETURN
+    c == b'\n' || c == b'\r'
 }
 
 fn is_space(c: u8) -> bool {
-    c == SPACE || c == HORIZONTAL_TAB || c == VERTICAL_TAB || c == FORM_FEED || is_newline(c)
+    c == b' ' || c == b'\t' || c == VERTICAL_TAB || c == FORM_FEED || is_newline(c)
 }
 
 // Is this character a lua alpha, which is A-Z, a-z, and _
 fn is_alpha(c: u8) -> bool {
-    (c >= LOWER_A && c <= LOWER_Z) || (c >= UPPER_A && c <= UPPER_Z) || c == UNDERSCORE
+    (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_'
 }
 
 fn from_digit(c: u8) -> Option<u8> {
-    if c >= NUM_0 && c <= NUM_9 {
-        Some(c - NUM_0)
+    if c >= b'0' && c <= b'9' {
+        Some(c - b'0')
     } else {
         None
     }
@@ -983,12 +931,12 @@ fn is_digit(c: u8) -> bool {
 }
 
 fn from_hex_digit(c: u8) -> Option<u8> {
-    if c >= NUM_0 && c <= NUM_9 {
-        Some(c - NUM_0)
-    } else if c >= LOWER_A && c <= LOWER_F {
-        Some(10 + c - LOWER_A)
-    } else if c >= UPPER_A && c <= UPPER_F {
-        Some(10 + c - UPPER_A)
+    if c >= b'0' && c <= b'9' {
+        Some(c - b'0')
+    } else if c >= b'a' && c <= b'f' {
+        Some(10 + c - b'a')
+    } else if c >= b'A' && c <= b'F' {
+        Some(10 + c - b'A')
     } else {
         None
     }
