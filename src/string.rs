@@ -17,11 +17,11 @@ impl<'gc> String<'gc> {
         let len = s.len();
         if len <= 8 {
             let mut b = [0; 8];
-            b.copy_from_slice(s);
+            b[..len].copy_from_slice(s);
             String::Short8(len as u8, Gc::allocate(mc, b))
         } else if len <= 32 {
             let mut b = [0; 32];
-            b.copy_from_slice(s);
+            b[..len].copy_from_slice(s);
             String::Short32(len as u8, Gc::allocate(mc, b))
         } else {
             String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice()))
