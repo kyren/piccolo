@@ -23,14 +23,14 @@ fn test_suite() {
         let path = dir.expect("could not read 'testsuite' dir entry").path();
         if let Some(ext) = path.extension() {
             if ext == "lua" {
-                writeln!(stdout, "parsing file {:?}", path);
+                let _ = writeln!(stdout, "parsing file {:?}", path);
                 if let Err(err) = parse_file(&path) {
-                    writeln!(stdout, "error encountered: {:?}", err);
+                    let _ = writeln!(stdout, "error encountered: {:?}", err);
                     file_failed = true;
                 }
             }
         } else {
-            writeln!(stdout, "skipping file {:?}", path);
+            let _ = writeln!(stdout, "skipping file {:?}", path);
         }
     }
 
