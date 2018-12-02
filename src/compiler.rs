@@ -13,7 +13,7 @@ use operators::{apply_binop, BinaryOperator};
 use parser::{
     AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
-    ReturnStatement, SimpleExpression, Statement, SuffixedExpression,
+    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
 };
 use string::String;
 use value::Value;
@@ -113,7 +113,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 start: reg,
                 count: var_count,
             });
-            self.free_expr(expr);
+            self.free_expr(expr)?;
         } else {
             let ret_start = self.functions.top.register_allocator.stack_top;
             for i in 0..ret_count {
@@ -141,7 +141,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .push((&local_statement.names[i], reg));
             } else {
                 let expr = self.expression(expr)?;
-                self.free_expr(expr);
+                self.free_expr(expr)?;
             }
         }
         for i in local_statement.values.len()..local_statement.names.len() {
@@ -162,28 +162,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn function_call(&mut self, function_call: &'a FunctionCallStatement) -> Result<(), Error> {
         let func_expr = self.suffixed_expression(&function_call.head)?;
-        let f_reg = self.expr_push_register(func_expr)?;
-
         match &function_call.call {
-            CallSuffix::Function(exprs) => {
-                let arg_count: u8 = cast(exprs.len()).ok_or(CompilerLimit::FixedParameters)?;
-                for expr in exprs {
-                    let expr = self.expression(expr)?;
-                    self.expr_push_register(expr)?;
-                }
-                self.functions.top.opcodes.push(OpCode::Call {
-                    func: f_reg,
-                    args: VarCount::make_constant(arg_count)
-                        .ok_or(CompilerLimit::FixedParameters)?,
-                    returns: VarCount::make_zero(),
-                });
-                self.functions.top.register_allocator.pop(arg_count);
+            CallSuffix::Function(args) => {
+                let arg_exprs = args
+                    .iter()
+                    .map(|arg| self.expression(arg))
+                    .collect::<Result<_, Error>>()?;
+                self.expr_function_call(func_expr, arg_exprs, VarCount::make_zero())?;
             }
             CallSuffix::Method(_, _) => bail!("method unsupported"),
         }
-
-        self.functions.top.register_allocator.pop(1);
-
         Ok(())
     }
 
@@ -206,7 +194,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .top
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
-                        self.free_expr(expr);
+                        self.free_expr(expr)?;
                     }
                     VariableDescriptor::Global(_) => bail!("global variables unsupported"),
                 },
@@ -312,10 +300,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         suffixed_expression: &'a SuffixedExpression,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        if !suffixed_expression.suffixes.is_empty() {
-            bail!("no support for expression suffixes yet");
+        let mut expr = self.primary_expression(&suffixed_expression.primary)?;
+        for suffix in &suffixed_expression.suffixes {
+            match suffix {
+                SuffixPart::Field(_) => bail!("no support for fields yet"),
+                SuffixPart::Call(call_suffix) => match call_suffix {
+                    CallSuffix::Function(args) => {
+                        let args = args
+                            .iter()
+                            .map(|arg| self.expression(arg))
+                            .collect::<Result<_, Error>>()?;
+                        expr = ExprDescriptor::FunctionCall(Box::new(expr), args);
+                    }
+                    CallSuffix::Method(_, _) => bail!("methods not supported yet"),
+                },
+            }
         }
-        self.primary_expression(&suffixed_expression.primary)
+        Ok(expr)
     }
 
     fn primary_expression(
@@ -340,7 +341,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         binop: BinaryOperator,
         right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        if let (ExprDescriptor::Value(a), ExprDescriptor::Value(b)) = (left, right) {
+        if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
             if let Some(v) = apply_binop(binop, a, b) {
                 return Ok(ExprDescriptor::Value(v));
             }
@@ -351,7 +352,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (mut left_expr, ExprDescriptor::Value(right_const)) => {
                     let left = self.expr_any_register(&mut left_expr)?;
                     let right = self.get_constant(right_const)?;
-                    self.free_expr(left_expr);
+                    self.free_expr(left_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -367,7 +368,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (ExprDescriptor::Value(left_const), mut right_expr) => {
                     let left = self.get_constant(left_const)?;
                     let right = self.expr_any_register(&mut right_expr)?;
-                    self.free_expr(right_expr);
+                    self.free_expr(right_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -383,8 +384,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (mut left_expr, mut right_expr) => {
                     let left = self.expr_any_register(&mut left_expr)?;
                     let right = self.expr_any_register(&mut right_expr)?;
-                    self.free_expr(right_expr);
-                    self.free_expr(left_expr);
+                    self.free_expr(right_expr)?;
+                    self.free_expr(left_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -501,101 +502,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Modify an expression to contain its result in any register, and return that register
     fn expr_any_register(&mut self, expr: &mut ExprDescriptor<'gc>) -> Result<Register, Error> {
-        let (new_expr, reg) = match *expr {
-            ExprDescriptor::Temporary(reg) => (ExprDescriptor::Temporary(reg), reg),
-            ExprDescriptor::Local(reg) => (ExprDescriptor::Local(reg), reg),
-            ExprDescriptor::UpValue(source) => {
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::GetUpValue { source, dest });
-                (ExprDescriptor::Temporary(dest), dest)
-            }
-            ExprDescriptor::Value(value) => {
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                match value {
-                    Value::Nil => {
-                        self.load_nil(dest)?;
-                    }
-                    Value::Boolean(value) => {
-                        self.functions.top.opcodes.push(OpCode::LoadBool {
-                            dest,
-                            value,
-                            skip_next: false,
-                        });
-                    }
-                    val => {
-                        let constant = self.get_constant(val)?;
-                        self.functions
-                            .top
-                            .opcodes
-                            .push(OpCode::LoadConstant { dest, constant });
-                    }
-                }
-                (ExprDescriptor::Temporary(dest), dest)
-            }
-        };
-
-        *expr = new_expr;
-        Ok(reg)
-    }
-
-    // Consume an expression and store the result in the given register
-    fn expr_to_register(&mut self, expr: ExprDescriptor<'gc>, dest: Register) -> Result<(), Error> {
-        match expr {
-            ExprDescriptor::Temporary(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::Move { dest, source });
-            }
-            ExprDescriptor::Local(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::Move { dest, source });
-            }
-            ExprDescriptor::UpValue(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::GetUpValue { source, dest });
-            }
-            ExprDescriptor::Value(value) => match value {
-                Value::Nil => {
-                    self.load_nil(dest)?;
-                }
-                Value::Boolean(value) => {
-                    self.functions.top.opcodes.push(OpCode::LoadBool {
-                        dest,
-                        value,
-                        skip_next: false,
-                    });
-                }
-                val => {
-                    let constant = self.get_constant(val)?;
-                    self.functions
-                        .top
-                        .opcodes
-                        .push(OpCode::LoadConstant { dest, constant });
-                }
-            },
+        match *expr {
+            ExprDescriptor::Temporary(reg) => return Ok(reg),
+            ExprDescriptor::Local(reg) => return Ok(reg),
+            _ => {}
         }
 
-        self.free_expr(expr);
-
-        Ok(())
+        let reg = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+        let old_expr = mem::replace(expr, ExprDescriptor::Temporary(reg));
+        self.expr_to_register(old_expr, reg)?;
+        Ok(reg)
     }
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register
@@ -634,10 +555,114 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(dest)
     }
 
-    fn free_expr(&mut self, expr: ExprDescriptor<'gc>) {
-        if let ExprDescriptor::Temporary(r) = expr {
-            self.functions.top.register_allocator.free(r);
+    // Consume an expression and store the result in the given register
+    fn expr_to_register(&mut self, expr: ExprDescriptor<'gc>, dest: Register) -> Result<(), Error> {
+        match expr {
+            ExprDescriptor::Temporary(source) => {
+                self.functions
+                    .top
+                    .opcodes
+                    .push(OpCode::Move { dest, source });
+                self.functions.top.register_allocator.free(source);
+            }
+            ExprDescriptor::Local(source) => {
+                self.functions
+                    .top
+                    .opcodes
+                    .push(OpCode::Move { dest, source });
+            }
+            ExprDescriptor::UpValue(source) => {
+                self.functions
+                    .top
+                    .opcodes
+                    .push(OpCode::GetUpValue { source, dest });
+            }
+            ExprDescriptor::Value(value) => match value {
+                Value::Nil => {
+                    self.load_nil(dest)?;
+                }
+                Value::Boolean(value) => {
+                    self.functions.top.opcodes.push(OpCode::LoadBool {
+                        dest,
+                        value,
+                        skip_next: false,
+                    });
+                }
+                val => {
+                    let constant = self.get_constant(val)?;
+                    self.functions
+                        .top
+                        .opcodes
+                        .push(OpCode::LoadConstant { dest, constant });
+                }
+            },
+            ExprDescriptor::FunctionCall(func, args) => {
+                let source = self.expr_function_call(*func, args, VarCount::make_one())?;
+                self.functions
+                    .top
+                    .opcodes
+                    .push(OpCode::Move { dest, source });
+            }
         }
+
+        Ok(())
+    }
+
+    // Performs a function call, consuming the func and args registers.  At the end of the function
+    // call, the return values will be left at the top of the stack, and this method does not mark
+    // the return registers as allocated.  Returns the register at which the returns (if any) are
+    // placed (which will also be the current register allocator top).
+    fn expr_function_call(
+        &mut self,
+        func: ExprDescriptor<'gc>,
+        mut args: Vec<ExprDescriptor<'gc>>,
+        returns: VarCount,
+    ) -> Result<Register, Error> {
+        let top_reg = self.expr_push_register(func)?;
+        let arg_count: u8 = cast(args.len()).ok_or(CompilerLimit::FixedParameters)?;
+        let last_arg = args.pop();
+        for arg in args {
+            self.expr_push_register(arg)?;
+        }
+
+        if let Some(ExprDescriptor::FunctionCall(func, args)) = last_arg {
+            self.expr_function_call(*func, args, VarCount::make_variable())?;
+            self.functions.top.opcodes.push(OpCode::Call {
+                func: top_reg,
+                args: VarCount::make_variable(),
+                returns,
+            });
+            self.functions.top.register_allocator.pop(arg_count);
+        } else {
+            if let Some(last_arg) = last_arg {
+                self.expr_push_register(last_arg)?;
+            }
+            self.functions.top.opcodes.push(OpCode::Call {
+                func: top_reg,
+                args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
+                returns,
+            });
+            self.functions.top.register_allocator.pop(arg_count + 1);
+        }
+
+        Ok(top_reg)
+    }
+
+    // Consume an expression without placing it in a register
+    fn free_expr(&mut self, expr: ExprDescriptor<'gc>) -> Result<(), Error> {
+        match expr {
+            ExprDescriptor::Temporary(r) => {
+                self.functions.top.register_allocator.free(r);
+            }
+            ExprDescriptor::Local(_) => {}
+            ExprDescriptor::UpValue(_) => {}
+            ExprDescriptor::Value(_) => {}
+            ExprDescriptor::FunctionCall(func, args) => {
+                self.expr_function_call(*func, args, VarCount::make_zero())?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -686,12 +711,13 @@ enum VariableDescriptor<'a> {
     Global(&'a [u8]),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 enum ExprDescriptor<'gc> {
     Temporary(Register),
     Local(Register),
     UpValue(UpValueIndex),
     Value(Value<'gc>),
+    FunctionCall(Box<ExprDescriptor<'gc>>, Vec<ExprDescriptor<'gc>>),
 }
 
 struct RegisterAllocator {

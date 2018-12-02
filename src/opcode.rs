@@ -27,6 +27,10 @@ impl VarCount {
         VarCount(1)
     }
 
+    pub fn make_one() -> VarCount {
+        VarCount(2)
+    }
+
     pub fn is_variable(&self) -> bool {
         self.0 == 0
     }
