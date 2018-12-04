@@ -25,7 +25,7 @@ fn test_mult_arg() {
             local function test2(a, b, c)
                 return a + b + c
             end
-            return test2(1, 2, 3, test1())
+            return test2(1, test1())
         "#,
         6,
     );

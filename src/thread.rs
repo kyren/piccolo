@@ -133,7 +133,7 @@ impl<'gc> ThreadState<'gc> {
                         let return_count = count
                             .get_constant()
                             .map(|c| c as usize)
-                            .unwrap_or(self.stack.len() - start as usize);
+                            .unwrap_or(self.stack.len() - current_frame.base - start as usize);
                         let expected = current_frame
                             .returns
                             .get_constant()
@@ -150,8 +150,10 @@ impl<'gc> ThreadState<'gc> {
 
                         self.pc = current_frame.restore_pc;
                         self.frames.pop();
+
                         if let Some(frame) = self.frames.last() {
-                            self.stack.truncate(frame.top);
+                            let last_return = current_frame.bottom + expected;
+                            self.stack.truncate(frame.top.max(last_return));
                         }
                         continue 'function_start;
                     }
