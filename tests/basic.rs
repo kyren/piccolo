@@ -36,3 +36,17 @@ fn test_assignment() {
         35,
     );
 }
+
+#[test]
+fn test_function() {
+    test_script(
+        r#"
+            local function test(a, b)
+                return a + b
+            end
+            local i = test(1, 2)
+            return i
+        "#,
+        3,
+    );
+}

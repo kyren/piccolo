@@ -113,7 +113,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 start: reg,
                 count: var_count,
             });
-            self.free_expr(expr)?;
+            self.expr_finish(expr)?;
         } else {
             let ret_start = self.functions.top.register_allocator.stack_top;
             for i in 0..ret_count {
@@ -141,7 +141,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .push((&local_statement.names[i], reg));
             } else {
                 let expr = self.expression(expr)?;
-                self.free_expr(expr)?;
+                self.expr_finish(expr)?;
             }
         }
         for i in local_statement.values.len()..local_statement.names.len() {
@@ -194,7 +194,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .top
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
-                        self.free_expr(expr)?;
+                        self.expr_finish(expr)?;
                     }
                     VariableDescriptor::Global(_) => bail!("global variables unsupported"),
                 },
@@ -352,7 +352,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (mut left_expr, ExprDescriptor::Value(right_const)) => {
                     let left = self.expr_any_register(&mut left_expr)?;
                     let right = self.get_constant(right_const)?;
-                    self.free_expr(left_expr)?;
+                    self.expr_finish(left_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -368,7 +368,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (ExprDescriptor::Value(left_const), mut right_expr) => {
                     let left = self.get_constant(left_const)?;
                     let right = self.expr_any_register(&mut right_expr)?;
-                    self.free_expr(right_expr)?;
+                    self.expr_finish(right_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -384,8 +384,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 (mut left_expr, mut right_expr) => {
                     let left = self.expr_any_register(&mut left_expr)?;
                     let right = self.expr_any_register(&mut right_expr)?;
-                    self.free_expr(right_expr)?;
-                    self.free_expr(left_expr)?;
+                    self.expr_finish(right_expr)?;
+                    self.expr_finish(left_expr)?;
                     let dest = self
                         .functions
                         .top
@@ -648,8 +648,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(top_reg)
     }
 
-    // Consume an expression without placing it in a register
-    fn free_expr(&mut self, expr: ExprDescriptor<'gc>) -> Result<(), Error> {
+    // Consume an expression and ignore the result.  If the expression is a pending function call,
+    // performs the function call with no expected returns, if it is held in a temporary register,
+    // frees that register.  All created `ExprDescriptor`s must be consumed by one of the methods
+    // that handles them, if no other method has consumed an expr, `expr_finish` must be called on
+    // it.
+    fn expr_finish(&mut self, expr: ExprDescriptor<'gc>) -> Result<(), Error> {
         match expr {
             ExprDescriptor::Temporary(r) => {
                 self.functions.top.register_allocator.free(r);
@@ -711,7 +715,6 @@ enum VariableDescriptor<'a> {
     Global(&'a [u8]),
 }
 
-#[derive(Clone)]
 enum ExprDescriptor<'gc> {
     Temporary(Register),
     Local(Register),
