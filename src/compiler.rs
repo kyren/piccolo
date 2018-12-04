@@ -98,52 +98,102 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn return_statement(&mut self, return_statement: &'a ReturnStatement) -> Result<(), Error> {
-        let ret_count: u8 = cast(return_statement.returns.len()).ok_or(CompilerLimit::Returns)?;
-        let var_count = VarCount::make_constant(ret_count).ok_or(CompilerLimit::Returns)?;
+        let ret_len = return_statement.returns.len();
 
-        if ret_count == 0 {
+        if ret_len == 0 {
             self.functions.top.opcodes.push(OpCode::Return {
                 start: 0,
-                count: var_count,
+                count: VarCount::make_zero(),
             });
-        } else if ret_count == 1 {
-            let mut expr = self.expression(&return_statement.returns[0])?;
-            let reg = self.expr_any_register(&mut expr)?;
-            self.functions.top.opcodes.push(OpCode::Return {
-                start: reg,
-                count: var_count,
-            });
-            self.expr_finish(expr)?;
         } else {
-            let ret_start = self.functions.top.register_allocator.stack_top;
-            for i in 0..ret_count {
-                let expr = self.expression(&return_statement.returns[i as usize])?;
+            let ret_start = cast(self.functions.top.register_allocator.stack_top)
+                .ok_or(CompilerLimit::Registers)?;
+
+            for i in 0..ret_len - 1 {
+                let expr = self.expression(&return_statement.returns[i])?;
                 self.expr_push_register(expr)?;
             }
+
+            let ret_count = match self.expression(&return_statement.returns[ret_len - 1])? {
+                ExprDescriptor::FunctionCall(func, args) => {
+                    self.expr_function_call(*func, args, VarCount::make_variable())?;
+                    VarCount::make_variable()
+                }
+                expr => {
+                    self.expr_push_register(expr)?;
+                    cast(ret_len)
+                        .and_then(VarCount::make_constant)
+                        .ok_or(CompilerLimit::Returns)?
+                }
+            };
+
             self.functions.top.opcodes.push(OpCode::Return {
-                start: ret_start as u8,
-                count: var_count,
+                start: ret_start,
+                count: ret_count,
             });
-            self.functions.top.register_allocator.pop(ret_count);
+
+            // Free all allocated return registers so that we do not fail the register leak check
+            self.functions
+                .top
+                .register_allocator
+                .pop_to(ret_start as u16);
         }
 
         Ok(())
     }
 
     fn local_statement(&mut self, local_statement: &'a LocalStatement) -> Result<(), Error> {
-        for (i, expr) in local_statement.values.iter().enumerate() {
-            if local_statement.names.len() > i {
-                let expr = self.expression(expr)?;
+        let name_len = local_statement.names.len();
+        let val_len = local_statement.values.len();
+
+        for i in 0..val_len {
+            let expr = self.expression(&local_statement.values[i])?;
+
+            if i >= name_len {
+                self.expr_finish(expr)?;
+            } else if i == val_len - 1 {
+                match expr {
+                    ExprDescriptor::FunctionCall(func, args) => {
+                        let num_returns =
+                            cast(1 + name_len - val_len).ok_or(CompilerLimit::Registers)?;
+                        println!("{}", num_returns);
+                        self.expr_function_call(
+                            *func,
+                            args,
+                            VarCount::make_constant(num_returns).ok_or(CompilerLimit::Returns)?,
+                        )?;
+                        let reg = self
+                            .functions
+                            .top
+                            .register_allocator
+                            .push(num_returns)
+                            .ok_or(CompilerLimit::Registers)?;
+                        for j in 0..num_returns {
+                            self.functions
+                                .top
+                                .locals
+                                .push((&local_statement.names[i + j as usize], reg + j));
+                        }
+
+                        return Ok(());
+                    }
+                    expr => {
+                        let reg = self.expr_allocate_register(expr)?;
+                        self.functions
+                            .top
+                            .locals
+                            .push((&local_statement.names[i], reg));
+                    }
+                }
+            } else {
                 let reg = self.expr_allocate_register(expr)?;
                 self.functions
                     .top
                     .locals
                     .push((&local_statement.names[i], reg));
-            } else {
-                let expr = self.expression(expr)?;
-                self.expr_finish(expr)?;
             }
         }
+
         for i in local_statement.values.len()..local_statement.names.len() {
             let reg = self
                 .functions
@@ -157,6 +207,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .locals
                 .push((&local_statement.names[i], reg));
         }
+
         Ok(())
     }
 
@@ -632,7 +683,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 args: VarCount::make_variable(),
                 returns,
             });
-            self.functions.top.register_allocator.pop(arg_count);
         } else {
             if let Some(last_arg) = last_arg {
                 self.expr_push_register(last_arg)?;
@@ -642,8 +692,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
                 returns,
             });
-            self.functions.top.register_allocator.pop(arg_count + 1);
         }
+        self.functions.top.register_allocator.pop_to(top_reg as u16);
 
         Ok(top_reg)
     }
@@ -805,22 +855,14 @@ impl RegisterAllocator {
         }
     }
 
-    // Free a contiguous block of registers which have been just been pushed (so only a block at the
-    // end of the allocated area).
-    fn pop(&mut self, size: u8) {
-        if size > 0 {
-            assert!(
-                self.stack_top >= size as u16,
-                "cannot pop more registers than were allocated"
-            );
-            self.stack_top = self.stack_top - size as u16;
-            for i in self.stack_top..self.stack_top + size as u16 {
-                assert!(
-                    self.registers[i as usize],
-                    "not all popped registers were allocated"
-                );
+    // Free all registers past the given register, making the given register the new top of the
+    // stack.  If the given register is >= to the current top, this will have no effect.
+    fn pop_to(&mut self, new_top: u16) {
+        if self.stack_top > new_top {
+            for i in new_top..self.stack_top {
                 self.registers[i as usize] = false;
             }
+            self.stack_top = new_top;
             self.first_free = self.first_free.min(self.stack_top);
         }
     }
