@@ -289,7 +289,6 @@ impl<'gc> ThreadState<'gc> {
 
         let top = base + closure.0.proto.stack_size as usize;
         self.stack.resize(top, Value::Nil);
-        println!("stack size {}", self.stack.len());
 
         self.frames.push(Frame {
             bottom: closure_index,

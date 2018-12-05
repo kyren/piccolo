@@ -156,7 +156,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     ExprDescriptor::FunctionCall(func, args) => {
                         let num_returns =
                             cast(1 + name_len - val_len).ok_or(CompilerLimit::Registers)?;
-                        println!("{}", num_returns);
                         self.expr_function_call(
                             *func,
                             args,
