@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{f64, mem, usize};
 
-use arena::ArenaParameters;
-use collect::Collect;
-use util::{GcBox, GcColor, GcFlags, Invariant};
+use crate::arena::ArenaParameters;
+use crate::collect::Collect;
+use crate::util::{GcBox, GcColor, GcFlags, Invariant};
 
 /// Handle value given by arena callbacks during construction and mutation.  Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.

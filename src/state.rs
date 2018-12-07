@@ -4,12 +4,12 @@ use failure::{err_msg, Error};
 
 use gc_arena::ArenaParameters;
 
-use compiler::compile_chunk;
-use conversion::FromLua;
-use function::Closure;
-use parser::parse_chunk;
-use thread::Thread;
-use value::Value;
+use crate::compiler::compile_chunk;
+use crate::conversion::FromLua;
+use crate::function::Closure;
+use crate::parser::parse_chunk;
+use crate::thread::Thread;
+use crate::value::Value;
 
 #[derive(Collect)]
 #[collect(empty_drop)]

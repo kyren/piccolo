@@ -2,6 +2,7 @@
 name = "gc-arena-derive"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
+edition = "2018"
 
 [lib]
 proc-macro = true

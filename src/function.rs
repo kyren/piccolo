@@ -4,8 +4,8 @@ use failure::{err_msg, Error};
 
 use gc_arena::{Gc, GcCell, MutationContext};
 
-use opcode::{OpCode, Register, UpValueIndex};
-use value::Value;
+use crate::opcode::{OpCode, Register, UpValueIndex};
+use crate::value::Value;
 
 #[derive(Debug, Collect, Clone, Copy)]
 pub enum UpValueDescriptor {

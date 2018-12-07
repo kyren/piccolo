@@ -2,7 +2,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
-use collect::Collect;
+use crate::collect::Collect;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum GcColor {

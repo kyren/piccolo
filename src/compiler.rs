@@ -7,16 +7,16 @@ use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
 
-use function::{FunctionProto, UpValueDescriptor};
-use opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
-use operators::{apply_binop, BinaryOperator};
-use parser::{
+use crate::function::{FunctionProto, UpValueDescriptor};
+use crate::opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
+use crate::operators::{apply_binop, BinaryOperator};
+use crate::parser::{
     AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
     ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
 };
-use string::String;
-use value::Value;
+use crate::string::String;
+use crate::value::Value;
 
 pub fn compile_chunk<'gc>(
     mc: MutationContext<'gc, '_>,

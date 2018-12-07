@@ -1,8 +1,8 @@
 use std::i64;
 
-use function::Closure;
-use string::String;
-use table::Table;
+use crate::function::Closure;
+use crate::string::String;
+use crate::table::Table;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

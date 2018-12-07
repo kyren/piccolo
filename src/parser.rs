@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use failure::{err_msg, Error};
 
-use lexer::{Lexer, Token};
-use operators::{BinaryOperator, UnaryOperator};
+use crate::lexer::{Lexer, Token};
+use crate::operators::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk {

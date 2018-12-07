@@ -1,8 +1,8 @@
 use std::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
 
-use collect::Collect;
-use context::{CollectionContext, MutationContext};
-use gc::Gc;
+use crate::collect::Collect;
+use crate::context::{CollectionContext, MutationContext};
+use crate::gc::Gc;
 
 /// A garbage collected pointer to a type T that may be safely mutated.  When a type that may hold
 /// `Gc` pointers is mutated, it may adopt new `Gc` pointers, and in order for this to be safe this

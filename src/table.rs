@@ -6,7 +6,7 @@ use num_traits::cast;
 
 use gc_arena::{GcCell, MutationContext};
 
-use value::Value;
+use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

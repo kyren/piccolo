@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 
 use gc_arena::{Gc, GcCell, MutationContext};
 
-use function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
-use opcode::{OpCode, VarCount};
-use operators::{apply_binop, BinaryOperator};
-use value::Value;
+use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
+use crate::opcode::{OpCode, VarCount};
+use crate::operators::{apply_binop, BinaryOperator};
+use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

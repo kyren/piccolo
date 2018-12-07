@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hash};
 
-use collect::Collect;
-use context::CollectionContext;
+use crate::collect::Collect;
+use crate::context::CollectionContext;
 
 /// If a type will never hold `Gc` pointers, you can use this macro to provide a simple empty
 /// `Collect` implementation.

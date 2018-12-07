@@ -1,4 +1,4 @@
-use context::CollectionContext;
+use crate::context::CollectionContext;
 
 /// A trait for garbage collected objects that can be placed into `Gc` pointers.  This trait is
 /// unsafe, because `Gc` pointers inside an Arena are assumed never to be dangling, and in order to

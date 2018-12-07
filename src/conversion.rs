@@ -1,7 +1,7 @@
 use failure::{err_msg, Error};
 use num_traits::cast;
 
-use value::Value;
+use crate::value::Value;
 
 pub trait FromLua: Sized {
     fn from_lua<'gc>(value: Value<'gc>) -> Result<Self, Error>;

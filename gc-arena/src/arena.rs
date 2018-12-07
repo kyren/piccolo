@@ -1,6 +1,6 @@
 use std::{f64, usize};
 
-use context::{Context, MutationContext};
+use crate::context::{Context, MutationContext};
 
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {

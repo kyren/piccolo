@@ -1,6 +1,6 @@
 use std::f64;
 
-use lexer::{Lexer, Token};
+use crate::lexer::{Lexer, Token};
 
 fn test_tokens(source: &str, tokens: &[Token]) {
     let mut lexer = Lexer::new(source.as_bytes());

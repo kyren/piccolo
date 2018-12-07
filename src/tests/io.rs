@@ -1,6 +1,6 @@
 use std::io::{BufReader, Read};
 
-use io::skip_prefix;
+use crate::io::skip_prefix;
 
 #[test]
 fn test_skip_prefix() {

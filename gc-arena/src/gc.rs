@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
 
-use collect::Collect;
-use context::{CollectionContext, MutationContext};
-use util::{GcBox, Invariant};
+use crate::collect::Collect;
+use crate::context::{CollectionContext, MutationContext};
+use crate::util::{GcBox, Invariant};
 
 /// A garbage collected pointer to a type T.  Implements Copy, and is implemented as a plain machine
 /// pointer.  You can only allocate `Gc` pointers through an `Allocator` inside an arena type, and
