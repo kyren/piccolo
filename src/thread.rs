@@ -1,7 +1,7 @@
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
 
-use gc_arena::{Gc, GcCell, MutationContext};
+use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::opcode::{OpCode, VarCount};

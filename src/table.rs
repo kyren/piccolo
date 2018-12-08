@@ -1,10 +1,11 @@
 use std::hash::{Hash, Hasher};
 use std::mem;
 
+use failure::Fail;
 use fnv::FnvHashMap;
 use num_traits::cast;
 
-use gc_arena::{GcCell, MutationContext};
+use gc_arena::{Collect, GcCell, MutationContext};
 
 use crate::value::Value;
 

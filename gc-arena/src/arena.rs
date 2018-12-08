@@ -62,10 +62,7 @@ impl ArenaParameters {
 ///
 /// An eample:
 /// ```
-/// # #[macro_use]
-/// # extern crate gc_arena;
-/// #
-/// # use gc_arena::Gc;
+/// # use gc_arena::{Collect, Gc, make_arena};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]

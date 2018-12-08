@@ -1,13 +1,3 @@
-#[macro_use]
-extern crate failure;
-extern crate fnv;
-#[macro_use]
-extern crate lazy_static;
-extern crate num_traits;
-
-#[macro_use]
-extern crate gc_arena;
-
 pub mod compiler;
 pub mod conversion;
 pub mod function;

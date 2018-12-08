@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::{char, i32, i64, mem, str};
 
-use failure::{err_msg, Error};
+use failure::{err_msg, format_err, Error};
+use lazy_static::lazy_static;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -658,7 +659,8 @@ impl<R: Read> Lexer<R> {
                 read_hex_float(&self.output_buffer)
             } else {
                 read_float(&self.output_buffer)
-            }.ok_or_else(|| err_msg("malformed number"))?,
+            }
+            .ok_or_else(|| err_msg("malformed number"))?,
         ))
     }
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem;
 
-use failure::Error;
+use failure::{bail, Error, Fail};
 use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
@@ -511,9 +511,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
                 count: prev_count,
-            })
-                if prev_dest + prev_count == dest =>
-            {
+            }) if prev_dest + prev_count == dest => {
                 self.functions.top.opcodes.push(OpCode::LoadNil {
                     dest: prev_dest,
                     count: prev_count + 1,

@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::rc::Rc;
 
-use failure::{err_msg, Error};
+use failure::{err_msg, format_err, Error};
 
 use crate::lexer::{Lexer, Token};
 use crate::operators::{BinaryOperator, UnaryOperator};

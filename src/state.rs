@@ -2,7 +2,7 @@ use std::io::Read;
 
 use failure::{err_msg, Error};
 
-use gc_arena::ArenaParameters;
+use gc_arena::{make_arena, ArenaParameters, Collect};
 
 use crate::compiler::compile_chunk;
 use crate::conversion::FromLua;

@@ -1,14 +1,9 @@
-extern crate rand;
-
-#[macro_use]
-extern crate gc_arena;
-
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use rand::distributions::Distribution;
 
-use gc_arena::{ArenaParameters, Collect, Gc, GcCell};
+use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell};
 
 #[test]
 fn simple_allocation() {

@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
-use gc_arena::{Gc, MutationContext};
+use gc_arena::{Collect, Gc, MutationContext};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

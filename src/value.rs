@@ -1,5 +1,7 @@
 use std::i64;
 
+use gc_arena::Collect;
+
 use crate::function::Closure;
 use crate::string::String;
 use crate::table::Table;

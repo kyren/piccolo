@@ -1,7 +1,3 @@
-#[allow(unused_imports)]
-#[macro_use]
-extern crate gc_arena_derive;
-
 #[doc(hidden)]
 pub use gc_arena_derive::*;
 

@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use failure::{err_msg, Error};
 
-use gc_arena::{Gc, GcCell, MutationContext};
+use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::opcode::{OpCode, Register, UpValueIndex};
 use crate::value::Value;
