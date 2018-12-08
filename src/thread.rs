@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
-use crate::opcode::{OpCode, VarCount};
-use crate::operators::{apply_binop, BinaryOperator};
+use crate::opcode::{apply_binop, apply_unop, OpCode, VarCount};
 use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -206,28 +205,49 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
-                    OpCode::AddRR { dest, left, right } => {
+                    OpCode::UnOp { unop, dest, source } => {
+                        let source = self.stack[current_frame.base + source as usize];
+                        self.stack[current_frame.base + dest as usize] =
+                            apply_unop(unop, source).expect("could not apply unary operator");
+                    }
+
+                    OpCode::BinOpRR {
+                        binop,
+                        dest,
+                        left,
+                        right,
+                    } => {
                         let left = self.stack[current_frame.base + left as usize];
                         let right = self.stack[current_frame.base + right as usize];
                         self.stack[current_frame.base + dest as usize] =
-                            apply_binop(BinaryOperator::Add, left, right)
-                                .expect("could not apply add operator");
+                            apply_binop(binop, left, right)
+                                .expect("could not apply binary operator");
                     }
 
-                    OpCode::AddRC { dest, left, right } => {
+                    OpCode::BinOpRC {
+                        binop,
+                        dest,
+                        left,
+                        right,
+                    } => {
                         let left = self.stack[current_frame.base + left as usize];
                         let right = current_function.0.proto.constants[right as usize];
                         self.stack[current_frame.base + dest as usize] =
-                            apply_binop(BinaryOperator::Add, left, right)
-                                .expect("could not apply add operator");
+                            apply_binop(binop, left, right)
+                                .expect("could not apply binary operator");
                     }
 
-                    OpCode::AddCR { dest, left, right } => {
+                    OpCode::BinOpCR {
+                        binop,
+                        dest,
+                        left,
+                        right,
+                    } => {
                         let left = current_function.0.proto.constants[left as usize];
                         let right = self.stack[current_frame.base + right as usize];
                         self.stack[current_frame.base + dest as usize] =
-                            apply_binop(BinaryOperator::Add, left, right)
-                                .expect("could not apply add operator");
+                            apply_binop(binop, left, right)
+                                .expect("could not apply binary operator");
                     }
                 }
 

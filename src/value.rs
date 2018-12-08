@@ -46,3 +46,14 @@ impl<'gc> PartialEq for Value<'gc> {
         }
     }
 }
+
+impl<'gc> Value<'gc> {
+    /// Lua `nil` and `false` are false, anything else is true.
+    pub fn as_bool(self) -> bool {
+        match self {
+            Value::Nil => false,
+            Value::Boolean(false) => false,
+            _ => true,
+        }
+    }
+}

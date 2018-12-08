@@ -4,7 +4,6 @@ use std::rc::Rc;
 use failure::{err_msg, format_err, Error};
 
 use crate::lexer::{Lexer, Token};
-use crate::operators::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk {
@@ -94,6 +93,39 @@ pub struct FunctionStatement {
 pub struct LocalStatement {
     pub names: Vec<Box<[u8]>>,
     pub values: Vec<Expression>,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum BinaryOperator {
+    Add,
+    Sub,
+    Mul,
+    Mod,
+    Pow,
+    Div,
+    IDiv,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
+    Concat,
+    NotEqual,
+    Equal,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+    And,
+    Or,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum UnaryOperator {
+    Not,
+    Minus,
+    BitNot,
+    Len,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -919,8 +951,8 @@ const MIN_PRIORITY: u8 = 0;
 const UNARY_PRIORITY: u8 = 12;
 
 // Returns the left and right priority of the given binary operator.
-fn binary_priority(binop: BinaryOperator) -> (u8, u8) {
-    match binop {
+fn binary_priority(operator: BinaryOperator) -> (u8, u8) {
+    match operator {
         BinaryOperator::Add => (10, 10),
         BinaryOperator::Sub => (10, 10),
         BinaryOperator::Mul => (11, 11),

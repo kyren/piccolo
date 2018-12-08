@@ -7,6 +7,8 @@ pub const MAX_VAR_COUNT: u8 = 254;
 
 use gc_arena::Collect;
 
+use crate::value::Value;
+
 /// Count of arguments or return values which can either be a constant between 0-254 or a special
 /// "variable" value.
 #[derive(Debug, Copy, Clone, Collect)]
@@ -44,6 +46,29 @@ impl VarCount {
             Some(self.0 - 1)
         }
     }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Collect)]
+pub enum UnOp {
+    Minus,
+    Not,
+    BitNot,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Collect)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Mod,
+    Pow,
+    Div,
+    IDiv,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -86,19 +111,47 @@ pub enum OpCode {
         source: Register,
         dest: UpValueIndex,
     },
-    AddRR {
+    UnOp {
+        unop: UnOp,
+        dest: Register,
+        source: Register,
+    },
+    BinOpRR {
+        binop: BinOp,
         dest: Register,
         left: Register,
         right: Register,
     },
-    AddRC {
+    BinOpRC {
+        binop: BinOp,
         dest: Register,
         left: Register,
         right: Constant,
     },
-    AddCR {
+    BinOpCR {
+        binop: BinOp,
         dest: Register,
         left: Constant,
         right: Register,
     },
+}
+
+pub fn apply_unop<'gc>(unop: UnOp, value: Value<'gc>) -> Option<Value<'gc>> {
+    match unop {
+        UnOp::Not => Some(Value::Boolean(!value.as_bool())),
+        _ => None,
+    }
+}
+
+pub fn apply_binop<'gc>(binop: BinOp, left: Value<'gc>, right: Value<'gc>) -> Option<Value<'gc>> {
+    match binop {
+        BinOp::Add => match (left, right) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
+            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
+            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
+            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
+            _ => None,
+        },
+        _ => None,
+    }
 }

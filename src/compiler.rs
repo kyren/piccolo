@@ -8,10 +8,9 @@ use num_traits::cast;
 use gc_arena::{Gc, MutationContext};
 
 use crate::function::{FunctionProto, UpValueDescriptor};
-use crate::opcode::{Constant, OpCode, Register, UpValueIndex, VarCount};
-use crate::operators::{apply_binop, BinaryOperator};
+use crate::opcode::{apply_binop, BinOp, Constant, OpCode, Register, UpValueIndex, VarCount};
 use crate::parser::{
-    AssignmentStatement, AssignmentTarget, Block, CallSuffix, Chunk, Expression,
+    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
     ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
 };
@@ -310,9 +309,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc>, Error> {
         let mut expr = self.head_expression(&expression.head)?;
-        for (binop, right) in &expression.tail {
+        for (binary_operator, right) in &expression.tail {
             let right = self.expression(&right)?;
-            expr = self.binop(expr, *binop, right)?;
+            expr = self.binary_operator(expr, *binary_operator, right)?;
         }
         Ok(expr)
     }
@@ -385,71 +384,89 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn binop(
+    fn binary_operator(
         &mut self,
         left: ExprDescriptor<'gc>,
-        binop: BinaryOperator,
+        binary_operator: BinaryOperator,
         right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
+        let binop = match binary_operator {
+            BinaryOperator::Add => BinOp::Add,
+            BinaryOperator::Sub => BinOp::Sub,
+            BinaryOperator::Mul => BinOp::Mul,
+            BinaryOperator::Pow => BinOp::Pow,
+            BinaryOperator::Div => BinOp::Div,
+            BinaryOperator::IDiv => BinOp::IDiv,
+            BinaryOperator::BitAnd => BinOp::BitAnd,
+            BinaryOperator::BitOr => BinOp::BitOr,
+            BinaryOperator::BitXor => BinOp::BitXor,
+            BinaryOperator::ShiftLeft => BinOp::ShiftLeft,
+            BinaryOperator::ShiftRight => BinOp::ShiftRight,
+            _ => bail!("unsupported binary operator"),
+        };
+
         if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
             if let Some(v) = apply_binop(binop, a, b) {
                 return Ok(ExprDescriptor::Value(v));
             }
         }
 
-        match binop {
-            BinaryOperator::Add => match (left, right) {
-                (mut left_expr, ExprDescriptor::Value(right_const)) => {
-                    let left = self.expr_any_register(&mut left_expr)?;
-                    let right = self.get_constant(right_const)?;
-                    self.expr_finish(left_expr)?;
-                    let dest = self
-                        .functions
-                        .top
-                        .register_allocator
-                        .allocate()
-                        .ok_or(CompilerLimit::Registers)?;
-                    self.functions
-                        .top
-                        .opcodes
-                        .push(OpCode::AddRC { dest, left, right });
-                    Ok(ExprDescriptor::Temporary(dest))
-                }
-                (ExprDescriptor::Value(left_const), mut right_expr) => {
-                    let left = self.get_constant(left_const)?;
-                    let right = self.expr_any_register(&mut right_expr)?;
-                    self.expr_finish(right_expr)?;
-                    let dest = self
-                        .functions
-                        .top
-                        .register_allocator
-                        .allocate()
-                        .ok_or(CompilerLimit::Registers)?;
-                    self.functions
-                        .top
-                        .opcodes
-                        .push(OpCode::AddCR { dest, left, right });
-                    Ok(ExprDescriptor::Temporary(dest))
-                }
-                (mut left_expr, mut right_expr) => {
-                    let left = self.expr_any_register(&mut left_expr)?;
-                    let right = self.expr_any_register(&mut right_expr)?;
-                    self.expr_finish(right_expr)?;
-                    self.expr_finish(left_expr)?;
-                    let dest = self
-                        .functions
-                        .top
-                        .register_allocator
-                        .allocate()
-                        .ok_or(CompilerLimit::Registers)?;
-                    self.functions
-                        .top
-                        .opcodes
-                        .push(OpCode::AddRR { dest, left, right });
-                    Ok(ExprDescriptor::Temporary(dest))
-                }
-            },
-            _ => bail!("unsupported binary operator"),
+        match (left, right) {
+            (mut left_expr, ExprDescriptor::Value(right_const)) => {
+                let left = self.expr_any_register(&mut left_expr)?;
+                let right = self.get_constant(right_const)?;
+                self.expr_finish(left_expr)?;
+                let dest = self
+                    .functions
+                    .top
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
+                self.functions.top.opcodes.push(OpCode::BinOpRC {
+                    binop,
+                    dest,
+                    left,
+                    right,
+                });
+                Ok(ExprDescriptor::Temporary(dest))
+            }
+            (ExprDescriptor::Value(left_const), mut right_expr) => {
+                let left = self.get_constant(left_const)?;
+                let right = self.expr_any_register(&mut right_expr)?;
+                self.expr_finish(right_expr)?;
+                let dest = self
+                    .functions
+                    .top
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
+                self.functions.top.opcodes.push(OpCode::BinOpCR {
+                    binop,
+                    dest,
+                    left,
+                    right,
+                });
+                Ok(ExprDescriptor::Temporary(dest))
+            }
+            (mut left_expr, mut right_expr) => {
+                let left = self.expr_any_register(&mut left_expr)?;
+                let right = self.expr_any_register(&mut right_expr)?;
+                self.expr_finish(right_expr)?;
+                self.expr_finish(left_expr)?;
+                let dest = self
+                    .functions
+                    .top
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
+                self.functions.top.opcodes.push(OpCode::BinOpRR {
+                    binop,
+                    dest,
+                    left,
+                    right,
+                });
+                Ok(ExprDescriptor::Temporary(dest))
+            }
         }
     }
 
