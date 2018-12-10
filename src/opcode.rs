@@ -89,6 +89,9 @@ pub enum OpCode {
         start: RegisterIndex,
         count: VarCount,
     },
+    Jump {
+        displacement: i16,
+    },
     Closure {
         dest: RegisterIndex,
         proto: PrototypeIndex,
@@ -100,6 +103,21 @@ pub enum OpCode {
     SetUpValue {
         dest: UpValueIndex,
         source: RegisterIndex,
+    },
+    EqRR {
+        equal: bool,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    EqRC {
+        equal: bool,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    EqCR {
+        equal: bool,
+        left: ConstantIndex8,
+        right: RegisterIndex,
     },
     Not {
         dest: RegisterIndex,
