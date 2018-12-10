@@ -157,11 +157,11 @@ impl<'gc> ThreadState<'gc> {
                         continue 'function_start;
                     }
 
-                    OpCode::Jump { displacement } => {
-                        if displacement > 0 {
-                            self.pc = self.pc.checked_add(displacement as usize).unwrap();
-                        } else if displacement < 0 {
-                            self.pc = self.pc.checked_sub(-displacement as usize).unwrap();
+                    OpCode::Jump { offset } => {
+                        if offset > 0 {
+                            self.pc = self.pc.checked_add(offset as usize).unwrap();
+                        } else if offset < 0 {
+                            self.pc = self.pc.checked_sub(-offset as usize).unwrap();
                         }
                     }
 

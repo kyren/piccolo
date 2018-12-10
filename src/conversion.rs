@@ -33,3 +33,9 @@ convert_int!(i64);
 convert_int!(u64);
 convert_int!(isize);
 convert_int!(usize);
+
+impl FromLua for bool {
+    fn from_lua<'gc>(value: Value<'gc>) -> Result<Self, Error> {
+        Ok(value.as_bool())
+    }
+}

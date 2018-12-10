@@ -50,3 +50,46 @@ fn test_function() {
         3,
     );
 }
+
+#[test]
+fn test_equality() {
+    test_script(
+        r#"
+            return 1 == 1
+        "#,
+        true,
+    );
+
+    test_script(
+        r#"
+            return 1 == 2
+        "#,
+        false,
+    );
+
+    test_script(
+        r#"
+            local i = 1
+            return i == 1
+        "#,
+        true,
+    );
+
+    test_script(
+        r#"
+            local i = 2
+            local j = 3
+            return i == j
+        "#,
+        false,
+    );
+
+    test_script(
+        r#"
+            local i = 2
+            local j = 2
+            return (i == j) == true
+        "#,
+        true,
+    );
+}

@@ -90,7 +90,7 @@ pub enum OpCode {
         count: VarCount,
     },
     Jump {
-        displacement: i16,
+        offset: i16,
     },
     Closure {
         dest: RegisterIndex,

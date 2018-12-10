@@ -316,9 +316,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc>, Error> {
         let mut expr = self.head_expression(&expression.head)?;
-        for (binary_operator, right) in &expression.tail {
+        for (binop, right) in &expression.tail {
             let right = self.expression(&right)?;
-            expr = self.binary_operator(expr, *binary_operator, right)?;
+            expr = self.binary_operator(expr, *binop, right)?;
         }
         Ok(expr)
     }
@@ -394,42 +394,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn binary_operator(
         &mut self,
         mut left: ExprDescriptor<'gc>,
-        binary_operator: BinaryOperator,
+        binop: BinaryOperator,
         mut right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        enum BinOpArgs {
-            RC(RegisterIndex, ConstantIndex8),
-            CR(ConstantIndex8, RegisterIndex),
-            RR(RegisterIndex, RegisterIndex),
-        }
-
-        struct BinOpEntry {
-            make_opcode: fn(RegisterIndex, BinOpArgs) -> OpCode,
-            constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
-        }
-
-        lazy_static! {
-            static ref BINOP_REGISTRY: HashMap<BinaryOperator, BinOpEntry> = {
-                let mut m = HashMap::new();
-
-                m.insert(
-                    BinaryOperator::Add,
-                    BinOpEntry {
-                        make_opcode: |dest, args| match args {
-                            BinOpArgs::RC(left, right) => OpCode::AddRC { dest, left, right },
-                            BinOpArgs::CR(left, right) => OpCode::AddCR { dest, left, right },
-                            BinOpArgs::RR(left, right) => OpCode::AddRR { dest, left, right },
-                        },
-                        constant_fold: |left, right| left.add(right),
-                    },
-                );
-
-                m
-            };
-        }
-
         let binop_entry = BINOP_REGISTRY
-            .get(&binary_operator)
+            .get(&binop)
             .ok_or_else(|| err_msg("unsupported binary operator"))?;
 
         if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
@@ -450,7 +419,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let left_cons = get_constant8(&left)?;
         let right_cons = get_constant8(&right)?;
 
-        let binop_arg = if let Some(left_cons) = left_cons {
+        let binop_args = if let Some(left_cons) = left_cons {
             let right_reg = self.expr_any_register(&mut right)?;
             self.expr_finish(right)?;
             BinOpArgs::CR(left_cons, right_reg)
@@ -475,7 +444,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.functions
             .top
             .opcodes
-            .push((binop_entry.make_opcode)(dest, binop_arg));
+            .extend((binop_entry.make_opcodes)(dest, binop_args));
+
         Ok(ExprDescriptor::Temporary(dest))
     }
 
@@ -802,18 +772,93 @@ impl<'gc, 'a> CompilerFunction<'gc, 'a> {
     }
 }
 
+#[derive(Debug)]
 enum VariableDescriptor<'a> {
     Local(RegisterIndex),
     UpValue(UpValueIndex),
     Global(&'a [u8]),
 }
 
+#[derive(Debug)]
 enum ExprDescriptor<'gc> {
     Temporary(RegisterIndex),
     Local(RegisterIndex),
     UpValue(UpValueIndex),
     Value(Value<'gc>),
     FunctionCall(Box<ExprDescriptor<'gc>>, Vec<ExprDescriptor<'gc>>),
+}
+
+#[derive(Debug)]
+enum BinOpArgs {
+    RC(RegisterIndex, ConstantIndex8),
+    CR(ConstantIndex8, RegisterIndex),
+    RR(RegisterIndex, RegisterIndex),
+}
+
+struct BinOpEntry {
+    make_opcodes: fn(RegisterIndex, BinOpArgs) -> Vec<OpCode>,
+    constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
+}
+
+lazy_static! {
+    static ref BINOP_REGISTRY: HashMap<BinaryOperator, BinOpEntry> = {
+        let mut m = HashMap::new();
+
+        m.insert(
+            BinaryOperator::Add,
+            BinOpEntry {
+                make_opcodes: |dest, args| {
+                    vec![match args {
+                        BinOpArgs::RC(left, right) => OpCode::AddRC { dest, left, right },
+                        BinOpArgs::CR(left, right) => OpCode::AddCR { dest, left, right },
+                        BinOpArgs::RR(left, right) => OpCode::AddRR { dest, left, right },
+                    }]
+                },
+                constant_fold: |left, right| left.add(right),
+            },
+        );
+
+        m.insert(
+            BinaryOperator::Equal,
+            BinOpEntry {
+                make_opcodes: |dest, args| {
+                    vec![
+                        match args {
+                            BinOpArgs::RC(left, right) => OpCode::EqRC {
+                                equal: true,
+                                left,
+                                right,
+                            },
+                            BinOpArgs::CR(left, right) => OpCode::EqCR {
+                                equal: true,
+                                left,
+                                right,
+                            },
+                            BinOpArgs::RR(left, right) => OpCode::EqRR {
+                                equal: true,
+                                left,
+                                right,
+                            },
+                        },
+                        OpCode::Jump { offset: 1 },
+                        OpCode::LoadBool {
+                            dest,
+                            value: false,
+                            skip_next: true,
+                        },
+                        OpCode::LoadBool {
+                            dest,
+                            value: true,
+                            skip_next: false,
+                        },
+                    ]
+                },
+                constant_fold: |left, right| Some(Value::Boolean(left == right)),
+            },
+        );
+
+        m
+    };
 }
 
 struct RegisterAllocator {
