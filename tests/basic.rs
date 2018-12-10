@@ -93,3 +93,49 @@ fn test_equality() {
         true,
     );
 }
+
+#[test]
+fn test_short_circuit() {
+    test_script(
+        r#"
+            return 1 == 1 and 2 == 2
+        "#,
+        true,
+    );
+
+    test_script(
+        r#"
+            return 1 == 1 or 1 == 2
+        "#,
+        true,
+    );
+
+    test_script(
+        r#"
+            return 1 == 1 and 2 == 3
+        "#,
+        false,
+    );
+
+    test_script(
+        r#"
+            return false or false
+        "#,
+        false,
+    );
+
+    test_script(
+        r#"
+            local i = 0
+            local function t(p)
+                i = i + p
+            end
+            local _ = (false and t(1))
+            local _ = (true and t(2))
+            local _ = (false or t(3))
+            local _ = (true or t(4))
+            return i
+        "#,
+        5,
+    );
+}

@@ -12,7 +12,7 @@ use crate::opcode::{
     ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 use crate::operators::{
-    categorize_binop, BinOpArgs, BinOpCategory, COMPARISON_BINOPS, SIMPLE_BINOPS,
+    categorize_binop, BinOpArgs, BinOpCategory, ShortCircuitBinOp, COMPARISON_BINOPS, SIMPLE_BINOPS,
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
@@ -43,6 +43,8 @@ enum CompilerLimit {
     Functions,
     #[fail(display = "too many constants")]
     Constants,
+    #[fail(display = "too many opcodes")]
+    OpCodes,
 }
 
 struct Compiler<'gc, 'a> {
@@ -119,7 +121,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             let ret_count = match self.expression(&return_statement.returns[ret_len - 1])? {
-                ExprDescriptor::FunctionCall(func, args) => {
+                ExprDescriptor::FunctionCall { func, args } => {
                     self.expr_function_call(*func, args, VarCount::make_variable())?;
                     VarCount::make_variable()
                 }
@@ -157,7 +159,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.expr_finish(expr)?;
             } else if i == val_len - 1 {
                 match expr {
-                    ExprDescriptor::FunctionCall(func, args) => {
+                    ExprDescriptor::FunctionCall { func, args } => {
                         let num_returns =
                             cast(1 + name_len - val_len).ok_or(CompilerLimit::Registers)?;
                         self.expr_function_call(
@@ -316,10 +318,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc>, Error> {
+    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
-            let right = self.expression(&right)?;
             expr = self.binary_operator(expr, *binop, right)?;
         }
         Ok(expr)
@@ -328,7 +329,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn head_expression(
         &mut self,
         head_expression: &'a HeadExpression,
-    ) -> Result<ExprDescriptor<'gc>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(_, _) => bail!("no unary operator support yet"),
@@ -338,7 +339,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn simple_expression(
         &mut self,
         simple_expression: &'a SimpleExpression,
-    ) -> Result<ExprDescriptor<'gc>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         Ok(match simple_expression {
             SimpleExpression::Float(f) => ExprDescriptor::Value(Value::Number(*f)),
             SimpleExpression::Integer(i) => ExprDescriptor::Value(Value::Integer(*i)),
@@ -357,7 +358,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn suffixed_expression(
         &mut self,
         suffixed_expression: &'a SuffixedExpression,
-    ) -> Result<ExprDescriptor<'gc>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
@@ -368,7 +369,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .iter()
                             .map(|arg| self.expression(arg))
                             .collect::<Result<_, Error>>()?;
-                        expr = ExprDescriptor::FunctionCall(Box::new(expr), args);
+                        expr = ExprDescriptor::FunctionCall {
+                            func: Box::new(expr),
+                            args,
+                        };
                     }
                     CallSuffix::Method(_, _) => bail!("methods not supported yet"),
                 },
@@ -380,10 +384,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn primary_expression(
         &mut self,
         primary_expression: &'a PrimaryExpression,
-    ) -> Result<ExprDescriptor<'gc>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         match primary_expression {
             PrimaryExpression::Name(name) => Ok(match self.find_variable(name)? {
-                VariableDescriptor::Local(reg) => ExprDescriptor::Local(reg),
+                VariableDescriptor::Local(register) => ExprDescriptor::Register {
+                    register,
+                    is_temporary: false,
+                },
                 VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
                 VariableDescriptor::Global(_) => {
                     bail!("no support for globals");
@@ -395,15 +402,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn binary_operator(
         &mut self,
-        left: ExprDescriptor<'gc>,
+        left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
-        right: ExprDescriptor<'gc>,
-    ) -> Result<ExprDescriptor<'gc>, Error> {
-        let mut make_binop_args = |mut left, mut right| -> Result<_, Error> {
+        right: &'a Expression,
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        fn make_binop_args<'gc, 'a>(
+            comp: &mut Compiler<'gc, 'a>,
+            mut left: ExprDescriptor<'gc, 'a>,
+            mut right: ExprDescriptor<'gc, 'a>,
+        ) -> Result<BinOpArgs, Error> {
             let mut make_constant8 =
-                |expr: &ExprDescriptor<'gc>| -> Result<Option<ConstantIndex8>, Error> {
+                |expr: &ExprDescriptor<'gc, 'a>| -> Result<Option<ConstantIndex8>, Error> {
                     if let &ExprDescriptor::Value(cons) = expr {
-                        if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                        if let Some(c8) = cast(comp.get_constant(cons)?.0) {
                             return Ok(Some(ConstantIndex8(c8)));
                         }
                     }
@@ -413,18 +424,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             let right_cons = make_constant8(&right)?;
 
             Ok(if let Some(left_cons) = left_cons {
-                let right_reg = self.expr_any_register(&mut right)?;
-                self.expr_finish(right)?;
+                let right_reg = comp.expr_any_register(&mut right)?;
+                comp.expr_finish(right)?;
                 BinOpArgs::CR(left_cons, right_reg)
             } else if let Some(right_cons) = right_cons {
-                let left_reg = self.expr_any_register(&mut left)?;
-                self.expr_finish(left)?;
+                let left_reg = comp.expr_any_register(&mut left)?;
+                comp.expr_finish(left)?;
                 BinOpArgs::RC(left_reg, right_cons)
             } else {
-                let left_reg = self.expr_any_register(&mut left)?;
-                let right_reg = self.expr_any_register(&mut right)?;
-                self.expr_finish(right)?;
-                self.expr_finish(left)?;
+                let left_reg = comp.expr_any_register(&mut left)?;
+                let right_reg = comp.expr_any_register(&mut right)?;
+                comp.expr_finish(right)?;
+                comp.expr_finish(left)?;
                 BinOpArgs::RR(left_reg, right_reg)
             })
         };
@@ -434,6 +445,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let binop_entry = SIMPLE_BINOPS
                     .get(&simple_binop)
                     .ok_or_else(|| err_msg("unsupported binary operator"))?;
+                let right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = (binop_entry.constant_fold)(a, b) {
@@ -441,7 +453,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                 }
 
-                let binop_args = make_binop_args(left, right)?;
+                let binop_args = make_binop_args(self, left, right)?;
                 let dest = self
                     .functions
                     .top
@@ -452,12 +464,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .top
                     .opcodes
                     .push((binop_entry.make_opcode)(dest, binop_args));
-                Ok(ExprDescriptor::Temporary(dest))
+                Ok(ExprDescriptor::Register {
+                    register: dest,
+                    is_temporary: true,
+                })
             }
             BinOpCategory::Comparison(comparison_binop) => {
                 let binop_entry = COMPARISON_BINOPS
                     .get(&comparison_binop)
                     .ok_or_else(|| err_msg("unsupported binary operator"))?;
+                let right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = (binop_entry.constant_fold)(a, b) {
@@ -465,7 +481,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                 }
 
-                let binop_args = make_binop_args(left, right)?;
+                let binop_args = make_binop_args(self, left, right)?;
                 let dest = self
                     .functions
                     .top
@@ -476,8 +492,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .top
                     .opcodes
                     .extend(&(binop_entry.make_opcodes)(dest, binop_args));
-                Ok(ExprDescriptor::Temporary(dest))
+                Ok(ExprDescriptor::Register {
+                    register: dest,
+                    is_temporary: true,
+                })
             }
+            BinOpCategory::ShortCircuit(op) => Ok(ExprDescriptor::ShortCircuitBinOp {
+                left: Box::new(left),
+                op,
+                right,
+            }),
             _ => bail!("unsupported binary operator"),
         }
     }
@@ -587,32 +611,40 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // Modify an expression to contain its result in any register, and return that register
     fn expr_any_register(
         &mut self,
-        expr: &mut ExprDescriptor<'gc>,
+        expr: &mut ExprDescriptor<'gc, 'a>,
     ) -> Result<RegisterIndex, Error> {
         match *expr {
-            ExprDescriptor::Temporary(reg) => return Ok(reg),
-            ExprDescriptor::Local(reg) => return Ok(reg),
+            ExprDescriptor::Register { register, .. } => return Ok(register),
             _ => {}
         }
 
-        let reg = self
+        let register = self
             .functions
             .top
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
-        let old_expr = mem::replace(expr, ExprDescriptor::Temporary(reg));
-        self.expr_to_register(old_expr, reg)?;
-        Ok(reg)
+        let old_expr = mem::replace(
+            expr,
+            ExprDescriptor::Register {
+                register,
+                is_temporary: true,
+            },
+        );
+        self.expr_to_register(old_expr, register)?;
+        Ok(register)
     }
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register
     fn expr_allocate_register(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<'gc, 'a>,
     ) -> Result<RegisterIndex, Error> {
         match expr {
-            ExprDescriptor::Temporary(register) => Ok(register),
+            ExprDescriptor::Register {
+                register,
+                is_temporary: true,
+            } => Ok(register),
             expr => {
                 let dest = self
                     .functions
@@ -628,8 +660,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register at
     // the top of the stack.
-    fn expr_push_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<RegisterIndex, Error> {
-        if let ExprDescriptor::Temporary(register) = expr {
+    fn expr_push_register(
+        &mut self,
+        expr: ExprDescriptor<'gc, 'a>,
+    ) -> Result<RegisterIndex, Error> {
+        if let ExprDescriptor::Register {
+            register,
+            is_temporary: true,
+        } = expr
+        {
             if register.0 as u16 + 1 == self.functions.top.register_allocator.stack_top {
                 return Ok(register);
             }
@@ -648,22 +687,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // Consume an expression and store the result in the given register
     fn expr_to_register(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<'gc, 'a>,
         dest: RegisterIndex,
     ) -> Result<(), Error> {
         match expr {
-            ExprDescriptor::Temporary(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::Move { dest, source });
-                self.functions.top.register_allocator.free(source);
-            }
-            ExprDescriptor::Local(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::Move { dest, source });
+            ExprDescriptor::Register {
+                register: source,
+                is_temporary,
+            } => {
+                if dest != source {
+                    self.functions
+                        .top
+                        .opcodes
+                        .push(OpCode::Move { dest, source });
+                }
+                if is_temporary {
+                    self.functions.top.register_allocator.free(source);
+                }
             }
             ExprDescriptor::UpValue(source) => {
                 self.functions
@@ -690,12 +730,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         .push(OpCode::LoadConstant { dest, constant });
                 }
             },
-            ExprDescriptor::FunctionCall(func, args) => {
+            ExprDescriptor::FunctionCall { func, args } => {
                 let source = self.expr_function_call(*func, args, VarCount::make_one())?;
                 self.functions
                     .top
                     .opcodes
                     .push(OpCode::Move { dest, source });
+            }
+            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
+                self.expr_short_circuit(*left, op, right, Some(dest))?;
             }
         }
 
@@ -708,8 +751,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // placed (which will also be the current register allocator top).
     fn expr_function_call(
         &mut self,
-        func: ExprDescriptor<'gc>,
-        mut args: Vec<ExprDescriptor<'gc>>,
+        func: ExprDescriptor<'gc, 'a>,
+        mut args: Vec<ExprDescriptor<'gc, 'a>>,
         returns: VarCount,
     ) -> Result<RegisterIndex, Error> {
         let top_reg = self.expr_push_register(func)?;
@@ -719,7 +762,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.expr_push_register(arg)?;
         }
 
-        if let Some(ExprDescriptor::FunctionCall(func, args)) = last_arg {
+        if let Some(ExprDescriptor::FunctionCall { func, args }) = last_arg {
             self.expr_function_call(*func, args, VarCount::make_variable())?;
             self.functions.top.opcodes.push(OpCode::Call {
                 func: top_reg,
@@ -744,21 +787,84 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(top_reg)
     }
 
+    // Consume a short circuit expression, placing the result in the given destination, if provided.
+    fn expr_short_circuit(
+        &mut self,
+        mut left_expr: ExprDescriptor<'gc, 'a>,
+        op: ShortCircuitBinOp,
+        right_expr: &'a Expression,
+        dest: Option<RegisterIndex>,
+    ) -> Result<(), Error> {
+        let left = self.expr_any_register(&mut left_expr)?;
+
+        let test_op_true = op == ShortCircuitBinOp::And;
+        let test_op = if let Some(dest) = dest {
+            if left == dest {
+                OpCode::Test {
+                    value: left,
+                    is_true: test_op_true,
+                }
+            } else {
+                OpCode::TestSet {
+                    dest,
+                    value: left,
+                    is_true: test_op_true,
+                }
+            }
+        } else {
+            OpCode::Test {
+                value: left,
+                is_true: test_op_true,
+            }
+        };
+        self.functions.top.opcodes.push(test_op);
+
+        self.expr_finish(left_expr)?;
+
+        let jmp_inst = self.functions.top.opcodes.len();
+        self.functions.top.opcodes.push(OpCode::Jump { offset: 0 });
+
+        let right_expr = self.expression(right_expr)?;
+        if let Some(dest) = dest {
+            self.expr_to_register(right_expr, dest)?;
+        } else {
+            self.expr_finish(right_expr)?;
+        }
+
+        let jmp_offset =
+            cast(self.functions.top.opcodes.len() - jmp_inst - 1).ok_or(CompilerLimit::OpCodes)?;
+        match &mut self.functions.top.opcodes[jmp_inst] {
+            OpCode::Jump { offset } => {
+                *offset = jmp_offset;
+            }
+            _ => panic!("Jump opcode for short circuit binary operation is misplaced"),
+        }
+
+        Ok(())
+    }
+
     // Consume an expression and ignore the result.  If the expression is a pending function call,
     // performs the function call with no expected returns, if it is held in a temporary register,
     // frees that register.  All created `ExprDescriptor`s must be consumed by one of the methods
     // that handles them, if no other method has consumed an expr, `expr_finish` must be called on
     // it.
-    fn expr_finish(&mut self, expr: ExprDescriptor<'gc>) -> Result<(), Error> {
+    fn expr_finish(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), Error> {
         match expr {
-            ExprDescriptor::Temporary(r) => {
-                self.functions.top.register_allocator.free(r);
+            ExprDescriptor::Register {
+                register,
+                is_temporary,
+            } => {
+                if is_temporary {
+                    self.functions.top.register_allocator.free(register);
+                }
             }
-            ExprDescriptor::Local(_) => {}
             ExprDescriptor::UpValue(_) => {}
             ExprDescriptor::Value(_) => {}
-            ExprDescriptor::FunctionCall(func, args) => {
+            ExprDescriptor::FunctionCall { func, args } => {
                 self.expr_function_call(*func, args, VarCount::make_zero())?;
+            }
+            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
+                self.expr_short_circuit(*left, op, right, None)?;
             }
         }
 
@@ -813,12 +919,22 @@ enum VariableDescriptor<'a> {
 }
 
 #[derive(Debug)]
-enum ExprDescriptor<'gc> {
-    Temporary(RegisterIndex),
-    Local(RegisterIndex),
+enum ExprDescriptor<'gc, 'a> {
+    Register {
+        register: RegisterIndex,
+        is_temporary: bool,
+    },
     UpValue(UpValueIndex),
     Value(Value<'gc>),
-    FunctionCall(Box<ExprDescriptor<'gc>>, Vec<ExprDescriptor<'gc>>),
+    FunctionCall {
+        func: Box<ExprDescriptor<'gc, 'a>>,
+        args: Vec<ExprDescriptor<'gc, 'a>>,
+    },
+    ShortCircuitBinOp {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: ShortCircuitBinOp,
+        right: &'a Expression,
+    },
 }
 
 struct RegisterAllocator {

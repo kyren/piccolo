@@ -1,23 +1,23 @@
 use gc_arena::Collect;
 
 /// An index that points to a register in the stack relative to the current frame.
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 pub struct RegisterIndex(pub u8);
 
 /// An 8 bit index into the constant table
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 pub struct ConstantIndex8(pub u8);
 
 /// A 16 bit index into the constant table
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 pub struct ConstantIndex16(pub u16);
 
 /// An index into the upvalue table
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 pub struct UpValueIndex(pub u8);
 
 /// An index into the prototype table
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 pub struct PrototypeIndex(pub u8);
 
 pub const MAX_VAR_COUNT: u8 = 254;
