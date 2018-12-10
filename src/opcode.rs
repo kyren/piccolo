@@ -1,13 +1,26 @@
-pub type Register = u8;
-pub type Constant = u16;
-pub type UpValueIndex = u8;
-pub type FunctionProtoIndex = u8;
-
-pub const MAX_VAR_COUNT: u8 = 254;
-
 use gc_arena::Collect;
 
-use crate::value::Value;
+/// An index that points to a register in the stack relative to the current frame.
+#[derive(Debug, Copy, Clone, Collect)]
+pub struct RegisterIndex(pub u8);
+
+/// An 8 bit index into the constant table
+#[derive(Debug, Copy, Clone, Collect)]
+pub struct ConstantIndex8(pub u8);
+
+/// A 16 bit index into the constant table
+#[derive(Debug, Copy, Clone, Collect)]
+pub struct ConstantIndex16(pub u16);
+
+/// An index into the upvalue table
+#[derive(Debug, Copy, Clone, Collect)]
+pub struct UpValueIndex(pub u8);
+
+/// An index into the prototype table
+#[derive(Debug, Copy, Clone, Collect)]
+pub struct PrototypeIndex(pub u8);
+
+pub const MAX_VAR_COUNT: u8 = 254;
 
 /// Count of arguments or return values which can either be a constant between 0-254 or a special
 /// "variable" value.
@@ -48,110 +61,63 @@ impl VarCount {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Collect)]
-pub enum UnOp {
-    Minus,
-    Not,
-    BitNot,
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Collect)]
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Mod,
-    Pow,
-    Div,
-    IDiv,
-    BitAnd,
-    BitOr,
-    BitXor,
-    ShiftLeft,
-    ShiftRight,
-}
-
 #[derive(Debug, Copy, Clone, Collect)]
 pub enum OpCode {
     Move {
-        dest: Register,
-        source: Register,
+        dest: RegisterIndex,
+        source: RegisterIndex,
     },
     LoadConstant {
-        dest: Register,
-        constant: Constant,
+        dest: RegisterIndex,
+        constant: ConstantIndex16,
     },
     LoadBool {
-        dest: Register,
+        dest: RegisterIndex,
         value: bool,
         skip_next: bool,
     },
     LoadNil {
-        dest: Register,
+        dest: RegisterIndex,
         count: u8,
     },
     Call {
-        func: Register,
+        func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
     },
     Return {
-        start: Register,
+        start: RegisterIndex,
         count: VarCount,
     },
     Closure {
-        proto: FunctionProtoIndex,
-        dest: Register,
+        dest: RegisterIndex,
+        proto: PrototypeIndex,
     },
     GetUpValue {
+        dest: RegisterIndex,
         source: UpValueIndex,
-        dest: Register,
     },
     SetUpValue {
-        source: Register,
         dest: UpValueIndex,
+        source: RegisterIndex,
     },
-    UnOp {
-        unop: UnOp,
-        dest: Register,
-        source: Register,
+    Not {
+        dest: RegisterIndex,
+        source: RegisterIndex,
     },
-    BinOpRR {
-        binop: BinOp,
-        dest: Register,
-        left: Register,
-        right: Register,
+    AddRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
     },
-    BinOpRC {
-        binop: BinOp,
-        dest: Register,
-        left: Register,
-        right: Constant,
+    AddRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
     },
-    BinOpCR {
-        binop: BinOp,
-        dest: Register,
-        left: Constant,
-        right: Register,
+    AddCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
     },
-}
-
-pub fn apply_unop<'gc>(unop: UnOp, value: Value<'gc>) -> Option<Value<'gc>> {
-    match unop {
-        UnOp::Not => Some(Value::Boolean(!value.as_bool())),
-        _ => None,
-    }
-}
-
-pub fn apply_binop<'gc>(binop: BinOp, left: Value<'gc>, right: Value<'gc>) -> Option<Value<'gc>> {
-    match binop {
-        BinOp::Add => match (left, right) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
-            _ => None,
-        },
-        _ => None,
-    }
 }

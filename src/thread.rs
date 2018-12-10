@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
-use crate::opcode::{apply_binop, apply_unop, OpCode, VarCount};
+use crate::opcode::{OpCode, VarCount};
 use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -79,13 +79,13 @@ impl<'gc> ThreadState<'gc> {
             loop {
                 match current_function.0.proto.opcodes[self.pc] {
                     OpCode::Move { dest, source } => {
-                        self.stack[current_frame.base + dest as usize] =
-                            self.stack[current_frame.base + source as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            self.stack[current_frame.base + source.0 as usize];
                     }
 
                     OpCode::LoadConstant { dest, constant } => {
-                        self.stack[current_frame.base + dest as usize] =
-                            current_function.0.proto.constants[constant as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            current_function.0.proto.constants[constant.0 as usize];
                     }
 
                     OpCode::LoadBool {
@@ -93,14 +93,14 @@ impl<'gc> ThreadState<'gc> {
                         value,
                         skip_next,
                     } => {
-                        self.stack[current_frame.base + dest as usize] = Value::Boolean(value);
+                        self.stack[current_frame.base + dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
                             self.pc += 1;
                         }
                     }
 
                     OpCode::LoadNil { dest, count } => {
-                        for i in dest..dest + count {
+                        for i in dest.0..dest.0 + count {
                             self.stack[current_frame.base + i as usize] = Value::Nil;
                         }
                     }
@@ -112,7 +112,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         let ret_pc = self.pc + 1;
                         self.call_function(
-                            current_frame.base + func as usize,
+                            current_frame.base + func.0 as usize,
                             args,
                             returns,
                             ret_pc,
@@ -132,7 +132,7 @@ impl<'gc> ThreadState<'gc> {
                         let return_count = count
                             .get_constant()
                             .map(|c| c as usize)
-                            .unwrap_or(self.stack.len() - current_frame.base - start as usize);
+                            .unwrap_or(self.stack.len() - current_frame.base - start.0 as usize);
                         let expected = current_frame
                             .returns
                             .get_constant()
@@ -140,7 +140,7 @@ impl<'gc> ThreadState<'gc> {
                             .unwrap_or(return_count);
                         for i in 0..expected.min(return_count) {
                             self.stack[current_frame.bottom + i] =
-                                self.stack[current_frame.base + start as usize + i]
+                                self.stack[current_frame.base + start.0 as usize + i]
                         }
 
                         for i in return_count..expected {
@@ -158,12 +158,12 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::Closure { proto, dest } => {
-                        let proto = current_function.0.proto.prototypes[proto as usize];
+                        let proto = current_function.0.proto.prototypes[proto.0 as usize];
                         let mut upvalues = Vec::new();
                         for &desc in &proto.upvalues {
                             match desc {
                                 UpValueDescriptor::ParentLocal(reg) => {
-                                    let ind = current_frame.base + reg as usize;
+                                    let ind = current_frame.base + reg.0 as usize;
                                     match self.open_upvalues.entry(ind) {
                                         BTreeEntry::Occupied(occupied) => {
                                             upvalues.push(*occupied.get());
@@ -179,75 +179,56 @@ impl<'gc> ThreadState<'gc> {
                                     }
                                 }
                                 UpValueDescriptor::Outer(uvindex) => {
-                                    upvalues.push(current_function.0.upvalues[uvindex as usize]);
+                                    upvalues.push(current_function.0.upvalues[uvindex.0 as usize]);
                                 }
                             }
                         }
 
                         let closure = Closure(Gc::allocate(mc, ClosureState { proto, upvalues }));
-                        self.stack[current_frame.base + dest as usize] = Value::Closure(closure);
+                        self.stack[current_frame.base + dest.0 as usize] = Value::Closure(closure);
                     }
 
                     OpCode::GetUpValue { source, dest } => {
-                        self.stack[current_frame.base + dest as usize] =
-                            match *current_function.0.upvalues[source as usize].0.read() {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            match *current_function.0.upvalues[source.0 as usize].0.read() {
                                 UpValueState::Open(ind) => self.stack[ind],
                                 UpValueState::Closed(v) => v,
                             };
                     }
 
                     OpCode::SetUpValue { source, dest } => {
-                        let val = self.stack[current_frame.base + source as usize];
-                        let mut uv = current_function.0.upvalues[dest as usize].0.write(mc);
+                        let val = self.stack[current_frame.base + source.0 as usize];
+                        let mut uv = current_function.0.upvalues[dest.0 as usize].0.write(mc);
                         match &mut *uv {
                             UpValueState::Open(ind) => self.stack[*ind] = val,
                             UpValueState::Closed(v) => *v = val,
                         }
                     }
 
-                    OpCode::UnOp { unop, dest, source } => {
-                        let source = self.stack[current_frame.base + source as usize];
-                        self.stack[current_frame.base + dest as usize] =
-                            apply_unop(unop, source).expect("could not apply unary operator");
+                    OpCode::Not { dest, source } => {
+                        let source = self.stack[current_frame.base + source.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = source.negate();
                     }
 
-                    OpCode::BinOpRR {
-                        binop,
-                        dest,
-                        left,
-                        right,
-                    } => {
-                        let left = self.stack[current_frame.base + left as usize];
-                        let right = self.stack[current_frame.base + right as usize];
-                        self.stack[current_frame.base + dest as usize] =
-                            apply_binop(binop, left, right)
-                                .expect("could not apply binary operator");
+                    OpCode::AddRR { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            left.add(right).expect("could not apply binary operator");
                     }
 
-                    OpCode::BinOpRC {
-                        binop,
-                        dest,
-                        left,
-                        right,
-                    } => {
-                        let left = self.stack[current_frame.base + left as usize];
-                        let right = current_function.0.proto.constants[right as usize];
-                        self.stack[current_frame.base + dest as usize] =
-                            apply_binop(binop, left, right)
-                                .expect("could not apply binary operator");
+                    OpCode::AddRC { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            left.add(right).expect("could not apply binary operator");
                     }
 
-                    OpCode::BinOpCR {
-                        binop,
-                        dest,
-                        left,
-                        right,
-                    } => {
-                        let left = current_function.0.proto.constants[left as usize];
-                        let right = self.stack[current_frame.base + right as usize];
-                        self.stack[current_frame.base + dest as usize] =
-                            apply_binop(binop, left, right)
-                                .expect("could not apply binary operator");
+                    OpCode::AddCR { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            left.add(right).expect("could not apply binary operator");
                     }
                 }
 

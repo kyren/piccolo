@@ -4,12 +4,12 @@ use failure::{err_msg, Error};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::opcode::{OpCode, Register, UpValueIndex};
+use crate::opcode::{OpCode, RegisterIndex, UpValueIndex};
 use crate::value::Value;
 
 #[derive(Debug, Collect, Clone, Copy)]
 pub enum UpValueDescriptor {
-    ParentLocal(Register),
+    ParentLocal(RegisterIndex),
     Outer(UpValueIndex),
 }
 

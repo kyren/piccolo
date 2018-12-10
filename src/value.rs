@@ -56,4 +56,18 @@ impl<'gc> Value<'gc> {
             _ => true,
         }
     }
+
+    pub fn negate(self) -> Value<'gc> {
+        Value::Boolean(!self.as_bool())
+    }
+
+    pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
+            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
+            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
+            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
+            _ => None,
+        }
+    }
 }

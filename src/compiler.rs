@@ -2,13 +2,16 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem;
 
-use failure::{bail, Error, Fail};
+use failure::{bail, err_msg, Error, Fail};
+use lazy_static::lazy_static;
 use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
 
 use crate::function::{FunctionProto, UpValueDescriptor};
-use crate::opcode::{apply_binop, BinOp, Constant, OpCode, Register, UpValueIndex, VarCount};
+use crate::opcode::{
+    ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
+};
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
@@ -68,7 +71,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.return_statement(return_statement)?;
         } else {
             self.functions.top.opcodes.push(OpCode::Return {
-                start: 0,
+                start: RegisterIndex(0),
                 count: VarCount::make_zero(),
             });
         }
@@ -101,7 +104,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         if ret_len == 0 {
             self.functions.top.opcodes.push(OpCode::Return {
-                start: 0,
+                start: RegisterIndex(0),
                 count: VarCount::make_zero(),
             });
         } else {
@@ -127,7 +130,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             };
 
             self.functions.top.opcodes.push(OpCode::Return {
-                start: ret_start,
+                start: RegisterIndex(ret_start),
                 count: ret_count,
             });
 
@@ -167,10 +170,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .push(num_returns)
                             .ok_or(CompilerLimit::Registers)?;
                         for j in 0..num_returns {
-                            self.functions
-                                .top
-                                .locals
-                                .push((&local_statement.names[i + j as usize], reg + j));
+                            self.functions.top.locals.push((
+                                &local_statement.names[i + j as usize],
+                                RegisterIndex(reg.0 + j),
+                            ));
                         }
 
                         return Ok(());
@@ -273,7 +276,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.functions.top.register_allocator.push(fixed_params);
             self.functions.top.fixed_params = fixed_params;
             for (i, name) in local_function.definition.parameters.iter().enumerate() {
-                self.functions.top.locals.push((name, cast(i).unwrap()));
+                self.functions
+                    .top
+                    .locals
+                    .push((name, RegisterIndex(cast(i).unwrap())));
             }
         }
 
@@ -292,8 +298,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .ok_or(CompilerLimit::Registers)?;
 
         {
-            let proto =
-                cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?;
+            let proto = PrototypeIndex(
+                cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
+            );
             self.functions
                 .top
                 .opcodes
@@ -386,88 +393,90 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn binary_operator(
         &mut self,
-        left: ExprDescriptor<'gc>,
+        mut left: ExprDescriptor<'gc>,
         binary_operator: BinaryOperator,
-        right: ExprDescriptor<'gc>,
+        mut right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        let binop = match binary_operator {
-            BinaryOperator::Add => BinOp::Add,
-            BinaryOperator::Sub => BinOp::Sub,
-            BinaryOperator::Mul => BinOp::Mul,
-            BinaryOperator::Pow => BinOp::Pow,
-            BinaryOperator::Div => BinOp::Div,
-            BinaryOperator::IDiv => BinOp::IDiv,
-            BinaryOperator::BitAnd => BinOp::BitAnd,
-            BinaryOperator::BitOr => BinOp::BitOr,
-            BinaryOperator::BitXor => BinOp::BitXor,
-            BinaryOperator::ShiftLeft => BinOp::ShiftLeft,
-            BinaryOperator::ShiftRight => BinOp::ShiftRight,
-            _ => bail!("unsupported binary operator"),
-        };
+        enum BinOpArgs {
+            RC(RegisterIndex, ConstantIndex8),
+            CR(ConstantIndex8, RegisterIndex),
+            RR(RegisterIndex, RegisterIndex),
+        }
+
+        struct BinOpEntry {
+            make_opcode: fn(RegisterIndex, BinOpArgs) -> OpCode,
+            constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
+        }
+
+        lazy_static! {
+            static ref BINOP_REGISTRY: HashMap<BinaryOperator, BinOpEntry> = {
+                let mut m = HashMap::new();
+
+                m.insert(
+                    BinaryOperator::Add,
+                    BinOpEntry {
+                        make_opcode: |dest, args| match args {
+                            BinOpArgs::RC(left, right) => OpCode::AddRC { dest, left, right },
+                            BinOpArgs::CR(left, right) => OpCode::AddCR { dest, left, right },
+                            BinOpArgs::RR(left, right) => OpCode::AddRR { dest, left, right },
+                        },
+                        constant_fold: |left, right| left.add(right),
+                    },
+                );
+
+                m
+            };
+        }
+
+        let binop_entry = BINOP_REGISTRY
+            .get(&binary_operator)
+            .ok_or_else(|| err_msg("unsupported binary operator"))?;
 
         if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-            if let Some(v) = apply_binop(binop, a, b) {
+            if let Some(v) = (binop_entry.constant_fold)(a, b) {
                 return Ok(ExprDescriptor::Value(v));
             }
         }
 
-        match (left, right) {
-            (mut left_expr, ExprDescriptor::Value(right_const)) => {
-                let left = self.expr_any_register(&mut left_expr)?;
-                let right = self.get_constant(right_const)?;
-                self.expr_finish(left_expr)?;
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.functions.top.opcodes.push(OpCode::BinOpRC {
-                    binop,
-                    dest,
-                    left,
-                    right,
-                });
-                Ok(ExprDescriptor::Temporary(dest))
-            }
-            (ExprDescriptor::Value(left_const), mut right_expr) => {
-                let left = self.get_constant(left_const)?;
-                let right = self.expr_any_register(&mut right_expr)?;
-                self.expr_finish(right_expr)?;
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.functions.top.opcodes.push(OpCode::BinOpCR {
-                    binop,
-                    dest,
-                    left,
-                    right,
-                });
-                Ok(ExprDescriptor::Temporary(dest))
-            }
-            (mut left_expr, mut right_expr) => {
-                let left = self.expr_any_register(&mut left_expr)?;
-                let right = self.expr_any_register(&mut right_expr)?;
-                self.expr_finish(right_expr)?;
-                self.expr_finish(left_expr)?;
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.functions.top.opcodes.push(OpCode::BinOpRR {
-                    binop,
-                    dest,
-                    left,
-                    right,
-                });
-                Ok(ExprDescriptor::Temporary(dest))
-            }
-        }
+        let mut get_constant8 =
+            |expr: &ExprDescriptor<'gc>| -> Result<Option<ConstantIndex8>, Error> {
+                if let &ExprDescriptor::Value(cons) = expr {
+                    if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                        return Ok(Some(ConstantIndex8(c8)));
+                    }
+                }
+                Ok(None)
+            };
+        let left_cons = get_constant8(&left)?;
+        let right_cons = get_constant8(&right)?;
+
+        let binop_arg = if let Some(left_cons) = left_cons {
+            let right_reg = self.expr_any_register(&mut right)?;
+            self.expr_finish(right)?;
+            BinOpArgs::CR(left_cons, right_reg)
+        } else if let Some(right_cons) = right_cons {
+            let left_reg = self.expr_any_register(&mut left)?;
+            self.expr_finish(left)?;
+            BinOpArgs::RC(left_reg, right_cons)
+        } else {
+            let left_reg = self.expr_any_register(&mut left)?;
+            let right_reg = self.expr_any_register(&mut right)?;
+            self.expr_finish(right)?;
+            self.expr_finish(left)?;
+            BinOpArgs::RR(left_reg, right_reg)
+        };
+
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+        self.functions
+            .top
+            .opcodes
+            .push((binop_entry.make_opcode)(dest, binop_arg));
+        Ok(ExprDescriptor::Temporary(dest))
     }
 
     fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, Error> {
@@ -484,15 +493,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .get_mut(i + 1)
                             .upvalues
                             .push((name, UpValueDescriptor::ParentLocal(register)));
-                        let mut upvalue_index = cast(self.functions.get(i + 1).upvalues.len() - 1)
-                            .ok_or(CompilerLimit::UpValues)?;
+                        let mut upvalue_index = UpValueIndex(
+                            cast(self.functions.get(i + 1).upvalues.len() - 1)
+                                .ok_or(CompilerLimit::UpValues)?,
+                        );
                         for k in i + 2..function_len {
                             self.functions
                                 .get_mut(k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
-                            upvalue_index = cast(self.functions.get(k).upvalues.len() - 1)
-                                .ok_or(CompilerLimit::UpValues)?;
+                            upvalue_index = UpValueIndex(
+                                cast(self.functions.get(k).upvalues.len() - 1)
+                                    .ok_or(CompilerLimit::UpValues)?,
+                            );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
                     }
@@ -501,17 +514,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             for j in 0..self.functions.get(i).upvalues.len() {
                 if name == self.functions.get(i).upvalues[j].0 {
+                    let mut upvalue_index = UpValueIndex(cast(j).unwrap());
                     if i == function_len - 1 {
-                        return Ok(VariableDescriptor::UpValue(cast(j).unwrap()));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index));
                     } else {
-                        let mut upvalue_index = cast(j).unwrap();
                         for k in i + 1..function_len {
                             self.functions
                                 .get_mut(k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
-                            upvalue_index = cast(self.functions.get(k).upvalues.len() - 1)
-                                .ok_or(CompilerLimit::UpValues)?;
+                            upvalue_index = UpValueIndex(
+                                cast(self.functions.get(k).upvalues.len() - 1)
+                                    .ok_or(CompilerLimit::UpValues)?,
+                            );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
                     }
@@ -523,12 +538,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
-    fn load_nil(&mut self, dest: Register) -> Result<(), Error> {
+    fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), Error> {
         match self.functions.top.opcodes.last().cloned() {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
                 count: prev_count,
-            }) if prev_dest + prev_count == dest => {
+            }) if prev_dest.0 + prev_count == dest.0 => {
                 self.functions.top.opcodes.push(OpCode::LoadNil {
                     dest: prev_dest,
                     count: prev_count + 1,
@@ -544,7 +559,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn get_constant(&mut self, constant: Value<'gc>) -> Result<Constant, Error> {
+    fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, Error> {
         if let Some(constant) = self
             .functions
             .top
@@ -554,8 +569,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         {
             Ok(constant)
         } else {
-            let c: Constant =
-                cast(self.functions.top.constants.len()).ok_or(CompilerLimit::Constants)?;
+            let c = ConstantIndex16(
+                cast(self.functions.top.constants.len()).ok_or(CompilerLimit::Constants)?,
+            );
             self.functions.top.constants.push(constant);
             self.functions
                 .top
@@ -566,7 +582,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Modify an expression to contain its result in any register, and return that register
-    fn expr_any_register(&mut self, expr: &mut ExprDescriptor<'gc>) -> Result<Register, Error> {
+    fn expr_any_register(
+        &mut self,
+        expr: &mut ExprDescriptor<'gc>,
+    ) -> Result<RegisterIndex, Error> {
         match *expr {
             ExprDescriptor::Temporary(reg) => return Ok(reg),
             ExprDescriptor::Local(reg) => return Ok(reg),
@@ -585,7 +604,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register
-    fn expr_allocate_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
+    fn expr_allocate_register(
+        &mut self,
+        expr: ExprDescriptor<'gc>,
+    ) -> Result<RegisterIndex, Error> {
         match expr {
             ExprDescriptor::Temporary(register) => Ok(register),
             expr => {
@@ -603,9 +625,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Consume an expression, ensuring that its result is stored in a newly allocated register at
     // the top of the stack.
-    fn expr_push_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<Register, Error> {
+    fn expr_push_register(&mut self, expr: ExprDescriptor<'gc>) -> Result<RegisterIndex, Error> {
         if let ExprDescriptor::Temporary(register) = expr {
-            if register as u16 + 1 == self.functions.top.register_allocator.stack_top {
+            if register.0 as u16 + 1 == self.functions.top.register_allocator.stack_top {
                 return Ok(register);
             }
         }
@@ -621,7 +643,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Consume an expression and store the result in the given register
-    fn expr_to_register(&mut self, expr: ExprDescriptor<'gc>, dest: Register) -> Result<(), Error> {
+    fn expr_to_register(
+        &mut self,
+        expr: ExprDescriptor<'gc>,
+        dest: RegisterIndex,
+    ) -> Result<(), Error> {
         match expr {
             ExprDescriptor::Temporary(source) => {
                 self.functions
@@ -682,7 +708,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         func: ExprDescriptor<'gc>,
         mut args: Vec<ExprDescriptor<'gc>>,
         returns: VarCount,
-    ) -> Result<Register, Error> {
+    ) -> Result<RegisterIndex, Error> {
         let top_reg = self.expr_push_register(func)?;
         let arg_count: u8 = cast(args.len()).ok_or(CompilerLimit::FixedParameters)?;
         let last_arg = args.pop();
@@ -707,7 +733,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 returns,
             });
         }
-        self.functions.top.register_allocator.pop_to(top_reg as u16);
+        self.functions
+            .top
+            .register_allocator
+            .pop_to(top_reg.0 as u16);
 
         Ok(top_reg)
     }
@@ -737,7 +766,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 #[derive(Default)]
 struct CompilerFunction<'gc, 'a> {
     constants: Vec<Value<'gc>>,
-    constant_table: HashMap<ConstantValue<'gc>, Constant>,
+    constant_table: HashMap<ConstantValue<'gc>, ConstantIndex16>,
 
     upvalues: Vec<(&'a [u8], UpValueDescriptor)>,
     prototypes: Vec<FunctionProto<'gc>>,
@@ -745,7 +774,7 @@ struct CompilerFunction<'gc, 'a> {
     register_allocator: RegisterAllocator,
 
     fixed_params: u8,
-    locals: Vec<(&'a [u8], Register)>,
+    locals: Vec<(&'a [u8], RegisterIndex)>,
 
     opcodes: Vec<OpCode>,
 }
@@ -774,14 +803,14 @@ impl<'gc, 'a> CompilerFunction<'gc, 'a> {
 }
 
 enum VariableDescriptor<'a> {
-    Local(Register),
+    Local(RegisterIndex),
     UpValue(UpValueIndex),
     Global(&'a [u8]),
 }
 
 enum ExprDescriptor<'gc> {
-    Temporary(Register),
-    Local(Register),
+    Temporary(RegisterIndex),
+    Local(RegisterIndex),
     UpValue(UpValueIndex),
     Value(Value<'gc>),
     FunctionCall(Box<ExprDescriptor<'gc>>, Vec<ExprDescriptor<'gc>>),
@@ -811,7 +840,7 @@ impl Default for RegisterAllocator {
 
 impl RegisterAllocator {
     // Allocates any single available register, returns it if one is available.
-    fn allocate(&mut self) -> Option<Register> {
+    fn allocate(&mut self) -> Option<RegisterIndex> {
         if self.first_free < 256 {
             let register = self.first_free as u8;
             self.registers[register as usize] = true;
@@ -829,28 +858,28 @@ impl RegisterAllocator {
                 i += 1;
             };
 
-            Some(register)
+            Some(RegisterIndex(register))
         } else {
             None
         }
     }
 
     // Free a single register.
-    fn free(&mut self, register: Register) {
+    fn free(&mut self, register: RegisterIndex) {
         assert!(
-            self.registers[register as usize],
+            self.registers[register.0 as usize],
             "cannot free unallocated register"
         );
-        self.registers[register as usize] = false;
-        self.first_free = self.first_free.min(register as u16);
-        if register as u16 + 1 == self.stack_top {
+        self.registers[register.0 as usize] = false;
+        self.first_free = self.first_free.min(register.0 as u16);
+        if register.0 as u16 + 1 == self.stack_top {
             self.stack_top -= 1;
         }
     }
 
     // Allocates a block of registers of the given size (which must be > 0) always at the end of the
     // allocated area.  If successful, returns the starting register of the block.
-    fn push(&mut self, size: u8) -> Option<Register> {
+    fn push(&mut self, size: u8) -> Option<RegisterIndex> {
         if size == 0 {
             None
         } else if size as u16 <= 256 - self.stack_top {
@@ -863,7 +892,7 @@ impl RegisterAllocator {
             }
             self.stack_top += size as u16;
             self.stack_size = self.stack_size.max(self.stack_top);
-            Some(rbegin)
+            Some(RegisterIndex(rbegin))
         } else {
             None
         }
