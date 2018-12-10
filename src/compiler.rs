@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 use failure::{bail, err_msg, Error, Fail};
-use lazy_static::lazy_static;
 use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
@@ -11,6 +10,9 @@ use gc_arena::{Gc, MutationContext};
 use crate::function::{FunctionProto, UpValueDescriptor};
 use crate::opcode::{
     ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
+};
+use crate::operators::{
+    categorize_binop, BinOpArgs, BinOpCategory, COMPARISON_BINOPS, SIMPLE_BINOPS,
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
@@ -393,60 +395,91 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn binary_operator(
         &mut self,
-        mut left: ExprDescriptor<'gc>,
+        left: ExprDescriptor<'gc>,
         binop: BinaryOperator,
-        mut right: ExprDescriptor<'gc>,
+        right: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, Error> {
-        let binop_entry = BINOP_REGISTRY
-            .get(&binop)
-            .ok_or_else(|| err_msg("unsupported binary operator"))?;
-
-        if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-            if let Some(v) = (binop_entry.constant_fold)(a, b) {
-                return Ok(ExprDescriptor::Value(v));
-            }
-        }
-
-        let mut get_constant8 =
-            |expr: &ExprDescriptor<'gc>| -> Result<Option<ConstantIndex8>, Error> {
-                if let &ExprDescriptor::Value(cons) = expr {
-                    if let Some(c8) = cast(self.get_constant(cons)?.0) {
-                        return Ok(Some(ConstantIndex8(c8)));
+        let mut make_binop_args = |mut left, mut right| -> Result<_, Error> {
+            let mut make_constant8 =
+                |expr: &ExprDescriptor<'gc>| -> Result<Option<ConstantIndex8>, Error> {
+                    if let &ExprDescriptor::Value(cons) = expr {
+                        if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                            return Ok(Some(ConstantIndex8(c8)));
+                        }
                     }
-                }
-                Ok(None)
-            };
-        let left_cons = get_constant8(&left)?;
-        let right_cons = get_constant8(&right)?;
+                    Ok(None)
+                };
+            let left_cons = make_constant8(&left)?;
+            let right_cons = make_constant8(&right)?;
 
-        let binop_args = if let Some(left_cons) = left_cons {
-            let right_reg = self.expr_any_register(&mut right)?;
-            self.expr_finish(right)?;
-            BinOpArgs::CR(left_cons, right_reg)
-        } else if let Some(right_cons) = right_cons {
-            let left_reg = self.expr_any_register(&mut left)?;
-            self.expr_finish(left)?;
-            BinOpArgs::RC(left_reg, right_cons)
-        } else {
-            let left_reg = self.expr_any_register(&mut left)?;
-            let right_reg = self.expr_any_register(&mut right)?;
-            self.expr_finish(right)?;
-            self.expr_finish(left)?;
-            BinOpArgs::RR(left_reg, right_reg)
+            Ok(if let Some(left_cons) = left_cons {
+                let right_reg = self.expr_any_register(&mut right)?;
+                self.expr_finish(right)?;
+                BinOpArgs::CR(left_cons, right_reg)
+            } else if let Some(right_cons) = right_cons {
+                let left_reg = self.expr_any_register(&mut left)?;
+                self.expr_finish(left)?;
+                BinOpArgs::RC(left_reg, right_cons)
+            } else {
+                let left_reg = self.expr_any_register(&mut left)?;
+                let right_reg = self.expr_any_register(&mut right)?;
+                self.expr_finish(right)?;
+                self.expr_finish(left)?;
+                BinOpArgs::RR(left_reg, right_reg)
+            })
         };
 
-        let dest = self
-            .functions
-            .top
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerLimit::Registers)?;
-        self.functions
-            .top
-            .opcodes
-            .extend((binop_entry.make_opcodes)(dest, binop_args));
+        match categorize_binop(binop) {
+            BinOpCategory::Simple(simple_binop) => {
+                let binop_entry = SIMPLE_BINOPS
+                    .get(&simple_binop)
+                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
 
-        Ok(ExprDescriptor::Temporary(dest))
+                if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
+                    if let Some(v) = (binop_entry.constant_fold)(a, b) {
+                        return Ok(ExprDescriptor::Value(v));
+                    }
+                }
+
+                let binop_args = make_binop_args(left, right)?;
+                let dest = self
+                    .functions
+                    .top
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
+                self.functions
+                    .top
+                    .opcodes
+                    .push((binop_entry.make_opcode)(dest, binop_args));
+                Ok(ExprDescriptor::Temporary(dest))
+            }
+            BinOpCategory::Comparison(comparison_binop) => {
+                let binop_entry = COMPARISON_BINOPS
+                    .get(&comparison_binop)
+                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
+
+                if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
+                    if let Some(v) = (binop_entry.constant_fold)(a, b) {
+                        return Ok(ExprDescriptor::Value(v));
+                    }
+                }
+
+                let binop_args = make_binop_args(left, right)?;
+                let dest = self
+                    .functions
+                    .top
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerLimit::Registers)?;
+                self.functions
+                    .top
+                    .opcodes
+                    .extend(&(binop_entry.make_opcodes)(dest, binop_args));
+                Ok(ExprDescriptor::Temporary(dest))
+            }
+            _ => bail!("unsupported binary operator"),
+        }
     }
 
     fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, Error> {
@@ -786,79 +819,6 @@ enum ExprDescriptor<'gc> {
     UpValue(UpValueIndex),
     Value(Value<'gc>),
     FunctionCall(Box<ExprDescriptor<'gc>>, Vec<ExprDescriptor<'gc>>),
-}
-
-#[derive(Debug)]
-enum BinOpArgs {
-    RC(RegisterIndex, ConstantIndex8),
-    CR(ConstantIndex8, RegisterIndex),
-    RR(RegisterIndex, RegisterIndex),
-}
-
-struct BinOpEntry {
-    make_opcodes: fn(RegisterIndex, BinOpArgs) -> Vec<OpCode>,
-    constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
-}
-
-lazy_static! {
-    static ref BINOP_REGISTRY: HashMap<BinaryOperator, BinOpEntry> = {
-        let mut m = HashMap::new();
-
-        m.insert(
-            BinaryOperator::Add,
-            BinOpEntry {
-                make_opcodes: |dest, args| {
-                    vec![match args {
-                        BinOpArgs::RC(left, right) => OpCode::AddRC { dest, left, right },
-                        BinOpArgs::CR(left, right) => OpCode::AddCR { dest, left, right },
-                        BinOpArgs::RR(left, right) => OpCode::AddRR { dest, left, right },
-                    }]
-                },
-                constant_fold: |left, right| left.add(right),
-            },
-        );
-
-        m.insert(
-            BinaryOperator::Equal,
-            BinOpEntry {
-                make_opcodes: |dest, args| {
-                    vec![
-                        match args {
-                            BinOpArgs::RC(left, right) => OpCode::EqRC {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                            BinOpArgs::CR(left, right) => OpCode::EqCR {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                            BinOpArgs::RR(left, right) => OpCode::EqRR {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                        },
-                        OpCode::Jump { offset: 1 },
-                        OpCode::LoadBool {
-                            dest,
-                            value: false,
-                            skip_next: true,
-                        },
-                        OpCode::LoadBool {
-                            dest,
-                            value: true,
-                            skip_next: false,
-                        },
-                    ]
-                },
-                constant_fold: |left, right| Some(Value::Boolean(left == right)),
-            },
-        );
-
-        m
-    };
 }
 
 struct RegisterAllocator {

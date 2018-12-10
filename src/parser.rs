@@ -95,7 +95,7 @@ pub struct LocalStatement {
     pub values: Vec<Expression>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -120,7 +120,7 @@ pub enum BinaryOperator {
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum UnaryOperator {
     Not,
     Minus,

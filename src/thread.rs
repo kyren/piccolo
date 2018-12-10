@@ -95,7 +95,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         self.stack[current_frame.base + dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
-                            self.pc += 1;
+                            self.pc = self.pc.checked_add(1).unwrap();
                         }
                     }
 
@@ -165,6 +165,26 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
+                    OpCode::Test { value, is_true } => {
+                        let value = self.stack[current_frame.base + value.0 as usize];
+                        if value.as_bool() == is_true {
+                            self.pc = self.pc.checked_add(1).unwrap();
+                        }
+                    }
+
+                    OpCode::TestSet {
+                        dest,
+                        value,
+                        is_true,
+                    } => {
+                        let value = self.stack[current_frame.base + value.0 as usize];
+                        if value.as_bool() == is_true {
+                            self.pc = self.pc.checked_add(1).unwrap();
+                        } else {
+                            self.stack[current_frame.base + dest.0 as usize] = value;
+                        }
+                    }
+
                     OpCode::Closure { proto, dest } => {
                         let proto = current_function.0.proto.prototypes[proto.0 as usize];
                         let mut upvalues = Vec::new();
@@ -217,7 +237,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
                         if (left == right) != equal {
-                            self.pc += 1;
+                            self.pc = self.pc.checked_add(1).unwrap();
                         }
                     }
 
@@ -225,7 +245,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize];
                         if (left == right) != equal {
-                            self.pc += 1;
+                            self.pc = self.pc.checked_add(1).unwrap();
                         }
                     }
 
@@ -233,7 +253,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
                         if (left == right) != equal {
-                            self.pc += 1;
+                            self.pc = self.pc.checked_add(1).unwrap();
                         }
                     }
                     OpCode::Not { dest, source } => {
@@ -263,7 +283,7 @@ impl<'gc> ThreadState<'gc> {
                     }
                 }
 
-                self.pc += 1;
+                self.pc = self.pc.checked_add(1).unwrap();
 
                 if let Some(instruction_limit) = instruction_limit.as_mut() {
                     if *instruction_limit == 0 {

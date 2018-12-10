@@ -92,6 +92,15 @@ pub enum OpCode {
     Jump {
         offset: i16,
     },
+    Test {
+        value: RegisterIndex,
+        is_true: bool,
+    },
+    TestSet {
+        dest: RegisterIndex,
+        value: RegisterIndex,
+        is_true: bool,
+    },
     Closure {
         dest: RegisterIndex,
         proto: PrototypeIndex,
