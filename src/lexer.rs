@@ -692,7 +692,6 @@ impl<R: Read> Lexer<R> {
 
         if at_end {
             self.source = None;
-            self.peek_buffer.clear();
         }
 
         if let Some(err) = err {
