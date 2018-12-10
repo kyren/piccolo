@@ -665,15 +665,12 @@ impl<R: Read> Lexer<R> {
     }
 
     fn peek(&mut self, n: usize) -> Result<Option<u8>, io::Error> {
-        let mut at_end = false;
-        let mut err = None;
-
         if let Some(source) = self.source.as_mut() {
             while self.peek_buffer.len() <= n {
                 let mut c = [0];
                 match source.read(&mut c) {
                     Ok(0) => {
-                        at_end = true;
+                        self.source = None;
                         break;
                     }
                     Ok(_) => {
@@ -681,21 +678,12 @@ impl<R: Read> Lexer<R> {
                     }
                     Err(e) => {
                         if e.kind() != io::ErrorKind::Interrupted {
-                            at_end = true;
-                            err = Some(e);
-                            break;
+                            self.source = None;
+                            return Err(e);
                         }
                     }
                 }
             }
-        }
-
-        if at_end {
-            self.source = None;
-        }
-
-        if let Some(err) = err {
-            return Err(err);
         }
 
         Ok(self.peek_buffer.get(n).cloned())
