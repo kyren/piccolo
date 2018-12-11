@@ -5,6 +5,7 @@ use failure::{err_msg, Error};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::opcode::{OpCode, RegisterIndex, UpValueIndex};
+use crate::thread::Thread;
 use crate::value::Value;
 
 #[derive(Debug, Collect, Clone, Copy)]
@@ -28,7 +29,7 @@ pub struct FunctionProto<'gc> {
 #[derive(Debug, Collect, Copy, Clone)]
 #[collect(require_copy)]
 pub enum UpValueState<'gc> {
-    Open(usize),
+    Open(Thread<'gc>, usize),
     Closed(Value<'gc>),
 }
 

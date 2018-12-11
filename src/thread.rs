@@ -11,6 +11,12 @@ use crate::value::Value;
 #[collect(require_copy)]
 pub struct Thread<'gc>(GcCell<'gc, ThreadState<'gc>>);
 
+impl<'gc> PartialEq for Thread<'gc> {
+    fn eq(&self, other: &Thread<'gc>) -> bool {
+        self.0.as_ptr() == other.0.as_ptr()
+    }
+}
+
 impl<'gc> Thread<'gc> {
     pub fn new(
         mc: MutationContext<'gc, '_>,
@@ -21,7 +27,7 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn run(&self, mc: MutationContext<'gc, '_>, instruction_limit: Option<u64>) -> bool {
-        self.0.write(mc).run(mc, instruction_limit)
+        self.0.write(mc).run(mc, instruction_limit, *self)
     }
 
     pub fn results(&self) -> Option<Vec<Value<'gc>>> {
@@ -63,7 +69,12 @@ impl<'gc> ThreadState<'gc> {
         state
     }
 
-    fn run(&mut self, mc: MutationContext<'gc, '_>, mut instruction_limit: Option<u64>) -> bool {
+    fn run(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        mut instruction_limit: Option<u64>,
+        self_thread: Thread<'gc>,
+    ) -> bool {
         'function_start: loop {
             let current_frame = if let Some(top) = self.frames.last().cloned() {
                 top
@@ -124,8 +135,12 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::Return { start, count } => {
                         for (_, upval) in self.open_upvalues.split_off(&current_frame.bottom) {
                             let mut upval = upval.0.write(mc);
-                            if let UpValueState::Open(ind) = *upval {
-                                *upval = UpValueState::Closed(self.stack[ind]);
+                            if let UpValueState::Open(thread, ind) = *upval {
+                                *upval = UpValueState::Closed(if thread == self_thread {
+                                    self.stack[ind]
+                                } else {
+                                    thread.0.read().stack[ind]
+                                });
                             }
                         }
 
@@ -199,7 +214,7 @@ impl<'gc> ThreadState<'gc> {
                                         BTreeEntry::Vacant(vacant) => {
                                             let uv = UpValue(GcCell::allocate(
                                                 mc,
-                                                UpValueState::Open(ind),
+                                                UpValueState::Open(self_thread, ind),
                                             ));
                                             vacant.insert(uv);
                                             upvalues.push(uv);
@@ -219,7 +234,13 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::GetUpValue { source, dest } => {
                         self.stack[current_frame.base + dest.0 as usize] =
                             match *current_function.0.upvalues[source.0 as usize].0.read() {
-                                UpValueState::Open(ind) => self.stack[ind],
+                                UpValueState::Open(thread, ind) => {
+                                    if thread == self_thread {
+                                        self.stack[ind]
+                                    } else {
+                                        thread.0.read().stack[ind]
+                                    }
+                                }
                                 UpValueState::Closed(v) => v,
                             };
                     }
@@ -228,7 +249,13 @@ impl<'gc> ThreadState<'gc> {
                         let val = self.stack[current_frame.base + source.0 as usize];
                         let mut uv = current_function.0.upvalues[dest.0 as usize].0.write(mc);
                         match &mut *uv {
-                            UpValueState::Open(ind) => self.stack[*ind] = val,
+                            UpValueState::Open(thread, ind) => {
+                                if *thread == self_thread {
+                                    self.stack[*ind] = val
+                                } else {
+                                    thread.0.write(mc).stack[*ind] = val;
+                                }
+                            }
                             UpValueState::Closed(v) => *v = val,
                         }
                     }
