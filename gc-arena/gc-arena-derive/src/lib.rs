@@ -1,7 +1,8 @@
-use quote::{quote, ToTokens, Tokens};
-use synstructure::{decl_derive, quote_each_token, quote_spanned};
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::{quote, ToTokens};
+use synstructure::{decl_derive, AddBounds};
 
-fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
+fn collect_derive(s: synstructure::Structure) -> TokenStream {
     // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
     // necessarily safe for `Collect` types.  This derive macro has four possible modes to ensure
     // that this is safe:
@@ -24,7 +25,7 @@ fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
     for attr in &s.ast().attrs {
         match attr.interpret_meta() {
             Some(syn::Meta::List(syn::MetaList { ident, nested, .. })) => {
-                if ident == syn::Ident::from("collect") {
+                if ident == Ident::new("collect", Span::call_site()) {
                     if let Some(prev_mode) = mode {
                         let prev_mode_str = match prev_mode {
                             Mode::RequireStatic => "require_static",
@@ -37,26 +38,30 @@ fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
 
                     if let Some(syn::punctuated::Pair::End(nmeta)) = nested.first() {
                         if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
+                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
                                 "require_static",
+                                Span::call_site(),
                             )))
                         {
                             mode = Some(Mode::RequireStatic);
                         } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
+                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
                                 "require_copy",
+                                Span::call_site(),
                             )))
                         {
                             mode = Some(Mode::RequireCopy);
                         } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
+                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
                                 "empty_drop",
+                                Span::call_site(),
                             )))
                         {
                             mode = Some(Mode::EmptyDrop);
                         } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(syn::Ident::from(
+                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
                                 "unsafe_drop",
+                                Span::call_site(),
                             )))
                         {
                             mode = Some(Mode::UnsafeDrop);
@@ -72,7 +77,7 @@ fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
 
     let mode = mode.unwrap_or(Mode::RequireStatic);
 
-    let mut needs_trace_body = Tokens::new();
+    let mut needs_trace_body = TokenStream::new();
     quote!(false).to_tokens(&mut needs_trace_body);
     for v in s.variants() {
         for b in v.bindings() {
@@ -108,7 +113,8 @@ fn collect_derive(s: synstructure::Structure) -> quote::Tokens {
     });
 
     let drop_impl = if mode == Mode::EmptyDrop {
-        s.gen_impl(quote! {
+        let mut s = s;
+        s.add_bounds(AddBounds::None).gen_impl(quote! {
             gen impl Drop for @Self {
                 fn drop(&mut self) {}
             }
