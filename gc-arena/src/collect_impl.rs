@@ -51,14 +51,18 @@ static_collect!(f32);
 static_collect!(f64);
 static_collect!(String);
 
-unsafe impl<T: ?Sized> Collect for &'static T {
+unsafe impl<'a, T: ?Sized> Collect for &'a T {
     #[inline]
     fn needs_trace() -> bool {
         false
     }
+}
 
+unsafe impl<'a, T: ?Sized> Collect for &'a mut T {
     #[inline]
-    fn trace(&self, _cc: CollectionContext) {}
+    fn needs_trace() -> bool {
+        false
+    }
 }
 
 unsafe impl<T: Collect> Collect for Box<T> {

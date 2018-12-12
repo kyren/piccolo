@@ -96,9 +96,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
         quote!()
     };
 
-    let collect_impl = s.gen_impl(quote! {
-        extern crate gc_arena;
-
+    let collect_impl = s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
         gen unsafe impl gc_arena::Collect for @Self #where_clause {
             #[inline]
             fn needs_trace() -> bool {
