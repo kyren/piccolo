@@ -9,6 +9,7 @@ use crate::thread::Thread;
 use crate::value::Value;
 
 #[derive(Debug, Collect, Clone, Copy)]
+#[collect(require_static)]
 pub enum UpValueDescriptor {
     ParentLocal(RegisterIndex),
     Outer(UpValueIndex),

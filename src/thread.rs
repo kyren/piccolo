@@ -85,6 +85,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
 }
 
 #[derive(Debug, Clone, Copy, Collect)]
+#[collect(require_static)]
 struct Frame {
     bottom: usize,
     base: usize,

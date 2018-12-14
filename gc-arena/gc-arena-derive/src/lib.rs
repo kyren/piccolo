@@ -6,8 +6,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
     // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
     // necessarily safe for `Collect` types.  This derive macro has four possible modes to ensure
     // that this is safe:
-    //   1) Require that the type be 'static with `#[collect(require_static)]`.  This is the
-    //      default if no other option is specified.
+    //   1) Require that the type be 'static with `#[collect(require_static)]`.
     //   2) Require that the type be `Copy` with `#[collect(require_copy)]`
     //   3) Generate a safe empty `Drop` impl with `#[collect(empty_drop)]`
     //   4) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`.  Such
@@ -75,7 +74,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
         }
     }
 
-    let mode = mode.unwrap_or(Mode::RequireStatic);
+    let mode = mode.expect("deriving `Collect` requires a `#[collect(<mode>)]` attribute, where `<mode>` is one of \"require_static\", \"require_copy\", \"empty_drop\", or \"unsafe_drop\"");
 
     let mut needs_trace_body = TokenStream::new();
     quote!(false).to_tokens(&mut needs_trace_body);
