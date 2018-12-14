@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 
 use crate::opcode::{ConstantIndex8, OpCode, RegisterIndex};
-use crate::parser::BinaryOperator;
 use crate::value::Value;
+
+pub use crate::parser::BinaryOperator;
+pub use crate::parser::UnaryOperator;
 
 // Binary operators which map directly to a single opcode
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
@@ -154,6 +156,27 @@ lazy_static! {
                     ]
                 },
                 constant_fold: |left, right| Some(Value::Boolean(left == right)),
+            },
+        );
+
+        m
+    };
+}
+
+pub struct UnOpEntry {
+    pub make_opcode: fn(RegisterIndex, RegisterIndex) -> OpCode,
+    pub constant_fold: for<'gc> fn(Value<'gc>) -> Option<Value<'gc>>,
+}
+
+lazy_static! {
+    pub static ref UNOPS: HashMap<UnaryOperator, UnOpEntry> = {
+        let mut m = HashMap::new();
+
+        m.insert(
+            UnaryOperator::Not,
+            UnOpEntry {
+                make_opcode: |dest, source| OpCode::Not { dest, source },
+                constant_fold: |v| Some(Value::Boolean(!v.as_bool())),
             },
         );
 

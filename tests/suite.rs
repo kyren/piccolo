@@ -7,39 +7,93 @@ use std::path::PathBuf;
 
 use failure::Error;
 
+use luster::compiler::compile_chunk;
+use luster::function::Closure;
 use luster::io::buffered_read;
-use luster::parser::parse_chunk;
+use luster::lua::Lua;
+use luster::parser::{parse_chunk, Chunk};
+use luster::sequence::{sequence_fn, SequenceExt};
+use luster::value::Value;
 
-#[test]
-fn test_suite() {
-    // Right now, we just check that all the files in the testsuite directory parse correctly.
+fn parse_file(path: &PathBuf) -> Result<Chunk, Error> {
+    parse_chunk(buffered_read(File::open(path)?)?)
+}
 
+fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
 
-    // We write to stdout directly as a hack to allow printing without capture from `cargo test`.
-    let mut stdout = stdout();
+    let op = if run_code { "running" } else { "parsing" };
+    let _ = writeln!(stdout(), "{} all files in '{}'", op, dir);
 
-    for dir in read_dir("./testsuite").expect("could not list 'testsuite' dir contents") {
-        let path = dir.expect("could not read 'testsuite' dir entry").path();
+    for dir in read_dir(dir).expect("could not list dir contents") {
+        let path = dir.expect("could not read dir entry").path();
         if let Some(ext) = path.extension() {
             if ext == "lua" {
-                let _ = writeln!(stdout, "parsing file {:?}", path);
-                if let Err(err) = parse_file(&path) {
-                    let _ = writeln!(stdout, "error encountered: {:?}", err);
-                    file_failed = true;
+                let _ = writeln!(stdout(), "{} file {:?}", op, path);
+                match parse_file(&path) {
+                    Err(err) => {
+                        let _ = writeln!(stdout(), "error encountered parsing: {:?}", err);
+                        file_failed = true;
+                    }
+                    Ok(chunk) => {
+                        if run_code {
+                            let mut lua = Lua::new();
+                            let r = lua.sequence(move |_, lc| {
+                                Box::new(
+                                    sequence_fn(move |mc| {
+                                        Closure::new(mc, compile_chunk(mc, &chunk)?)
+                                    })
+                                    .and_then_with(
+                                        lc.main_thread,
+                                        move |mc, main_thread, closure| {
+                                            Ok(main_thread.call_function(mc, closure, &[], 64))
+                                        },
+                                    )
+                                    .map(move |_, r| match &r[..] {
+                                        &[Value::Boolean(true)] => Ok(false),
+                                        v => {
+                                            let _ = writeln!(
+                                                stdout(),
+                                                "unexpected return values: {:?}",
+                                                v
+                                            );
+                                            Ok(true)
+                                        }
+                                    }),
+                                )
+                            });
+
+                            match r {
+                                Err(err) => {
+                                    let _ =
+                                        writeln!(stdout(), "error encountered running: {:?}", err);
+                                    file_failed = true;
+                                }
+                                Ok(true) => {
+                                    file_failed = true;
+                                }
+                                Ok(false) => {}
+                            }
+                        }
+                    }
                 }
             }
         } else {
-            let _ = writeln!(stdout, "skipping file {:?}", path);
+            let _ = writeln!(stdout(), "skipping file {:?}", path);
         }
     }
 
     if file_failed {
-        panic!("one or more testsuite errors occurred");
+        panic!("one or more errors occurred");
     }
 }
 
-fn parse_file(path: &PathBuf) -> Result<(), Error> {
-    parse_chunk(buffered_read(File::open(path)?)?)?;
-    Ok(())
+#[test]
+fn test_suite_parsing() {
+    test_dir("./tests/parsing", false);
+}
+
+#[test]
+fn test_suite_running() {
+    test_dir("./tests/running", true);
 }

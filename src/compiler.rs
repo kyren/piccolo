@@ -12,12 +12,13 @@ use crate::opcode::{
     ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 use crate::operators::{
-    categorize_binop, BinOpArgs, BinOpCategory, ShortCircuitBinOp, COMPARISON_BINOPS, SIMPLE_BINOPS,
+    categorize_binop, BinOpArgs, BinOpCategory, ShortCircuitBinOp, COMPARISON_BINOPS,
+    SIMPLE_BINOPS, UNOPS,
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
-    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
+    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression, UnaryOperator,
 };
 use crate::string::String;
 use crate::value::Value;
@@ -332,7 +333,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
-            HeadExpression::UnaryOperator(_, _) => bail!("no unary operator support yet"),
+            HeadExpression::UnaryOperator(unop, expr) => {
+                let expr = self.expression(expr)?;
+                self.unary_operator(*unop, expr)
+            }
         }
     }
 
@@ -398,6 +402,39 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }),
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
         }
+    }
+
+    fn unary_operator(
+        &mut self,
+        unop: UnaryOperator,
+        mut expr: ExprDescriptor<'gc, 'a>,
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        let unop_entry = UNOPS
+            .get(&unop)
+            .ok_or_else(|| err_msg("unsupported unary operator"))?;
+
+        if let &ExprDescriptor::Value(v) = &expr {
+            if let Some(v) = (unop_entry.constant_fold)(v) {
+                return Ok(ExprDescriptor::Value(v));
+            }
+        }
+
+        let source = self.expr_any_register(&mut expr)?;
+        self.expr_finish(expr)?;
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+        self.functions
+            .top
+            .opcodes
+            .push((unop_entry.make_opcode)(dest, source));
+        Ok(ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
+        })
     }
 
     fn binary_operator(

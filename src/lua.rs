@@ -7,8 +7,8 @@ use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
 use crate::sequence::{Sequence, SequenceExt};
 use crate::thread::Thread;
 
-#[derive(Collect)]
-#[collect(empty_drop)]
+#[derive(Collect, Clone, Copy)]
+#[collect(require_copy)]
 pub struct LuaContext<'gc> {
     pub main_thread: Thread<'gc>,
 }
@@ -32,13 +32,13 @@ impl Lua {
     where
         F: for<'gc> FnOnce(
             MutationContext<'gc, '_>,
-            &LuaContext<'gc>,
+            LuaContext<'gc>,
         ) -> Box<dyn Sequence<'gc, Item = R> + 'gc>,
         R: 'static,
     {
         self.arena.mutate(move |mc, lua_root| {
             *lua_root.current_sequence.write(mc) = Some(Box::new(
-                f(mc, &lua_root.context)
+                f(mc, lua_root.context)
                     .map(move |_, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
             ));
         });

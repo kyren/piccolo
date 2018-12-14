@@ -415,12 +415,6 @@ impl<'gc> ThreadState<'gc> {
             self.stack.truncate(closure_index + constant + 1);
             constant
         } else {
-            println!(
-                "{}, {}, {:?}",
-                self.stack.len(),
-                closure_index,
-                &self.stack[closure_index..]
-            );
             self.stack.len() - closure_index - 1
         };
 
