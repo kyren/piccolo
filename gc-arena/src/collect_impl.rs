@@ -65,12 +65,7 @@ unsafe impl<'a, T: ?Sized> Collect for &'a mut T {
     }
 }
 
-unsafe impl<T: Collect> Collect for Box<T> {
-    #[inline]
-    fn needs_trace() -> bool {
-        T::needs_trace()
-    }
-
+unsafe impl<T: ?Sized + Collect> Collect for Box<T> {
     #[inline]
     fn trace(&self, cc: CollectionContext) {
         (**self).trace(cc)
@@ -101,6 +96,21 @@ unsafe impl<T: Collect> Collect for Option<T> {
     fn trace(&self, cc: CollectionContext) {
         if let Some(t) = self.as_ref() {
             t.trace(cc)
+        }
+    }
+}
+
+unsafe impl<T: Collect, E: Collect> Collect for Result<T, E> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace() || E::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        match self {
+            Ok(r) => r.trace(cc),
+            Err(e) => e.trace(cc),
         }
     }
 }

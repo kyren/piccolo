@@ -1,10 +1,13 @@
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
 
+use failure::Error;
+
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::opcode::{OpCode, VarCount};
+use crate::sequence::Sequence;
 use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -18,20 +21,66 @@ impl<'gc> PartialEq for Thread<'gc> {
 }
 
 impl<'gc> Thread<'gc> {
-    pub fn new(
+    pub fn new(mc: MutationContext<'gc, '_>) -> Thread<'gc> {
+        Thread(GcCell::allocate(mc, ThreadState::new()))
+    }
+
+    /// Call a closure on this thread, producing a `Sequence`.  No more than `granularity` VM
+    /// instructions will be executed at a time during each `Sequence` step.
+    ///
+    /// The same `Thread` can be used for multiple function calls, but only the most recently
+    /// created unfinished `ThreadSequence` for a `Thread` can be run at any given time.  When a
+    /// `ThreadSequence` is constructed, it operates on whatever the top of the stack is at that
+    /// time, so any later constructed `ThreadSequence`s must be run to completion before earlier
+    /// ones can be completed.
+    pub fn call_function(
+        &self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
-    ) -> Thread<'gc> {
-        Thread(GcCell::allocate(mc, ThreadState::new(closure, args)))
-    }
+        granularity: u32,
+    ) -> ThreadSequence<'gc> {
+        assert_ne!(granularity, 0, "granularity cannot be zero");
 
-    pub fn run(&self, mc: MutationContext<'gc, '_>, instruction_limit: Option<u64>) -> bool {
-        self.0.write(mc).run(mc, instruction_limit, *self)
-    }
+        let mut state = self.0.write(mc);
+        let closure_index = state.stack.len();
+        state.stack.push(Value::Closure(closure));
+        state.stack.extend(args);
+        let res_pc = state.pc;
+        state.call_function(
+            closure_index,
+            VarCount::make_variable(),
+            VarCount::make_variable(),
+            res_pc,
+            true,
+        );
 
-    pub fn results(&self) -> Option<Vec<Value<'gc>>> {
-        self.0.read().results().map(|v| v.to_vec())
+        ThreadSequence {
+            thread: Some(*self),
+            granularity,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(require_copy)]
+pub struct ThreadSequence<'gc> {
+    thread: Option<Thread<'gc>>,
+    granularity: u32,
+}
+
+impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
+    type Item = Vec<Value<'gc>>;
+
+    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<Vec<Value<'gc>>, Error>> {
+        let thread = self.thread.expect("cannot pump a finished ThreadSequence");
+        let mut state = thread.0.write(mc);
+        if let Some(res) = state.run(mc, thread, self.granularity) {
+            self.thread = None;
+            Some(Ok(res))
+        } else {
+            None
+        }
     }
 }
 
@@ -42,6 +91,7 @@ struct Frame {
     top: usize,
     returns: VarCount,
     restore_pc: usize,
+    call_boundary: bool,
 }
 
 #[derive(Debug, Collect)]
@@ -54,33 +104,27 @@ struct ThreadState<'gc> {
 }
 
 impl<'gc> ThreadState<'gc> {
-    fn new(closure: Closure<'gc>, args: &[Value<'gc>]) -> ThreadState<'gc> {
-        let mut stack = vec![Value::Closure(closure)];
-        stack.extend(args);
-        let mut state = ThreadState {
-            stack,
+    fn new() -> ThreadState<'gc> {
+        ThreadState {
+            stack: Vec::new(),
             frames: Vec::new(),
             pc: 0,
             open_upvalues: BTreeMap::new(),
-        };
-
-        state.call_function(0, VarCount::make_variable(), VarCount::make_variable(), 0);
-
-        state
+        }
     }
 
     fn run(
         &mut self,
         mc: MutationContext<'gc, '_>,
-        mut instruction_limit: Option<u64>,
         self_thread: Thread<'gc>,
-    ) -> bool {
+        mut instructions: u32,
+    ) -> Option<Vec<Value<'gc>>> {
         'function_start: loop {
-            let current_frame = if let Some(top) = self.frames.last().cloned() {
-                top
-            } else {
-                return true;
-            };
+            let current_frame = self
+                .frames
+                .last()
+                .expect("no current ThreadState frame")
+                .clone();
 
             let current_function = match self.stack[current_frame.bottom] {
                 Value::Closure(c) => c,
@@ -88,7 +132,10 @@ impl<'gc> ThreadState<'gc> {
             };
 
             loop {
-                match current_function.0.proto.opcodes[self.pc] {
+                let op = current_function.0.proto.opcodes[self.pc];
+                self.pc += 1;
+
+                match op {
                     OpCode::Move { dest, source } => {
                         self.stack[current_frame.base + dest.0 as usize] =
                             self.stack[current_frame.base + source.0 as usize];
@@ -106,7 +153,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         self.stack[current_frame.base + dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         }
                     }
 
@@ -121,14 +168,13 @@ impl<'gc> ThreadState<'gc> {
                         args,
                         returns,
                     } => {
-                        let ret_pc = self.pc + 1;
                         self.call_function(
                             current_frame.base + func.0 as usize,
                             args,
                             returns,
-                            ret_pc,
+                            self.pc,
+                            false,
                         );
-                        self.pc = 0;
                         continue 'function_start;
                     }
 
@@ -144,32 +190,62 @@ impl<'gc> ThreadState<'gc> {
                             }
                         }
 
-                        let return_count = count
+                        let start = current_frame.base + start.0 as usize;
+                        let count = count
                             .get_constant()
                             .map(|c| c as usize)
-                            .unwrap_or(self.stack.len() - current_frame.base - start.0 as usize);
-                        let expected = current_frame
+                            .unwrap_or(self.stack.len() - start);
+
+                        let returning = current_frame
                             .returns
                             .get_constant()
                             .map(|c| c as usize)
-                            .unwrap_or(return_count);
-                        for i in 0..expected.min(return_count) {
-                            self.stack[current_frame.bottom + i] =
-                                self.stack[current_frame.base + start.0 as usize + i]
-                        }
+                            .unwrap_or(count);
 
-                        for i in return_count..expected {
-                            self.stack[current_frame.bottom + i] = Value::Nil;
-                        }
+                        if current_frame.call_boundary {
+                            let ret_vals = self.stack[start..start + returning].to_vec();
 
-                        self.pc = current_frame.restore_pc;
-                        self.frames.pop();
+                            self.pc = current_frame.restore_pc;
+                            self.frames.pop();
+                            if let Some(frame) = self.frames.last() {
+                                self.stack.truncate(frame.top);
+                            } else {
+                                self.stack.clear();
+                            }
 
-                        if let Some(frame) = self.frames.last() {
-                            let last_return = current_frame.bottom + expected;
-                            self.stack.truncate(frame.top.max(last_return));
+                            return Some(ret_vals);
+                        } else {
+                            for i in 0..returning.min(count) {
+                                self.stack[current_frame.bottom + i] = self.stack[start + i]
+                            }
+
+                            for i in count..returning {
+                                self.stack[current_frame.bottom + i] = Value::Nil;
+                            }
+
+                            self.pc = current_frame.restore_pc;
+                            self.frames.pop();
+
+                            // If variable returns were expected, then we set the stack top to
+                            // indicate the number of variable returns.  If we are returning with an
+                            // expected number of restuls, then we should reset the stack size to
+                            // the size expeted by the previous frame.  The top set when there are
+                            // variable results may be lower than the top expected by the previous
+                            // frame, but this is okay because all variable results ops are
+                            // immediately followed by subsequent ops that consume the variable
+                            // results.  Any operation that consumes variable results without
+                            // producing variable results is expected to reset the stack to the
+                            // correct normal top.
+                            if current_frame.returns.is_variable() {
+                                self.stack.truncate(current_frame.bottom + returning);
+                            } else {
+                                let current_frame =
+                                    self.frames.last().expect("top frame is not call boundary");
+                                self.stack.truncate(current_frame.top);
+                            }
+
+                            continue 'function_start;
                         }
-                        continue 'function_start;
                     }
 
                     OpCode::Jump { offset } => {
@@ -183,7 +259,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::Test { value, is_true } => {
                         let value = self.stack[current_frame.base + value.0 as usize];
                         if value.as_bool() == is_true {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         }
                     }
 
@@ -194,7 +270,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         let value = self.stack[current_frame.base + value.0 as usize];
                         if value.as_bool() == is_true {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         } else {
                             self.stack[current_frame.base + dest.0 as usize] = value;
                         }
@@ -264,7 +340,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
                         if (left == right) != equal {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         }
                     }
 
@@ -272,7 +348,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize];
                         if (left == right) != equal {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         }
                     }
 
@@ -280,7 +356,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
                         if (left == right) != equal {
-                            self.pc = self.pc.checked_add(1).unwrap();
+                            self.pc += 1;
                         }
                     }
                     OpCode::Not { dest, source } => {
@@ -310,24 +386,12 @@ impl<'gc> ThreadState<'gc> {
                     }
                 }
 
-                self.pc = self.pc.checked_add(1).unwrap();
-
-                if let Some(instruction_limit) = instruction_limit.as_mut() {
-                    if *instruction_limit == 0 {
-                        return false;
-                    } else {
-                        *instruction_limit -= 1
-                    }
+                if instructions == 0 {
+                    return None;
+                } else {
+                    instructions -= 1
                 }
             }
-        }
-    }
-
-    fn results(&self) -> Option<&[Value<'gc>]> {
-        if self.frames.is_empty() {
-            Some(&self.stack)
-        } else {
-            None
         }
     }
 
@@ -337,6 +401,7 @@ impl<'gc> ThreadState<'gc> {
         args: VarCount,
         returns: VarCount,
         restore_pc: usize,
+        call_boundary: bool,
     ) {
         let closure = match self.stack[closure_index] {
             Value::Closure(c) => c,
@@ -349,6 +414,12 @@ impl<'gc> ThreadState<'gc> {
             self.stack.truncate(closure_index + constant + 1);
             constant
         } else {
+            println!(
+                "{}, {}, {:?}",
+                self.stack.len(),
+                closure_index,
+                &self.stack[closure_index..]
+            );
             self.stack.len() - closure_index - 1
         };
 
@@ -375,6 +446,9 @@ impl<'gc> ThreadState<'gc> {
             top,
             returns,
             restore_pc,
+            call_boundary,
         });
+
+        self.pc = 0;
     }
 }

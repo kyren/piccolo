@@ -1,9 +1,11 @@
+use luster::value::Value;
+
 mod util;
-use self::util::test_script;
+use self::util::run_script;
 
 #[test]
 fn test_upvalue() {
-    test_script(
+    run_script(
         r#"
             local i = 0
             local function inc(amt)
@@ -14,13 +16,13 @@ fn test_upvalue() {
             inc(3)
             return i
         "#,
-        6,
+        |r| assert_eq!(r, &[Value::Integer(6)]),
     );
 }
 
 #[test]
 fn test_upvalue_multi() {
-    test_script(
+    run_script(
         r#"
             local i = 0
             local j = 0
@@ -35,13 +37,13 @@ fn test_upvalue_multi() {
             inc(3)
             return i + j + k
         "#,
-        15,
+        |r| assert_eq!(r, &[Value::Integer(15)]),
     );
 }
 
 #[test]
 fn test_upvalue_outer() {
-    test_script(
+    run_script(
         r#"
             local i = 0
             local inc
@@ -59,6 +61,6 @@ fn test_upvalue_outer() {
             inc()
             return i
         "#,
-        12,
+        |r| assert_eq!(r, &[Value::Integer(12)]),
     );
 }

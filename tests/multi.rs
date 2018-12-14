@@ -1,9 +1,11 @@
+use luster::value::Value;
+
 mod util;
-use self::util::test_script;
+use self::util::run_script;
 
 #[test]
 fn test_mult_return() {
-    test_script(
+    run_script(
         r#"
             local function test()
                 return 1, 2, 3
@@ -11,13 +13,13 @@ fn test_mult_return() {
             local i, j, k = test()
             return i + j + k
         "#,
-        6,
+        |r| assert_eq!(r, &[Value::Integer(6)]),
     );
 }
 
 #[test]
 fn test_mult_arg() {
-    test_script(
+    run_script(
         r#"
             local function test1()
                 return 2, 3
@@ -27,6 +29,6 @@ fn test_mult_arg() {
             end
             return test2(1, test1())
         "#,
-        6,
+        |r| assert_eq!(r, &[Value::Integer(6)]),
     );
 }

@@ -7,6 +7,7 @@ use std::fs::File;
 
 use failure::{err_msg, Error};
 
+use luster::io::buffered_read;
 use luster::parser::parse_chunk;
 
 fn main() -> Result<(), Error> {
@@ -17,7 +18,7 @@ fn main() -> Result<(), Error> {
             .ok_or_else(|| err_msg("no file argument given"))?,
     )?;
 
-    let chunk = parse_chunk(file)?;
+    let chunk = parse_chunk(buffered_read(file)?)?;
     println!("output: {:#?}", chunk);
 
     Ok(())
