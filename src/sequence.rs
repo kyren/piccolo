@@ -22,10 +22,10 @@ use gc_arena::{Collect, MutationContext, StaticCollect};
 ///    arbitrarily growing the Rust stack.  Even disregarding coroutines, this mechanism also allows
 ///    there not to be arbitrary limits on the Rust callback depth.
 ///
-/// 3. It allows for an asynchronous API.  Rust code to be treated similarly to Lua VM code in that
-///    it can be paused, resumed, and incrementally executed.  With a chain of Rust -> Lua -> Rust
-///    -> Lua calls, it is not generally possible to stop executing a script without returning
-///    through all of the real Rust frames in the call stack, but it *is* possible to stop
+/// 3. It allows for an asynchronous API.  Using this, Rust code can be treated similarly to Lua VM
+///    code in that it can be paused, resumed, and incrementally executed.  With a normal chain of
+///    Rust -> Lua -> Rust -> Lua calls, it would not be possible to stop executing a script without
+///    returning through all of the real Rust frames in the call stack, but it *is* possible to stop
 ///    arbitrarily at any point in a Sequence and resume later.
 pub trait Sequence<'gc>: Collect {
     type Item;
