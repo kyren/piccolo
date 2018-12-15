@@ -44,7 +44,7 @@ impl GcFlags {
     }
 
     pub(crate) fn needs_trace(&self) -> bool {
-        self.0.get() | 0x4 != 0x0
+        self.0.get() & 0x4 != 0x0
     }
 
     pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
