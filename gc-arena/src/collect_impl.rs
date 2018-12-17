@@ -261,3 +261,7 @@ impl_tuple! {A B C D E F G H I}
 impl_tuple! {A B C D E F G H I J}
 impl_tuple! {A B C D E F G H I J K}
 impl_tuple! {A B C D E F G H I J K L}
+impl_tuple! {A B C D E F G H I J K L M}
+impl_tuple! {A B C D E F G H I J K L M N}
+impl_tuple! {A B C D E F G H I J K L M N O}
+impl_tuple! {A B C D E F G H I J K L M N O P}

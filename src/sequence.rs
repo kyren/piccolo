@@ -50,6 +50,12 @@ where
     SequenceFnWith::new(c, f)
 }
 
+/// Extension trait for `Sequence` that provides useful combinator methods, similarly to
+/// `FutureExt`.  A key difference with `FutureExt` comes from `Sequence` requiring `Collect`: it is
+/// currently not possible for a regular Rust closure to implement `Collect`, so there are
+/// `xxx_with` variant methods that allow you to manually close over a type `C: Collect` to manually
+/// capture `Collect` implementing types.  Tuples up to size 16 implement `Collect`, so this is a
+/// convenient way to manually capture a reasonable number of such values.
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     fn map<F, R>(self, f: F) -> Map<Self, F>
     where
