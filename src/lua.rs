@@ -33,15 +33,17 @@ impl Lua {
         F: for<'gc> FnOnce(
             MutationContext<'gc, '_>,
             LuaContext<'gc>,
-        ) -> Box<dyn Sequence<'gc, Item = R> + 'gc>,
+        ) -> Result<Box<dyn Sequence<'gc, Item = R> + 'gc>, Error>,
         R: 'static,
     {
-        self.arena.mutate(move |mc, lua_root| {
-            *lua_root.current_sequence.write(mc) = Some(Box::new(
-                f(mc, lua_root.context)
-                    .map(move |_, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
-            ));
-        });
+        self.arena
+            .mutate(move |mc, lua_root| -> Result<(), Error> {
+                *lua_root.current_sequence.write(mc) = Some(Box::new(
+                    f(mc, lua_root.context)?
+                        .map(move |_, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
+                ));
+                Ok(())
+            })?;
         self.arena.collect_debt();
 
         loop {

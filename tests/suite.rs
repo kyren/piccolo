@@ -12,7 +12,7 @@ use luster::function::Closure;
 use luster::io::buffered_read;
 use luster::lua::Lua;
 use luster::parser::{parse_chunk, Chunk};
-use luster::sequence::{sequence_fn, SequenceExt};
+use luster::sequence::SequenceExt;
 use luster::value::Value;
 
 fn parse_file(path: &PathBuf) -> Result<Chunk, Error> {
@@ -38,29 +38,27 @@ fn test_dir(dir: &str, run_code: bool) {
                     Ok(chunk) => {
                         if run_code {
                             let mut lua = Lua::new();
-                            let r = lua.sequence(move |_, lc| {
-                                Box::new(
-                                    sequence_fn(move |mc| {
-                                        Closure::new(mc, compile_chunk(mc, &chunk)?)
-                                    })
-                                    .and_then_with(
-                                        lc.main_thread,
-                                        move |mc, main_thread, closure| {
-                                            Ok(main_thread.call_function(mc, closure, &[], 64))
-                                        },
-                                    )
-                                    .map(move |_, r| match &r[..] {
-                                        &[Value::Boolean(true)] => Ok(false),
-                                        v => {
-                                            let _ = writeln!(
-                                                stdout(),
-                                                "unexpected return values: {:?}",
-                                                v
-                                            );
-                                            Ok(true)
-                                        }
-                                    }),
-                                )
+                            let r = lua.sequence(move |mc, lc| {
+                                Ok(Box::new(
+                                    lc.main_thread
+                                        .call_function(
+                                            mc,
+                                            Closure::new(mc, compile_chunk(mc, &chunk)?)?,
+                                            &[],
+                                            64,
+                                        )
+                                        .map(|_, r| match &r[..] {
+                                            &[Value::Boolean(true)] => Ok(false),
+                                            v => {
+                                                let _ = writeln!(
+                                                    stdout(),
+                                                    "unexpected return values: {:?}",
+                                                    v
+                                                );
+                                                Ok(true)
+                                            }
+                                        }),
+                                ))
                             });
 
                             match r {

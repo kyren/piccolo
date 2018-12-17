@@ -11,7 +11,7 @@ use luster::function::Closure;
 use luster::io::buffered_read;
 use luster::lua::Lua;
 use luster::parser::parse_chunk;
-use luster::sequence::{sequence_fn, SequenceExt};
+use luster::sequence::SequenceExt;
 
 fn main() -> Result<(), Error> {
     let mut args = env::args();
@@ -23,17 +23,15 @@ fn main() -> Result<(), Error> {
     let chunk = parse_chunk(buffered_read(file)?)?;
 
     let mut lua = Lua::new();
-    lua.sequence(move |_, lc| {
-        Box::new(
-            sequence_fn(move |mc| Closure::new(mc, compile_chunk(mc, &chunk)?))
-                .and_then_with(lc.main_thread, move |mc, main_thread, closure| {
-                    Ok(main_thread.call_function(mc, closure, &[], 64))
-                })
+    lua.sequence(move |mc, lc| {
+        Ok(Box::new(
+            lc.main_thread
+                .call_function(mc, Closure::new(mc, compile_chunk(mc, &chunk)?)?, &[], 64)
                 .map(|_, r| {
                     println!("results: {:?}", r);
                     Ok(())
                 }),
-        )
+        ))
     })?;
 
     Ok(())
