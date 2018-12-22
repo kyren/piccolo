@@ -36,7 +36,7 @@ impl<'gc> Hash for Table<'gc> {
 }
 
 impl<'gc> Table<'gc> {
-    pub fn new(&self, mc: MutationContext<'gc, '_>) -> Table<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>) -> Table<'gc> {
         Table(GcCell::allocate(mc, TableState::default()))
     }
 

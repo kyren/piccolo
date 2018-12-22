@@ -87,6 +87,69 @@ pub enum OpCode {
         dest: RegisterIndex,
         count: u8,
     },
+    NewTable {
+        dest: RegisterIndex,
+    },
+    GetTableR {
+        dest: RegisterIndex,
+        table: RegisterIndex,
+        key: RegisterIndex,
+    },
+    GetTableC {
+        dest: RegisterIndex,
+        table: RegisterIndex,
+        key: ConstantIndex8,
+    },
+    SetTableRR {
+        table: RegisterIndex,
+        key: RegisterIndex,
+        value: RegisterIndex,
+    },
+    SetTableRC {
+        table: RegisterIndex,
+        key: RegisterIndex,
+        value: ConstantIndex8,
+    },
+    SetTableCR {
+        table: RegisterIndex,
+        key: ConstantIndex8,
+        value: RegisterIndex,
+    },
+    SetTableCC {
+        table: RegisterIndex,
+        key: ConstantIndex8,
+        value: ConstantIndex8,
+    },
+    GetUpTableR {
+        dest: RegisterIndex,
+        table: UpValueIndex,
+        key: RegisterIndex,
+    },
+    GetUpTableC {
+        dest: RegisterIndex,
+        table: UpValueIndex,
+        key: ConstantIndex8,
+    },
+    SetUpTableRR {
+        table: UpValueIndex,
+        key: RegisterIndex,
+        value: RegisterIndex,
+    },
+    SetUpTableRC {
+        table: UpValueIndex,
+        key: RegisterIndex,
+        value: ConstantIndex8,
+    },
+    SetUpTableCR {
+        table: UpValueIndex,
+        key: ConstantIndex8,
+        value: RegisterIndex,
+    },
+    SetUpTableCC {
+        table: UpValueIndex,
+        key: ConstantIndex8,
+        value: ConstantIndex8,
+    },
     Call {
         func: RegisterIndex,
         args: VarCount,

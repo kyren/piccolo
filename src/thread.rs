@@ -8,6 +8,7 @@ use gc_arena::{Collect, Gc, GcCell, MutationContext};
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::opcode::{OpCode, VarCount};
 use crate::sequence::Sequence;
+use crate::table::Table;
 use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -127,10 +128,7 @@ impl<'gc> ThreadState<'gc> {
                 .expect("no current ThreadState frame")
                 .clone();
 
-            let current_function = match self.stack[current_frame.bottom] {
-                Value::Closure(c) => c,
-                _ => unreachable!(),
-            };
+            let current_function = get_closure(self.stack[current_frame.bottom]);
 
             loop {
                 let op = current_function.0.proto.opcodes[self.pc];
@@ -162,6 +160,133 @@ impl<'gc> ThreadState<'gc> {
                         for i in dest.0..dest.0 + count {
                             self.stack[current_frame.base + i as usize] = Value::Nil;
                         }
+                    }
+
+                    OpCode::NewTable { dest } => {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            Value::Table(Table::new(mc));
+                    }
+
+                    OpCode::GetTableR { dest, table, key } => {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            get_table(self.stack[current_frame.base + table.0 as usize])
+                                .get(self.stack[current_frame.base + key.0 as usize]);
+                    }
+
+                    OpCode::GetTableC { dest, table, key } => {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            get_table(self.stack[current_frame.base + table.0 as usize])
+                                .get(current_function.0.proto.constants[key.0 as usize]);
+                    }
+
+                    OpCode::SetTableRR { table, key, value } => {
+                        get_table(self.stack[current_frame.base + table.0 as usize])
+                            .set(
+                                mc,
+                                self.stack[current_frame.base + key.0 as usize],
+                                self.stack[current_frame.base + value.0 as usize],
+                            )
+                            .expect("could not set table value");
+                    }
+
+                    OpCode::SetTableRC { table, key, value } => {
+                        get_table(self.stack[current_frame.base + table.0 as usize])
+                            .set(
+                                mc,
+                                self.stack[current_frame.base + key.0 as usize],
+                                current_function.0.proto.constants[value.0 as usize],
+                            )
+                            .expect("could not set table value");
+                    }
+
+                    OpCode::SetTableCR { table, key, value } => {
+                        get_table(self.stack[current_frame.base + table.0 as usize])
+                            .set(
+                                mc,
+                                current_function.0.proto.constants[key.0 as usize],
+                                self.stack[current_frame.base + value.0 as usize],
+                            )
+                            .expect("could not set table value");
+                    }
+
+                    OpCode::SetTableCC { table, key, value } => {
+                        get_table(self.stack[current_frame.base + table.0 as usize])
+                            .set(
+                                mc,
+                                current_function.0.proto.constants[key.0 as usize],
+                                current_function.0.proto.constants[value.0 as usize],
+                            )
+                            .expect("could not set table value");
+                    }
+
+                    OpCode::GetUpTableR { dest, table, key } => {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            get_table(self.get_upvalue(
+                                self_thread,
+                                current_function.0.upvalues[table.0 as usize],
+                            ))
+                            .get(self.stack[current_frame.base + key.0 as usize]);
+                    }
+
+                    OpCode::GetUpTableC { dest, table, key } => {
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            get_table(self.get_upvalue(
+                                self_thread,
+                                current_function.0.upvalues[table.0 as usize],
+                            ))
+                            .get(current_function.0.proto.constants[key.0 as usize]);
+                    }
+
+                    OpCode::SetUpTableRR { table, key, value } => {
+                        get_table(self.get_upvalue(
+                            self_thread,
+                            current_function.0.upvalues[table.0 as usize],
+                        ))
+                        .set(
+                            mc,
+                            self.stack[current_frame.base + key.0 as usize],
+                            self.stack[current_frame.base + value.0 as usize],
+                        )
+                        .expect("could not set table value");
+                    }
+
+                    OpCode::SetUpTableRC { table, key, value } => {
+                        get_table(self.get_upvalue(
+                            self_thread,
+                            current_function.0.upvalues[table.0 as usize],
+                        ))
+                        .set(
+                            mc,
+                            self.stack[current_frame.base + key.0 as usize],
+                            current_function.0.proto.constants[value.0 as usize],
+                        )
+                        .expect("could not set table value");
+                    }
+
+                    OpCode::SetUpTableCR { table, key, value } => {
+                        get_table(self.get_upvalue(
+                            self_thread,
+                            current_function.0.upvalues[table.0 as usize],
+                        ))
+                        .set(
+                            mc,
+                            current_function.0.proto.constants[key.0 as usize],
+                            self.stack[current_frame.base + value.0 as usize],
+                        )
+                        .expect("could not set table value");
+                    }
+
+                    OpCode::SetUpTableCC { table, key, value } => {
+                        get_table(self.get_upvalue(
+                            self_thread,
+                            current_function.0.upvalues[table.0 as usize],
+                        ))
+                        .set(
+                            mc,
+                            current_function.0.proto.constants[key.0 as usize],
+                            current_function.0.proto.constants[value.0 as usize],
+                        )
+                        .expect("could not set table value");
                     }
 
                     OpCode::Call {
@@ -309,17 +434,10 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::GetUpValue { source, dest } => {
-                        self.stack[current_frame.base + dest.0 as usize] =
-                            match *current_function.0.upvalues[source.0 as usize].0.read() {
-                                UpValueState::Open(thread, ind) => {
-                                    if thread == self_thread {
-                                        self.stack[ind]
-                                    } else {
-                                        thread.0.read().stack[ind]
-                                    }
-                                }
-                                UpValueState::Closed(v) => v,
-                            };
+                        self.stack[current_frame.base + dest.0 as usize] = self.get_upvalue(
+                            self_thread,
+                            current_function.0.upvalues[source.0 as usize],
+                        );
                     }
 
                     OpCode::SetUpValue { source, dest } => {
@@ -445,5 +563,32 @@ impl<'gc> ThreadState<'gc> {
         });
 
         self.pc = 0;
+    }
+
+    fn get_upvalue(&self, self_thread: Thread<'gc>, upvalue: UpValue<'gc>) -> Value<'gc> {
+        match *upvalue.0.read() {
+            UpValueState::Open(thread, ind) => {
+                if thread == self_thread {
+                    self.stack[ind]
+                } else {
+                    thread.0.read().stack[ind]
+                }
+            }
+            UpValueState::Closed(v) => v,
+        }
+    }
+}
+
+fn get_closure<'gc>(value: Value<'gc>) -> Closure<'gc> {
+    match value {
+        Value::Closure(c) => c,
+        _ => panic!("value is not a closure"),
+    }
+}
+
+fn get_table<'gc>(value: Value<'gc>) -> Table<'gc> {
+    match value {
+        Value::Table(t) => t,
+        _ => panic!("value is not a table"),
     }
 }
