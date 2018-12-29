@@ -253,9 +253,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .push(OpCode::SetUpValue { source, dest });
                         self.expr_finish(expr)?;
                     }
-                    VariableDescriptor::Global(_) => bail!("global variables unsupported"),
+                    VariableDescriptor::Global(name) => {
+                        let mut env = self.get_environment()?;
+                        let mut key = ExprDescriptor::Value(Value::String(String::new(
+                            self.mutation_context,
+                            name,
+                        )));
+                        self.set_table(&mut env, &mut key, &mut expr)?;
+                        self.expr_finish(env)?;
+                        self.expr_finish(key)?;
+                        self.expr_finish(expr)?;
+                    }
                 },
-                AssignmentTarget::Field(_, _) => bail!("unimplemented assignment target"),
+                AssignmentTarget::Field(_, _) => bail!("no support for field assignment"),
             }
         }
 
@@ -396,8 +406,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     is_temporary: false,
                 },
                 VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-                VariableDescriptor::Global(_) => {
-                    bail!("no support for globals");
+                VariableDescriptor::Global(name) => {
+                    let mut env = self.get_environment()?;
+                    let mut key = ExprDescriptor::Value(Value::String(String::new(
+                        self.mutation_context,
+                        name,
+                    )));
+                    let res = self.get_table(&mut env, &mut key)?;
+                    self.expr_finish(env)?;
+                    self.expr_finish(key)?;
+                    res
                 }
             }),
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
@@ -448,17 +466,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             mut left: ExprDescriptor<'gc, 'a>,
             mut right: ExprDescriptor<'gc, 'a>,
         ) -> Result<BinOpArgs, Error> {
-            let mut make_constant8 =
-                |expr: &ExprDescriptor<'gc, 'a>| -> Result<Option<ConstantIndex8>, Error> {
-                    if let &ExprDescriptor::Value(cons) = expr {
-                        if let Some(c8) = cast(comp.get_constant(cons)?.0) {
-                            return Ok(Some(ConstantIndex8(c8)));
-                        }
-                    }
-                    Ok(None)
-                };
-            let left_cons = make_constant8(&left)?;
-            let right_cons = make_constant8(&right)?;
+            let left_cons = comp.as_constant8(&left)?;
+            let right_cons = comp.as_constant8(&right)?;
 
             Ok(if let Some(left_cons) = left_cons {
                 let right_reg = comp.expr_any_register(&mut right)?;
@@ -601,6 +610,33 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(VariableDescriptor::Global(name))
     }
 
+    // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
+    // _ENV.
+    fn get_environment(&mut self) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        Ok(match self.find_variable(b"_ENV")? {
+            VariableDescriptor::Local(register) => ExprDescriptor::Register {
+                register,
+                is_temporary: false,
+            },
+            VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
+            VariableDescriptor::Global(_) => {
+                let chunk_function = self.functions.get_mut(0);
+                assert!(chunk_function.upvalues.is_empty());
+                chunk_function
+                    .upvalues
+                    .push((b"_ENV", UpValueDescriptor::Environment));
+                match self.find_variable(b"_ENV")? {
+                    VariableDescriptor::Local(register) => ExprDescriptor::Register {
+                        register,
+                        is_temporary: false,
+                    },
+                    VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
+                    VariableDescriptor::Global(_) => unreachable!(),
+                }
+            }
+        })
+    }
+
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
     fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), Error> {
         match self.functions.top.opcodes.last().cloned() {
@@ -643,6 +679,114 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .insert(ConstantValue(constant), c);
             Ok(c)
         }
+    }
+
+    fn as_constant8(
+        &mut self,
+        expr: &ExprDescriptor<'gc, 'a>,
+    ) -> Result<Option<ConstantIndex8>, Error> {
+        if let &ExprDescriptor::Value(cons) = expr {
+            if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                return Ok(Some(ConstantIndex8(c8)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn get_table(
+        &mut self,
+        table: &mut ExprDescriptor<'gc, 'a>,
+        key: &mut ExprDescriptor<'gc, 'a>,
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+        let op = match table {
+            &mut ExprDescriptor::UpValue(table) => match self.as_constant8(key)? {
+                Some(key) => OpCode::GetUpTableC { dest, table, key },
+                None => {
+                    let key = self.expr_any_register(key)?;
+                    OpCode::GetUpTableR { dest, table, key }
+                }
+            },
+            table => {
+                let table = self.expr_any_register(table)?;
+                match self.as_constant8(key)? {
+                    Some(key) => OpCode::GetTableC { dest, table, key },
+                    None => {
+                        let key = self.expr_any_register(key)?;
+                        OpCode::GetTableR { dest, table, key }
+                    }
+                }
+            }
+        };
+
+        self.functions.top.opcodes.push(op);
+        Ok(ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
+        })
+    }
+
+    fn set_table(
+        &mut self,
+        table: &mut ExprDescriptor<'gc, 'a>,
+        key: &mut ExprDescriptor<'gc, 'a>,
+        value: &mut ExprDescriptor<'gc, 'a>,
+    ) -> Result<(), Error> {
+        let op = match table {
+            &mut ExprDescriptor::UpValue(table) => {
+                match (self.as_constant8(key)?, self.as_constant8(value)?) {
+                    (None, None) => OpCode::SetUpTableRR {
+                        table,
+                        key: self.expr_any_register(key)?,
+                        value: self.expr_any_register(value)?,
+                    },
+                    (None, Some(value)) => OpCode::SetUpTableRC {
+                        table,
+                        key: self.expr_any_register(key)?,
+                        value,
+                    },
+                    (Some(key), None) => OpCode::SetUpTableCR {
+                        table,
+                        key,
+                        value: self.expr_any_register(value)?,
+                    },
+                    (Some(key), Some(value)) => OpCode::SetUpTableCC { table, key, value },
+                }
+            }
+            table => {
+                let table = self.expr_any_register(table)?;
+                match (self.as_constant8(key)?, self.as_constant8(value)?) {
+                    (None, None) => OpCode::SetTableRR {
+                        table,
+                        key: self.expr_any_register(key)?,
+                        value: self.expr_any_register(value)?,
+                    },
+                    (None, Some(cval)) => OpCode::SetTableRC {
+                        table,
+                        key: self.expr_any_register(key)?,
+                        value: cval,
+                    },
+                    (Some(ckey), None) => OpCode::SetTableCR {
+                        table,
+                        key: ckey,
+                        value: self.expr_any_register(value)?,
+                    },
+                    (Some(ckey), Some(cval)) => OpCode::SetTableCC {
+                        table,
+                        key: ckey,
+                        value: cval,
+                    },
+                }
+            }
+        };
+
+        self.functions.top.opcodes.push(op);
+        Ok(())
     }
 
     // Modify an expression to contain its result in any register, and return that register

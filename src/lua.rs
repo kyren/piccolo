@@ -5,12 +5,14 @@ use failure::Error;
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
 
 use crate::sequence::{Sequence, SequenceExt};
+use crate::table::Table;
 use crate::thread::Thread;
 
 #[derive(Collect, Clone, Copy)]
 #[collect(require_copy)]
 pub struct LuaContext<'gc> {
     pub main_thread: Thread<'gc>,
+    pub globals: Table<'gc>,
 }
 
 pub struct Lua {
@@ -22,6 +24,7 @@ impl Lua {
         let arena = LuaArena::new(ArenaParameters::default(), |mc| LuaRoot {
             context: LuaContext {
                 main_thread: Thread::new(mc),
+                globals: Table::new(mc),
             },
             current_sequence: GcCell::allocate(mc, None),
         });

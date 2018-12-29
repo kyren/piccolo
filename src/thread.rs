@@ -407,6 +407,9 @@ impl<'gc> ThreadState<'gc> {
                         let mut upvalues = Vec::new();
                         for &desc in &proto.upvalues {
                             match desc {
+                                UpValueDescriptor::Environment => {
+                                    panic!("_ENV upvalue is only allowed on top-level closure");
+                                }
                                 UpValueDescriptor::ParentLocal(reg) => {
                                     let ind = current_frame.base + reg.0 as usize;
                                     match self.open_upvalues.entry(ind) {

@@ -43,7 +43,11 @@ fn test_dir(dir: &str, run_code: bool) {
                                     lc.main_thread
                                         .call_function(
                                             mc,
-                                            Closure::new(mc, compile_chunk(mc, &chunk)?)?,
+                                            Closure::new(
+                                                mc,
+                                                compile_chunk(mc, &chunk)?,
+                                                Some(lc.globals),
+                                            )?,
                                             &[],
                                             64,
                                         )

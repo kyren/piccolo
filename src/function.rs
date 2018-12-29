@@ -1,16 +1,18 @@
 use std::hash::{Hash, Hasher};
 
-use failure::{err_msg, Error};
+use failure::{bail, Error};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::opcode::{OpCode, RegisterIndex, UpValueIndex};
+use crate::table::Table;
 use crate::thread::Thread;
 use crate::value::Value;
 
-#[derive(Debug, Collect, Clone, Copy)]
+#[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
 #[collect(require_static)]
 pub enum UpValueDescriptor {
+    Environment,
     ParentLocal(RegisterIndex),
     Outer(UpValueIndex),
 }
@@ -64,23 +66,28 @@ impl<'gc> Hash for Closure<'gc> {
 }
 
 impl<'gc> Closure<'gc> {
-    // Create a top-level closure, prototype must not have any upvalues
+    /// Create a top-level closure, prototype must not have any upvalues besides _ENV.
     pub fn new(
         mc: MutationContext<'gc, '_>,
         proto: FunctionProto<'gc>,
+        environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, Error> {
+        let proto = Gc::allocate(mc, proto);
+        let mut upvalues = Vec::new();
+
         if !proto.upvalues.is_empty() {
-            Err(err_msg(
-                "cannot use prototype with upvalues to create top-level closure",
-            ))
-        } else {
-            Ok(Closure(Gc::allocate(
-                mc,
-                ClosureState {
-                    proto: Gc::allocate(mc, proto),
-                    upvalues: Vec::new(),
-                },
-            )))
+            if proto.upvalues.len() > 1 || proto.upvalues[0] != UpValueDescriptor::Environment {
+                bail!("cannot use prototype with upvalues other than _ENV to create top-level closure")
+            } else if let Some(environment) = environment {
+                upvalues.push(UpValue(GcCell::allocate(
+                    mc,
+                    UpValueState::Closed(Value::Table(environment)),
+                )));
+            } else {
+                bail!("closure requires _ENV upvalue but no environment was provided")
+            }
         }
+
+        Ok(Closure(Gc::allocate(mc, ClosureState { proto, upvalues })))
     }
 }

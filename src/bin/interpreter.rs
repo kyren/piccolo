@@ -26,7 +26,12 @@ fn main() -> Result<(), Error> {
     lua.sequence(move |mc, lc| {
         Ok(Box::new(
             lc.main_thread
-                .call_function(mc, Closure::new(mc, compile_chunk(mc, &chunk)?)?, &[], 64)
+                .call_function(
+                    mc,
+                    Closure::new(mc, compile_chunk(mc, &chunk)?, Some(lc.globals))?,
+                    &[],
+                    64,
+                )
                 .map(|_, r| {
                     println!("results: {:?}", r);
                     Ok(())
