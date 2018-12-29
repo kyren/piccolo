@@ -17,8 +17,9 @@ use crate::operators::{
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
-    FunctionCallStatement, FunctionStatement, HeadExpression, LocalStatement, PrimaryExpression,
-    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression, UnaryOperator,
+    FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression, LocalStatement,
+    PrimaryExpression, ReturnStatement, SimpleExpression, Statement, SuffixPart,
+    SuffixedExpression, TableConstructor, UnaryOperator,
 };
 use crate::string::String;
 use crate::value::Value;
@@ -86,20 +87,72 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn statement(&mut self, statement: &'a Statement) -> Result<(), Error> {
         match statement {
-            Statement::LocalStatement(local_statement) => {
-                self.local_statement(local_statement)?;
+            Statement::If(_) => bail!("if statement unsupported"),
+            Statement::While(_) => bail!("while statement unsupported"),
+            Statement::Do(_) => bail!("do statement unsupported"),
+            Statement::For(_) => bail!("for statement unsupported"),
+            Statement::Repeat(_) => bail!("repeat statement unsupported"),
+            Statement::Function(function_statement) => {
+                self.function_statement(function_statement)?;
             }
             Statement::LocalFunction(local_function) => {
                 self.local_function(local_function)?;
             }
+            Statement::LocalStatement(local_statement) => {
+                self.local_statement(local_statement)?;
+            }
+            Statement::Label(_) => bail!("label statement unsupported"),
+            Statement::Break => bail!("break statement unsupported"),
+            Statement::Goto(_) => bail!("goto statement unsupported"),
             Statement::FunctionCall(function_call) => {
                 self.function_call(function_call)?;
             }
             Statement::Assignment(assignment) => {
                 self.assignment(assignment)?;
             }
-            _ => bail!("unsupported statement type"),
         }
+
+        Ok(())
+    }
+
+    fn function_statement(
+        &mut self,
+        function_statement: &'a FunctionStatement,
+    ) -> Result<(), Error> {
+        if !function_statement.name.fields.is_empty() {
+            bail!("no function name fields support");
+        }
+        if function_statement.name.method.is_some() {
+            bail!("no method support");
+        }
+
+        let proto = self.new_prototype(&function_statement.definition)?;
+        let mut env = self.get_environment()?;
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+
+        self.functions
+            .top
+            .opcodes
+            .push(OpCode::Closure { proto, dest });
+        let mut name = ExprDescriptor::Value(Value::String(String::new(
+            self.mutation_context,
+            &*function_statement.name.name,
+        )));
+        let mut closure = ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
+        };
+
+        self.set_table(&mut env, &mut name, &mut closure)?;
+
+        self.expr_finish(env)?;
+        self.expr_finish(name)?;
+        self.expr_finish(closure)?;
 
         Ok(())
     }
@@ -227,7 +280,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .collect::<Result<_, Error>>()?;
                 self.expr_function_call(func_expr, arg_exprs, VarCount::make_zero())?;
             }
-            CallSuffix::Method(_, _) => bail!("method unsupported"),
+            CallSuffix::Method(_, _) => bail!("method call unsupported"),
         }
         Ok(())
     }
@@ -273,9 +326,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn local_function(&mut self, local_function: &'a FunctionStatement) -> Result<(), Error> {
-        if local_function.definition.has_varargs {
-            bail!("no varargs support");
-        }
         if !local_function.name.fields.is_empty() {
             bail!("no function name fields support");
         }
@@ -283,28 +333,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             bail!("no method support");
         }
 
-        self.functions.push(CompilerFunction::default());
-
-        let fixed_params: u8 = cast(local_function.definition.parameters.len())
-            .ok_or(CompilerLimit::FixedParameters)?;
-        {
-            self.functions.top.register_allocator.push(fixed_params);
-            self.functions.top.fixed_params = fixed_params;
-            for (i, name) in local_function.definition.parameters.iter().enumerate() {
-                self.functions
-                    .top
-                    .locals
-                    .push((name, RegisterIndex(cast(i).unwrap())));
-            }
-        }
-
-        self.block(&local_function.definition.body)?;
-
-        let new_function = self.functions.pop();
-        self.functions
-            .top
-            .prototypes
-            .push(new_function.to_proto(self.mutation_context));
+        let proto = self.new_prototype(&local_function.definition)?;
         let dest = self
             .functions
             .top
@@ -312,19 +341,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
 
-        {
-            let proto = PrototypeIndex(
-                cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
-            );
-            self.functions
-                .top
-                .opcodes
-                .push(OpCode::Closure { proto, dest });
-            self.functions
-                .top
-                .locals
-                .push((&local_function.name.name, dest));
-        }
+        self.functions
+            .top
+            .opcodes
+            .push(OpCode::Closure { proto, dest });
+
+        self.functions
+            .top
+            .locals
+            .push((&local_function.name.name, dest));
 
         Ok(())
     }
@@ -364,8 +389,58 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
             SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
             SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
+            SimpleExpression::VarArgs => bail!("varargs expression unsupported"),
+            SimpleExpression::TableConstructor(table_constructor) => {
+                self.table_constructor(table_constructor)?
+            }
+            SimpleExpression::Function(function) => self.function_expression(function)?,
             SimpleExpression::Suffixed(suffixed) => self.suffixed_expression(suffixed)?,
-            _ => bail!("unsupported simple expression"),
+        })
+    }
+
+    fn table_constructor(
+        &mut self,
+        table_constructor: &'a TableConstructor,
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        if !table_constructor.fields.is_empty() {
+            bail!("only empty table constructors supported");
+        }
+
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+
+        self.functions.top.opcodes.push(OpCode::NewTable { dest });
+
+        Ok(ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
+        })
+    }
+
+    fn function_expression(
+        &mut self,
+        function: &'a FunctionDefinition,
+    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+        let proto = self.new_prototype(function)?;
+        let dest = self
+            .functions
+            .top
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+
+        self.functions
+            .top
+            .opcodes
+            .push(OpCode::Closure { proto, dest });
+
+        Ok(ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
         })
     }
 
@@ -376,7 +451,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
-                SuffixPart::Field(_) => bail!("no support for fields yet"),
+                SuffixPart::Field(_) => bail!("no support for field expression"),
                 SuffixPart::Call(call_suffix) => match call_suffix {
                     CallSuffix::Function(args) => {
                         let args = args
@@ -420,6 +495,37 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }),
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
         }
+    }
+
+    fn new_prototype(&mut self, function: &'a FunctionDefinition) -> Result<PrototypeIndex, Error> {
+        if function.has_varargs {
+            bail!("no varargs support");
+        }
+
+        self.functions.push(CompilerFunction::default());
+
+        let fixed_params: u8 =
+            cast(function.parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
+        self.functions.top.register_allocator.push(fixed_params);
+        self.functions.top.fixed_params = fixed_params;
+        for (i, name) in function.parameters.iter().enumerate() {
+            self.functions
+                .top
+                .locals
+                .push((name, RegisterIndex(cast(i).unwrap())));
+        }
+
+        self.block(&function.body)?;
+
+        let new_function = self.functions.pop();
+        self.functions
+            .top
+            .prototypes
+            .push(new_function.to_proto(self.mutation_context));
+
+        Ok(PrototypeIndex(
+            cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
+        ))
     }
 
     fn unary_operator(
@@ -548,7 +654,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 op,
                 right,
             }),
-            _ => bail!("unsupported binary operator"),
+            BinOpCategory::Concat => bail!("no support for concat operator"),
         }
     }
 
