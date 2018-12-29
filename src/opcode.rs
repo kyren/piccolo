@@ -29,7 +29,7 @@ pub const MAX_VAR_COUNT: u8 = 254;
 
 /// Count of arguments or return values which can either be a constant between 0-254 or a special
 /// "variable" value.
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 #[collect(require_static)]
 pub struct VarCount(u8);
 

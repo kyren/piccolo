@@ -572,24 +572,30 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             mut left: ExprDescriptor<'gc, 'a>,
             mut right: ExprDescriptor<'gc, 'a>,
         ) -> Result<BinOpArgs, Error> {
-            let left_cons = comp.as_constant8(&left)?;
-            let right_cons = comp.as_constant8(&right)?;
+            let left_reg_cons = comp.expr_any_register_or_constant(&mut left)?;
+            let right_reg_cons = comp.expr_any_register_or_constant(&mut right)?;
 
-            Ok(if let Some(left_cons) = left_cons {
-                let right_reg = comp.expr_any_register(&mut right)?;
-                comp.expr_finish(right)?;
-                BinOpArgs::CR(left_cons, right_reg)
-            } else if let Some(right_cons) = right_cons {
-                let left_reg = comp.expr_any_register(&mut left)?;
-                comp.expr_finish(left)?;
-                BinOpArgs::RC(left_reg, right_cons)
-            } else {
-                let left_reg = comp.expr_any_register(&mut left)?;
-                let right_reg = comp.expr_any_register(&mut right)?;
-                comp.expr_finish(right)?;
-                comp.expr_finish(left)?;
-                BinOpArgs::RR(left_reg, right_reg)
-            })
+            let op = match (left_reg_cons, right_reg_cons) {
+                (
+                    RegisterOrConstant::Constant(left_cons),
+                    RegisterOrConstant::Register(right_reg),
+                ) => BinOpArgs::CR(left_cons, right_reg),
+                (
+                    RegisterOrConstant::Register(left_reg),
+                    RegisterOrConstant::Constant(right_cons),
+                ) => BinOpArgs::RC(left_reg, right_cons),
+                (
+                    RegisterOrConstant::Register(left_reg),
+                    RegisterOrConstant::Register(right_reg),
+                ) => BinOpArgs::RR(left_reg, right_reg),
+                (RegisterOrConstant::Constant(_), RegisterOrConstant::Constant(_)) => {
+                    unreachable!("binary operator not constant folded")
+                }
+            };
+
+            comp.expr_finish(left)?;
+            comp.expr_finish(right)?;
+            Ok(op)
         };
 
         match categorize_binop(binop) {
@@ -787,18 +793,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn as_constant8(
-        &mut self,
-        expr: &ExprDescriptor<'gc, 'a>,
-    ) -> Result<Option<ConstantIndex8>, Error> {
-        if let &ExprDescriptor::Value(cons) = expr {
-            if let Some(c8) = cast(self.get_constant(cons)?.0) {
-                return Ok(Some(ConstantIndex8(c8)));
-            }
-        }
-        Ok(None)
-    }
-
     fn get_table(
         &mut self,
         table: &mut ExprDescriptor<'gc, 'a>,
@@ -811,21 +805,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
         let op = match table {
-            &mut ExprDescriptor::UpValue(table) => match self.as_constant8(key)? {
-                Some(key) => OpCode::GetUpTableC { dest, table, key },
-                None => {
-                    let key = self.expr_any_register(key)?;
-                    OpCode::GetUpTableR { dest, table, key }
-                }
+            &mut ExprDescriptor::UpValue(table) => match self.expr_any_register_or_constant(key)? {
+                RegisterOrConstant::Constant(key) => OpCode::GetUpTableC { dest, table, key },
+                RegisterOrConstant::Register(key) => OpCode::GetUpTableR { dest, table, key },
             },
             table => {
                 let table = self.expr_any_register(table)?;
-                match self.as_constant8(key)? {
-                    Some(key) => OpCode::GetTableC { dest, table, key },
-                    None => {
-                        let key = self.expr_any_register(key)?;
-                        OpCode::GetTableR { dest, table, key }
-                    }
+                match self.expr_any_register_or_constant(key)? {
+                    RegisterOrConstant::Constant(key) => OpCode::GetTableC { dest, table, key },
+                    RegisterOrConstant::Register(key) => OpCode::GetTableR { dest, table, key },
                 }
             }
         };
@@ -845,54 +833,62 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<(), Error> {
         let op = match table {
             &mut ExprDescriptor::UpValue(table) => {
-                match (self.as_constant8(key)?, self.as_constant8(value)?) {
-                    (None, None) => OpCode::SetUpTableRR {
-                        table,
-                        key: self.expr_any_register(key)?,
-                        value: self.expr_any_register(value)?,
-                    },
-                    (None, Some(value)) => OpCode::SetUpTableRC {
-                        table,
-                        key: self.expr_any_register(key)?,
-                        value,
-                    },
-                    (Some(key), None) => OpCode::SetUpTableCR {
-                        table,
-                        key,
-                        value: self.expr_any_register(value)?,
-                    },
-                    (Some(key), Some(value)) => OpCode::SetUpTableCC { table, key, value },
+                match (
+                    self.expr_any_register_or_constant(key)?,
+                    self.expr_any_register_or_constant(value)?,
+                ) {
+                    (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
+                        OpCode::SetUpTableRR { table, key, value }
+                    }
+                    (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
+                        OpCode::SetUpTableRC { table, key, value }
+                    }
+                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
+                        OpCode::SetUpTableCR { table, key, value }
+                    }
+                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
+                        OpCode::SetUpTableCC { table, key, value }
+                    }
                 }
             }
             table => {
                 let table = self.expr_any_register(table)?;
-                match (self.as_constant8(key)?, self.as_constant8(value)?) {
-                    (None, None) => OpCode::SetTableRR {
-                        table,
-                        key: self.expr_any_register(key)?,
-                        value: self.expr_any_register(value)?,
-                    },
-                    (None, Some(cval)) => OpCode::SetTableRC {
-                        table,
-                        key: self.expr_any_register(key)?,
-                        value: cval,
-                    },
-                    (Some(ckey), None) => OpCode::SetTableCR {
-                        table,
-                        key: ckey,
-                        value: self.expr_any_register(value)?,
-                    },
-                    (Some(ckey), Some(cval)) => OpCode::SetTableCC {
-                        table,
-                        key: ckey,
-                        value: cval,
-                    },
+                match (
+                    self.expr_any_register_or_constant(key)?,
+                    self.expr_any_register_or_constant(value)?,
+                ) {
+                    (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
+                        OpCode::SetTableRR { table, key, value }
+                    }
+                    (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
+                        OpCode::SetTableRC { table, key, value }
+                    }
+                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
+                        OpCode::SetTableCR { table, key, value }
+                    }
+                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
+                        OpCode::SetTableCC { table, key, value }
+                    }
                 }
             }
         };
 
         self.functions.top.opcodes.push(op);
         Ok(())
+    }
+
+    // If the expression is a constant value *and* fits into an 8-bit constant index, return that
+    // constant index, otherwise place the expression into a register.
+    fn expr_any_register_or_constant(
+        &mut self,
+        expr: &mut ExprDescriptor<'gc, 'a>,
+    ) -> Result<RegisterOrConstant, Error> {
+        if let &mut ExprDescriptor::Value(cons) = expr {
+            if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                return Ok(RegisterOrConstant::Constant(ConstantIndex8(c8)));
+            }
+        }
+        Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
     }
 
     // Modify an expression to contain its result in any register, and return that register
@@ -1371,6 +1367,11 @@ impl<T> TopStack<T> {
             panic!("TopStack index {} out of range", i);
         }
     }
+}
+
+enum RegisterOrConstant {
+    Register(RegisterIndex),
+    Constant(ConstantIndex8),
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit
