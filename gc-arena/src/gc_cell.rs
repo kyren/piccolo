@@ -60,8 +60,9 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     where
         'gc: 'a,
     {
+        let b = self.0.cell.borrow_mut();
         Gc::write_barrier(mc, self.0);
-        self.0.cell.borrow_mut()
+        b
     }
 
     pub fn try_write<'a>(
