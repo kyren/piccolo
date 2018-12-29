@@ -1,4 +1,5 @@
 use std::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
+use std::fmt::{self, Debug};
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
@@ -9,7 +10,6 @@ use crate::gc::Gc;
 /// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
 /// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
 /// `Gc::write_barrier`.
-#[derive(Debug)]
 pub struct GcCell<'gc, T: 'gc + Collect>(Gc<'gc, GcRefCell<T>>);
 
 impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
@@ -17,6 +17,14 @@ impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
 impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
     fn clone(&self) -> GcCell<'gc, T> {
         *self
+    }
+}
+
+impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("GcCell")
+            .field("cell", &self.0.cell)
+            .finish()
     }
 }
 
@@ -66,7 +74,6 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     }
 }
 
-#[derive(Debug)]
 struct GcRefCell<T: Collect> {
     cell: RefCell<T>,
 }

@@ -17,9 +17,11 @@ pub struct Gc<'gc, T: 'gc + Collect> {
     _invariant: Invariant<'gc>,
 }
 
-impl<'gc, T: Collect + 'gc> Debug for Gc<'gc, T> {
+impl<'gc, T: 'gc + Collect + Debug> Debug for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Gc").field("ptr", &self.ptr).finish()
+        fmt.debug_struct("Gc")
+            .field("ptr", unsafe { &*self.ptr.as_ref().value.get() })
+            .finish()
     }
 }
 
