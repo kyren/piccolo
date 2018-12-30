@@ -17,8 +17,8 @@ use crate::operators::{
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
-    FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression, LocalStatement,
-    PrimaryExpression, ReturnStatement, SimpleExpression, Statement, SuffixPart,
+    FieldSuffix, FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression,
+    LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression, Statement, SuffixPart,
     SuffixedExpression, TableConstructor, UnaryOperator,
 };
 use crate::string::String;
@@ -318,7 +318,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.expr_finish(expr)?;
                     }
                 },
-                AssignmentTarget::Field(_, _) => bail!("no support for field assignment"),
+                AssignmentTarget::Field(table, field) => {
+                    let mut table = self.suffixed_expression(table)?;
+                    let mut key = match field {
+                        FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(
+                            String::new(self.mutation_context, name),
+                        )),
+                        FieldSuffix::Indexed(idx) => self.expression(idx)?,
+                    };
+                    self.set_table(&mut table, &mut key, &mut expr)?;
+                    self.expr_finish(table)?;
+                    self.expr_finish(key)?;
+                    self.expr_finish(expr)?;
+                }
             }
         }
 
@@ -451,7 +463,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
-                SuffixPart::Field(_) => bail!("no support for field expression"),
+                SuffixPart::Field(field) => {
+                    let mut key = match field {
+                        FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(
+                            String::new(self.mutation_context, name),
+                        )),
+                        FieldSuffix::Indexed(idx) => self.expression(idx)?,
+                    };
+                    let res = self.get_table(&mut expr, &mut key)?;
+                    self.expr_finish(expr)?;
+                    self.expr_finish(key)?;
+                    expr = res;
+                }
                 SuffixPart::Call(call_suffix) => match call_suffix {
                     CallSuffix::Function(args) => {
                         let args = args
@@ -1176,7 +1199,7 @@ impl<'gc, 'a> CompilerFunction<'gc, 'a> {
         assert_eq!(
             self.register_allocator.stack_top as usize,
             self.locals.len(),
-            "register leak detected"
+            "register leak detected",
         );
         FunctionProto {
             fixed_params: self.fixed_params,
@@ -1272,7 +1295,7 @@ impl RegisterAllocator {
     fn free(&mut self, register: RegisterIndex) {
         assert!(
             self.registers[register.0 as usize],
-            "cannot free unallocated register"
+            "cannot free unallocated register",
         );
         self.registers[register.0 as usize] = false;
         self.first_free = self.first_free.min(register.0 as u16);
