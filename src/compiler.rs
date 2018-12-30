@@ -720,6 +720,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
+            // The top-level function has an implicit _ENV upvalue (and this is the only upvalue it
+            // can have), we add it if it is ever referenced.
+            if i == 0 && name == b"_ENV" && self.functions.get(0).upvalues.is_empty() {
+                self.functions
+                    .get_mut(0)
+                    .upvalues
+                    .push((b"_ENV", UpValueDescriptor::Environment));
+            }
+
             for j in 0..self.functions.get(i).upvalues.len() {
                 if name == self.functions.get(i).upvalues[j].0 {
                     let mut upvalue_index = UpValueIndex(cast(j).unwrap());
@@ -754,21 +763,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 is_temporary: false,
             },
             VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-            VariableDescriptor::Global(_) => {
-                let chunk_function = self.functions.get_mut(0);
-                assert!(chunk_function.upvalues.is_empty());
-                chunk_function
-                    .upvalues
-                    .push((b"_ENV", UpValueDescriptor::Environment));
-                match self.find_variable(b"_ENV")? {
-                    VariableDescriptor::Local(register) => ExprDescriptor::Register {
-                        register,
-                        is_temporary: false,
-                    },
-                    VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-                    VariableDescriptor::Global(_) => unreachable!(),
-                }
-            }
+            VariableDescriptor::Global(_) => unreachable!("there should always be an _ENV upvalue"),
         })
     }
 

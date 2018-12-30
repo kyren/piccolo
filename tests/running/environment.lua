@@ -9,4 +9,11 @@ local function test1()
     return test1b()
 end
 
-return test1()
+local function test2()
+    _ENV.i = 3
+    return _ENV.i == 3
+end
+
+return
+    test1() and
+    test2()
