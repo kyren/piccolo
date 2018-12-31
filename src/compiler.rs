@@ -1111,16 +1111,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        if let Some(result) = result {
-            if dest == ExprDestination::PushNew {
-                // Make sure that if we are requested to push a new register at the top of the stack, it
-                // is the *first* available register after the registers inside the given expression are
-                // consumed.
-                assert!(
-                    result.0 == 0
-                        || self.functions.top.register_allocator.registers[result.0 as usize - 1]
-                );
+        match dest {
+            ExprDestination::Register(reg) => assert_eq!(result, Some(reg)),
+            ExprDestination::AllocateNew => assert!(result.is_some()),
+            ExprDestination::PushNew => {
+                let r = result.unwrap().0;
+                assert!(r == 0 || self.functions.top.register_allocator.registers[r as usize - 1]);
             }
+            ExprDestination::None => assert!(result.is_none()),
         }
 
         Ok(result)
