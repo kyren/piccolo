@@ -150,9 +150,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.set_table(&mut env, &mut name, &mut closure)?;
 
-        self.expr_finish(env)?;
-        self.expr_finish(name)?;
-        self.expr_finish(closure)?;
+        self.expr_discharge(env, ExprDestination::None)?;
+        self.expr_discharge(name, ExprDestination::None)?;
+        self.expr_discharge(closure, ExprDestination::None)?;
 
         Ok(())
     }
@@ -171,7 +171,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             for i in 0..ret_len - 1 {
                 let expr = self.expression(&return_statement.returns[i])?;
-                self.expr_push_register(expr)?;
+                self.expr_discharge(expr, ExprDestination::PushNew)?;
             }
 
             let ret_count = match self.expression(&return_statement.returns[ret_len - 1])? {
@@ -180,7 +180,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     VarCount::make_variable()
                 }
                 expr => {
-                    self.expr_push_register(expr)?;
+                    self.expr_discharge(expr, ExprDestination::PushNew)?;
                     cast(ret_len)
                         .and_then(VarCount::make_constant)
                         .ok_or(CompilerLimit::Returns)?
@@ -210,7 +210,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             let expr = self.expression(&local_statement.values[i])?;
 
             if i >= name_len {
-                self.expr_finish(expr)?;
+                self.expr_discharge(expr, ExprDestination::None)?;
             } else if i == val_len - 1 {
                 match expr {
                     ExprDescriptor::FunctionCall { func, args } => {
@@ -237,7 +237,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         return Ok(());
                     }
                     expr => {
-                        let reg = self.expr_allocate_register(expr)?;
+                        let reg = self
+                            .expr_discharge(expr, ExprDestination::AllocateNew)?
+                            .unwrap();
                         self.functions
                             .top
                             .locals
@@ -245,7 +247,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                 }
             } else {
-                let reg = self.expr_allocate_register(expr)?;
+                let reg = self
+                    .expr_discharge(expr, ExprDestination::AllocateNew)?
+                    .unwrap();
                 self.functions
                     .top
                     .locals
@@ -296,7 +300,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             match target {
                 AssignmentTarget::Name(name) => match self.find_variable(name)? {
                     VariableDescriptor::Local(dest) => {
-                        self.expr_to_register(expr, dest)?;
+                        self.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
                     VariableDescriptor::UpValue(dest) => {
                         let source = self.expr_any_register(&mut expr)?;
@@ -304,7 +308,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .top
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
-                        self.expr_finish(expr)?;
+                        self.expr_discharge(expr, ExprDestination::None)?;
                     }
                     VariableDescriptor::Global(name) => {
                         let mut env = self.get_environment()?;
@@ -313,9 +317,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             name,
                         )));
                         self.set_table(&mut env, &mut key, &mut expr)?;
-                        self.expr_finish(env)?;
-                        self.expr_finish(key)?;
-                        self.expr_finish(expr)?;
+                        self.expr_discharge(env, ExprDestination::None)?;
+                        self.expr_discharge(key, ExprDestination::None)?;
+                        self.expr_discharge(expr, ExprDestination::None)?;
                     }
                 },
                 AssignmentTarget::Field(table, field) => {
@@ -327,9 +331,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     self.set_table(&mut table, &mut key, &mut expr)?;
-                    self.expr_finish(table)?;
-                    self.expr_finish(key)?;
-                    self.expr_finish(expr)?;
+                    self.expr_discharge(table, ExprDestination::None)?;
+                    self.expr_discharge(key, ExprDestination::None)?;
+                    self.expr_discharge(expr, ExprDestination::None)?;
                 }
             }
         }
@@ -471,8 +475,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     let res = self.get_table(&mut expr, &mut key)?;
-                    self.expr_finish(expr)?;
-                    self.expr_finish(key)?;
+                    self.expr_discharge(expr, ExprDestination::None)?;
+                    self.expr_discharge(key, ExprDestination::None)?;
                     expr = res;
                 }
                 SuffixPart::Call(call_suffix) => match call_suffix {
@@ -511,8 +515,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         name,
                     )));
                     let res = self.get_table(&mut env, &mut key)?;
-                    self.expr_finish(env)?;
-                    self.expr_finish(key)?;
+                    self.expr_discharge(env, ExprDestination::None)?;
+                    self.expr_discharge(key, ExprDestination::None)?;
                     res
                 }
             }),
@@ -567,7 +571,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let source = self.expr_any_register(&mut expr)?;
-        self.expr_finish(expr)?;
+        self.expr_discharge(expr, ExprDestination::None)?;
         let dest = self
             .functions
             .top
@@ -616,8 +620,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             };
 
-            comp.expr_finish(left)?;
-            comp.expr_finish(right)?;
+            comp.expr_discharge(left, ExprDestination::None)?;
+            comp.expr_discharge(right, ExprDestination::None)?;
             Ok(op)
         };
 
@@ -896,7 +900,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // If the expression is a constant value *and* fits into an 8-bit constant index, return that
-    // constant index, otherwise place the expression into a register.
+    // constant index, otherwise modify the expression so that it is contained in a register and
+    // return that register.
     fn expr_any_register_or_constant(
         &mut self,
         expr: &mut ExprDescriptor<'gc, 'a>,
@@ -909,141 +914,216 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
     }
 
-    // Modify an expression to contain its result in any register, and return that register
+    // Modify an expression so that it contains its result in any register, and return that
+    // register.
     fn expr_any_register(
         &mut self,
         expr: &mut ExprDescriptor<'gc, 'a>,
     ) -> Result<RegisterIndex, Error> {
-        match *expr {
-            ExprDescriptor::Register { register, .. } => return Ok(register),
-            _ => {}
-        }
-
-        let register = self
-            .functions
-            .top
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerLimit::Registers)?;
-        let old_expr = mem::replace(
-            expr,
-            ExprDescriptor::Register {
+        if let ExprDescriptor::Register { register, .. } = *expr {
+            Ok(register)
+        } else {
+            // The given expresison will be invalid if `expr_discharge` errors, but this is fine,
+            // compiler errors always halt compilation.
+            let register = self
+                .expr_discharge(
+                    mem::replace(expr, ExprDescriptor::Value(Value::Nil)),
+                    ExprDestination::AllocateNew,
+                )?
+                .unwrap();
+            *expr = ExprDescriptor::Register {
                 register,
                 is_temporary: true,
-            },
-        );
-        self.expr_to_register(old_expr, register)?;
-        Ok(register)
-    }
-
-    // Consume an expression, ensuring that its result is stored in a newly allocated register
-    fn expr_allocate_register(
-        &mut self,
-        expr: ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterIndex, Error> {
-        match expr {
-            ExprDescriptor::Register {
-                register,
-                is_temporary: true,
-            } => Ok(register),
-            expr => {
-                let dest = self
-                    .functions
-                    .top
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.expr_to_register(expr, dest)?;
-                Ok(dest)
-            }
+            };
+            Ok(register)
         }
     }
 
-    // Consume an expression, ensuring that its result is stored in a newly allocated register at
-    // the top of the stack.
-    fn expr_push_register(
+    // Consume an expression, placing it in the given destination.  If the desitnation is not None,
+    // then the resulting register is returned.  The returned register (if any) will always be
+    // marked as allocated, so it must be placed into another expression or freed.
+    fn expr_discharge(
         &mut self,
         expr: ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterIndex, Error> {
-        if let ExprDescriptor::Register {
-            register,
-            is_temporary: true,
-        } = expr
-        {
-            if register.0 as u16 + 1 == self.functions.top.register_allocator.stack_top {
-                return Ok(register);
-            }
+        dest: ExprDestination,
+    ) -> Result<Option<RegisterIndex>, Error> {
+        fn new_destination<'gc, 'a>(
+            comp: &mut Compiler<'gc, 'a>,
+            dest: ExprDestination,
+        ) -> Result<Option<RegisterIndex>, Error> {
+            Ok(match dest {
+                ExprDestination::Register(dest) => Some(dest),
+                ExprDestination::AllocateNew => Some(
+                    comp.functions
+                        .top
+                        .register_allocator
+                        .allocate()
+                        .ok_or(CompilerLimit::Registers)?,
+                ),
+                ExprDestination::PushNew => Some(
+                    comp.functions
+                        .top
+                        .register_allocator
+                        .push(1)
+                        .ok_or(CompilerLimit::Registers)?,
+                ),
+                ExprDestination::None => None,
+            })
         }
 
-        let dest = self
-            .functions
-            .top
-            .register_allocator
-            .push(1)
-            .ok_or(CompilerLimit::Registers)?;
-        self.expr_to_register(expr, dest)?;
-        Ok(dest)
-    }
-
-    // Consume an expression and store the result in the given register
-    fn expr_to_register(
-        &mut self,
-        expr: ExprDescriptor<'gc, 'a>,
-        dest: RegisterIndex,
-    ) -> Result<(), Error> {
-        match expr {
+        let result = match expr {
             ExprDescriptor::Register {
                 register: source,
                 is_temporary,
             } => {
-                if dest != source {
-                    self.functions
-                        .top
-                        .opcodes
-                        .push(OpCode::Move { dest, source });
-                }
-                if is_temporary {
-                    self.functions.top.register_allocator.free(source);
+                if dest == ExprDestination::AllocateNew && is_temporary {
+                    Some(source)
+                } else {
+                    if is_temporary {
+                        self.functions.top.register_allocator.free(source);
+                    }
+                    if let Some(dest) = new_destination(self, dest)? {
+                        if dest != source {
+                            self.functions
+                                .top
+                                .opcodes
+                                .push(OpCode::Move { dest, source });
+                        }
+                        Some(dest)
+                    } else {
+                        None
+                    }
                 }
             }
             ExprDescriptor::UpValue(source) => {
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::GetUpValue { source, dest });
-            }
-            ExprDescriptor::Value(value) => match value {
-                Value::Nil => {
-                    self.load_nil(dest)?;
-                }
-                Value::Boolean(value) => {
-                    self.functions.top.opcodes.push(OpCode::LoadBool {
-                        dest,
-                        value,
-                        skip_next: false,
-                    });
-                }
-                val => {
-                    let constant = self.get_constant(val)?;
+                if let Some(dest) = new_destination(self, dest)? {
                     self.functions
                         .top
                         .opcodes
-                        .push(OpCode::LoadConstant { dest, constant });
+                        .push(OpCode::GetUpValue { source, dest });
+                    Some(dest)
+                } else {
+                    None
                 }
-            },
+            }
+            ExprDescriptor::Value(value) => {
+                if let Some(dest) = new_destination(self, dest)? {
+                    match value {
+                        Value::Nil => {
+                            self.load_nil(dest)?;
+                        }
+                        Value::Boolean(value) => {
+                            self.functions.top.opcodes.push(OpCode::LoadBool {
+                                dest,
+                                value,
+                                skip_next: false,
+                            });
+                        }
+                        val => {
+                            let constant = self.get_constant(val)?;
+                            self.functions
+                                .top
+                                .opcodes
+                                .push(OpCode::LoadConstant { dest, constant });
+                        }
+                    }
+                    Some(dest)
+                } else {
+                    None
+                }
+            }
             ExprDescriptor::FunctionCall { func, args } => {
                 let source = self.expr_function_call(*func, args, VarCount::make_one())?;
-                self.functions
-                    .top
-                    .opcodes
-                    .push(OpCode::Move { dest, source });
+                match dest {
+                    ExprDestination::Register(dest) => {
+                        assert_ne!(dest, source);
+                        self.functions
+                            .top
+                            .opcodes
+                            .push(OpCode::Move { dest, source });
+                        Some(dest)
+                    }
+                    ExprDestination::AllocateNew | ExprDestination::PushNew => {
+                        assert_eq!(
+                            self.functions
+                                .top
+                                .register_allocator
+                                .push(1)
+                                .ok_or(CompilerLimit::Registers)?,
+                            source
+                        );
+                        Some(source)
+                    }
+                    ExprDestination::None => None,
+                }
             }
-            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
-                self.expr_short_circuit(*left, op, right, Some(dest))?;
+            ExprDescriptor::ShortCircuitBinOp {
+                mut left,
+                op,
+                right,
+            } => {
+                let left_register = self.expr_any_register(&mut left)?;
+                self.expr_discharge(*left, ExprDestination::None)?;
+                let dest = new_destination(self, dest)?;
+
+                let test_op_true = op == ShortCircuitBinOp::And;
+                let test_op = if let Some(dest) = dest {
+                    if left_register == dest {
+                        OpCode::Test {
+                            value: left_register,
+                            is_true: test_op_true,
+                        }
+                    } else {
+                        OpCode::TestSet {
+                            dest,
+                            value: left_register,
+                            is_true: test_op_true,
+                        }
+                    }
+                } else {
+                    OpCode::Test {
+                        value: left_register,
+                        is_true: test_op_true,
+                    }
+                };
+                self.functions.top.opcodes.push(test_op);
+
+                let jmp_inst = self.functions.top.opcodes.len();
+                self.functions.top.opcodes.push(OpCode::Jump { offset: 0 });
+
+                let right = self.expression(right)?;
+                if let Some(dest) = dest {
+                    self.expr_discharge(right, ExprDestination::Register(dest))?;
+                } else {
+                    self.expr_discharge(right, ExprDestination::None)?;
+                }
+
+                let jmp_offset = cast(self.functions.top.opcodes.len() - jmp_inst - 1)
+                    .ok_or(CompilerLimit::OpCodes)?;
+                match &mut self.functions.top.opcodes[jmp_inst] {
+                    OpCode::Jump { offset } => {
+                        *offset = jmp_offset;
+                    }
+                    _ => panic!("Jump opcode for short circuit binary operation is misplaced"),
+                }
+
+                dest
+            }
+        };
+
+        if let Some(result) = result {
+            if dest == ExprDestination::PushNew {
+                // Make sure that if we are requested to push a new register at the top of the stack, it
+                // is the *first* available register after the registers inside the given expression are
+                // consumed.
+                assert!(
+                    result.0 == 0
+                        || self.functions.top.register_allocator.registers[result.0 as usize - 1]
+                );
             }
         }
 
-        Ok(())
+        Ok(result)
     }
 
     // Performs a function call, consuming the func and args registers.  At the end of the function
@@ -1056,11 +1136,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         mut args: Vec<ExprDescriptor<'gc, 'a>>,
         returns: VarCount,
     ) -> Result<RegisterIndex, Error> {
-        let top_reg = self.expr_push_register(func)?;
+        let top_reg = self
+            .expr_discharge(func, ExprDestination::PushNew)?
+            .unwrap();
         let arg_count: u8 = cast(args.len()).ok_or(CompilerLimit::FixedParameters)?;
         let last_arg = args.pop();
         for arg in args {
-            self.expr_push_register(arg)?;
+            self.expr_discharge(arg, ExprDestination::PushNew)?;
         }
 
         if let Some(ExprDescriptor::FunctionCall { func, args }) = last_arg {
@@ -1072,7 +1154,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             });
         } else {
             if let Some(last_arg) = last_arg {
-                self.expr_push_register(last_arg)?;
+                self.expr_discharge(last_arg, ExprDestination::PushNew)?;
             }
             self.functions.top.opcodes.push(OpCode::Call {
                 func: top_reg,
@@ -1086,90 +1168,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .pop_to(top_reg.0 as u16);
 
         Ok(top_reg)
-    }
-
-    // Consume a short circuit expression, placing the result in the given destination, if provided.
-    fn expr_short_circuit(
-        &mut self,
-        mut left_expr: ExprDescriptor<'gc, 'a>,
-        op: ShortCircuitBinOp,
-        right_expr: &'a Expression,
-        dest: Option<RegisterIndex>,
-    ) -> Result<(), Error> {
-        let left = self.expr_any_register(&mut left_expr)?;
-
-        let test_op_true = op == ShortCircuitBinOp::And;
-        let test_op = if let Some(dest) = dest {
-            if left == dest {
-                OpCode::Test {
-                    value: left,
-                    is_true: test_op_true,
-                }
-            } else {
-                OpCode::TestSet {
-                    dest,
-                    value: left,
-                    is_true: test_op_true,
-                }
-            }
-        } else {
-            OpCode::Test {
-                value: left,
-                is_true: test_op_true,
-            }
-        };
-        self.functions.top.opcodes.push(test_op);
-
-        self.expr_finish(left_expr)?;
-
-        let jmp_inst = self.functions.top.opcodes.len();
-        self.functions.top.opcodes.push(OpCode::Jump { offset: 0 });
-
-        let right_expr = self.expression(right_expr)?;
-        if let Some(dest) = dest {
-            self.expr_to_register(right_expr, dest)?;
-        } else {
-            self.expr_finish(right_expr)?;
-        }
-
-        let jmp_offset =
-            cast(self.functions.top.opcodes.len() - jmp_inst - 1).ok_or(CompilerLimit::OpCodes)?;
-        match &mut self.functions.top.opcodes[jmp_inst] {
-            OpCode::Jump { offset } => {
-                *offset = jmp_offset;
-            }
-            _ => panic!("Jump opcode for short circuit binary operation is misplaced"),
-        }
-
-        Ok(())
-    }
-
-    // Consume an expression and ignore the result.  If the expression is a pending function call,
-    // performs the function call with no expected returns, if it is held in a temporary register,
-    // frees that register.  All created `ExprDescriptor`s must be consumed by one of the methods
-    // that handles them, if no other method has consumed an expr, `expr_finish` must be called on
-    // it.
-    fn expr_finish(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), Error> {
-        match expr {
-            ExprDescriptor::Register {
-                register,
-                is_temporary,
-            } => {
-                if is_temporary {
-                    self.functions.top.register_allocator.free(register);
-                }
-            }
-            ExprDescriptor::UpValue(_) => {}
-            ExprDescriptor::Value(_) => {}
-            ExprDescriptor::FunctionCall { func, args } => {
-                self.expr_function_call(*func, args, VarCount::make_zero())?;
-            }
-            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
-                self.expr_short_circuit(*left, op, right, None)?;
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -1236,6 +1234,23 @@ enum ExprDescriptor<'gc, 'a> {
         op: ShortCircuitBinOp,
         right: &'a Expression,
     },
+}
+
+enum RegisterOrConstant {
+    Register(RegisterIndex),
+    Constant(ConstantIndex8),
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum ExprDestination {
+    // Place the expression in the given previously allocated register
+    Register(RegisterIndex),
+    // Place the expression in a newly allocated register anywhere
+    AllocateNew,
+    // Place the expression in a newly allocated register at the top of the stack
+    PushNew,
+    // Evaluate the expression but do not place it anywhere
+    None,
 }
 
 struct RegisterAllocator {
@@ -1385,11 +1400,6 @@ impl<T> TopStack<T> {
             panic!("TopStack index {} out of range", i);
         }
     }
-}
-
-enum RegisterOrConstant {
-    Register(RegisterIndex),
-    Constant(ConstantIndex8),
 }
 
 // Value which implements Hash and Eq, where values are equal only when they are bit for bit
