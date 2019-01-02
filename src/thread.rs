@@ -458,29 +458,54 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
-                    OpCode::EqRR { equal, left, right } => {
+                    OpCode::EqRR {
+                        skip_if,
+                        left,
+                        right,
+                    } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
-                        if (left == right) != equal {
+                        if (left == right) == skip_if {
                             self.pc += 1;
                         }
                     }
 
-                    OpCode::EqRC { equal, left, right } => {
+                    OpCode::EqRC {
+                        skip_if,
+                        left,
+                        right,
+                    } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize];
-                        if (left == right) != equal {
+                        if (left == right) == skip_if {
                             self.pc += 1;
                         }
                     }
 
-                    OpCode::EqCR { equal, left, right } => {
+                    OpCode::EqCR {
+                        skip_if,
+                        left,
+                        right,
+                    } => {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
-                        if (left == right) != equal {
+                        if (left == right) == skip_if {
                             self.pc += 1;
                         }
                     }
+
+                    OpCode::EqCC {
+                        skip_if,
+                        left,
+                        right,
+                    } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        if (left == right) == skip_if {
+                            self.pc += 1;
+                        }
+                    }
+
                     OpCode::Not { dest, source } => {
                         let source = self.stack[current_frame.base + source.0 as usize];
                         self.stack[current_frame.base + dest.0 as usize] = source.negate();
@@ -503,6 +528,13 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::AddCR { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] =
+                            left.add(right).expect("could not apply binary operator");
+                    }
+
+                    OpCode::AddCC { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
                         self.stack[current_frame.base + dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }

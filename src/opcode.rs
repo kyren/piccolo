@@ -184,19 +184,24 @@ pub enum OpCode {
         source: RegisterIndex,
     },
     EqRR {
-        equal: bool,
+        skip_if: bool,
         left: RegisterIndex,
         right: RegisterIndex,
     },
     EqRC {
-        equal: bool,
+        skip_if: bool,
         left: RegisterIndex,
         right: ConstantIndex8,
     },
     EqCR {
-        equal: bool,
+        skip_if: bool,
         left: ConstantIndex8,
         right: RegisterIndex,
+    },
+    EqCC {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
     },
     Not {
         dest: RegisterIndex,
@@ -216,5 +221,10 @@ pub enum OpCode {
         dest: RegisterIndex,
         left: ConstantIndex8,
         right: RegisterIndex,
+    },
+    AddCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
     },
 }

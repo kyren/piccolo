@@ -79,15 +79,13 @@ pub fn categorize_binop(binop: BinaryOperator) -> BinOpCategory {
     }
 }
 
-#[derive(Debug)]
-pub enum BinOpArgs {
-    RC(RegisterIndex, ConstantIndex8),
-    CR(ConstantIndex8, RegisterIndex),
-    RR(RegisterIndex, RegisterIndex),
+pub enum RegisterOrConstant {
+    Register(RegisterIndex),
+    Constant(ConstantIndex8),
 }
 
 pub struct SimpleBinOpEntry {
-    pub make_opcode: fn(RegisterIndex, BinOpArgs) -> OpCode,
+    pub make_opcode: fn(RegisterIndex, RegisterOrConstant, RegisterOrConstant) -> OpCode,
     pub constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
 }
 
@@ -98,10 +96,19 @@ lazy_static! {
         m.insert(
             SimpleBinOp::Add,
             SimpleBinOpEntry {
-                make_opcode: |dest, args| match args {
-                    BinOpArgs::RC(left, right) => OpCode::AddRC { dest, left, right },
-                    BinOpArgs::CR(left, right) => OpCode::AddCR { dest, left, right },
-                    BinOpArgs::RR(left, right) => OpCode::AddRR { dest, left, right },
+                make_opcode: |dest, left, right| match (left, right) {
+                    (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                        OpCode::AddRR { dest, left, right }
+                    }
+                    (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                        OpCode::AddRC { dest, left, right }
+                    }
+                    (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                        OpCode::AddCR { dest, left, right }
+                    }
+                    (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                        OpCode::AddCC { dest, left, right }
+                    }
                 },
                 constant_fold: |left, right| left.add(right),
             },
@@ -112,7 +119,8 @@ lazy_static! {
 }
 
 pub struct ComparisonBinOpEntry {
-    pub make_opcodes: fn(RegisterIndex, BinOpArgs) -> [OpCode; 4],
+    // Generated OpCode will skip over the next instruction if the comparison is *not* true
+    pub make_opcode: fn(RegisterOrConstant, RegisterOrConstant) -> OpCode,
     pub constant_fold: for<'gc> fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
 }
 
@@ -123,37 +131,35 @@ lazy_static! {
         m.insert(
             ComparisonBinOp::Equal,
             ComparisonBinOpEntry {
-                make_opcodes: |dest, args| {
-                    [
-                        match args {
-                            BinOpArgs::RC(left, right) => OpCode::EqRC {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                            BinOpArgs::CR(left, right) => OpCode::EqCR {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                            BinOpArgs::RR(left, right) => OpCode::EqRR {
-                                equal: true,
-                                left,
-                                right,
-                            },
-                        },
-                        OpCode::Jump { offset: 1 },
-                        OpCode::LoadBool {
-                            dest,
-                            value: false,
-                            skip_next: true,
-                        },
-                        OpCode::LoadBool {
-                            dest,
-                            value: true,
-                            skip_next: false,
-                        },
-                    ]
+                make_opcode: |left, right| match (left, right) {
+                    (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                        OpCode::EqRR {
+                            skip_if: false,
+                            left,
+                            right,
+                        }
+                    }
+                    (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                        OpCode::EqRC {
+                            skip_if: false,
+                            left,
+                            right,
+                        }
+                    }
+                    (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                        OpCode::EqCR {
+                            skip_if: false,
+                            left,
+                            right,
+                        }
+                    }
+                    (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                        OpCode::EqCC {
+                            skip_if: false,
+                            left,
+                            right,
+                        }
+                    }
                 },
                 constant_fold: |left, right| Some(Value::Boolean(left == right)),
             },

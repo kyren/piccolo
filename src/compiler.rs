@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::mem;
+use std::{iter, mem};
 
 use failure::{bail, err_msg, Error, Fail};
 use num_traits::cast;
@@ -12,14 +12,14 @@ use crate::opcode::{
     ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 use crate::operators::{
-    categorize_binop, BinOpArgs, BinOpCategory, ShortCircuitBinOp, COMPARISON_BINOPS,
-    SIMPLE_BINOPS, UNOPS,
+    categorize_binop, BinOpCategory, ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp,
+    COMPARISON_BINOPS, SIMPLE_BINOPS, UNOPS,
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FieldSuffix, FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression,
-    LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression, Statement, SuffixPart,
-    SuffixedExpression, TableConstructor, UnaryOperator,
+    IfStatement, LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression, Statement,
+    SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
 };
 use crate::string::String;
 use crate::value::Value;
@@ -129,31 +129,85 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn statement(&mut self, statement: &'a Statement) -> Result<(), Error> {
         match statement {
-            Statement::If(_) => bail!("if statement unsupported"),
+            Statement::If(if_statement) => self.if_statement(if_statement),
             Statement::While(_) => bail!("while statement unsupported"),
-            Statement::Do(block) => {
-                self.block(block)?;
-            }
+            Statement::Do(block) => self.block(block),
             Statement::For(_) => bail!("for statement unsupported"),
             Statement::Repeat(_) => bail!("repeat statement unsupported"),
-            Statement::Function(function_statement) => {
-                self.function_statement(function_statement)?;
-            }
-            Statement::LocalFunction(local_function) => {
-                self.local_function(local_function)?;
-            }
-            Statement::LocalStatement(local_statement) => {
-                self.local_statement(local_statement)?;
-            }
+            Statement::Function(function_statement) => self.function_statement(function_statement),
+            Statement::LocalFunction(local_function) => self.local_function(local_function),
+            Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
             Statement::Label(_) => bail!("label statement unsupported"),
             Statement::Break => bail!("break statement unsupported"),
             Statement::Goto(_) => bail!("goto statement unsupported"),
-            Statement::FunctionCall(function_call) => {
-                self.function_call(function_call)?;
+            Statement::FunctionCall(function_call) => self.function_call(function_call),
+            Statement::Assignment(assignment) => self.assignment(assignment),
+        }
+    }
+
+    fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), Error> {
+        let mut end_jumps = Vec::new();
+        let mut next_jump = None;
+
+        for (if_expr, block) in iter::once(&if_statement.if_part).chain(&if_statement.else_if_parts)
+        {
+            if let Some(next_jump) = next_jump.take() {
+                self.jump_here(next_jump)?;
             }
-            Statement::Assignment(assignment) => {
-                self.assignment(assignment)?;
+
+            match self.expression(if_expr)? {
+                ExprDescriptor::Comparison {
+                    mut left,
+                    op,
+                    mut right,
+                } => {
+                    let comparison_op = COMPARISON_BINOPS
+                        .get(&op)
+                        .ok_or_else(|| err_msg("unsupported binary operator"))?;
+
+                    let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
+                    let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
+                    self.expr_discharge(*left, ExprDestination::None)?;
+                    self.expr_discharge(*right, ExprDestination::None)?;
+
+                    self.current_function()
+                        .opcodes
+                        .push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                }
+
+                ExprDescriptor::Not(mut test_expr) => {
+                    let test_reg = self.expr_any_register(&mut test_expr)?;
+                    self.expr_discharge(*test_expr, ExprDestination::None)?;
+                    self.current_function().opcodes.push(OpCode::Test {
+                        value: test_reg,
+                        is_true: false,
+                    });
+                }
+
+                mut test_expr => {
+                    let test_reg = self.expr_any_register(&mut test_expr)?;
+                    self.expr_discharge(test_expr, ExprDestination::None)?;
+                    self.current_function().opcodes.push(OpCode::Test {
+                        value: test_reg,
+                        is_true: true,
+                    });
+                }
             }
+
+            next_jump = Some(self.jump_placeholder());
+            self.block(block)?;
+            end_jumps.push(self.jump_placeholder());
+        }
+
+        if let Some(else_block) = &if_statement.else_part {
+            if let Some(next_jump) = next_jump.take() {
+                self.jump_here(next_jump)?;
+            }
+            self.block(else_block)?;
+        }
+
+        for end_jump in end_jumps.into_iter().chain(next_jump) {
+            self.jump_here(end_jump)?;
         }
 
         Ok(())
@@ -359,6 +413,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.expr_discharge(expr, ExprDestination::None)?;
                     }
                 },
+
                 AssignmentTarget::Field(table, field) => {
                     let mut table = self.suffixed_expression(table)?;
                     let mut key = match field {
@@ -583,6 +638,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
 
+        if unop == UnaryOperator::Not {
+            return Ok(ExprDescriptor::Not(Box::new(expr)));
+        }
+
         let source = self.expr_any_register(&mut expr)?;
         self.expr_discharge(expr, ExprDestination::None)?;
 
@@ -602,55 +661,28 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn binary_operator(
         &mut self,
-        left: ExprDescriptor<'gc, 'a>,
+        mut left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
         right: &'a Expression,
     ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
-        fn make_binop_args<'gc, 'a>(
-            comp: &mut Compiler<'gc, 'a>,
-            mut left: ExprDescriptor<'gc, 'a>,
-            mut right: ExprDescriptor<'gc, 'a>,
-        ) -> Result<BinOpArgs, Error> {
-            let left_reg_cons = comp.expr_any_register_or_constant(&mut left)?;
-            let right_reg_cons = comp.expr_any_register_or_constant(&mut right)?;
-
-            let op = match (left_reg_cons, right_reg_cons) {
-                (
-                    RegisterOrConstant::Constant(left_cons),
-                    RegisterOrConstant::Register(right_reg),
-                ) => BinOpArgs::CR(left_cons, right_reg),
-                (
-                    RegisterOrConstant::Register(left_reg),
-                    RegisterOrConstant::Constant(right_cons),
-                ) => BinOpArgs::RC(left_reg, right_cons),
-                (
-                    RegisterOrConstant::Register(left_reg),
-                    RegisterOrConstant::Register(right_reg),
-                ) => BinOpArgs::RR(left_reg, right_reg),
-                (RegisterOrConstant::Constant(_), RegisterOrConstant::Constant(_)) => {
-                    unreachable!("binary operator not constant folded")
-                }
-            };
-
-            comp.expr_discharge(left, ExprDestination::None)?;
-            comp.expr_discharge(right, ExprDestination::None)?;
-            Ok(op)
-        };
-
         match categorize_binop(binop) {
-            BinOpCategory::Simple(simple_binop) => {
-                let binop_entry = SIMPLE_BINOPS
-                    .get(&simple_binop)
+            BinOpCategory::Simple(op) => {
+                let simple_op = SIMPLE_BINOPS
+                    .get(&op)
                     .ok_or_else(|| err_msg("unsupported binary operator"))?;
-                let right = self.expression(right)?;
+                let mut right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-                    if let Some(v) = (binop_entry.constant_fold)(a, b) {
+                    if let Some(v) = (simple_op.constant_fold)(a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
 
-                let binop_args = make_binop_args(self, left, right)?;
+                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
+                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
+                self.expr_discharge(left, ExprDestination::None)?;
+                self.expr_discharge(right, ExprDestination::None)?;
+
                 let dest = self
                     .current_function()
                     .register_allocator
@@ -658,43 +690,38 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .ok_or(CompilerLimit::Registers)?;
                 self.current_function()
                     .opcodes
-                    .push((binop_entry.make_opcode)(dest, binop_args));
+                    .push((simple_op.make_opcode)(dest, left_reg_cons, right_reg_cons));
                 Ok(ExprDescriptor::Register {
                     register: dest,
                     is_temporary: true,
                 })
             }
-            BinOpCategory::Comparison(comparison_binop) => {
-                let binop_entry = COMPARISON_BINOPS
-                    .get(&comparison_binop)
+
+            BinOpCategory::Comparison(op) => {
+                let comparison_op = COMPARISON_BINOPS
+                    .get(&op)
                     .ok_or_else(|| err_msg("unsupported binary operator"))?;
                 let right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-                    if let Some(v) = (binop_entry.constant_fold)(a, b) {
+                    if let Some(v) = (comparison_op.constant_fold)(a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
 
-                let binop_args = make_binop_args(self, left, right)?;
-                let dest = self
-                    .current_function()
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.current_function()
-                    .opcodes
-                    .extend(&(binop_entry.make_opcodes)(dest, binop_args));
-                Ok(ExprDescriptor::Register {
-                    register: dest,
-                    is_temporary: true,
+                Ok(ExprDescriptor::Comparison {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
                 })
             }
+
             BinOpCategory::ShortCircuit(op) => Ok(ExprDescriptor::ShortCircuitBinOp {
                 left: Box::new(left),
                 op,
                 right,
             }),
+
             BinOpCategory::Concat => bail!("no support for concat operator"),
         }
     }
@@ -794,6 +821,28 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
         Ok(())
+    }
+
+    // Places a placeholdeer jump instruction that must be updated later with jump_finish
+    fn jump_placeholder(&mut self) -> usize {
+        let jmp_inst = self.current_function().opcodes.len();
+        self.current_function()
+            .opcodes
+            .push(OpCode::Jump { offset: 0 });
+        jmp_inst
+    }
+
+    // Commit a placeholder jump to jump to the next instruction
+    fn jump_here(&mut self, jmp_instruction: usize) -> Result<(), Error> {
+        let jmp_offset = cast(self.current_function().opcodes.len() - jmp_instruction - 1)
+            .ok_or(CompilerLimit::OpCodes)?;
+        if let OpCode::Jump { offset } = &mut self.current_function().opcodes[jmp_instruction] {
+            if *offset == 0 {
+                *offset = jmp_offset;
+                return Ok(());
+            }
+        }
+        panic!("jump instruction being finished was not a placeholder jump instruction");
     }
 
     fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, Error> {
@@ -992,6 +1041,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                 }
             }
+
             ExprDescriptor::UpValue(source) => {
                 if let Some(dest) = new_destination(self, dest)? {
                     self.current_function()
@@ -1002,6 +1052,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     None
                 }
             }
+
             ExprDescriptor::Value(value) => {
                 if let Some(dest) = new_destination(self, dest)? {
                     match value {
@@ -1027,6 +1078,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     None
                 }
             }
+
+            ExprDescriptor::Not(mut expr) => {
+                if let Some(dest) = new_destination(self, dest)? {
+                    let source = self.expr_any_register(&mut expr)?;
+                    self.expr_discharge(*expr, ExprDestination::None)?;
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::Not { dest, source });
+                    Some(dest)
+                } else {
+                    self.expr_discharge(*expr, ExprDestination::None)?;
+                    None
+                }
+            }
+
             ExprDescriptor::FunctionCall { func, args } => {
                 let source = self.expr_function_call(*func, args, VarCount::make_one())?;
                 match dest {
@@ -1050,6 +1116,45 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     ExprDestination::None => None,
                 }
             }
+
+            ExprDescriptor::Comparison {
+                mut left,
+                op,
+                mut right,
+            } => {
+                let comparison_op = COMPARISON_BINOPS
+                    .get(&op)
+                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
+
+                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
+                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
+                self.expr_discharge(*left, ExprDestination::None)?;
+                self.expr_discharge(*right, ExprDestination::None)?;
+
+                let dest = new_destination(self, dest)?;
+
+                let opcodes = &mut self.current_function().opcodes;
+                if let Some(dest) = dest {
+                    opcodes.push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                    opcodes.push(OpCode::Jump { offset: 1 });
+                    opcodes.push(OpCode::LoadBool {
+                        dest,
+                        value: false,
+                        skip_next: true,
+                    });
+                    opcodes.push(OpCode::LoadBool {
+                        dest,
+                        value: true,
+                        skip_next: false,
+                    });
+                } else {
+                    opcodes.push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                    opcodes.push(OpCode::Jump { offset: 0 });
+                }
+
+                dest
+            }
+
             ExprDescriptor::ShortCircuitBinOp {
                 mut left,
                 op,
@@ -1081,10 +1186,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 };
                 self.current_function().opcodes.push(test_op);
 
-                let jmp_inst = self.current_function().opcodes.len();
-                self.current_function()
-                    .opcodes
-                    .push(OpCode::Jump { offset: 0 });
+                let jmp_inst = self.jump_placeholder();
 
                 let right = self.expression(right)?;
                 if let Some(dest) = dest {
@@ -1093,14 +1195,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_discharge(right, ExprDestination::None)?;
                 }
 
-                let jmp_offset = cast(self.current_function().opcodes.len() - jmp_inst - 1)
-                    .ok_or(CompilerLimit::OpCodes)?;
-                match &mut self.current_function().opcodes[jmp_inst] {
-                    OpCode::Jump { offset } => {
-                        *offset = jmp_offset;
-                    }
-                    _ => panic!("Jump opcode for short circuit binary operation is misplaced"),
-                }
+                self.jump_here(jmp_inst)?;
 
                 dest
             }
@@ -1197,20 +1292,21 @@ enum ExprDescriptor<'gc, 'a> {
     },
     UpValue(UpValueIndex),
     Value(Value<'gc>),
+    Not(Box<ExprDescriptor<'gc, 'a>>),
     FunctionCall {
         func: Box<ExprDescriptor<'gc, 'a>>,
         args: Vec<ExprDescriptor<'gc, 'a>>,
+    },
+    Comparison {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: ComparisonBinOp,
+        right: Box<ExprDescriptor<'gc, 'a>>,
     },
     ShortCircuitBinOp {
         left: Box<ExprDescriptor<'gc, 'a>>,
         op: ShortCircuitBinOp,
         right: &'a Expression,
     },
-}
-
-enum RegisterOrConstant {
-    Register(RegisterIndex),
-    Constant(ConstantIndex8),
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
