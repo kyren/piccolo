@@ -28,7 +28,11 @@ pub fn compile_chunk<'gc>(
     mc: MutationContext<'gc, '_>,
     chunk: &Chunk,
 ) -> Result<FunctionProto<'gc>, Error> {
-    Compiler::compile(mc, &chunk)
+    let mut compiler = Compiler {
+        mutation_context: mc,
+        functions: Vec::new(),
+    };
+    compiler.compile_function(&[], true, &chunk.block)
 }
 
 #[derive(Fail, Debug)]
@@ -51,35 +55,73 @@ enum CompilerLimit {
 
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
-    functions: TopStack<CompilerFunction<'gc, 'a>>,
+    functions: Vec<CompilerFunction<'gc, 'a>>,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
-    fn compile(
-        mc: MutationContext<'gc, '_>,
-        chunk: &'a Chunk,
+    fn compile_function(
+        &mut self,
+        parameters: &'a [Box<[u8]>],
+        has_varargs: bool,
+        body: &'a Block,
     ) -> Result<FunctionProto<'gc>, Error> {
-        let mut compiler = Compiler {
-            mutation_context: mc,
-            functions: TopStack::new(CompilerFunction::default()),
-        };
+        let mut new_function = CompilerFunction::default();
+        let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
+        new_function.register_allocator.push(fixed_params);
+        new_function.has_varargs = has_varargs;
+        new_function.fixed_params = fixed_params;
+        for (i, name) in parameters.iter().enumerate() {
+            new_function
+                .locals
+                .push((name, RegisterIndex(cast(i).unwrap())));
+        }
 
-        compiler.block(&chunk.block)?;
-        Ok(compiler.functions.top.to_proto(mc))
+        self.functions.push(new_function);
+        self.block(&body)?;
+        let mut new_function = self.functions.pop().unwrap();
+
+        new_function.opcodes.push(OpCode::Return {
+            start: RegisterIndex(0),
+            count: VarCount::make_zero(),
+        });
+        assert!(new_function.locals.len() == fixed_params as usize);
+        for (_, r) in new_function.locals.drain(..) {
+            new_function.register_allocator.free(r);
+        }
+        assert_eq!(
+            new_function.register_allocator.stack_top, 0,
+            "register leak detected"
+        );
+
+        Ok(FunctionProto {
+            fixed_params: new_function.fixed_params,
+            has_varargs: false,
+            stack_size: new_function.register_allocator.stack_size,
+            constants: new_function.constants,
+            opcodes: new_function.opcodes,
+            upvalues: new_function.upvalues.iter().map(|(_, d)| *d).collect(),
+            prototypes: new_function
+                .prototypes
+                .into_iter()
+                .map(|f| Gc::allocate(self.mutation_context, f))
+                .collect(),
+        })
     }
 
     fn block(&mut self, block: &'a Block) -> Result<(), Error> {
+        let first_local = self.current_function().locals.len();
+
         for statement in &block.statements {
             self.statement(statement)?;
         }
 
         if let Some(return_statement) = &block.return_statement {
             self.return_statement(return_statement)?;
-        } else {
-            self.functions.top.opcodes.push(OpCode::Return {
-                start: RegisterIndex(0),
-                count: VarCount::make_zero(),
-            });
+        }
+
+        let current_function = self.current_function();
+        for (_, r) in current_function.locals.drain(first_local..) {
+            current_function.register_allocator.free(r);
         }
 
         Ok(())
@@ -89,7 +131,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         match statement {
             Statement::If(_) => bail!("if statement unsupported"),
             Statement::While(_) => bail!("while statement unsupported"),
-            Statement::Do(_) => bail!("do statement unsupported"),
+            Statement::Do(block) => {
+                self.block(block)?;
+            }
             Statement::For(_) => bail!("for statement unsupported"),
             Statement::Repeat(_) => bail!("repeat statement unsupported"),
             Statement::Function(function_statement) => {
@@ -127,22 +171,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let proto = self.new_prototype(&function_statement.definition)?;
-        let mut env = self.get_environment()?;
-        let dest = self
-            .functions
-            .top
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerLimit::Registers)?;
 
-        self.functions
-            .top
-            .opcodes
-            .push(OpCode::Closure { proto, dest });
+        let mut env = self.get_environment()?;
         let mut name = ExprDescriptor::Value(Value::String(String::new(
             self.mutation_context,
             &*function_statement.name.name,
         )));
+
+        let dest = self
+            .current_function()
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerLimit::Registers)?;
+        self.current_function()
+            .opcodes
+            .push(OpCode::Closure { proto, dest });
         let mut closure = ExprDescriptor::Register {
             register: dest,
             is_temporary: true,
@@ -161,12 +204,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let ret_len = return_statement.returns.len();
 
         if ret_len == 0 {
-            self.functions.top.opcodes.push(OpCode::Return {
+            self.current_function().opcodes.push(OpCode::Return {
                 start: RegisterIndex(0),
                 count: VarCount::make_zero(),
             });
         } else {
-            let ret_start = cast(self.functions.top.register_allocator.stack_top)
+            let ret_start = cast(self.current_function().register_allocator.stack_top)
                 .ok_or(CompilerLimit::Registers)?;
 
             for i in 0..ret_len - 1 {
@@ -187,14 +230,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             };
 
-            self.functions.top.opcodes.push(OpCode::Return {
+            self.current_function().opcodes.push(OpCode::Return {
                 start: RegisterIndex(ret_start),
                 count: ret_count,
             });
 
             // Free all allocated return registers so that we do not fail the register leak check
-            self.functions
-                .top
+            self.current_function()
                 .register_allocator
                 .pop_to(ret_start as u16);
         }
@@ -221,14 +263,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             args,
                             VarCount::make_constant(num_returns).ok_or(CompilerLimit::Returns)?,
                         )?;
+
                         let reg = self
-                            .functions
-                            .top
+                            .current_function()
                             .register_allocator
                             .push(num_returns)
                             .ok_or(CompilerLimit::Registers)?;
                         for j in 0..num_returns {
-                            self.functions.top.locals.push((
+                            self.current_function().locals.push((
                                 &local_statement.names[i + j as usize],
                                 RegisterIndex(reg.0 + j),
                             ));
@@ -240,8 +282,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         let reg = self
                             .expr_discharge(expr, ExprDestination::AllocateNew)?
                             .unwrap();
-                        self.functions
-                            .top
+                        self.current_function()
                             .locals
                             .push((&local_statement.names[i], reg));
                     }
@@ -250,8 +291,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let reg = self
                     .expr_discharge(expr, ExprDestination::AllocateNew)?
                     .unwrap();
-                self.functions
-                    .top
+                self.current_function()
                     .locals
                     .push((&local_statement.names[i], reg));
             }
@@ -259,14 +299,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         for i in local_statement.values.len()..local_statement.names.len() {
             let reg = self
-                .functions
-                .top
+                .current_function()
                 .register_allocator
                 .allocate()
                 .ok_or(CompilerLimit::Registers)?;
             self.load_nil(reg)?;
-            self.functions
-                .top
+            self.current_function()
                 .locals
                 .push((&local_statement.names[i], reg));
         }
@@ -304,8 +342,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                     VariableDescriptor::UpValue(dest) => {
                         let source = self.expr_any_register(&mut expr)?;
-                        self.functions
-                            .top
+                        self.current_function()
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
                         self.expr_discharge(expr, ExprDestination::None)?;
@@ -350,20 +387,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let proto = self.new_prototype(&local_function.definition)?;
+
         let dest = self
-            .functions
-            .top
+            .current_function()
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
-
-        self.functions
-            .top
+        self.current_function()
             .opcodes
             .push(OpCode::Closure { proto, dest });
-
-        self.functions
-            .top
+        self.current_function()
             .locals
             .push((&local_function.name.name, dest));
 
@@ -423,13 +456,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let dest = self
-            .functions
-            .top
+            .current_function()
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
-
-        self.functions.top.opcodes.push(OpCode::NewTable { dest });
+        self.current_function()
+            .opcodes
+            .push(OpCode::NewTable { dest });
 
         Ok(ExprDescriptor::Register {
             register: dest,
@@ -443,14 +476,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         let proto = self.new_prototype(function)?;
         let dest = self
-            .functions
-            .top
+            .current_function()
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
-
-        self.functions
-            .top
+        self.current_function()
             .opcodes
             .push(OpCode::Closure { proto, dest });
 
@@ -524,34 +554,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
+    // Returns the function currently being compiled
+    fn current_function(&mut self) -> &mut CompilerFunction<'gc, 'a> {
+        self.functions.last_mut().expect("no current function")
+    }
+
     fn new_prototype(&mut self, function: &'a FunctionDefinition) -> Result<PrototypeIndex, Error> {
-        if function.has_varargs {
-            bail!("no varargs support");
-        }
-
-        self.functions.push(CompilerFunction::default());
-
-        let fixed_params: u8 =
-            cast(function.parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
-        self.functions.top.register_allocator.push(fixed_params);
-        self.functions.top.fixed_params = fixed_params;
-        for (i, name) in function.parameters.iter().enumerate() {
-            self.functions
-                .top
-                .locals
-                .push((name, RegisterIndex(cast(i).unwrap())));
-        }
-
-        self.block(&function.body)?;
-
-        let new_function = self.functions.pop();
-        self.functions
-            .top
-            .prototypes
-            .push(new_function.to_proto(self.mutation_context));
-
+        let proto =
+            self.compile_function(&function.parameters, function.has_varargs, &function.body)?;
+        self.current_function().prototypes.push(proto);
         Ok(PrototypeIndex(
-            cast(self.functions.top.prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
+            cast(self.current_function().prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
         ))
     }
 
@@ -572,14 +585,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         let source = self.expr_any_register(&mut expr)?;
         self.expr_discharge(expr, ExprDestination::None)?;
+
         let dest = self
-            .functions
-            .top
+            .current_function()
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
-        self.functions
-            .top
+        self.current_function()
             .opcodes
             .push((unop_entry.make_opcode)(dest, source));
         Ok(ExprDescriptor::Register {
@@ -640,13 +652,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 let binop_args = make_binop_args(self, left, right)?;
                 let dest = self
-                    .functions
-                    .top
+                    .current_function()
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerLimit::Registers)?;
-                self.functions
-                    .top
+                self.current_function()
                     .opcodes
                     .push((binop_entry.make_opcode)(dest, binop_args));
                 Ok(ExprDescriptor::Register {
@@ -668,13 +678,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 let binop_args = make_binop_args(self, left, right)?;
                 let dest = self
-                    .functions
-                    .top
+                    .current_function()
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerLimit::Registers)?;
-                self.functions
-                    .top
+                self.current_function()
                     .opcodes
                     .extend(&(binop_entry.make_opcodes)(dest, binop_args));
                 Ok(ExprDescriptor::Register {
@@ -695,27 +703,25 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let function_len = self.functions.len();
 
         for i in (0..function_len).rev() {
-            for j in (0..self.functions.get(i).locals.len()).rev() {
-                let (local_name, register) = self.functions.get(i).locals[j];
+            for j in (0..self.functions[i].locals.len()).rev() {
+                let (local_name, register) = self.functions[i].locals[j];
                 if name == local_name {
                     if i == function_len - 1 {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
-                        self.functions
-                            .get_mut(i + 1)
+                        self.functions[i + 1]
                             .upvalues
                             .push((name, UpValueDescriptor::ParentLocal(register)));
                         let mut upvalue_index = UpValueIndex(
-                            cast(self.functions.get(i + 1).upvalues.len() - 1)
+                            cast(self.functions[i + 1].upvalues.len() - 1)
                                 .ok_or(CompilerLimit::UpValues)?,
                         );
                         for k in i + 2..function_len {
-                            self.functions
-                                .get_mut(k)
+                            self.functions[k]
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
-                                cast(self.functions.get(k).upvalues.len() - 1)
+                                cast(self.functions[k].upvalues.len() - 1)
                                     .ok_or(CompilerLimit::UpValues)?,
                             );
                         }
@@ -726,26 +732,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             // The top-level function has an implicit _ENV upvalue (and this is the only upvalue it
             // can have), we add it if it is ever referenced.
-            if i == 0 && name == b"_ENV" && self.functions.get(0).upvalues.is_empty() {
-                self.functions
-                    .get_mut(0)
+            if i == 0 && name == b"_ENV" && self.functions[i].upvalues.is_empty() {
+                self.functions[0]
                     .upvalues
                     .push((b"_ENV", UpValueDescriptor::Environment));
             }
 
-            for j in 0..self.functions.get(i).upvalues.len() {
-                if name == self.functions.get(i).upvalues[j].0 {
+            for j in 0..self.functions[i].upvalues.len() {
+                if name == self.functions[i].upvalues[j].0 {
                     let mut upvalue_index = UpValueIndex(cast(j).unwrap());
                     if i == function_len - 1 {
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
                     } else {
                         for k in i + 1..function_len {
-                            self.functions
-                                .get_mut(k)
+                            self.functions[k]
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
-                                cast(self.functions.get(k).upvalues.len() - 1)
+                                cast(self.functions[k].upvalues.len() - 1)
                                     .ok_or(CompilerLimit::UpValues)?,
                             );
                         }
@@ -773,19 +777,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
     fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), Error> {
-        match self.functions.top.opcodes.last().cloned() {
+        match self.current_function().opcodes.last().cloned() {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
                 count: prev_count,
             }) if prev_dest.0 + prev_count == dest.0 => {
-                self.functions.top.opcodes.push(OpCode::LoadNil {
+                self.current_function().opcodes.push(OpCode::LoadNil {
                     dest: prev_dest,
                     count: prev_count + 1,
                 });
             }
             _ => {
-                self.functions
-                    .top
+                self.current_function()
                     .opcodes
                     .push(OpCode::LoadNil { dest, count: 1 });
             }
@@ -795,8 +798,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, Error> {
         if let Some(constant) = self
-            .functions
-            .top
+            .current_function()
             .constant_table
             .get(&ConstantValue(constant))
             .cloned()
@@ -804,11 +806,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(constant)
         } else {
             let c = ConstantIndex16(
-                cast(self.functions.top.constants.len()).ok_or(CompilerLimit::Constants)?,
+                cast(self.current_function().constants.len()).ok_or(CompilerLimit::Constants)?,
             );
-            self.functions.top.constants.push(constant);
-            self.functions
-                .top
+            self.current_function().constants.push(constant);
+            self.current_function()
                 .constant_table
                 .insert(ConstantValue(constant), c);
             Ok(c)
@@ -821,8 +822,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         key: &mut ExprDescriptor<'gc, 'a>,
     ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
         let dest = self
-            .functions
-            .top
+            .current_function()
             .register_allocator
             .allocate()
             .ok_or(CompilerLimit::Registers)?;
@@ -840,7 +840,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        self.functions.top.opcodes.push(op);
+        self.current_function().opcodes.push(op);
         Ok(ExprDescriptor::Register {
             register: dest,
             is_temporary: true,
@@ -895,23 +895,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        self.functions.top.opcodes.push(op);
+        self.current_function().opcodes.push(op);
         Ok(())
-    }
-
-    // If the expression is a constant value *and* fits into an 8-bit constant index, return that
-    // constant index, otherwise modify the expression so that it is contained in a register and
-    // return that register.
-    fn expr_any_register_or_constant(
-        &mut self,
-        expr: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterOrConstant, Error> {
-        if let &mut ExprDescriptor::Value(cons) = expr {
-            if let Some(c8) = cast(self.get_constant(cons)?.0) {
-                return Ok(RegisterOrConstant::Constant(ConstantIndex8(c8)));
-            }
-        }
-        Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
     }
 
     // Modify an expression so that it contains its result in any register, and return that
@@ -939,6 +924,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
+    // If the expression is a constant value *and* fits into an 8-bit constant index, return that
+    // constant index, otherwise modify the expression so that it is contained in a register and
+    // return that register.
+    fn expr_any_register_or_constant(
+        &mut self,
+        expr: &mut ExprDescriptor<'gc, 'a>,
+    ) -> Result<RegisterOrConstant, Error> {
+        if let &mut ExprDescriptor::Value(cons) = expr {
+            if let Some(c8) = cast(self.get_constant(cons)?.0) {
+                return Ok(RegisterOrConstant::Constant(ConstantIndex8(c8)));
+            }
+        }
+        Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
+    }
+
     // Consume an expression, placing it in the given destination.  If the desitnation is not None,
     // then the resulting register is returned.  The returned register (if any) will always be
     // marked as allocated, so it must be placed into another expression or freed.
@@ -954,15 +954,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(match dest {
                 ExprDestination::Register(dest) => Some(dest),
                 ExprDestination::AllocateNew => Some(
-                    comp.functions
-                        .top
+                    comp.current_function()
                         .register_allocator
                         .allocate()
                         .ok_or(CompilerLimit::Registers)?,
                 ),
                 ExprDestination::PushNew => Some(
-                    comp.functions
-                        .top
+                    comp.current_function()
                         .register_allocator
                         .push(1)
                         .ok_or(CompilerLimit::Registers)?,
@@ -980,12 +978,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     Some(source)
                 } else {
                     if is_temporary {
-                        self.functions.top.register_allocator.free(source);
+                        self.current_function().register_allocator.free(source);
                     }
                     if let Some(dest) = new_destination(self, dest)? {
                         if dest != source {
-                            self.functions
-                                .top
+                            self.current_function()
                                 .opcodes
                                 .push(OpCode::Move { dest, source });
                         }
@@ -997,8 +994,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             ExprDescriptor::UpValue(source) => {
                 if let Some(dest) = new_destination(self, dest)? {
-                    self.functions
-                        .top
+                    self.current_function()
                         .opcodes
                         .push(OpCode::GetUpValue { source, dest });
                     Some(dest)
@@ -1013,7 +1009,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             self.load_nil(dest)?;
                         }
                         Value::Boolean(value) => {
-                            self.functions.top.opcodes.push(OpCode::LoadBool {
+                            self.current_function().opcodes.push(OpCode::LoadBool {
                                 dest,
                                 value,
                                 skip_next: false,
@@ -1021,8 +1017,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         }
                         val => {
                             let constant = self.get_constant(val)?;
-                            self.functions
-                                .top
+                            self.current_function()
                                 .opcodes
                                 .push(OpCode::LoadConstant { dest, constant });
                         }
@@ -1037,16 +1032,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 match dest {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
-                        self.functions
-                            .top
+                        self.current_function()
                             .opcodes
                             .push(OpCode::Move { dest, source });
                         Some(dest)
                     }
                     ExprDestination::AllocateNew | ExprDestination::PushNew => {
                         assert_eq!(
-                            self.functions
-                                .top
+                            self.current_function()
                                 .register_allocator
                                 .push(1)
                                 .ok_or(CompilerLimit::Registers)?,
@@ -1086,10 +1079,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         is_true: test_op_true,
                     }
                 };
-                self.functions.top.opcodes.push(test_op);
+                self.current_function().opcodes.push(test_op);
 
-                let jmp_inst = self.functions.top.opcodes.len();
-                self.functions.top.opcodes.push(OpCode::Jump { offset: 0 });
+                let jmp_inst = self.current_function().opcodes.len();
+                self.current_function()
+                    .opcodes
+                    .push(OpCode::Jump { offset: 0 });
 
                 let right = self.expression(right)?;
                 if let Some(dest) = dest {
@@ -1098,9 +1093,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_discharge(right, ExprDestination::None)?;
                 }
 
-                let jmp_offset = cast(self.functions.top.opcodes.len() - jmp_inst - 1)
+                let jmp_offset = cast(self.current_function().opcodes.len() - jmp_inst - 1)
                     .ok_or(CompilerLimit::OpCodes)?;
-                match &mut self.functions.top.opcodes[jmp_inst] {
+                match &mut self.current_function().opcodes[jmp_inst] {
                     OpCode::Jump { offset } => {
                         *offset = jmp_offset;
                     }
@@ -1116,7 +1111,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDestination::AllocateNew => assert!(result.is_some()),
             ExprDestination::PushNew => {
                 let r = result.unwrap().0;
-                assert!(r == 0 || self.functions.top.register_allocator.registers[r as usize - 1]);
+                assert!(
+                    r == 0 || self.current_function().register_allocator.registers[r as usize - 1]
+                );
             }
             ExprDestination::None => assert!(result.is_none()),
         }
@@ -1145,7 +1142,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         if let Some(ExprDescriptor::FunctionCall { func, args }) = last_arg {
             self.expr_function_call(*func, args, VarCount::make_variable())?;
-            self.functions.top.opcodes.push(OpCode::Call {
+            self.current_function().opcodes.push(OpCode::Call {
                 func: top_reg,
                 args: VarCount::make_variable(),
                 returns,
@@ -1154,14 +1151,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             if let Some(last_arg) = last_arg {
                 self.expr_discharge(last_arg, ExprDestination::PushNew)?;
             }
-            self.functions.top.opcodes.push(OpCode::Call {
+            self.current_function().opcodes.push(OpCode::Call {
                 func: top_reg,
                 args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
                 returns,
             });
         }
-        self.functions
-            .top
+        self.current_function()
             .register_allocator
             .pop_to(top_reg.0 as u16);
 
@@ -1179,33 +1175,11 @@ struct CompilerFunction<'gc, 'a> {
 
     register_allocator: RegisterAllocator,
 
+    has_varargs: bool,
     fixed_params: u8,
     locals: Vec<(&'a [u8], RegisterIndex)>,
 
     opcodes: Vec<OpCode>,
-}
-
-impl<'gc, 'a> CompilerFunction<'gc, 'a> {
-    fn to_proto(self, mc: MutationContext<'gc, 'a>) -> FunctionProto<'gc> {
-        assert_eq!(
-            self.register_allocator.stack_top as usize,
-            self.locals.len(),
-            "register leak detected",
-        );
-        FunctionProto {
-            fixed_params: self.fixed_params,
-            has_varargs: false,
-            stack_size: self.register_allocator.stack_size,
-            constants: self.constants,
-            opcodes: self.opcodes,
-            upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
-            prototypes: self
-                .prototypes
-                .into_iter()
-                .map(|f| Gc::allocate(mc, f))
-                .collect(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1309,6 +1283,7 @@ impl RegisterAllocator {
         self.first_free = self.first_free.min(register.0 as u16);
         if register.0 as u16 + 1 == self.stack_top {
             self.stack_top -= 1;
+            self.shrink_top();
         }
     }
 
@@ -1342,60 +1317,16 @@ impl RegisterAllocator {
             }
             self.stack_top = new_top;
             self.first_free = self.first_free.min(self.stack_top);
-        }
-    }
-}
-
-// A stack which is guaranteed always to have a top value
-struct TopStack<T> {
-    top: T,
-    lower: Vec<T>,
-}
-
-impl<T> TopStack<T> {
-    fn new(top: T) -> TopStack<T> {
-        TopStack {
-            top,
-            lower: Vec::new(),
+            self.shrink_top();
         }
     }
 
-    fn push(&mut self, t: T) {
-        self.lower.push(mem::replace(&mut self.top, t));
-    }
-
-    fn pop(&mut self) -> T {
-        mem::replace(
-            &mut self.top,
-            self.lower
-                .pop()
-                .expect("TopStack must always have one entry"),
-        )
-    }
-
-    fn len(&self) -> usize {
-        self.lower.len() + 1
-    }
-
-    fn get(&self, i: usize) -> &T {
-        let lower_len = self.lower.len();
-        if i < lower_len {
-            &self.lower[i]
-        } else if i == lower_len {
-            &self.top
-        } else {
-            panic!("TopStack index {} out of range", i);
-        }
-    }
-
-    fn get_mut(&mut self, i: usize) -> &mut T {
-        let lower_len = self.lower.len();
-        if i < lower_len {
-            &mut self.lower[i]
-        } else if i == lower_len {
-            &mut self.top
-        } else {
-            panic!("TopStack index {} out of range", i);
+    fn shrink_top(&mut self) {
+        for i in (self.first_free..self.stack_top).rev() {
+            if self.registers[i as usize] {
+                break;
+            }
+            self.stack_top = i;
         }
     }
 }

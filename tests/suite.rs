@@ -1,6 +1,3 @@
-extern crate failure;
-extern crate luster;
-
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 use std::path::PathBuf;
@@ -56,7 +53,7 @@ fn test_dir(dir: &str, run_code: bool) {
                                             v => {
                                                 let _ = writeln!(
                                                     stdout(),
-                                                    "unexpected return values: {:?}",
+                                                    "error: unexpected return values: {:?}",
                                                     v
                                                 );
                                                 Ok(true)

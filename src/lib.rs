@@ -11,6 +11,3 @@ pub mod string;
 pub mod table;
 pub mod thread;
 pub mod value;
-
-#[cfg(test)]
-mod tests;
