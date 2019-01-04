@@ -118,33 +118,64 @@ pub fn comparison_binop_opcode(
     comparison_binop: ComparisonBinOp,
     left: RegisterOrConstant,
     right: RegisterOrConstant,
+    skip_if: bool,
 ) -> OpCode {
     match comparison_binop {
         ComparisonBinOp::Equal => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
                 OpCode::EqRR {
-                    skip_if: false,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
                 OpCode::EqRC {
-                    skip_if: false,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
                 OpCode::EqCR {
-                    skip_if: false,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
                 OpCode::EqCC {
-                    skip_if: false,
+                    skip_if,
+                    left,
+                    right,
+                }
+            }
+        },
+        ComparisonBinOp::NotEqual => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::EqRR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::EqRC {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::EqCR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::EqCC {
+                    skip_if: !skip_if,
                     left,
                     right,
                 }

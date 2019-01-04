@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::{iter, mem};
+use std::mem;
 
 use failure::Fail;
 use num_traits::cast;
@@ -14,7 +14,7 @@ use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FieldSuffix, FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression,
     IfStatement, LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression, Statement,
-    SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
+    SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator, WhileStatement,
 };
 use crate::string::String;
 use crate::value::Value;
@@ -90,7 +90,7 @@ struct CompilerFunction<'gc, 'a> {
     block_level: usize,
     unique_jump_id: u64,
     jump_targets: Vec<JumpTarget<'a>>,
-    unresolved_jumps: Vec<JumpSource<'a>>,
+    unresolved_jumps: Vec<Jump<'a>>,
 
     opcodes: Vec<OpCode>,
 }
@@ -139,13 +139,14 @@ enum ExprDestination {
     None,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum JumpLabel<'a> {
     Unique(u64),
     Named(&'a [u8]),
+    Break,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct JumpTarget<'a> {
     label: JumpLabel<'a>,
     instruction: usize,
@@ -153,8 +154,8 @@ struct JumpTarget<'a> {
     block_level: usize,
 }
 
-#[derive(Copy, Clone)]
-struct JumpSource<'a> {
+#[derive(Debug, Copy, Clone)]
+struct Jump<'a> {
     target: JumpLabel<'a>,
     instruction: usize,
     local_count: usize,
@@ -224,9 +225,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let upper_jump_target = current_function.jump_targets.len();
 
         // Labels blocks are treaded specially by Lua, if a label statement in a block is not
-        // followed by any other non-label statements, then the label should be treated as though it
-        // is outside of the block.  Thus, we must delay processing labels until we know whether we
-        // are followed by a non-label statement.
+        // followed by any other non-label statements, then the label should be handled after
+        // removing all the block local variables from scope.  Thus, we must delay processing labels
+        // until we know whether we are followed by a non-label statement.
         let mut labels = Vec::new();
 
         for statement in &block.statements {
@@ -239,7 +240,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 match statement {
                     Statement::If(if_statement) => self.if_statement(if_statement)?,
-                    Statement::While(_) => unimplemented!("while statement unsupported"),
+                    Statement::While(while_statement) => self.while_statement(while_statement)?,
                     Statement::Do(block) => self.block(block)?,
                     Statement::For(_) => unimplemented!("for statement unsupported"),
                     Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
@@ -253,9 +254,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.local_statement(local_statement)?
                     }
                     Statement::Label(_) => unreachable!(),
-                    Statement::Break => unimplemented!("break statement unsupported"),
+                    Statement::Break => self.jump(JumpLabel::Break)?,
                     Statement::Goto(goto_statement) => {
-                        self.jump_source(JumpLabel::Named(&goto_statement.name))?
+                        self.jump(JumpLabel::Named(&goto_statement.name))?
                     }
                     Statement::FunctionCall(function_call) => self.function_call(function_call)?,
                     Statement::Assignment(assignment) => self.assignment(assignment)?,
@@ -274,13 +275,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(upper_local..) {
             current_function.register_allocator.free(r);
         }
-        current_function.jump_targets.drain(upper_jump_target..);
 
+        // Labels at the end of a block are handled after freeing all of the block's local
+        // variables.
         for label in labels.drain(..) {
             self.jump_target(JumpLabel::Named(label))?;
         }
 
         let current_function = self.current_function();
+        current_function.jump_targets.drain(upper_jump_target..);
+
         // When locals go out of scope, we set the local count on all unresolved jumps to at most
         // the new local count, to catch any locals newly declared after leaving the block.
         for unresolved_jump in &mut current_function.unresolved_jumps {
@@ -294,66 +298,60 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
-        let end_label = self.new_jump_label();
-        let mut next_label = None;
+        let end_label = self.unique_jump_label();
+        let mut next_label = self.unique_jump_label();
 
-        for (if_expr, block) in iter::once(&if_statement.if_part).chain(&if_statement.else_if_parts)
-        {
-            if let Some(next_label) = next_label.take() {
-                self.jump_target(next_label)?;
-            }
+        let if_expr = self.expression(&if_statement.if_part.0)?;
+        self.expr_test(if_expr, true)?;
+        self.jump(next_label)?;
 
-            match self.expression(if_expr)? {
-                ExprDescriptor::Comparison {
-                    mut left,
-                    op,
-                    mut right,
-                } => {
-                    let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
-                    let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                    self.expr_discharge(*left, ExprDestination::None)?;
-                    self.expr_discharge(*right, ExprDestination::None)?;
-
-                    let comparison_opcode =
-                        comparison_binop_opcode(op, left_reg_cons, right_reg_cons);
-                    self.current_function().opcodes.push(comparison_opcode);
-                }
-
-                ExprDescriptor::Not(mut test_expr) => {
-                    let test_reg = self.expr_any_register(&mut test_expr)?;
-                    self.expr_discharge(*test_expr, ExprDestination::None)?;
-                    self.current_function().opcodes.push(OpCode::Test {
-                        value: test_reg,
-                        is_true: false,
-                    });
-                }
-
-                mut test_expr => {
-                    let test_reg = self.expr_any_register(&mut test_expr)?;
-                    self.expr_discharge(test_expr, ExprDestination::None)?;
-                    self.current_function().opcodes.push(OpCode::Test {
-                        value: test_reg,
-                        is_true: true,
-                    });
-                }
-            }
-
-            let next = self.new_jump_label();
-            self.jump_source(next)?;
-            next_label = Some(next);
-
-            self.block(block)?;
-            self.jump_source(end_label)?;
+        self.block(&if_statement.if_part.1)?;
+        if !if_statement.else_if_parts.is_empty() || if_statement.else_part.is_some() {
+            self.jump(end_label)?;
         }
 
-        if let Some(else_block) = &if_statement.else_part {
-            if let Some(next_label) = next_label.take() {
-                self.jump_target(next_label)?;
+        for (i, (if_expr, block)) in if_statement.else_if_parts.iter().enumerate() {
+            self.jump_target(next_label)?;
+            next_label = self.unique_jump_label();
+
+            let if_expr = self.expression(if_expr)?;
+            self.expr_test(if_expr, true)?;
+            self.jump(next_label)?;
+
+            self.block(block)?;
+            if i != if_statement.else_if_parts.len() - 1 || if_statement.else_part.is_some() {
+                self.jump(end_label)?;
             }
+        }
+
+        self.jump_target(next_label)?;
+        if let Some(else_block) = &if_statement.else_part {
             self.block(else_block)?;
         }
 
         self.jump_target(end_label)?;
+
+        Ok(())
+    }
+
+    fn while_statement(
+        &mut self,
+        while_statement: &'a WhileStatement,
+    ) -> Result<(), CompilerError> {
+        let start_label = self.unique_jump_label();
+        let end_label = self.unique_jump_label();
+
+        self.jump_target(start_label)?;
+        let condition = self.expression(&while_statement.condition)?;
+
+        self.expr_test(condition, true)?;
+        self.jump(end_label)?;
+
+        self.block(&while_statement.block)?;
+
+        self.jump(start_label)?;
+        self.jump_target(end_label)?;
+        self.resolve_jumps(JumpLabel::Break)?;
 
         Ok(())
     }
@@ -976,14 +974,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn new_jump_label(&mut self) -> JumpLabel<'a> {
+    fn unique_jump_label(&mut self) -> JumpLabel<'a> {
         let current_function = self.current_function();
         let jl = JumpLabel::Unique(current_function.unique_jump_id);
         current_function.unique_jump_id = current_function.unique_jump_id.checked_add(1).unwrap();
         jl
     }
 
-    fn jump_source(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
+    // Jump to the given label, which may not yet be a valid target
+    fn jump(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
 
@@ -1006,7 +1005,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         if !target_found {
             current_function.opcodes.push(OpCode::Jump { offset: 0 });
 
-            current_function.unresolved_jumps.push(JumpSource {
+            current_function.unresolved_jumps.push(Jump {
                 target: target,
                 instruction: jmp_inst,
                 local_count: current_function.locals.len(),
@@ -1017,6 +1016,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
+    // Mark this location as a jump target, allowing backwards and forwards jumps to it
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
@@ -1036,6 +1036,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             block_level: current_function.block_level,
         });
 
+        self.resolve_jumps(jump_label)
+    }
+
+    // Resolve all matching jumps to the current location *without* adding a jump target and
+    // allowing backwards jumps.  Does not check for duplicate jump labels.
+    fn resolve_jumps(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
+        let current_function = self.current_function();
+        let target_instruction = current_function.opcodes.len();
+
         let mut resolving_jumps = Vec::new();
         let current_block_level = current_function.block_level;
         current_function.unresolved_jumps.retain(|unresolved_jump| {
@@ -1049,14 +1058,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         });
 
-        for jump_source in resolving_jumps {
-            if jump_source.local_count < current_function.locals.len() {
+        for jump in resolving_jumps {
+            if jump.local_count < current_function.locals.len() {
                 return Err(CompilerError::JumpLocal);
             }
 
-            match &mut current_function.opcodes[jump_source.instruction] {
+            match &mut current_function.opcodes[jump.instruction] {
                 OpCode::Jump { offset } if *offset == 0 => {
-                    *offset = jump_offset(jump_source.instruction, target_instruction)
+                    *offset = jump_offset(jump.instruction, target_instruction)
                         .ok_or(CompilerError::JumpOverflow)?;
                 }
                 _ => panic!("jump instruction is not a placeholder jump instruction"),
@@ -1349,7 +1358,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.expr_discharge(*right, ExprDestination::None)?;
 
                 let dest = new_destination(self, dest)?;
-                let comparison_opcode = comparison_binop_opcode(op, left_reg_cons, right_reg_cons);
+                let comparison_opcode =
+                    comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
 
                 let opcodes = &mut self.current_function().opcodes;
                 if let Some(dest) = dest {
@@ -1404,8 +1414,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 };
                 self.current_function().opcodes.push(test_op);
 
-                let skip = self.new_jump_label();
-                self.jump_source(skip)?;
+                let skip = self.unique_jump_label();
+                self.jump(skip)?;
 
                 let right = self.expression(right)?;
                 if let Some(dest) = dest {
@@ -1477,6 +1487,70 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .pop_to(top_reg.0 as u16);
 
         Ok(top_reg)
+    }
+
+    // Consumes the given expression and tests it, skipping the following instruction if the boolean
+    // result is equal to `skip_if`
+    fn expr_test(
+        &mut self,
+        expr: ExprDescriptor<'gc, 'a>,
+        skip_if: bool,
+    ) -> Result<(), CompilerError> {
+        fn gen_comparison<'gc, 'a>(
+            comp: &mut Compiler<'gc, 'a>,
+            mut left: ExprDescriptor<'gc, 'a>,
+            op: ComparisonBinOp,
+            mut right: ExprDescriptor<'gc, 'a>,
+            skip_if: bool,
+        ) -> Result<(), CompilerError> {
+            let left_reg_cons = comp.expr_any_register_or_constant(&mut left)?;
+            let right_reg_cons = comp.expr_any_register_or_constant(&mut right)?;
+            comp.expr_discharge(left, ExprDestination::None)?;
+            comp.expr_discharge(right, ExprDestination::None)?;
+
+            let comparison_opcode =
+                comparison_binop_opcode(op, left_reg_cons, right_reg_cons, skip_if);
+            comp.current_function().opcodes.push(comparison_opcode);
+
+            Ok(())
+        }
+
+        fn gen_test<'gc, 'a>(
+            comp: &mut Compiler<'gc, 'a>,
+            mut expr: ExprDescriptor<'gc, 'a>,
+            is_true: bool,
+        ) -> Result<(), CompilerError> {
+            let test_reg = comp.expr_any_register(&mut expr)?;
+            comp.expr_discharge(expr, ExprDestination::None)?;
+            comp.current_function().opcodes.push(OpCode::Test {
+                value: test_reg,
+                is_true,
+            });
+
+            Ok(())
+        }
+
+        match expr {
+            ExprDescriptor::Value(value) => {
+                if value.as_bool() == skip_if {
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::Jump { offset: 1 });
+                }
+            }
+            ExprDescriptor::Comparison { left, op, right } => {
+                gen_comparison(self, *left, op, *right, skip_if)?
+            }
+            ExprDescriptor::Not(expr) => match *expr {
+                ExprDescriptor::Comparison { left, op, right } => {
+                    gen_comparison(self, *left, op, *right, !skip_if)?
+                }
+                expr => gen_test(self, expr, !skip_if)?,
+            },
+            expr => gen_test(self, expr, skip_if)?,
+        }
+
+        Ok(())
     }
 }
 
