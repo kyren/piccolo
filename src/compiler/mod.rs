@@ -49,10 +49,8 @@ pub enum CompilerError {
     OpCodes,
     #[fail(display = "label defined multiple times")]
     DuplicateLabel,
-    #[fail(display = "no jump target found")]
-    JumpInvalid,
-    #[fail(display = "jump into inner block")]
-    JumpBlock,
+    #[fail(display = "goto target label not found")]
+    GotoInvalid,
     #[fail(display = "jump into new scope of new local variable")]
     JumpLocal,
     #[fail(display = "jump offset overflow")]
@@ -89,10 +87,10 @@ struct CompilerFunction<'gc, 'a> {
     fixed_params: u8,
     locals: Vec<(&'a [u8], RegisterIndex)>,
 
-    jump_id: u64,
     block_level: usize,
-    jump_targets: HashMap<JumpLabel<'a>, JumpPosition>,
-    unresolved_jumps: HashMap<JumpLabel<'a>, Vec<JumpPosition>>,
+    unique_jump_id: u64,
+    jump_targets: Vec<JumpTarget<'a>>,
+    unresolved_jumps: Vec<JumpSource<'a>>,
 
     opcodes: Vec<OpCode>,
 }
@@ -141,16 +139,26 @@ enum ExprDestination {
     None,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 enum JumpLabel<'a> {
-    Id(u64),
-    Name(&'a [u8]),
+    Unique(u64),
+    Named(&'a [u8]),
 }
 
-struct JumpPosition {
+#[derive(Copy, Clone)]
+struct JumpTarget<'a> {
+    label: JumpLabel<'a>,
     instruction: usize,
-    block_level: usize,
     local_count: usize,
+    block_level: usize,
+}
+
+#[derive(Copy, Clone)]
+struct JumpSource<'a> {
+    target: JumpLabel<'a>,
+    instruction: usize,
+    local_count: usize,
+    block_level: usize,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
@@ -190,9 +198,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         );
 
         if !new_function.unresolved_jumps.is_empty() {
-            return Err(CompilerError::JumpInvalid);
+            return Err(CompilerError::GotoInvalid);
         }
-        assert_eq!(new_function.block_level, 0);
 
         Ok(FunctionProto {
             fixed_params: new_function.fixed_params,
@@ -211,8 +218,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
         let current_function = self.current_function();
-        let first_local = current_function.locals.len();
         current_function.block_level = current_function.block_level.checked_add(1).unwrap();
+
+        let upper_local = current_function.locals.len();
+        let upper_jump_target = current_function.jump_targets.len();
 
         // Labels blocks are treaded specially by Lua, if a label statement in a block is not
         // followed by any other non-label statements, then the label should be treated as though it
@@ -225,15 +234,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 labels.push(&label_statement.name);
             } else {
                 for label in labels.drain(..) {
-                    self.jump_target(JumpLabel::Name(label))?;
+                    self.jump_target(JumpLabel::Named(label))?;
                 }
 
                 match statement {
                     Statement::If(if_statement) => self.if_statement(if_statement)?,
-                    Statement::While(_) => panic!("while statement unsupported"),
+                    Statement::While(_) => unimplemented!("while statement unsupported"),
                     Statement::Do(block) => self.block(block)?,
-                    Statement::For(_) => panic!("for statement unsupported"),
-                    Statement::Repeat(_) => panic!("repeat statement unsupported"),
+                    Statement::For(_) => unimplemented!("for statement unsupported"),
+                    Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
                     Statement::Function(function_statement) => {
                         self.function_statement(function_statement)?
                     }
@@ -244,9 +253,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.local_statement(local_statement)?
                     }
                     Statement::Label(_) => unreachable!(),
-                    Statement::Break => panic!("break statement unsupported"),
+                    Statement::Break => unimplemented!("break statement unsupported"),
                     Statement::Goto(goto_statement) => {
-                        self.jump_source(JumpLabel::Name(&goto_statement.name))?
+                        self.jump_source(JumpLabel::Named(&goto_statement.name))?
                     }
                     Statement::FunctionCall(function_call) => self.function_call(function_call)?,
                     Statement::Assignment(assignment) => self.assignment(assignment)?,
@@ -256,35 +265,30 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         if let Some(return_statement) = &block.return_statement {
             for label in labels.drain(..) {
-                self.jump_target(JumpLabel::Name(label))?;
+                self.jump_target(JumpLabel::Named(label))?;
             }
             self.return_statement(return_statement)?;
         }
 
         let current_function = self.current_function();
-        for (_, r) in current_function.locals.drain(first_local..) {
+        for (_, r) in current_function.locals.drain(upper_local..) {
             current_function.register_allocator.free(r);
         }
-        current_function.block_level = current_function.block_level.checked_sub(1).unwrap();
-
-        // We don't want jumps to go into inner blocks *either* from outer blocks or from adjacent
-        // blocks of the same level (and similarly with local variables), so when we leave a block
-        // we set all unresolved jumps as though they are at most coming from the outer block we are
-        // leaving to.
-        for (_, unresolved_jumps) in &mut current_function.unresolved_jumps {
-            for unresolved_jump in unresolved_jumps {
-                unresolved_jump.block_level = unresolved_jump
-                    .block_level
-                    .min(current_function.block_level);
-                unresolved_jump.local_count = unresolved_jump
-                    .local_count
-                    .min(current_function.locals.len());
-            }
-        }
+        current_function.jump_targets.drain(upper_jump_target..);
 
         for label in labels.drain(..) {
-            self.jump_target(JumpLabel::Name(label))?;
+            self.jump_target(JumpLabel::Named(label))?;
         }
+
+        let current_function = self.current_function();
+        // When locals go out of scope, we set the local count on all unresolved jumps to at most
+        // the new local count, to catch any locals newly declared after leaving the block.
+        for unresolved_jump in &mut current_function.unresolved_jumps {
+            unresolved_jump.local_count = unresolved_jump
+                .local_count
+                .min(current_function.locals.len());
+        }
+        current_function.block_level -= 1;
 
         Ok(())
     }
@@ -359,10 +363,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         function_statement: &'a FunctionStatement,
     ) -> Result<(), CompilerError> {
         if !function_statement.name.fields.is_empty() {
-            panic!("no function name fields support");
+            unimplemented!("no function name fields support");
         }
         if function_statement.name.method.is_some() {
-            panic!("no method support");
+            unimplemented!("no method support");
         }
 
         let proto = self.new_prototype(&function_statement.definition)?;
@@ -526,7 +530,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .collect::<Result<_, CompilerError>>()?;
                 self.expr_function_call(func_expr, arg_exprs, VarCount::make_zero())?;
             }
-            CallSuffix::Method(_, _) => panic!("method call unsupported"),
+            CallSuffix::Method(_, _) => unimplemented!("method call unsupported"),
         }
         Ok(())
     }
@@ -588,10 +592,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         local_function: &'a FunctionStatement,
     ) -> Result<(), CompilerError> {
         if !local_function.name.fields.is_empty() {
-            panic!("no function name fields support");
+            unimplemented!("no function name fields support");
         }
         if local_function.name.method.is_some() {
-            panic!("no method support");
+            unimplemented!("no method support");
         }
 
         let proto = self.new_prototype(&local_function.definition)?;
@@ -649,7 +653,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
             SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
             SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
-            SimpleExpression::VarArgs => panic!("varargs expression unsupported"),
+            SimpleExpression::VarArgs => unimplemented!("varargs expression unsupported"),
             SimpleExpression::TableConstructor(table_constructor) => {
                 self.table_constructor(table_constructor)?
             }
@@ -663,7 +667,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         table_constructor: &'a TableConstructor,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         if !table_constructor.fields.is_empty() {
-            panic!("only empty table constructors supported");
+            unimplemented!("only empty table constructors supported");
         }
 
         let dest = self
@@ -731,7 +735,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             args,
                         };
                     }
-                    CallSuffix::Method(_, _) => panic!("methods not supported yet"),
+                    CallSuffix::Method(_, _) => unimplemented!("methods not supported yet"),
                 },
             }
         }
@@ -871,7 +875,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 right,
             }),
 
-            BinOpCategory::Concat => panic!("no support for concat operator"),
+            BinOpCategory::Concat => unimplemented!("no support for concat operator"),
         }
     }
 
@@ -974,8 +978,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn new_jump_label(&mut self) -> JumpLabel<'a> {
         let current_function = self.current_function();
-        let jl = JumpLabel::Id(current_function.jump_id);
-        current_function.jump_id = current_function.jump_id.checked_add(1).unwrap();
+        let jl = JumpLabel::Unique(current_function.unique_jump_id);
+        current_function.unique_jump_id = current_function.unique_jump_id.checked_add(1).unwrap();
         jl
     }
 
@@ -983,30 +987,31 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
 
-        if let Some(jump_target) = current_function.jump_targets.remove(&target) {
-            if jump_target.block_level > current_function.block_level {
-                return Err(CompilerError::JumpBlock);
+        let mut target_found = false;
+        for jump_target in current_function.jump_targets.iter().rev() {
+            if jump_target.label == target {
+                assert!(
+                    jump_target.local_count <= current_function.locals.len(),
+                    "impossible larger local count with a backwards jump"
+                );
+                current_function.opcodes.push(OpCode::Jump {
+                    offset: jump_offset(jmp_inst, jump_target.instruction)
+                        .ok_or(CompilerError::JumpOverflow)?,
+                });
+                target_found = true;
+                break;
             }
-            assert!(
-                jump_target.local_count <= current_function.locals.len(),
-                "impossible larger local count with a backwards jump"
-            );
-            current_function.opcodes.push(OpCode::Jump {
-                offset: jump_offset(jmp_inst, jump_target.instruction)
-                    .ok_or(CompilerError::JumpOverflow)?,
-            });
-        } else {
+        }
+
+        if !target_found {
             current_function.opcodes.push(OpCode::Jump { offset: 0 });
 
-            current_function
-                .unresolved_jumps
-                .entry(target)
-                .or_insert_with(Vec::new)
-                .push(JumpPosition {
-                    instruction: jmp_inst,
-                    block_level: current_function.block_level,
-                    local_count: current_function.locals.len(),
-                });
+            current_function.unresolved_jumps.push(JumpSource {
+                target: target,
+                instruction: jmp_inst,
+                local_count: current_function.locals.len(),
+                block_level: current_function.block_level,
+            });
         }
 
         Ok(())
@@ -1015,36 +1020,46 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
-        if current_function
-            .jump_targets
-            .insert(
-                jump_label,
-                JumpPosition {
-                    instruction: target_instruction,
-                    block_level: current_function.block_level,
-                    local_count: current_function.locals.len(),
-                },
-            )
-            .is_some()
-        {
-            return Err(CompilerError::DuplicateLabel);
+
+        for jump_target in current_function.jump_targets.iter().rev() {
+            if jump_target.block_level < current_function.block_level {
+                break;
+            } else if jump_target.label == jump_label {
+                return Err(CompilerError::DuplicateLabel);
+            }
         }
 
-        if let Some(unresolved_jumps) = current_function.unresolved_jumps.remove(&jump_label) {
-            for unresolved_jump in unresolved_jumps {
-                if unresolved_jump.block_level < current_function.block_level {
-                    return Err(CompilerError::JumpBlock);
+        current_function.jump_targets.push(JumpTarget {
+            label: jump_label,
+            instruction: target_instruction,
+            local_count: current_function.locals.len(),
+            block_level: current_function.block_level,
+        });
+
+        let mut resolving_jumps = Vec::new();
+        let current_block_level = current_function.block_level;
+        current_function.unresolved_jumps.retain(|unresolved_jump| {
+            if unresolved_jump.block_level >= current_block_level
+                && unresolved_jump.target == jump_label
+            {
+                resolving_jumps.push(*unresolved_jump);
+                false
+            } else {
+                true
+            }
+        });
+
+        for jump_source in resolving_jumps {
+            if jump_source.local_count < current_function.locals.len() {
+                return Err(CompilerError::JumpLocal);
+            }
+
+            match &mut current_function.opcodes[jump_source.instruction] {
+                OpCode::Jump { offset } if *offset == 0 => {
+                    *offset = jump_offset(jump_source.instruction, target_instruction)
+                        .ok_or(CompilerError::JumpOverflow)?;
                 }
-                if unresolved_jump.local_count < current_function.locals.len() {
-                    return Err(CompilerError::JumpLocal);
-                }
-                match &mut current_function.opcodes[unresolved_jump.instruction] {
-                    OpCode::Jump { offset } if *offset == 0 => {
-                        *offset = jump_offset(unresolved_jump.instruction, target_instruction)
-                            .ok_or(CompilerError::JumpOverflow)?;
-                    }
-                    _ => panic!("jump instruction is not a placeholder jump instruction"),
-                }
+                _ => panic!("jump instruction is not a placeholder jump instruction"),
             }
         }
 
