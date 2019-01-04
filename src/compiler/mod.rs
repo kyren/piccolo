@@ -31,17 +31,6 @@ use self::operators::{
 };
 use self::register_allocator::RegisterAllocator;
 
-pub fn compile_chunk<'gc>(
-    mc: MutationContext<'gc, '_>,
-    chunk: &Chunk,
-) -> Result<FunctionProto<'gc>, CompilerError> {
-    let mut compiler = Compiler {
-        mutation_context: mc,
-        functions: Vec::new(),
-    };
-    compiler.compile_function(&[], true, &chunk.block)
-}
-
 #[derive(Fail, Debug)]
 pub enum CompilerError {
     #[fail(display = "insufficient available registers")]
@@ -58,11 +47,110 @@ pub enum CompilerError {
     Constants,
     #[fail(display = "too many opcodes")]
     OpCodes,
+    #[fail(display = "label defined multiple times")]
+    DuplicateLabel,
+    #[fail(display = "no jump target found")]
+    JumpInvalid,
+    #[fail(display = "jump into inner block")]
+    JumpBlock,
+    #[fail(display = "jump into new scope of new local variable")]
+    JumpLocal,
+    #[fail(display = "jump offset overflow")]
+    JumpOverflow,
+}
+
+pub fn compile_chunk<'gc>(
+    mc: MutationContext<'gc, '_>,
+    chunk: &Chunk,
+) -> Result<FunctionProto<'gc>, CompilerError> {
+    let mut compiler = Compiler {
+        mutation_context: mc,
+        functions: Vec::new(),
+    };
+    compiler.compile_function(&[], true, &chunk.block)
 }
 
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
     functions: Vec<CompilerFunction<'gc, 'a>>,
+}
+
+#[derive(Default)]
+struct CompilerFunction<'gc, 'a> {
+    constants: Vec<Value<'gc>>,
+    constant_table: HashMap<ConstantValue<'gc>, ConstantIndex16>,
+
+    upvalues: Vec<(&'a [u8], UpValueDescriptor)>,
+    prototypes: Vec<FunctionProto<'gc>>,
+
+    register_allocator: RegisterAllocator,
+
+    has_varargs: bool,
+    fixed_params: u8,
+    locals: Vec<(&'a [u8], RegisterIndex)>,
+
+    jump_id: u64,
+    block_level: usize,
+    jump_targets: HashMap<JumpLabel<'a>, JumpPosition>,
+    unresolved_jumps: HashMap<JumpLabel<'a>, Vec<JumpPosition>>,
+
+    opcodes: Vec<OpCode>,
+}
+
+#[derive(Debug)]
+enum VariableDescriptor<'a> {
+    Local(RegisterIndex),
+    UpValue(UpValueIndex),
+    Global(&'a [u8]),
+}
+
+#[derive(Debug)]
+enum ExprDescriptor<'gc, 'a> {
+    Register {
+        register: RegisterIndex,
+        is_temporary: bool,
+    },
+    UpValue(UpValueIndex),
+    Value(Value<'gc>),
+    Not(Box<ExprDescriptor<'gc, 'a>>),
+    FunctionCall {
+        func: Box<ExprDescriptor<'gc, 'a>>,
+        args: Vec<ExprDescriptor<'gc, 'a>>,
+    },
+    Comparison {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: ComparisonBinOp,
+        right: Box<ExprDescriptor<'gc, 'a>>,
+    },
+    ShortCircuitBinOp {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: ShortCircuitBinOp,
+        right: &'a Expression,
+    },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ExprDestination {
+    // Place the expression in the given previously allocated register
+    Register(RegisterIndex),
+    // Place the expression in a newly allocated register anywhere
+    AllocateNew,
+    // Place the expression in a newly allocated register at the top of the stack
+    PushNew,
+    // Evaluate the expression but do not place it anywhere
+    None,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+enum JumpLabel<'a> {
+    Id(u64),
+    Name(&'a [u8]),
+}
+
+struct JumpPosition {
+    instruction: usize,
+    block_level: usize,
+    local_count: usize,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
@@ -101,6 +189,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             "register leak detected"
         );
 
+        if !new_function.unresolved_jumps.is_empty() {
+            return Err(CompilerError::JumpInvalid);
+        }
+        assert_eq!(new_function.block_level, 0);
+
         Ok(FunctionProto {
             fixed_params: new_function.fixed_params,
             has_varargs: false,
@@ -117,13 +210,54 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
-        let first_local = self.current_function().locals.len();
+        let current_function = self.current_function();
+        let first_local = current_function.locals.len();
+        current_function.block_level = current_function.block_level.checked_add(1).unwrap();
+
+        // Labels blocks are treaded specially by Lua, if a label statement in a block is not
+        // followed by any other non-label statements, then the label should be treated as though it
+        // is outside of the block.  Thus, we must delay processing labels until we know whether we
+        // are followed by a non-label statement.
+        let mut labels = Vec::new();
 
         for statement in &block.statements {
-            self.statement(statement)?;
+            if let Statement::Label(label_statement) = statement {
+                labels.push(&label_statement.name);
+            } else {
+                for label in labels.drain(..) {
+                    self.jump_target(JumpLabel::Name(label))?;
+                }
+
+                match statement {
+                    Statement::If(if_statement) => self.if_statement(if_statement)?,
+                    Statement::While(_) => panic!("while statement unsupported"),
+                    Statement::Do(block) => self.block(block)?,
+                    Statement::For(_) => panic!("for statement unsupported"),
+                    Statement::Repeat(_) => panic!("repeat statement unsupported"),
+                    Statement::Function(function_statement) => {
+                        self.function_statement(function_statement)?
+                    }
+                    Statement::LocalFunction(local_function) => {
+                        self.local_function(local_function)?
+                    }
+                    Statement::LocalStatement(local_statement) => {
+                        self.local_statement(local_statement)?
+                    }
+                    Statement::Label(_) => unreachable!(),
+                    Statement::Break => panic!("break statement unsupported"),
+                    Statement::Goto(goto_statement) => {
+                        self.jump_source(JumpLabel::Name(&goto_statement.name))?
+                    }
+                    Statement::FunctionCall(function_call) => self.function_call(function_call)?,
+                    Statement::Assignment(assignment) => self.assignment(assignment)?,
+                }
+            }
         }
 
         if let Some(return_statement) = &block.return_statement {
+            for label in labels.drain(..) {
+                self.jump_target(JumpLabel::Name(label))?;
+            }
             self.return_statement(return_statement)?;
         }
 
@@ -131,36 +265,38 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(first_local..) {
             current_function.register_allocator.free(r);
         }
+        current_function.block_level = current_function.block_level.checked_sub(1).unwrap();
+
+        // We don't want jumps to go into inner blocks *either* from outer blocks or from adjacent
+        // blocks of the same level (and similarly with local variables), so when we leave a block
+        // we set all unresolved jumps as though they are at most coming from the outer block we are
+        // leaving to.
+        for (_, unresolved_jumps) in &mut current_function.unresolved_jumps {
+            for unresolved_jump in unresolved_jumps {
+                unresolved_jump.block_level = unresolved_jump
+                    .block_level
+                    .min(current_function.block_level);
+                unresolved_jump.local_count = unresolved_jump
+                    .local_count
+                    .min(current_function.locals.len());
+            }
+        }
+
+        for label in labels.drain(..) {
+            self.jump_target(JumpLabel::Name(label))?;
+        }
 
         Ok(())
     }
 
-    fn statement(&mut self, statement: &'a Statement) -> Result<(), CompilerError> {
-        match statement {
-            Statement::If(if_statement) => self.if_statement(if_statement),
-            Statement::While(_) => panic!("while statement unsupported"),
-            Statement::Do(block) => self.block(block),
-            Statement::For(_) => panic!("for statement unsupported"),
-            Statement::Repeat(_) => panic!("repeat statement unsupported"),
-            Statement::Function(function_statement) => self.function_statement(function_statement),
-            Statement::LocalFunction(local_function) => self.local_function(local_function),
-            Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
-            Statement::Label(_) => panic!("label statement unsupported"),
-            Statement::Break => panic!("break statement unsupported"),
-            Statement::Goto(_) => panic!("goto statement unsupported"),
-            Statement::FunctionCall(function_call) => self.function_call(function_call),
-            Statement::Assignment(assignment) => self.assignment(assignment),
-        }
-    }
-
     fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
-        let mut end_jumps = Vec::new();
-        let mut next_jump = None;
+        let end_label = self.new_jump_label();
+        let mut next_label = None;
 
         for (if_expr, block) in iter::once(&if_statement.if_part).chain(&if_statement.else_if_parts)
         {
-            if let Some(next_jump) = next_jump.take() {
-                self.jump_here(next_jump)?;
+            if let Some(next_label) = next_label.take() {
+                self.jump_target(next_label)?;
             }
 
             match self.expression(if_expr)? {
@@ -198,21 +334,22 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
-            next_jump = Some(self.jump_placeholder());
+            let next = self.new_jump_label();
+            self.jump_source(next)?;
+            next_label = Some(next);
+
             self.block(block)?;
-            end_jumps.push(self.jump_placeholder());
+            self.jump_source(end_label)?;
         }
 
         if let Some(else_block) = &if_statement.else_part {
-            if let Some(next_jump) = next_jump.take() {
-                self.jump_here(next_jump)?;
+            if let Some(next_label) = next_label.take() {
+                self.jump_target(next_label)?;
             }
             self.block(else_block)?;
         }
 
-        for end_jump in end_jumps.into_iter().chain(next_jump) {
-            self.jump_here(end_jump)?;
-        }
+        self.jump_target(end_label)?;
 
         Ok(())
     }
@@ -835,26 +972,83 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Places a placeholdeer jump instruction that must be updated later with jump_finish
-    fn jump_placeholder(&mut self) -> usize {
-        let jmp_inst = self.current_function().opcodes.len();
-        self.current_function()
-            .opcodes
-            .push(OpCode::Jump { offset: 0 });
-        jmp_inst
+    fn new_jump_label(&mut self) -> JumpLabel<'a> {
+        let current_function = self.current_function();
+        let jl = JumpLabel::Id(current_function.jump_id);
+        current_function.jump_id = current_function.jump_id.checked_add(1).unwrap();
+        jl
     }
 
-    // Commit a placeholder jump to jump to the next instruction
-    fn jump_here(&mut self, jmp_instruction: usize) -> Result<(), CompilerError> {
-        let jmp_offset = cast(self.current_function().opcodes.len() - jmp_instruction - 1)
-            .ok_or(CompilerError::OpCodes)?;
-        if let OpCode::Jump { offset } = &mut self.current_function().opcodes[jmp_instruction] {
-            if *offset == 0 {
-                *offset = jmp_offset;
-                return Ok(());
+    fn jump_source(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
+        let current_function = self.current_function();
+        let jmp_inst = current_function.opcodes.len();
+
+        if let Some(jump_target) = current_function.jump_targets.remove(&target) {
+            if jump_target.block_level > current_function.block_level {
+                return Err(CompilerError::JumpBlock);
+            }
+            assert!(
+                jump_target.local_count <= current_function.locals.len(),
+                "impossible larger local count with a backwards jump"
+            );
+            current_function.opcodes.push(OpCode::Jump {
+                offset: jump_offset(jmp_inst, jump_target.instruction)
+                    .ok_or(CompilerError::JumpOverflow)?,
+            });
+        } else {
+            current_function.opcodes.push(OpCode::Jump { offset: 0 });
+
+            current_function
+                .unresolved_jumps
+                .entry(target)
+                .or_insert_with(Vec::new)
+                .push(JumpPosition {
+                    instruction: jmp_inst,
+                    block_level: current_function.block_level,
+                    local_count: current_function.locals.len(),
+                });
+        }
+
+        Ok(())
+    }
+
+    fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
+        let current_function = self.current_function();
+        let target_instruction = current_function.opcodes.len();
+        if current_function
+            .jump_targets
+            .insert(
+                jump_label,
+                JumpPosition {
+                    instruction: target_instruction,
+                    block_level: current_function.block_level,
+                    local_count: current_function.locals.len(),
+                },
+            )
+            .is_some()
+        {
+            return Err(CompilerError::DuplicateLabel);
+        }
+
+        if let Some(unresolved_jumps) = current_function.unresolved_jumps.remove(&jump_label) {
+            for unresolved_jump in unresolved_jumps {
+                if unresolved_jump.block_level < current_function.block_level {
+                    return Err(CompilerError::JumpBlock);
+                }
+                if unresolved_jump.local_count < current_function.locals.len() {
+                    return Err(CompilerError::JumpLocal);
+                }
+                match &mut current_function.opcodes[unresolved_jump.instruction] {
+                    OpCode::Jump { offset } if *offset == 0 => {
+                        *offset = jump_offset(unresolved_jump.instruction, target_instruction)
+                            .ok_or(CompilerError::JumpOverflow)?;
+                    }
+                    _ => panic!("jump instruction is not a placeholder jump instruction"),
+                }
             }
         }
-        panic!("jump instruction is not a placeholder jump instruction");
+
+        Ok(())
     }
 
     fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, CompilerError> {
@@ -1195,7 +1389,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 };
                 self.current_function().opcodes.push(test_op);
 
-                let jmp_inst = self.jump_placeholder();
+                let skip = self.new_jump_label();
+                self.jump_source(skip)?;
 
                 let right = self.expression(right)?;
                 if let Some(dest) = dest {
@@ -1204,7 +1399,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_discharge(right, ExprDestination::None)?;
                 }
 
-                self.jump_here(jmp_inst)?;
+                self.jump_target(skip)?;
 
                 dest
             }
@@ -1270,63 +1465,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 }
 
-#[derive(Default)]
-struct CompilerFunction<'gc, 'a> {
-    constants: Vec<Value<'gc>>,
-    constant_table: HashMap<ConstantValue<'gc>, ConstantIndex16>,
-
-    upvalues: Vec<(&'a [u8], UpValueDescriptor)>,
-    prototypes: Vec<FunctionProto<'gc>>,
-
-    register_allocator: RegisterAllocator,
-
-    has_varargs: bool,
-    fixed_params: u8,
-    locals: Vec<(&'a [u8], RegisterIndex)>,
-
-    opcodes: Vec<OpCode>,
-}
-
-#[derive(Debug)]
-enum VariableDescriptor<'a> {
-    Local(RegisterIndex),
-    UpValue(UpValueIndex),
-    Global(&'a [u8]),
-}
-
-#[derive(Debug)]
-enum ExprDescriptor<'gc, 'a> {
-    Register {
-        register: RegisterIndex,
-        is_temporary: bool,
-    },
-    UpValue(UpValueIndex),
-    Value(Value<'gc>),
-    Not(Box<ExprDescriptor<'gc, 'a>>),
-    FunctionCall {
-        func: Box<ExprDescriptor<'gc, 'a>>,
-        args: Vec<ExprDescriptor<'gc, 'a>>,
-    },
-    Comparison {
-        left: Box<ExprDescriptor<'gc, 'a>>,
-        op: ComparisonBinOp,
-        right: Box<ExprDescriptor<'gc, 'a>>,
-    },
-    ShortCircuitBinOp {
-        left: Box<ExprDescriptor<'gc, 'a>>,
-        op: ShortCircuitBinOp,
-        right: &'a Expression,
-    },
-}
-
-#[derive(PartialEq, Eq, Clone, Copy)]
-enum ExprDestination {
-    // Place the expression in the given previously allocated register
-    Register(RegisterIndex),
-    // Place the expression in a newly allocated register anywhere
-    AllocateNew,
-    // Place the expression in a newly allocated register at the top of the stack
-    PushNew,
-    // Evaluate the expression but do not place it anywhere
-    None,
+fn jump_offset(source: usize, target: usize) -> Option<i16> {
+    if target > source {
+        cast(target - (source + 1))
+    } else {
+        cast((source + 1) - target).map(|i: i16| -i)
+    }
 }
