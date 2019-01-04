@@ -4,7 +4,6 @@ pub mod io;
 pub mod lexer;
 pub mod lua;
 pub mod opcode;
-pub mod operators;
 pub mod parser;
 pub mod sequence;
 pub mod string;

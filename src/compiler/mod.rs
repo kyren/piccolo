@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::{iter, mem};
 
-use failure::{bail, err_msg, Error, Fail};
+use failure::Fail;
 use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
@@ -10,10 +9,6 @@ use gc_arena::{Gc, MutationContext};
 use crate::function::{FunctionProto, UpValueDescriptor};
 use crate::opcode::{
     ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
-};
-use crate::operators::{
-    categorize_binop, BinOpCategory, ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp,
-    COMPARISON_BINOPS, SIMPLE_BINOPS, UNOPS,
 };
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
@@ -24,10 +19,22 @@ use crate::parser::{
 use crate::string::String;
 use crate::value::Value;
 
+mod constant;
+mod operators;
+mod register_allocator;
+
+use self::constant::ConstantValue;
+use self::operators::{
+    categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
+    simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
+    ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp,
+};
+use self::register_allocator::RegisterAllocator;
+
 pub fn compile_chunk<'gc>(
     mc: MutationContext<'gc, '_>,
     chunk: &Chunk,
-) -> Result<FunctionProto<'gc>, Error> {
+) -> Result<FunctionProto<'gc>, CompilerError> {
     let mut compiler = Compiler {
         mutation_context: mc,
         functions: Vec::new(),
@@ -36,7 +43,7 @@ pub fn compile_chunk<'gc>(
 }
 
 #[derive(Fail, Debug)]
-enum CompilerLimit {
+pub enum CompilerError {
     #[fail(display = "insufficient available registers")]
     Registers,
     #[fail(display = "too many upvalues")]
@@ -64,9 +71,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         parameters: &'a [Box<[u8]>],
         has_varargs: bool,
         body: &'a Block,
-    ) -> Result<FunctionProto<'gc>, Error> {
+    ) -> Result<FunctionProto<'gc>, CompilerError> {
         let mut new_function = CompilerFunction::default();
-        let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerLimit::FixedParameters)?;
+        let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerError::FixedParameters)?;
         new_function.register_allocator.push(fixed_params);
         new_function.has_varargs = has_varargs;
         new_function.fixed_params = fixed_params;
@@ -89,14 +96,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             new_function.register_allocator.free(r);
         }
         assert_eq!(
-            new_function.register_allocator.stack_top, 0,
+            new_function.register_allocator.stack_top(),
+            0,
             "register leak detected"
         );
 
         Ok(FunctionProto {
             fixed_params: new_function.fixed_params,
             has_varargs: false,
-            stack_size: new_function.register_allocator.stack_size,
+            stack_size: new_function.register_allocator.stack_size(),
             constants: new_function.constants,
             opcodes: new_function.opcodes,
             upvalues: new_function.upvalues.iter().map(|(_, d)| *d).collect(),
@@ -108,7 +116,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         })
     }
 
-    fn block(&mut self, block: &'a Block) -> Result<(), Error> {
+    fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
         let first_local = self.current_function().locals.len();
 
         for statement in &block.statements {
@@ -127,25 +135,25 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn statement(&mut self, statement: &'a Statement) -> Result<(), Error> {
+    fn statement(&mut self, statement: &'a Statement) -> Result<(), CompilerError> {
         match statement {
             Statement::If(if_statement) => self.if_statement(if_statement),
-            Statement::While(_) => bail!("while statement unsupported"),
+            Statement::While(_) => panic!("while statement unsupported"),
             Statement::Do(block) => self.block(block),
-            Statement::For(_) => bail!("for statement unsupported"),
-            Statement::Repeat(_) => bail!("repeat statement unsupported"),
+            Statement::For(_) => panic!("for statement unsupported"),
+            Statement::Repeat(_) => panic!("repeat statement unsupported"),
             Statement::Function(function_statement) => self.function_statement(function_statement),
             Statement::LocalFunction(local_function) => self.local_function(local_function),
             Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
-            Statement::Label(_) => bail!("label statement unsupported"),
-            Statement::Break => bail!("break statement unsupported"),
-            Statement::Goto(_) => bail!("goto statement unsupported"),
+            Statement::Label(_) => panic!("label statement unsupported"),
+            Statement::Break => panic!("break statement unsupported"),
+            Statement::Goto(_) => panic!("goto statement unsupported"),
             Statement::FunctionCall(function_call) => self.function_call(function_call),
             Statement::Assignment(assignment) => self.assignment(assignment),
         }
     }
 
-    fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), Error> {
+    fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
         let mut end_jumps = Vec::new();
         let mut next_jump = None;
 
@@ -161,18 +169,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     op,
                     mut right,
                 } => {
-                    let comparison_op = COMPARISON_BINOPS
-                        .get(&op)
-                        .ok_or_else(|| err_msg("unsupported binary operator"))?;
-
                     let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
                     let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
                     self.expr_discharge(*left, ExprDestination::None)?;
                     self.expr_discharge(*right, ExprDestination::None)?;
 
-                    self.current_function()
-                        .opcodes
-                        .push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                    let comparison_opcode =
+                        comparison_binop_opcode(op, left_reg_cons, right_reg_cons);
+                    self.current_function().opcodes.push(comparison_opcode);
                 }
 
                 ExprDescriptor::Not(mut test_expr) => {
@@ -216,12 +220,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn function_statement(
         &mut self,
         function_statement: &'a FunctionStatement,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CompilerError> {
         if !function_statement.name.fields.is_empty() {
-            bail!("no function name fields support");
+            panic!("no function name fields support");
         }
         if function_statement.name.method.is_some() {
-            bail!("no method support");
+            panic!("no method support");
         }
 
         let proto = self.new_prototype(&function_statement.definition)?;
@@ -236,7 +240,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
+            .ok_or(CompilerError::Registers)?;
         self.current_function()
             .opcodes
             .push(OpCode::Closure { proto, dest });
@@ -254,7 +258,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn return_statement(&mut self, return_statement: &'a ReturnStatement) -> Result<(), Error> {
+    fn return_statement(
+        &mut self,
+        return_statement: &'a ReturnStatement,
+    ) -> Result<(), CompilerError> {
         let ret_len = return_statement.returns.len();
 
         if ret_len == 0 {
@@ -263,8 +270,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 count: VarCount::make_zero(),
             });
         } else {
-            let ret_start = cast(self.current_function().register_allocator.stack_top)
-                .ok_or(CompilerLimit::Registers)?;
+            let ret_start = cast(self.current_function().register_allocator.stack_top())
+                .ok_or(CompilerError::Registers)?;
 
             for i in 0..ret_len - 1 {
                 let expr = self.expression(&return_statement.returns[i])?;
@@ -280,7 +287,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_discharge(expr, ExprDestination::PushNew)?;
                     cast(ret_len)
                         .and_then(VarCount::make_constant)
-                        .ok_or(CompilerLimit::Returns)?
+                        .ok_or(CompilerError::Returns)?
                 }
             };
 
@@ -298,7 +305,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn local_statement(&mut self, local_statement: &'a LocalStatement) -> Result<(), Error> {
+    fn local_statement(
+        &mut self,
+        local_statement: &'a LocalStatement,
+    ) -> Result<(), CompilerError> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
@@ -311,18 +321,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 match expr {
                     ExprDescriptor::FunctionCall { func, args } => {
                         let num_returns =
-                            cast(1 + name_len - val_len).ok_or(CompilerLimit::Registers)?;
+                            cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
                         self.expr_function_call(
                             *func,
                             args,
-                            VarCount::make_constant(num_returns).ok_or(CompilerLimit::Returns)?,
+                            VarCount::make_constant(num_returns).ok_or(CompilerError::Returns)?,
                         )?;
 
                         let reg = self
                             .current_function()
                             .register_allocator
                             .push(num_returns)
-                            .ok_or(CompilerLimit::Registers)?;
+                            .ok_or(CompilerError::Registers)?;
                         for j in 0..num_returns {
                             self.current_function().locals.push((
                                 &local_statement.names[i + j as usize],
@@ -356,7 +366,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .current_function()
                 .register_allocator
                 .allocate()
-                .ok_or(CompilerLimit::Registers)?;
+                .ok_or(CompilerError::Registers)?;
             self.load_nil(reg)?;
             self.current_function()
                 .locals
@@ -366,22 +376,25 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn function_call(&mut self, function_call: &'a FunctionCallStatement) -> Result<(), Error> {
+    fn function_call(
+        &mut self,
+        function_call: &'a FunctionCallStatement,
+    ) -> Result<(), CompilerError> {
         let func_expr = self.suffixed_expression(&function_call.head)?;
         match &function_call.call {
             CallSuffix::Function(args) => {
                 let arg_exprs = args
                     .iter()
                     .map(|arg| self.expression(arg))
-                    .collect::<Result<_, Error>>()?;
+                    .collect::<Result<_, CompilerError>>()?;
                 self.expr_function_call(func_expr, arg_exprs, VarCount::make_zero())?;
             }
-            CallSuffix::Method(_, _) => bail!("method call unsupported"),
+            CallSuffix::Method(_, _) => panic!("method call unsupported"),
         }
         Ok(())
     }
 
-    fn assignment(&mut self, assignment: &'a AssignmentStatement) -> Result<(), Error> {
+    fn assignment(&mut self, assignment: &'a AssignmentStatement) -> Result<(), CompilerError> {
         for (i, target) in assignment.targets.iter().enumerate() {
             let mut expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
@@ -433,12 +446,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn local_function(&mut self, local_function: &'a FunctionStatement) -> Result<(), Error> {
+    fn local_function(
+        &mut self,
+        local_function: &'a FunctionStatement,
+    ) -> Result<(), CompilerError> {
         if !local_function.name.fields.is_empty() {
-            bail!("no function name fields support");
+            panic!("no function name fields support");
         }
         if local_function.name.method.is_some() {
-            bail!("no method support");
+            panic!("no method support");
         }
 
         let proto = self.new_prototype(&local_function.definition)?;
@@ -447,7 +463,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
+            .ok_or(CompilerError::Registers)?;
         self.current_function()
             .opcodes
             .push(OpCode::Closure { proto, dest });
@@ -458,7 +474,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn expression(&mut self, expression: &'a Expression) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    fn expression(
+        &mut self,
+        expression: &'a Expression,
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
             expr = self.binary_operator(expr, *binop, right)?;
@@ -469,7 +488,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn head_expression(
         &mut self,
         head_expression: &'a HeadExpression,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(unop, expr) => {
@@ -482,7 +501,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn simple_expression(
         &mut self,
         simple_expression: &'a SimpleExpression,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         Ok(match simple_expression {
             SimpleExpression::Float(f) => ExprDescriptor::Value(Value::Number(*f)),
             SimpleExpression::Integer(i) => ExprDescriptor::Value(Value::Integer(*i)),
@@ -493,7 +512,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
             SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
             SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
-            SimpleExpression::VarArgs => bail!("varargs expression unsupported"),
+            SimpleExpression::VarArgs => panic!("varargs expression unsupported"),
             SimpleExpression::TableConstructor(table_constructor) => {
                 self.table_constructor(table_constructor)?
             }
@@ -505,16 +524,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn table_constructor(
         &mut self,
         table_constructor: &'a TableConstructor,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         if !table_constructor.fields.is_empty() {
-            bail!("only empty table constructors supported");
+            panic!("only empty table constructors supported");
         }
 
         let dest = self
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
+            .ok_or(CompilerError::Registers)?;
         self.current_function()
             .opcodes
             .push(OpCode::NewTable { dest });
@@ -528,13 +547,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn function_expression(
         &mut self,
         function: &'a FunctionDefinition,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let proto = self.new_prototype(function)?;
         let dest = self
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
+            .ok_or(CompilerError::Registers)?;
         self.current_function()
             .opcodes
             .push(OpCode::Closure { proto, dest });
@@ -548,7 +567,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn suffixed_expression(
         &mut self,
         suffixed_expression: &'a SuffixedExpression,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
@@ -569,13 +588,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         let args = args
                             .iter()
                             .map(|arg| self.expression(arg))
-                            .collect::<Result<_, Error>>()?;
+                            .collect::<Result<_, CompilerError>>()?;
                         expr = ExprDescriptor::FunctionCall {
                             func: Box::new(expr),
                             args,
                         };
                     }
-                    CallSuffix::Method(_, _) => bail!("methods not supported yet"),
+                    CallSuffix::Method(_, _) => panic!("methods not supported yet"),
                 },
             }
         }
@@ -585,7 +604,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn primary_expression(
         &mut self,
         primary_expression: &'a PrimaryExpression,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match primary_expression {
             PrimaryExpression::Name(name) => Ok(match self.find_variable(name)? {
                 VariableDescriptor::Local(register) => ExprDescriptor::Register {
@@ -614,12 +633,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.functions.last_mut().expect("no current function")
     }
 
-    fn new_prototype(&mut self, function: &'a FunctionDefinition) -> Result<PrototypeIndex, Error> {
+    fn new_prototype(
+        &mut self,
+        function: &'a FunctionDefinition,
+    ) -> Result<PrototypeIndex, CompilerError> {
         let proto =
             self.compile_function(&function.parameters, function.has_varargs, &function.body)?;
         self.current_function().prototypes.push(proto);
         Ok(PrototypeIndex(
-            cast(self.current_function().prototypes.len() - 1).ok_or(CompilerLimit::Functions)?,
+            cast(self.current_function().prototypes.len() - 1).ok_or(CompilerError::Functions)?,
         ))
     }
 
@@ -627,13 +649,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         unop: UnaryOperator,
         mut expr: ExprDescriptor<'gc, 'a>,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
-        let unop_entry = UNOPS
-            .get(&unop)
-            .ok_or_else(|| err_msg("unsupported unary operator"))?;
-
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         if let &ExprDescriptor::Value(v) = &expr {
-            if let Some(v) = (unop_entry.constant_fold)(v) {
+            if let Some(v) = unop_const_fold(unop, v) {
                 return Ok(ExprDescriptor::Value(v));
             }
         }
@@ -649,10 +667,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
-        self.current_function()
-            .opcodes
-            .push((unop_entry.make_opcode)(dest, source));
+            .ok_or(CompilerError::Registers)?;
+        let unop_opcode = unop_opcode(unop, dest, source);
+        self.current_function().opcodes.push(unop_opcode);
         Ok(ExprDescriptor::Register {
             register: dest,
             is_temporary: true,
@@ -664,16 +681,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         mut left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
         right: &'a Expression,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
-                let simple_op = SIMPLE_BINOPS
-                    .get(&op)
-                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
                 let mut right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-                    if let Some(v) = (simple_op.constant_fold)(a, b) {
+                    if let Some(v) = simple_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
@@ -687,10 +701,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .current_function()
                     .register_allocator
                     .allocate()
-                    .ok_or(CompilerLimit::Registers)?;
-                self.current_function()
-                    .opcodes
-                    .push((simple_op.make_opcode)(dest, left_reg_cons, right_reg_cons));
+                    .ok_or(CompilerError::Registers)?;
+                let simple_binop_opcode =
+                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
+                self.current_function().opcodes.push(simple_binop_opcode);
+
                 Ok(ExprDescriptor::Register {
                     register: dest,
                     is_temporary: true,
@@ -698,13 +713,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             BinOpCategory::Comparison(op) => {
-                let comparison_op = COMPARISON_BINOPS
-                    .get(&op)
-                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
                 let right = self.expression(right)?;
 
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
-                    if let Some(v) = (comparison_op.constant_fold)(a, b) {
+                    if let Some(v) = comparison_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
@@ -722,11 +734,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 right,
             }),
 
-            BinOpCategory::Concat => bail!("no support for concat operator"),
+            BinOpCategory::Concat => panic!("no support for concat operator"),
         }
     }
 
-    fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, Error> {
+    fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, CompilerError> {
         let function_len = self.functions.len();
 
         for i in (0..function_len).rev() {
@@ -741,7 +753,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .push((name, UpValueDescriptor::ParentLocal(register)));
                         let mut upvalue_index = UpValueIndex(
                             cast(self.functions[i + 1].upvalues.len() - 1)
-                                .ok_or(CompilerLimit::UpValues)?,
+                                .ok_or(CompilerError::UpValues)?,
                         );
                         for k in i + 2..function_len {
                             self.functions[k]
@@ -749,7 +761,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
                                 cast(self.functions[k].upvalues.len() - 1)
-                                    .ok_or(CompilerLimit::UpValues)?,
+                                    .ok_or(CompilerError::UpValues)?,
                             );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -777,7 +789,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
                                 cast(self.functions[k].upvalues.len() - 1)
-                                    .ok_or(CompilerLimit::UpValues)?,
+                                    .ok_or(CompilerError::UpValues)?,
                             );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -791,7 +803,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
     // _ENV.
-    fn get_environment(&mut self) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    fn get_environment(&mut self) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         Ok(match self.find_variable(b"_ENV")? {
             VariableDescriptor::Local(register) => ExprDescriptor::Register {
                 register,
@@ -803,7 +815,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
-    fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), Error> {
+    fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), CompilerError> {
         match self.current_function().opcodes.last().cloned() {
             Some(OpCode::LoadNil {
                 dest: prev_dest,
@@ -833,19 +845,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Commit a placeholder jump to jump to the next instruction
-    fn jump_here(&mut self, jmp_instruction: usize) -> Result<(), Error> {
+    fn jump_here(&mut self, jmp_instruction: usize) -> Result<(), CompilerError> {
         let jmp_offset = cast(self.current_function().opcodes.len() - jmp_instruction - 1)
-            .ok_or(CompilerLimit::OpCodes)?;
+            .ok_or(CompilerError::OpCodes)?;
         if let OpCode::Jump { offset } = &mut self.current_function().opcodes[jmp_instruction] {
             if *offset == 0 {
                 *offset = jmp_offset;
                 return Ok(());
             }
         }
-        panic!("jump instruction being finished was not a placeholder jump instruction");
+        panic!("jump instruction is not a placeholder jump instruction");
     }
 
-    fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, Error> {
+    fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, CompilerError> {
         if let Some(constant) = self
             .current_function()
             .constant_table
@@ -855,7 +867,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(constant)
         } else {
             let c = ConstantIndex16(
-                cast(self.current_function().constants.len()).ok_or(CompilerLimit::Constants)?,
+                cast(self.current_function().constants.len()).ok_or(CompilerError::Constants)?,
             );
             self.current_function().constants.push(constant);
             self.current_function()
@@ -869,12 +881,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         table: &mut ExprDescriptor<'gc, 'a>,
         key: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<ExprDescriptor<'gc, 'a>, Error> {
+    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let dest = self
             .current_function()
             .register_allocator
             .allocate()
-            .ok_or(CompilerLimit::Registers)?;
+            .ok_or(CompilerError::Registers)?;
         let op = match table {
             &mut ExprDescriptor::UpValue(table) => match self.expr_any_register_or_constant(key)? {
                 RegisterOrConstant::Constant(key) => OpCode::GetUpTableC { dest, table, key },
@@ -901,7 +913,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         table: &mut ExprDescriptor<'gc, 'a>,
         key: &mut ExprDescriptor<'gc, 'a>,
         value: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CompilerError> {
         let op = match table {
             &mut ExprDescriptor::UpValue(table) => {
                 match (
@@ -953,7 +965,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn expr_any_register(
         &mut self,
         expr: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterIndex, Error> {
+    ) -> Result<RegisterIndex, CompilerError> {
         if let ExprDescriptor::Register { register, .. } = *expr {
             Ok(register)
         } else {
@@ -979,7 +991,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn expr_any_register_or_constant(
         &mut self,
         expr: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterOrConstant, Error> {
+    ) -> Result<RegisterOrConstant, CompilerError> {
         if let &mut ExprDescriptor::Value(cons) = expr {
             if let Some(c8) = cast(self.get_constant(cons)?.0) {
                 return Ok(RegisterOrConstant::Constant(ConstantIndex8(c8)));
@@ -995,24 +1007,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         expr: ExprDescriptor<'gc, 'a>,
         dest: ExprDestination,
-    ) -> Result<Option<RegisterIndex>, Error> {
+    ) -> Result<Option<RegisterIndex>, CompilerError> {
         fn new_destination<'gc, 'a>(
             comp: &mut Compiler<'gc, 'a>,
             dest: ExprDestination,
-        ) -> Result<Option<RegisterIndex>, Error> {
+        ) -> Result<Option<RegisterIndex>, CompilerError> {
             Ok(match dest {
                 ExprDestination::Register(dest) => Some(dest),
                 ExprDestination::AllocateNew => Some(
                     comp.current_function()
                         .register_allocator
                         .allocate()
-                        .ok_or(CompilerLimit::Registers)?,
+                        .ok_or(CompilerError::Registers)?,
                 ),
                 ExprDestination::PushNew => Some(
                     comp.current_function()
                         .register_allocator
                         .push(1)
-                        .ok_or(CompilerLimit::Registers)?,
+                        .ok_or(CompilerError::Registers)?,
                 ),
                 ExprDestination::None => None,
             })
@@ -1108,7 +1120,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             self.current_function()
                                 .register_allocator
                                 .push(1)
-                                .ok_or(CompilerLimit::Registers)?,
+                                .ok_or(CompilerError::Registers)?,
                             source
                         );
                         Some(source)
@@ -1122,20 +1134,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 op,
                 mut right,
             } => {
-                let comparison_op = COMPARISON_BINOPS
-                    .get(&op)
-                    .ok_or_else(|| err_msg("unsupported binary operator"))?;
-
                 let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
                 let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
                 self.expr_discharge(*left, ExprDestination::None)?;
                 self.expr_discharge(*right, ExprDestination::None)?;
 
                 let dest = new_destination(self, dest)?;
+                let comparison_opcode = comparison_binop_opcode(op, left_reg_cons, right_reg_cons);
 
                 let opcodes = &mut self.current_function().opcodes;
                 if let Some(dest) = dest {
-                    opcodes.push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                    opcodes.push(comparison_opcode);
                     opcodes.push(OpCode::Jump { offset: 1 });
                     opcodes.push(OpCode::LoadBool {
                         dest,
@@ -1148,7 +1157,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         skip_next: false,
                     });
                 } else {
-                    opcodes.push((comparison_op.make_opcode)(left_reg_cons, right_reg_cons));
+                    opcodes.push(comparison_opcode);
                     opcodes.push(OpCode::Jump { offset: 0 });
                 }
 
@@ -1206,8 +1215,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDestination::AllocateNew => assert!(result.is_some()),
             ExprDestination::PushNew => {
                 let r = result.unwrap().0;
-                assert!(
-                    r == 0 || self.current_function().register_allocator.registers[r as usize - 1]
+                assert_eq!(
+                    r as u16 + 1,
+                    self.current_function().register_allocator.stack_top()
                 );
             }
             ExprDestination::None => assert!(result.is_none()),
@@ -1225,11 +1235,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         func: ExprDescriptor<'gc, 'a>,
         mut args: Vec<ExprDescriptor<'gc, 'a>>,
         returns: VarCount,
-    ) -> Result<RegisterIndex, Error> {
+    ) -> Result<RegisterIndex, CompilerError> {
         let top_reg = self
             .expr_discharge(func, ExprDestination::PushNew)?
             .unwrap();
-        let arg_count: u8 = cast(args.len()).ok_or(CompilerLimit::FixedParameters)?;
+        let arg_count: u8 = cast(args.len()).ok_or(CompilerError::FixedParameters)?;
         let last_arg = args.pop();
         for arg in args {
             self.expr_discharge(arg, ExprDestination::PushNew)?;
@@ -1248,7 +1258,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             self.current_function().opcodes.push(OpCode::Call {
                 func: top_reg,
-                args: VarCount::make_constant(arg_count).ok_or(CompilerLimit::FixedParameters)?,
+                args: VarCount::make_constant(arg_count).ok_or(CompilerError::FixedParameters)?,
                 returns,
             });
         }
@@ -1319,181 +1329,4 @@ enum ExprDestination {
     PushNew,
     // Evaluate the expression but do not place it anywhere
     None,
-}
-
-struct RegisterAllocator {
-    // The total array of registers, marking whether they are allocated
-    registers: [bool; 256],
-    // The first free register
-    first_free: u16,
-    // The free register after the last used register
-    stack_top: u16,
-    // The index of the largest used register + 1 (e.g. the stack size required for the function)
-    stack_size: u16,
-}
-
-impl Default for RegisterAllocator {
-    fn default() -> RegisterAllocator {
-        RegisterAllocator {
-            registers: [false; 256],
-            first_free: 0,
-            stack_top: 0,
-            stack_size: 0,
-        }
-    }
-}
-
-impl RegisterAllocator {
-    // Allocates any single available register, returns it if one is available.
-    fn allocate(&mut self) -> Option<RegisterIndex> {
-        if self.first_free < 256 {
-            let register = self.first_free as u8;
-            self.registers[register as usize] = true;
-
-            if self.first_free == self.stack_top {
-                self.stack_top += 1;
-            }
-            self.stack_size = self.stack_size.max(self.stack_top);
-
-            let mut i = self.first_free;
-            self.first_free = loop {
-                if i == 256 || !self.registers[i as usize] {
-                    break i;
-                }
-                i += 1;
-            };
-
-            Some(RegisterIndex(register))
-        } else {
-            None
-        }
-    }
-
-    // Free a single register.
-    fn free(&mut self, register: RegisterIndex) {
-        assert!(
-            self.registers[register.0 as usize],
-            "cannot free unallocated register",
-        );
-        self.registers[register.0 as usize] = false;
-        self.first_free = self.first_free.min(register.0 as u16);
-        if register.0 as u16 + 1 == self.stack_top {
-            self.stack_top -= 1;
-            self.shrink_top();
-        }
-    }
-
-    // Allocates a block of registers of the given size (which must be > 0) always at the end of the
-    // allocated area.  If successful, returns the starting register of the block.
-    fn push(&mut self, size: u8) -> Option<RegisterIndex> {
-        if size == 0 {
-            None
-        } else if size as u16 <= 256 - self.stack_top {
-            let rbegin = self.stack_top as u8;
-            for i in rbegin..rbegin + size {
-                self.registers[i as usize] = true;
-            }
-            if self.first_free == self.stack_top {
-                self.first_free += size as u16;
-            }
-            self.stack_top += size as u16;
-            self.stack_size = self.stack_size.max(self.stack_top);
-            Some(RegisterIndex(rbegin))
-        } else {
-            None
-        }
-    }
-
-    // Free all registers past the given register, making the given register the new top of the
-    // stack.  If the given register is >= to the current top, this will have no effect.
-    fn pop_to(&mut self, new_top: u16) {
-        if self.stack_top > new_top {
-            for i in new_top..self.stack_top {
-                self.registers[i as usize] = false;
-            }
-            self.stack_top = new_top;
-            self.first_free = self.first_free.min(self.stack_top);
-            self.shrink_top();
-        }
-    }
-
-    fn shrink_top(&mut self) {
-        for i in (self.first_free..self.stack_top).rev() {
-            if self.registers[i as usize] {
-                break;
-            }
-            self.stack_top = i;
-        }
-    }
-}
-
-// Value which implements Hash and Eq, where values are equal only when they are bit for bit
-// identical.
-struct ConstantValue<'gc>(Value<'gc>);
-
-impl<'gc> PartialEq for ConstantValue<'gc> {
-    fn eq(&self, other: &ConstantValue<'gc>) -> bool {
-        match (self.0, other.0) {
-            (Value::Nil, Value::Nil) => true,
-            (Value::Nil, _) => false,
-
-            (Value::Boolean(a), Value::Boolean(b)) => a == b,
-            (Value::Boolean(_), _) => false,
-
-            (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Integer(_), _) => false,
-
-            (Value::Number(a), Value::Number(b)) => float_bytes(a) == float_bytes(b),
-            (Value::Number(_), _) => false,
-
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::String(_), _) => false,
-
-            (Value::Table(a), Value::Table(b)) => a == b,
-            (Value::Table(_), _) => false,
-
-            (Value::Closure(a), Value::Closure(b)) => a == b,
-            (Value::Closure(_), _) => false,
-        }
-    }
-}
-
-impl<'gc> Eq for ConstantValue<'gc> {}
-
-impl<'gc> Hash for ConstantValue<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match &self.0 {
-            Value::Nil => {
-                Hash::hash(&0, state);
-            }
-            Value::Boolean(b) => {
-                Hash::hash(&1, state);
-                b.hash(state);
-            }
-            Value::Integer(i) => {
-                Hash::hash(&2, state);
-                i.hash(state);
-            }
-            Value::Number(n) => {
-                Hash::hash(&3, state);
-                float_bytes(*n).hash(state);
-            }
-            Value::String(s) => {
-                Hash::hash(&4, state);
-                s.hash(state);
-            }
-            Value::Table(t) => {
-                Hash::hash(&5, state);
-                t.hash(state);
-            }
-            Value::Closure(c) => {
-                Hash::hash(&6, state);
-                c.hash(state);
-            }
-        }
-    }
-}
-
-fn float_bytes(f: f64) -> u64 {
-    unsafe { mem::transmute(f) }
 }
