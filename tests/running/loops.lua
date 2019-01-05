@@ -2,7 +2,7 @@ function test1()
     local sum = 0
     local i = 1
     while i ~= 10 do
-	sum = sum + i
+        sum = sum + i
         i = i + 1
     end
 
@@ -13,14 +13,14 @@ function test2()
     local i = 1
     while true do
         i = i + 1
-	if i == 5 then
-	    break
-	end
+        if i == 5 then
+            break
+        end
     end
 
     return i == 5
 end
 
 return
-    -- test1() and
+    test1() and
     test2()
