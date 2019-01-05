@@ -346,7 +346,7 @@ impl<'gc> ThreadState<'gc> {
 
                             // If variable returns were expected, then we set the stack top to
                             // indicate the number of variable returns.  If we are returning with an
-                            // expected number of restuls, then we should reset the stack size to
+                            // expected number of results, then we should reset the stack size to
                             // the size expeted by the previous frame.  The top set when there are
                             // variable results may be lower than the top expected by the previous
                             // frame, but this is okay because all variable results ops are

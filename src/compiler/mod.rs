@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::mem;
+use std::{iter, mem};
 
 use failure::Fail;
 use num_traits::cast;
@@ -88,19 +88,12 @@ struct CompilerFunction<'gc, 'a> {
     fixed_params: u8,
     locals: Vec<(&'a [u8], RegisterIndex)>,
 
-    block_level: usize,
+    blocks: Vec<BlockDescriptor>,
     unique_jump_id: u64,
     jump_targets: Vec<JumpTarget<'a>>,
-    unresolved_jumps: Vec<Jump<'a>>,
+    pending_jumps: Vec<PendingJump<'a>>,
 
     opcodes: Vec<OpCode>,
-}
-
-#[derive(Debug)]
-enum VariableDescriptor<'a> {
-    Local(RegisterIndex),
-    UpValue(UpValueIndex),
-    Global(&'a [u8]),
 }
 
 #[derive(Debug)]
@@ -147,6 +140,31 @@ enum JumpLabel<'a> {
     Break,
 }
 
+#[derive(Debug)]
+enum VariableDescriptor<'a> {
+    Local(RegisterIndex),
+    UpValue(UpValueIndex),
+    Global(&'a [u8]),
+}
+
+#[derive(Debug)]
+struct BlockDescriptor {
+    // The index of the first local variable in this block.  All locals above this will be
+    // invalidated when this block is exited.
+    bottom_local: usize,
+    // True if any lower function has an upvalue reference to variables in this block
+    owns_upvalues: bool,
+}
+
+#[derive(Default)]
+struct BlockParameters<'a> {
+    // If set, a jump to the given target will be inserted at the end of the block.
+    ending_jump: Option<JumpLabel<'a>>,
+    // If set, a break label will be inserted just after the block closes.  This will come *after*
+    // the `ending_jump`, if it is set.
+    closing_break: bool,
+}
+
 #[derive(Debug, Copy, Clone)]
 struct JumpTarget<'a> {
     label: JumpLabel<'a>,
@@ -156,11 +174,14 @@ struct JumpTarget<'a> {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct Jump<'a> {
+struct PendingJump<'a> {
     target: JumpLabel<'a>,
     instruction: usize,
     local_count: usize,
     block_level: usize,
+    maximum_locals: usize,
+    // The highest block above where this jump took place that owns any upvalues
+    nearest_upvalue_block: Option<usize>,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
@@ -182,7 +203,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         self.functions.push(new_function);
-        self.block(&body)?;
+        self.block(&body, BlockParameters::default())?;
         let mut new_function = self.functions.pop().unwrap();
 
         new_function.opcodes.push(OpCode::Return {
@@ -199,7 +220,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             "register leak detected"
         );
 
-        if !new_function.unresolved_jumps.is_empty() {
+        if !new_function.pending_jumps.is_empty() {
             return Err(CompilerError::GotoInvalid);
         }
 
@@ -218,82 +239,114 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         })
     }
 
-    fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
+    fn block(
+        &mut self,
+        block: &'a Block,
+        block_parameters: BlockParameters<'a>,
+    ) -> Result<(), CompilerError> {
         let current_function = self.current_function();
-        current_function.block_level = current_function.block_level.checked_add(1).unwrap();
 
-        let upper_local = current_function.locals.len();
-        let upper_jump_target = current_function.jump_targets.len();
+        let bottom_jump_target = current_function.jump_targets.len();
+        current_function.blocks.push(BlockDescriptor {
+            bottom_local: current_function.locals.len(),
+            owns_upvalues: false,
+        });
 
         // Labels blocks are treaded specially by Lua, if a label statement in a block is not
         // followed by any other non-label statements, then the label should be handled after
-        // removing all the block local variables from scope.  Thus, we must delay processing labels
-        // until we know whether we are followed by a non-label statement.
-        let mut labels = Vec::new();
-
-        for statement in &block.statements {
-            if let Statement::Label(label_statement) = statement {
-                labels.push(&label_statement.name);
-            } else {
-                for label in labels.drain(..) {
-                    self.jump_target(JumpLabel::Named(label))?;
+        // exiting the block.
+        let mut trailing_labels = Vec::new();
+        if block.return_statement.is_none() {
+            for statement in block.statements.iter().rev() {
+                if let Statement::Label(label_statement) = statement {
+                    trailing_labels.push(&label_statement.name);
+                } else {
+                    break;
                 }
+            }
+        }
 
-                match statement {
-                    Statement::If(if_statement) => self.if_statement(if_statement)?,
-                    Statement::While(while_statement) => self.while_statement(while_statement)?,
-                    Statement::Do(block) => self.block(block)?,
-                    Statement::For(_) => unimplemented!("for statement unsupported"),
-                    Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
-                    Statement::Function(function_statement) => {
-                        self.function_statement(function_statement)?
-                    }
-                    Statement::LocalFunction(local_function) => {
-                        self.local_function(local_function)?
-                    }
-                    Statement::LocalStatement(local_statement) => {
-                        self.local_statement(local_statement)?
-                    }
-                    Statement::Label(_) => unreachable!(),
-                    Statement::Break => self.jump(JumpLabel::Break)?,
-                    Statement::Goto(goto_statement) => {
-                        self.jump(JumpLabel::Named(&goto_statement.name))?
-                    }
-                    Statement::FunctionCall(function_call) => self.function_call(function_call)?,
-                    Statement::Assignment(assignment) => self.assignment(assignment)?,
+        for i in 0..block.statements.len() - trailing_labels.len() {
+            match &block.statements[i] {
+                Statement::If(if_statement) => self.if_statement(if_statement)?,
+                Statement::While(while_statement) => self.while_statement(while_statement)?,
+                Statement::Do(block) => self.block(block, BlockParameters::default())?,
+                Statement::For(_) => unimplemented!("for statement unsupported"),
+                Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
+                Statement::Function(function_statement) => {
+                    self.function_statement(function_statement)?
                 }
+                Statement::LocalFunction(local_function) => self.local_function(local_function)?,
+                Statement::LocalStatement(local_statement) => {
+                    self.local_statement(local_statement)?
+                }
+                Statement::Label(label_statement) => {
+                    self.jump_target(JumpLabel::Named(&label_statement.name))?
+                }
+                Statement::Break => self.jump(JumpLabel::Break)?,
+                Statement::Goto(goto_statement) => {
+                    self.jump(JumpLabel::Named(&goto_statement.name))?
+                }
+                Statement::FunctionCall(function_call) => self.function_call(function_call)?,
+                Statement::Assignment(assignment) => self.assignment(assignment)?,
             }
         }
 
         if let Some(return_statement) = &block.return_statement {
-            for label in labels.drain(..) {
-                self.jump_target(JumpLabel::Named(label))?;
-            }
             self.return_statement(return_statement)?;
         }
 
         let current_function = self.current_function();
-        for (_, r) in current_function.locals.drain(upper_local..) {
+
+        let last_block = current_function.blocks.pop().unwrap();
+        for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
 
-        // Labels at the end of a block are handled after freeing all of the block's local
-        // variables.
-        for label in labels.drain(..) {
+        // When locals go out of scope, we set the maximum locals on all pending jumps to at most
+        // the new local count, to catch any locals newly declared after leaving the block.
+        for pending_jump in &mut current_function.pending_jumps {
+            pending_jump.maximum_locals = pending_jump
+                .maximum_locals
+                .min(current_function.locals.len());
+        }
+
+        for label in trailing_labels {
             self.jump_target(JumpLabel::Named(label))?;
         }
 
-        let current_function = self.current_function();
-        current_function.jump_targets.drain(upper_jump_target..);
-
-        // When locals go out of scope, we set the local count on all unresolved jumps to at most
-        // the new local count, to catch any locals newly declared after leaving the block.
-        for unresolved_jump in &mut current_function.unresolved_jumps {
-            unresolved_jump.local_count = unresolved_jump
-                .local_count
-                .min(current_function.locals.len());
+        let mut has_ending_jump = block.return_statement.is_none()
+            && match block.statements.last() {
+                Some(Statement::Goto(_)) => true,
+                Some(Statement::Break) => true,
+                _ => false,
+            };
+        if let Some(ending_jump) = block_parameters.ending_jump {
+            if !has_ending_jump {
+                self.jump(ending_jump)?;
+                has_ending_jump = true;
+            }
         }
-        current_function.block_level -= 1;
+
+        // If we do not have any ending jump at all, and this block owns upvalues, we need a no-op
+        // jump that closes those upvalues.
+        if !has_ending_jump && last_block.owns_upvalues {
+            self.current_function().opcodes.push(OpCode::Jump {
+                offset: 0,
+                close_upvalues: cast(last_block.bottom_local)
+                    .and_then(Opt254::try_some)
+                    .ok_or(CompilerError::Registers)?,
+            });
+        }
+
+        if block_parameters.closing_break {
+            self.jump_target(JumpLabel::Break)?;
+        }
+
+        let current_function = self.current_function();
+        // Trailing labels and the break label are all treated as though they are outside of the
+        // block, but they go out of scope when the block ends, so we remove them too.
+        current_function.jump_targets.drain(bottom_jump_target..);
 
         Ok(())
     }
@@ -302,16 +355,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let end_label = self.unique_jump_label();
         let mut next_label = self.unique_jump_label();
 
-        let if_expr = self.expression(&if_statement.if_part.0)?;
-        self.expr_test(if_expr, true)?;
-        self.jump(next_label)?;
-
-        self.block(&if_statement.if_part.1)?;
-        if !if_statement.else_if_parts.is_empty() || if_statement.else_part.is_some() {
-            self.jump(end_label)?;
-        }
-
-        for (i, (if_expr, block)) in if_statement.else_if_parts.iter().enumerate() {
+        for (i, (if_expr, block)) in iter::once(&if_statement.if_part)
+            .chain(&if_statement.else_if_parts)
+            .enumerate()
+        {
             self.jump_target(next_label)?;
             next_label = self.unique_jump_label();
 
@@ -319,15 +366,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.expr_test(if_expr, true)?;
             self.jump(next_label)?;
 
-            self.block(block)?;
-            if i != if_statement.else_if_parts.len() - 1 || if_statement.else_part.is_some() {
-                self.jump(end_label)?;
-            }
+            self.block(
+                block,
+                BlockParameters {
+                    ending_jump: if i != if_statement.else_if_parts.len()
+                        || if_statement.else_part.is_some()
+                    {
+                        Some(end_label)
+                    } else {
+                        None
+                    },
+                    closing_break: false,
+                },
+            )?;
         }
 
         self.jump_target(next_label)?;
         if let Some(else_block) = &if_statement.else_part {
-            self.block(else_block)?;
+            self.block(else_block, BlockParameters::default())?;
         }
 
         self.jump_target(end_label)?;
@@ -344,15 +400,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.jump_target(start_label)?;
         let condition = self.expression(&while_statement.condition)?;
-
         self.expr_test(condition, true)?;
         self.jump(end_label)?;
 
-        self.block(&while_statement.block)?;
+        self.block(
+            &while_statement.block,
+            BlockParameters {
+                ending_jump: Some(start_label),
+                closing_break: true,
+            },
+        )?;
 
-        self.jump(start_label)?;
         self.jump_target(end_label)?;
-        self.resolve_jumps(JumpLabel::Break)?;
 
         Ok(())
     }
@@ -888,6 +947,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     if i == function_len - 1 {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
+                        // If we've found an upvalue in an upper function, we need to mark the
+                        // blocks in that function as owning an upvalue.  This allows us to skip
+                        // closing upvalues in jumps if we know the block does not own any upvalues.
+                        for block in self.functions[i].blocks.iter_mut().rev() {
+                            if block.bottom_local <= register.0 as usize {
+                                block.owns_upvalues = true;
+                            }
+                        }
+
                         self.functions[i + 1]
                             .upvalues
                             .push((name, UpValueDescriptor::ParentLocal(register)));
@@ -909,8 +977,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
-            // The top-level function has an implicit _ENV upvalue (and this is the only upvalue it
-            // can have), we add it if it is ever referenced.
+            // The top-level function has an implicit _ENV upvalue (this is the only upvalue it can
+            // have), and we add it if it is ever referenced.
             if i == 0 && name == b"_ENV" && self.functions[i].upvalues.is_empty() {
                 self.functions[0]
                     .upvalues
@@ -919,10 +987,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             for j in 0..self.functions[i].upvalues.len() {
                 if name == self.functions[i].upvalues[j].0 {
-                    let mut upvalue_index = UpValueIndex(cast(j).unwrap());
                     if i == function_len - 1 {
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(UpValueIndex(cast(j).unwrap())));
                     } else {
+                        let mut upvalue_index = UpValueIndex(cast(j).unwrap());
                         for k in i + 1..function_len {
                             self.functions[k]
                                 .upvalues
@@ -986,18 +1054,31 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn jump(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
+        let current_local_count = current_function.locals.len();
+        let current_block_level = current_function.blocks.len() - 1;
 
         let mut target_found = false;
         for jump_target in current_function.jump_targets.iter().rev() {
             if jump_target.label == target {
-                assert!(
-                    jump_target.local_count <= current_function.locals.len(),
-                    "impossible larger local count with a backwards jump"
-                );
+                // We need to close upvalues only if any of the blocks we're jumping over in our
+                // backwards jump own upvalues
+                assert!(jump_target.local_count <= current_local_count);
+                assert!(jump_target.block_level <= current_block_level);
+                let needs_close_upvalues = jump_target.local_count < current_local_count
+                    && jump_target.block_level < current_block_level
+                    && (jump_target.block_level + 1..=current_block_level)
+                        .any(|i| current_function.blocks[i].owns_upvalues);
+
                 current_function.opcodes.push(OpCode::Jump {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
                         .ok_or(CompilerError::JumpOverflow)?,
-                    close_upvalues: Opt254::none(),
+                    close_upvalues: if needs_close_upvalues {
+                        cast(jump_target.local_count)
+                            .and_then(Opt254::try_some)
+                            .ok_or(CompilerError::Registers)?
+                    } else {
+                        Opt254::none()
+                    },
                 });
                 target_found = true;
                 break;
@@ -1010,11 +1091,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 close_upvalues: Opt254::none(),
             });
 
-            current_function.unresolved_jumps.push(Jump {
+            current_function.pending_jumps.push(PendingJump {
                 target: target,
                 instruction: jmp_inst,
-                local_count: current_function.locals.len(),
-                block_level: current_function.block_level,
+                local_count: current_local_count,
+                block_level: current_block_level,
+                maximum_locals: current_local_count,
+                nearest_upvalue_block: (0..current_function.blocks.len())
+                    .rev()
+                    .find(|&i| current_function.blocks[i].owns_upvalues),
             });
         }
 
@@ -1025,9 +1110,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
+        let current_local_count = current_function.locals.len();
+        let current_block_level = current_function.blocks.len() - 1;
 
         for jump_target in current_function.jump_targets.iter().rev() {
-            if jump_target.block_level < current_function.block_level {
+            if jump_target.block_level < current_block_level {
                 break;
             } else if jump_target.label == jump_label {
                 return Err(CompilerError::DuplicateLabel);
@@ -1037,44 +1124,44 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         current_function.jump_targets.push(JumpTarget {
             label: jump_label,
             instruction: target_instruction,
-            local_count: current_function.locals.len(),
-            block_level: current_function.block_level,
+            local_count: current_local_count,
+            block_level: current_block_level,
         });
 
-        self.resolve_jumps(jump_label)
-    }
-
-    // Resolve all matching jumps to the current location *without* adding a jump target and
-    // allowing backwards jumps.  Does not check for duplicate jump labels.
-    fn resolve_jumps(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
-        let current_function = self.current_function();
-        let target_instruction = current_function.opcodes.len();
-
         let mut resolving_jumps = Vec::new();
-        let current_block_level = current_function.block_level;
-        current_function.unresolved_jumps.retain(|unresolved_jump| {
-            if unresolved_jump.block_level >= current_block_level
-                && unresolved_jump.target == jump_label
+        current_function.pending_jumps.retain(|pending_jump| {
+            if pending_jump.block_level >= current_block_level && pending_jump.target == jump_label
             {
-                resolving_jumps.push(*unresolved_jump);
+                resolving_jumps.push(*pending_jump);
                 false
             } else {
                 true
             }
         });
 
-        for jump in resolving_jumps {
-            if jump.local_count < current_function.locals.len() {
+        for pending_jump in resolving_jumps {
+            if pending_jump.maximum_locals < current_local_count {
                 return Err(CompilerError::JumpLocal);
             }
 
-            match &mut current_function.opcodes[jump.instruction] {
+            assert!(current_local_count <= pending_jump.local_count);
+            assert!(current_block_level <= pending_jump.block_level);
+            match &mut current_function.opcodes[pending_jump.instruction] {
                 OpCode::Jump {
                     offset,
                     close_upvalues,
                 } if *offset == 0 && close_upvalues.is_none() => {
-                    *offset = jump_offset(jump.instruction, target_instruction)
+                    *offset = jump_offset(pending_jump.instruction, target_instruction)
                         .ok_or(CompilerError::JumpOverflow)?;
+                    // We need to close upvalues only if any of the blocks we're jumping over in our
+                    // forwards jump own upvalues
+                    if let Some(nearest_upvalue_block) = pending_jump.nearest_upvalue_block {
+                        if current_block_level < nearest_upvalue_block {
+                            *close_upvalues = cast(current_local_count)
+                                .and_then(Opt254::try_some)
+                                .ok_or(CompilerError::Registers)?;
+                        }
+                    };
                 }
                 _ => panic!("jump instruction is not a placeholder jump instruction"),
             }
