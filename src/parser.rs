@@ -234,7 +234,12 @@ pub enum RecordKey {
 }
 
 pub fn parse_chunk<R: Read>(source: R) -> Result<Chunk, Error> {
-    Parser::new(source).parse_chunk()
+    Parser {
+        lexer: Lexer::new(source),
+        read_buffer: Vec::new(),
+        recursion_guard: Rc::new(()),
+    }
+    .parse_chunk()
 }
 
 struct Parser<R: Read> {
@@ -244,18 +249,13 @@ struct Parser<R: Read> {
 }
 
 impl<R: Read> Parser<R> {
-    fn new(source: R) -> Parser<R> {
-        Parser {
-            lexer: Lexer::new(source),
-            read_buffer: Vec::new(),
-            recursion_guard: Rc::new(()),
-        }
-    }
-
     fn parse_chunk(&mut self) -> Result<Chunk, Error> {
-        Ok(Chunk {
-            block: self.parse_block()?,
-        })
+        let block = self.parse_block()?;
+        if self.look_ahead(0)? != None {
+            Err(err_msg("expected end of token stream"))
+        } else {
+            Ok(Chunk { block })
+        }
     }
 
     fn parse_block(&mut self) -> Result<Block, Error> {
