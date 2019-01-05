@@ -4,9 +4,10 @@ use failure::{bail, Error};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::opcode::{OpCode, RegisterIndex, UpValueIndex};
+use crate::opcode::OpCode;
 use crate::table::Table;
 use crate::thread::Thread;
+use crate::types::{RegisterIndex, UpValueIndex};
 use crate::value::Value;
 
 #[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use crate::opcode::RegisterIndex;
+use crate::types::RegisterIndex;
 
 pub struct RegisterAllocator {
     // The total array of registers, marking whether they are allocated

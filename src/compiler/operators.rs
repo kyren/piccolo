@@ -1,5 +1,6 @@
-use crate::opcode::{ConstantIndex8, OpCode, RegisterIndex};
+use crate::opcode::OpCode;
 use crate::parser::{BinaryOperator, UnaryOperator};
+use crate::types::{ConstantIndex8, RegisterIndex};
 use crate::value::Value;
 
 // Binary operators which map directly to a single opcode

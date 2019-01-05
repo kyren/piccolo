@@ -9,4 +9,5 @@ pub mod sequence;
 pub mod string;
 pub mod table;
 pub mod thread;
+pub mod types;
 pub mod value;

@@ -7,9 +7,7 @@ use num_traits::cast;
 use gc_arena::{Gc, MutationContext};
 
 use crate::function::{FunctionProto, UpValueDescriptor};
-use crate::opcode::{
-    ConstantIndex16, ConstantIndex8, OpCode, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
-};
+use crate::opcode::OpCode;
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FieldSuffix, FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression,
@@ -17,6 +15,9 @@ use crate::parser::{
     SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator, WhileStatement,
 };
 use crate::string::String;
+use crate::types::{
+    ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
+};
 use crate::value::Value;
 
 mod constant;
@@ -186,7 +187,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         new_function.opcodes.push(OpCode::Return {
             start: RegisterIndex(0),
-            count: VarCount::make_zero(),
+            count: VarCount::constant(0),
         });
         assert!(new_function.locals.len() == fixed_params as usize);
         for (_, r) in new_function.locals.drain(..) {
@@ -406,7 +407,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         if ret_len == 0 {
             self.current_function().opcodes.push(OpCode::Return {
                 start: RegisterIndex(0),
-                count: VarCount::make_zero(),
+                count: VarCount::constant(0),
             });
         } else {
             let ret_start = cast(self.current_function().register_allocator.stack_top())
@@ -419,13 +420,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             let ret_count = match self.expression(&return_statement.returns[ret_len - 1])? {
                 ExprDescriptor::FunctionCall { func, args } => {
-                    self.expr_function_call(*func, args, VarCount::make_variable())?;
-                    VarCount::make_variable()
+                    self.expr_function_call(*func, args, VarCount::variable())?;
+                    VarCount::variable()
                 }
                 expr => {
                     self.expr_discharge(expr, ExprDestination::PushNew)?;
                     cast(ret_len)
-                        .and_then(VarCount::make_constant)
+                        .and_then(VarCount::try_constant)
                         .ok_or(CompilerError::Returns)?
                 }
             };
@@ -464,7 +465,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.expr_function_call(
                             *func,
                             args,
-                            VarCount::make_constant(num_returns).ok_or(CompilerError::Returns)?,
+                            VarCount::try_constant(num_returns).ok_or(CompilerError::Returns)?,
                         )?;
 
                         let reg = self
@@ -526,7 +527,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .iter()
                     .map(|arg| self.expression(arg))
                     .collect::<Result<_, CompilerError>>()?;
-                self.expr_function_call(func_expr, arg_exprs, VarCount::make_zero())?;
+                self.expr_function_call(func_expr, arg_exprs, VarCount::constant(0))?;
             }
             CallSuffix::Method(_, _) => unimplemented!("method call unsupported"),
         }
@@ -996,6 +997,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 current_function.opcodes.push(OpCode::Jump {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
                         .ok_or(CompilerError::JumpOverflow)?,
+                    close_upvalues: Opt254::none(),
                 });
                 target_found = true;
                 break;
@@ -1003,7 +1005,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         if !target_found {
-            current_function.opcodes.push(OpCode::Jump { offset: 0 });
+            current_function.opcodes.push(OpCode::Jump {
+                offset: 0,
+                close_upvalues: Opt254::none(),
+            });
 
             current_function.unresolved_jumps.push(Jump {
                 target: target,
@@ -1064,7 +1069,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             match &mut current_function.opcodes[jump.instruction] {
-                OpCode::Jump { offset } if *offset == 0 => {
+                OpCode::Jump {
+                    offset,
+                    close_upvalues,
+                } if *offset == 0 && close_upvalues.is_none() => {
                     *offset = jump_offset(jump.instruction, target_instruction)
                         .ok_or(CompilerError::JumpOverflow)?;
                 }
@@ -1324,7 +1332,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             ExprDescriptor::FunctionCall { func, args } => {
-                let source = self.expr_function_call(*func, args, VarCount::make_one())?;
+                let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
                 match dest {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
@@ -1364,7 +1372,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let opcodes = &mut self.current_function().opcodes;
                 if let Some(dest) = dest {
                     opcodes.push(comparison_opcode);
-                    opcodes.push(OpCode::Jump { offset: 1 });
+                    opcodes.push(OpCode::Jump {
+                        offset: 1,
+                        close_upvalues: Opt254::none(),
+                    });
                     opcodes.push(OpCode::LoadBool {
                         dest,
                         value: false,
@@ -1377,7 +1388,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     });
                 } else {
                     opcodes.push(comparison_opcode);
-                    opcodes.push(OpCode::Jump { offset: 0 });
+                    opcodes.push(OpCode::Jump {
+                        offset: 0,
+                        close_upvalues: Opt254::none(),
+                    });
                 }
 
                 dest
@@ -1466,10 +1480,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         if let Some(ExprDescriptor::FunctionCall { func, args }) = last_arg {
-            self.expr_function_call(*func, args, VarCount::make_variable())?;
+            self.expr_function_call(*func, args, VarCount::variable())?;
             self.current_function().opcodes.push(OpCode::Call {
                 func: top_reg,
-                args: VarCount::make_variable(),
+                args: VarCount::variable(),
                 returns,
             });
         } else {
@@ -1478,7 +1492,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             self.current_function().opcodes.push(OpCode::Call {
                 func: top_reg,
-                args: VarCount::make_constant(arg_count).ok_or(CompilerError::FixedParameters)?,
+                args: VarCount::try_constant(arg_count).ok_or(CompilerError::FixedParameters)?,
                 returns,
             });
         }
@@ -1533,9 +1547,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         match expr {
             ExprDescriptor::Value(value) => {
                 if value.as_bool() == skip_if {
-                    self.current_function()
-                        .opcodes
-                        .push(OpCode::Jump { offset: 1 });
+                    self.current_function().opcodes.push(OpCode::Jump {
+                        offset: 1,
+                        close_upvalues: Opt254::none(),
+                    });
                 }
             }
             ExprDescriptor::Comparison { left, op, right } => {

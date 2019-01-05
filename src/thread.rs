@@ -6,9 +6,10 @@ use failure::Error;
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
-use crate::opcode::{OpCode, VarCount};
+use crate::opcode::OpCode;
 use crate::sequence::Sequence;
 use crate::table::Table;
+use crate::types::VarCount;
 use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -50,8 +51,8 @@ impl<'gc> Thread<'gc> {
         let res_pc = state.pc;
         state.call_function(
             closure_index,
-            VarCount::make_variable(),
-            VarCount::make_variable(),
+            VarCount::variable(),
+            VarCount::variable(),
             res_pc,
             true,
         );
@@ -305,16 +306,7 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::Return { start, count } => {
-                        for (_, upval) in self.open_upvalues.split_off(&current_frame.bottom) {
-                            let mut upval = upval.0.write(mc);
-                            if let UpValueState::Open(thread, ind) = *upval {
-                                *upval = UpValueState::Closed(if thread == self_thread {
-                                    self.stack[ind]
-                                } else {
-                                    thread.0.read().stack[ind]
-                                });
-                            }
-                        }
+                        self.close_upvalues(mc, self_thread, current_frame.bottom);
 
                         let start = current_frame.base + start.0 as usize;
                         let count = count
@@ -374,11 +366,18 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
-                    OpCode::Jump { offset } => {
+                    OpCode::Jump {
+                        offset,
+                        close_upvalues,
+                    } => {
                         if offset > 0 {
                             self.pc = self.pc.checked_add(offset as usize).unwrap();
                         } else if offset < 0 {
                             self.pc = self.pc.checked_sub(-offset as usize).unwrap();
+                        }
+
+                        if let Some(r) = close_upvalues.as_u8() {
+                            self.close_upvalues(mc, self_thread, current_frame.bottom + r as usize);
                         }
                     }
 
@@ -610,6 +609,24 @@ impl<'gc> ThreadState<'gc> {
                 }
             }
             UpValueState::Closed(v) => v,
+        }
+    }
+
+    fn close_upvalues(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        self_thread: Thread<'gc>,
+        bottom: usize,
+    ) {
+        for (_, upval) in self.open_upvalues.split_off(&bottom) {
+            let mut upval = upval.0.write(mc);
+            if let UpValueState::Open(thread, ind) = *upval {
+                *upval = UpValueState::Closed(if thread == self_thread {
+                    self.stack[ind]
+                } else {
+                    thread.0.read().stack[ind]
+                });
+            }
         }
     }
 }

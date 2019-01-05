@@ -1,71 +1,8 @@
 use gc_arena::Collect;
 
-/// An index that points to a register in the stack relative to the current frame.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct RegisterIndex(pub u8);
-
-/// An 8 bit index into the constant table
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct ConstantIndex8(pub u8);
-
-/// A 16 bit index into the constant table
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct ConstantIndex16(pub u16);
-
-/// An index into the upvalue table
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct UpValueIndex(pub u8);
-
-/// An index into the prototype table
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct PrototypeIndex(pub u8);
-
-pub const MAX_VAR_COUNT: u8 = 254;
-
-/// Count of arguments or return values which can either be a constant between 0-254 or a special
-/// "variable" value.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-#[collect(require_static)]
-pub struct VarCount(u8);
-
-impl VarCount {
-    pub fn make_variable() -> VarCount {
-        VarCount(0)
-    }
-
-    pub fn make_constant(constant: u8) -> Option<VarCount> {
-        if constant == 255 {
-            None
-        } else {
-            Some(VarCount(constant + 1))
-        }
-    }
-
-    pub fn make_zero() -> VarCount {
-        VarCount(1)
-    }
-
-    pub fn make_one() -> VarCount {
-        VarCount(2)
-    }
-
-    pub fn is_variable(&self) -> bool {
-        self.0 == 0
-    }
-
-    pub fn get_constant(&self) -> Option<u8> {
-        if self.0 == 0 {
-            None
-        } else {
-            Some(self.0 - 1)
-        }
-    }
-}
+use crate::types::{
+    ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
+};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
@@ -81,8 +18,10 @@ pub enum OpCode {
     LoadBool {
         dest: RegisterIndex,
         value: bool,
+        // If true, unconditionally skip the next instruction
         skip_next: bool,
     },
+    // Load `count` Nil values starting at `dest`
     LoadNil {
         dest: RegisterIndex,
         count: u8,
@@ -161,11 +100,18 @@ pub enum OpCode {
     },
     Jump {
         offset: i16,
+        // If set, close upvalues >= `close_upvalues`
+        close_upvalues: Opt254,
     },
+    // Test the register as a boolean, if its boolean value matches `is_true`, skip the next
+    // instruction.
     Test {
         value: RegisterIndex,
         is_true: bool,
     },
+    // Test the value at the `value` register as a boolean, if its boolean value matches `is_true`,
+    // skip the next instruction, otherwise assign the given value (not converted to a boolean) to
+    // the destination register.
     TestSet {
         dest: RegisterIndex,
         value: RegisterIndex,
