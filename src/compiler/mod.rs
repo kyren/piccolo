@@ -317,7 +317,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
-        if !has_final_jump && !current_function.blocks.is_empty() {
+        if last_block.owns_upvalues && !has_final_jump && !current_function.blocks.is_empty() {
             current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
                 close_upvalues: cast(last_block.bottom_local)
