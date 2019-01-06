@@ -149,20 +149,14 @@ enum VariableDescriptor<'a> {
 
 #[derive(Debug)]
 struct BlockDescriptor {
-    // The index of the first local variable in this block.  All locals above this will be
-    // invalidated when this block is exited.
+    // The index of the first local variable in this block.  All locals above this will be freed
+    // when this block is exited.
     bottom_local: usize,
+    // The index of the first jump target in this block.  All jump targets above this will go out of
+    // scope when the block ends.
+    bottom_jump_target: usize,
     // True if any lower function has an upvalue reference to variables in this block
     owns_upvalues: bool,
-}
-
-#[derive(Default)]
-struct BlockParameters<'a> {
-    // If set, a jump to the given target will be inserted after the end of the block.
-    end_jump: Option<JumpLabel<'a>>,
-    // If true, a break label will be inserted after the end of the block, just after the 'end_jump'
-    // if it is set.
-    closing_break: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -172,9 +166,8 @@ struct JumpTarget<'a> {
     instruction: usize,
     // The valid local variables in scope at the target location
     local_count: usize,
-    // The block level at the target location, including the top-level block.  At the top level of
-    // the chunk, this value will be 1.
-    block_level: usize,
+    // The index of the active block at the target location.
+    block: usize,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -182,10 +175,10 @@ struct PendingJump<'a> {
     target: JumpLabel<'a>,
     // The index of the placeholder jump instruction
     instruction: usize,
-    // These are the expected block level and local variable count *after* the jump takes place.
-    // These start as the current block level and local count at the time of the jump, but will be
-    // lowered as blocks are exited.
-    block_level: usize,
+    // These are the expected block and local variable count *after* the jump takes place.  These
+    // start as the current block and local count at the time of the jump, but will be lowered as
+    // blocks are exited.
+    block: usize,
     local_count: usize,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
     close_upvalues: bool,
@@ -210,7 +203,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         self.functions.push(new_function);
-        self.block(&body, BlockParameters::default())?;
+        self.block(&body)?;
         let mut new_function = self.functions.pop().unwrap();
 
         new_function.opcodes.push(OpCode::Return {
@@ -246,47 +239,32 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         })
     }
 
-    fn block(
-        &mut self,
-        block: &'a Block,
-        block_parameters: BlockParameters<'a>,
-    ) -> Result<(), CompilerError> {
-        let current_function = self.current_function();
+    fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
+        self.enter_block();
+        self.block_statements(block)?;
+        self.exit_block()
+    }
 
-        let bottom_jump_target = current_function.jump_targets.len();
+    fn enter_block(&mut self) {
+        let current_function = self.current_function();
         current_function.blocks.push(BlockDescriptor {
             bottom_local: current_function.locals.len(),
+            bottom_jump_target: current_function.jump_targets.len(),
             owns_upvalues: false,
         });
+    }
 
-        // Labels blocks are treaded specially by Lua, if a label statement in a block is not
-        // followed by any other non-label statements, then the label should be handled after
-        // exiting the block.
-        let mut trailing_labels = Vec::new();
-        if block.return_statement.is_none() {
-            for statement in block.statements.iter().rev() {
-                if let Statement::Label(label_statement) = statement {
-                    trailing_labels.push(&label_statement.name);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        for i in 0..block.statements.len() - trailing_labels.len() {
-            self.statement(&block.statements[i])?;
-        }
-
-        if let Some(return_statement) = &block.return_statement {
-            self.return_statement(return_statement)?;
-        }
-
+    fn exit_block(&mut self) -> Result<(), CompilerError> {
         let current_function = self.current_function();
-
         let last_block = current_function.blocks.pop().unwrap();
+
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
+        current_function
+            .jump_targets
+            .drain(last_block.bottom_jump_target..);
+
         if last_block.owns_upvalues && !current_function.blocks.is_empty() {
             current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
@@ -298,33 +276,53 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         // Bring all the pending jumps outward one level, and mark them to close upvalues if this
         // block owned any.
-        for pending_jump in current_function.pending_jumps.iter_mut().rev() {
-            if pending_jump.block_level <= current_function.blocks.len() {
-                break;
+        if !current_function.blocks.is_empty() {
+            for pending_jump in current_function.pending_jumps.iter_mut().rev() {
+                if pending_jump.block < current_function.blocks.len() {
+                    break;
+                }
+                pending_jump.block = current_function.blocks.len() - 1;
+                assert!(pending_jump.local_count >= current_function.locals.len());
+                pending_jump.local_count = current_function.locals.len();
+                pending_jump.close_upvalues |= last_block.owns_upvalues;
             }
-            pending_jump.block_level = current_function.blocks.len();
-            assert!(pending_jump.local_count >= current_function.locals.len());
-            pending_jump.local_count = current_function.locals.len();
-            pending_jump.close_upvalues |= last_block.owns_upvalues;
         }
 
-        for label in trailing_labels {
-            self.jump_target(JumpLabel::Named(label))?;
+        Ok(())
+    }
+
+    // Handles the statements inside a block according to the trailing labels rule.  In most blocks,
+    // trailing labels are treated specially by Lua.  All labels at the end of a block are treated
+    // as though they are in a separate scope from the rest of the block, to make it legal to jump
+    // to the end of the block over local variable scope.  This is logically equivalent to an extra
+    // `do end` around the inside of the block not including the trailing labels.
+    fn block_statements(&mut self, block: &'a Block) -> Result<(), CompilerError> {
+        if let Some(return_statement) = &block.return_statement {
+            for statement in &block.statements {
+                self.statement(statement)?;
+            }
+            self.return_statement(return_statement)?;
+        } else {
+            let mut last = block.statements.len();
+            for i in (0..block.statements.len()).rev() {
+                match &block.statements[i] {
+                    Statement::Label(_) => {}
+                    _ => break,
+                }
+                last = i;
+            }
+            let trailing_labels = &block.statements[last..block.statements.len()];
+
+            self.enter_block();
+            for i in 0..block.statements.len() - trailing_labels.len() {
+                self.statement(&block.statements[i])?;
+            }
+            self.exit_block()?;
+
+            for label_statement in trailing_labels {
+                self.statement(&label_statement)?;
+            }
         }
-
-        if let Some(end_jump) = block_parameters.end_jump {
-            self.jump(end_jump)?;
-        }
-
-        if block_parameters.closing_break {
-            self.jump_target(JumpLabel::Break)?;
-        }
-
-        let current_function = self.current_function();
-        // Trailing labels and the break label are all treated as though they are outside of the
-        // block, but they go out of scope when the block ends, so we remove them too.
-        current_function.jump_targets.drain(bottom_jump_target..);
-
         Ok(())
     }
 
@@ -332,7 +330,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         match statement {
             Statement::If(if_statement) => self.if_statement(if_statement),
             Statement::While(while_statement) => self.while_statement(while_statement),
-            Statement::Do(block) => self.block(block, BlockParameters::default()),
+            Statement::Do(block) => self.block(block),
             Statement::For(_) => unimplemented!("for statement unsupported"),
             Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
             Statement::Function(function_statement) => self.function_statement(function_statement),
@@ -346,112 +344,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Statement::FunctionCall(function_call) => self.function_call(function_call),
             Statement::Assignment(assignment) => self.assignment(assignment),
         }
-    }
-
-    fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
-        let end_label = self.unique_jump_label();
-        let mut next_label = self.unique_jump_label();
-
-        for (i, (if_expr, block)) in iter::once(&if_statement.if_part)
-            .chain(&if_statement.else_if_parts)
-            .enumerate()
-        {
-            self.jump_target(next_label)?;
-            next_label = self.unique_jump_label();
-
-            let if_expr = self.expression(if_expr)?;
-            self.expr_test(if_expr, true)?;
-            self.jump(next_label)?;
-
-            self.block(
-                block,
-                BlockParameters {
-                    end_jump: if i != if_statement.else_if_parts.len()
-                        || if_statement.else_part.is_some()
-                    {
-                        Some(end_label)
-                    } else {
-                        None
-                    },
-                    closing_break: false,
-                },
-            )?;
-        }
-
-        self.jump_target(next_label)?;
-        if let Some(else_block) = &if_statement.else_part {
-            self.block(else_block, BlockParameters::default())?;
-        }
-
-        self.jump_target(end_label)?;
-
-        Ok(())
-    }
-
-    fn while_statement(
-        &mut self,
-        while_statement: &'a WhileStatement,
-    ) -> Result<(), CompilerError> {
-        let start_label = self.unique_jump_label();
-        let end_label = self.unique_jump_label();
-
-        self.jump_target(start_label)?;
-        let condition = self.expression(&while_statement.condition)?;
-        self.expr_test(condition, true)?;
-        self.jump(end_label)?;
-
-        self.block(
-            &while_statement.block,
-            BlockParameters {
-                end_jump: Some(start_label),
-                closing_break: true,
-            },
-        )?;
-
-        self.jump_target(end_label)?;
-
-        Ok(())
-    }
-
-    fn function_statement(
-        &mut self,
-        function_statement: &'a FunctionStatement,
-    ) -> Result<(), CompilerError> {
-        if !function_statement.name.fields.is_empty() {
-            unimplemented!("no function name fields support");
-        }
-        if function_statement.name.method.is_some() {
-            unimplemented!("no method support");
-        }
-
-        let proto = self.new_prototype(&function_statement.definition)?;
-
-        let mut env = self.get_environment()?;
-        let mut name = ExprDescriptor::Value(Value::String(String::new(
-            self.mutation_context,
-            &*function_statement.name.name,
-        )));
-
-        let dest = self
-            .current_function()
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        self.current_function()
-            .opcodes
-            .push(OpCode::Closure { proto, dest });
-        let mut closure = ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
-        };
-
-        self.set_table(&mut env, &mut name, &mut closure)?;
-
-        self.expr_discharge(env, ExprDestination::None)?;
-        self.expr_discharge(name, ExprDestination::None)?;
-        self.expr_discharge(closure, ExprDestination::None)?;
-
-        Ok(())
     }
 
     fn return_statement(
@@ -497,6 +389,104 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .register_allocator
                 .pop_to(ret_start as u16);
         }
+
+        Ok(())
+    }
+
+    fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
+        let end_label = self.unique_jump_label();
+        let mut next_label = self.unique_jump_label();
+
+        for (i, (if_expr, block)) in iter::once(&if_statement.if_part)
+            .chain(&if_statement.else_if_parts)
+            .enumerate()
+        {
+            self.jump_target(next_label)?;
+            next_label = self.unique_jump_label();
+
+            let if_expr = self.expression(if_expr)?;
+            self.expr_test(if_expr, true)?;
+            self.jump(next_label)?;
+
+            self.enter_block();
+            self.block_statements(block)?;
+            if i != if_statement.else_if_parts.len() || if_statement.else_part.is_some() {
+                self.jump(end_label)?;
+            }
+            self.exit_block()?;
+        }
+
+        self.jump_target(next_label)?;
+        if let Some(else_block) = &if_statement.else_part {
+            self.block(else_block)?;
+        }
+
+        self.jump_target(end_label)?;
+
+        Ok(())
+    }
+
+    fn while_statement(
+        &mut self,
+        while_statement: &'a WhileStatement,
+    ) -> Result<(), CompilerError> {
+        let start_label = self.unique_jump_label();
+        let end_label = self.unique_jump_label();
+
+        self.jump_target(start_label)?;
+        let condition = self.expression(&while_statement.condition)?;
+        self.expr_test(condition, true)?;
+        self.jump(end_label)?;
+
+        self.enter_block();
+
+        self.block_statements(&while_statement.block)?;
+        self.jump(start_label)?;
+
+        self.jump_target(JumpLabel::Break)?;
+        self.exit_block()?;
+
+        self.jump_target(end_label)?;
+        Ok(())
+    }
+
+    fn function_statement(
+        &mut self,
+        function_statement: &'a FunctionStatement,
+    ) -> Result<(), CompilerError> {
+        if !function_statement.name.fields.is_empty() {
+            unimplemented!("no function name fields support");
+        }
+        if function_statement.name.method.is_some() {
+            unimplemented!("no method support");
+        }
+
+        let proto = self.new_prototype(&function_statement.definition)?;
+
+        let mut env = self.get_environment()?;
+        let mut name = ExprDescriptor::Value(Value::String(String::new(
+            self.mutation_context,
+            &*function_statement.name.name,
+        )));
+
+        let dest = self
+            .current_function()
+            .register_allocator
+            .allocate()
+            .ok_or(CompilerError::Registers)?;
+        self.current_function()
+            .opcodes
+            .push(OpCode::Closure { proto, dest });
+        let mut closure = ExprDescriptor::Register {
+            register: dest,
+            is_temporary: true,
+        };
+
+        self.set_table(&mut env, &mut name, &mut closure)?;
+
+        self.expr_discharge(env, ExprDestination::None)?;
+        self.expr_discharge(name, ExprDestination::None)?;
+        self.expr_discharge(closure, ExprDestination::None)?;
 
         Ok(())
     }
@@ -1051,7 +1041,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block_level = current_function.blocks.len();
+        let current_block = current_function.blocks.len().checked_sub(1).unwrap();
 
         let mut target_found = false;
         for jump_target in current_function.jump_targets.iter().rev() {
@@ -1059,10 +1049,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 // We need to close upvalues only if any of the blocks we're jumping over own
                 // upvalues
                 assert!(jump_target.local_count <= current_local_count);
-                assert!(jump_target.block_level <= current_block_level);
+                assert!(jump_target.block <= current_block);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
-                    && jump_target.block_level < current_block_level
-                    && (jump_target.block_level..current_block_level)
+                    && jump_target.block < current_block
+                    && (jump_target.block + 1..=current_block)
                         .any(|i| current_function.blocks[i].owns_upvalues);
 
                 current_function.opcodes.push(OpCode::Jump {
@@ -1090,7 +1080,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             current_function.pending_jumps.push(PendingJump {
                 target: target,
                 instruction: jmp_inst,
-                block_level: current_block_level,
+                block: current_block,
                 local_count: current_local_count,
                 close_upvalues: false,
             });
@@ -1103,10 +1093,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block_level = current_function.blocks.len();
+        let current_block = current_function.blocks.len().checked_sub(1).unwrap();
 
         for jump_target in current_function.jump_targets.iter().rev() {
-            if jump_target.block_level < current_block_level {
+            if jump_target.block < current_block {
                 break;
             } else if jump_target.label == jump_label {
                 return Err(CompilerError::DuplicateLabel);
@@ -1117,16 +1107,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             label: jump_label,
             instruction: target_instruction,
             local_count: current_local_count,
-            block_level: current_block_level,
+            block: current_block,
         });
 
         let mut resolving_jumps = Vec::new();
         current_function.pending_jumps.retain(|pending_jump| {
-            assert!(pending_jump.block_level <= current_block_level);
+            assert!(pending_jump.block <= current_block);
             // Labels in inner blocks are out of scope for outer blocks, so skip if the pending jump
             // is from an outer block.
-            if pending_jump.block_level == current_block_level && pending_jump.target == jump_label
-            {
+            if pending_jump.block == current_block && pending_jump.target == jump_label {
                 resolving_jumps.push(*pending_jump);
                 false
             } else {
