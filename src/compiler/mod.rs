@@ -172,7 +172,8 @@ struct JumpTarget<'a> {
     instruction: usize,
     // The valid local variables in scope at the target location
     local_count: usize,
-    // The block level at the target location
+    // The block level at the target location, including the top-level block.  At the top level of
+    // the chunk, this value will be 1.
     block_level: usize,
 }
 
@@ -302,26 +303,36 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.return_statement(return_statement)?;
         }
 
+        // Whether this block ends in an explicit jump of some kind
+        let has_final_jump = block.return_statement.is_some()
+            || match block.statements.last() {
+                Some(Statement::Goto(_)) => true,
+                Some(Statement::Break) => true,
+                _ => false,
+            };
+
         let current_function = self.current_function();
 
         let last_block = current_function.blocks.pop().unwrap();
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
-        current_function.opcodes.push(OpCode::Jump {
-            offset: 0,
-            close_upvalues: cast(last_block.bottom_local)
-                .and_then(Opt254::try_some)
-                .ok_or(CompilerError::Registers)?,
-        });
+        if !has_final_jump && !current_function.blocks.is_empty() {
+            current_function.opcodes.push(OpCode::Jump {
+                offset: 0,
+                close_upvalues: cast(last_block.bottom_local)
+                    .and_then(Opt254::try_some)
+                    .ok_or(CompilerError::Registers)?,
+            });
+        }
 
-        // Bring all the pending jumps outward one level, mark them to close upvalues if this block
-        // owned any.
+        // Bring all the pending jumps outward one level, and mark them to close upvalues if this
+        // block owned any.
         for pending_jump in current_function.pending_jumps.iter_mut().rev() {
-            if pending_jump.block_level < current_function.blocks.len() {
+            if pending_jump.block_level <= current_function.blocks.len() {
                 break;
             }
-            pending_jump.block_level = current_function.blocks.len() - 1;
+            pending_jump.block_level = current_function.blocks.len();
             assert!(pending_jump.local_count >= current_function.locals.len());
             pending_jump.local_count = current_function.locals.len();
             pending_jump.close_upvalues |= last_block.owns_upvalues;
@@ -332,14 +343,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         if let Some(end_jump) = block_parameters.end_jump {
-            // We need an end jump only if we otherwise lack a final jump (return, goto, or break)
-            if block.return_statement.is_none()
-                && match block.statements.last() {
-                    Some(Statement::Goto(_)) => false,
-                    Some(Statement::Break) => false,
-                    _ => true,
-                }
-            {
+            if !has_final_jump {
                 self.jump(end_jump)?;
             }
         }
@@ -1059,7 +1063,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block_level = current_function.blocks.len() - 1;
+        let current_block_level = current_function.blocks.len();
 
         let mut target_found = false;
         for jump_target in current_function.jump_targets.iter().rev() {
@@ -1070,7 +1074,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 assert!(jump_target.block_level <= current_block_level);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
                     && jump_target.block_level < current_block_level
-                    && (jump_target.block_level + 1..=current_block_level)
+                    && (jump_target.block_level..current_block_level)
                         .any(|i| current_function.blocks[i].owns_upvalues);
 
                 current_function.opcodes.push(OpCode::Jump {
@@ -1111,7 +1115,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block_level = current_function.blocks.len() - 1;
+        let current_block_level = current_function.blocks.len();
 
         for jump_target in current_function.jump_targets.iter().rev() {
             if jump_target.block_level < current_block_level {
