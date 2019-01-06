@@ -158,10 +158,10 @@ struct BlockDescriptor {
 
 #[derive(Default)]
 struct BlockParameters<'a> {
-    // If set, a jump to the given target will be inserted at the end of the block.
-    ending_jump: Option<JumpLabel<'a>>,
-    // If set, a break label will be inserted just after the block closes.  This will come *after*
-    // the `ending_jump`, if it is set.
+    // If set, a jump to the given target will be inserted after the end of the block.
+    end_jump: Option<JumpLabel<'a>>,
+    // If true, a break label will be inserted after the end of the block, just after the 'end_jump'
+    // if it is set.
     closing_break: bool,
 }
 
@@ -181,9 +181,9 @@ struct PendingJump<'a> {
     target: JumpLabel<'a>,
     // The index of the placeholder jump instruction
     instruction: usize,
-    // The block level and local variable count *after* the jump takes place.  These start as the
-    // current block level and local count at the time of the jump, but will be lowered as blocks
-    // are exited.
+    // These are the expected block level and local variable count *after* the jump takes place.
+    // These start as the current block level and local count at the time of the jump, but will be
+    // lowered as blocks are exited.
     block_level: usize,
     local_count: usize,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
@@ -308,6 +308,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
+        current_function.opcodes.push(OpCode::Jump {
+            offset: 0,
+            close_upvalues: cast(last_block.bottom_local)
+                .and_then(Opt254::try_some)
+                .ok_or(CompilerError::Registers)?,
+        });
+
         // Bring all the pending jumps outward one level, mark them to close upvalues if this block
         // owned any.
         for pending_jump in current_function.pending_jumps.iter_mut().rev() {
@@ -324,28 +331,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.jump_target(JumpLabel::Named(label))?;
         }
 
-        let mut has_ending_jump = block.return_statement.is_none()
-            && match block.statements.last() {
-                Some(Statement::Goto(_)) => true,
-                Some(Statement::Break) => true,
-                _ => false,
-            };
-        if let Some(ending_jump) = block_parameters.ending_jump {
-            if !has_ending_jump {
-                self.jump(ending_jump)?;
-                has_ending_jump = true;
+        if let Some(end_jump) = block_parameters.end_jump {
+            // We need an end jump only if we otherwise lack a final jump (return, goto, or break)
+            if block.return_statement.is_none()
+                && match block.statements.last() {
+                    Some(Statement::Goto(_)) => false,
+                    Some(Statement::Break) => false,
+                    _ => true,
+                }
+            {
+                self.jump(end_jump)?;
             }
-        }
-
-        // If we do not have any ending jump at all, and this block owns upvalues, we need a no-op
-        // jump that closes those upvalues.
-        if !has_ending_jump && last_block.owns_upvalues {
-            self.current_function().opcodes.push(OpCode::Jump {
-                offset: 0,
-                close_upvalues: cast(last_block.bottom_local)
-                    .and_then(Opt254::try_some)
-                    .ok_or(CompilerError::Registers)?,
-            });
         }
 
         if block_parameters.closing_break {
@@ -378,7 +374,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             self.block(
                 block,
                 BlockParameters {
-                    ending_jump: if i != if_statement.else_if_parts.len()
+                    end_jump: if i != if_statement.else_if_parts.len()
                         || if_statement.else_part.is_some()
                     {
                         Some(end_label)
@@ -415,7 +411,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.block(
             &while_statement.block,
             BlockParameters {
-                ending_jump: Some(start_label),
+                end_jump: Some(start_label),
                 closing_break: true,
             },
         )?;
@@ -1059,7 +1055,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         jl
     }
 
-    // Jump to the given label, which may not yet be a valid target
     fn jump(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
@@ -1069,8 +1064,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let mut target_found = false;
         for jump_target in current_function.jump_targets.iter().rev() {
             if jump_target.label == target {
-                // We need to close upvalues only if any of the blocks we're jumping over in our
-                // backwards jump own upvalues
+                // We need to close upvalues only if any of the blocks we're jumping over own
+                // upvalues
                 assert!(jump_target.local_count <= current_local_count);
                 assert!(jump_target.block_level <= current_block_level);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
@@ -1112,7 +1107,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Mark this location as a jump target, allowing backwards and forwards jumps to it
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
@@ -1136,7 +1130,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         let mut resolving_jumps = Vec::new();
         current_function.pending_jumps.retain(|pending_jump| {
-            if pending_jump.block_level >= current_block_level && pending_jump.target == jump_label
+            assert!(pending_jump.block_level <= current_block_level);
+            // Labels in inner blocks are out of scope for outer blocks, so skip if the pending jump
+            // is from an outer block.
+            if pending_jump.block_level == current_block_level && pending_jump.target == jump_label
             {
                 resolving_jumps.push(*pending_jump);
                 false
@@ -1146,11 +1143,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         });
 
         for pending_jump in resolving_jumps {
+            assert!(pending_jump.local_count <= current_local_count);
             if pending_jump.local_count < current_local_count {
                 return Err(CompilerError::JumpLocal);
             }
-            assert_eq!(pending_jump.block_level, current_block_level);
-            assert_eq!(pending_jump.local_count, current_local_count);
 
             match &mut current_function.opcodes[pending_jump.instruction] {
                 OpCode::Jump {
