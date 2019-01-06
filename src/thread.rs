@@ -377,7 +377,7 @@ impl<'gc> ThreadState<'gc> {
                         }
 
                         if let Some(r) = close_upvalues.as_u8() {
-                            self.close_upvalues(mc, self_thread, current_frame.bottom + r as usize);
+                            self.close_upvalues(mc, self_thread, current_frame.base + r as usize);
                         }
                     }
 
