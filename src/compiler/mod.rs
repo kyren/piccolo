@@ -274,42 +274,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         for i in 0..block.statements.len() - trailing_labels.len() {
-            match &block.statements[i] {
-                Statement::If(if_statement) => self.if_statement(if_statement)?,
-                Statement::While(while_statement) => self.while_statement(while_statement)?,
-                Statement::Do(block) => self.block(block, BlockParameters::default())?,
-                Statement::For(_) => unimplemented!("for statement unsupported"),
-                Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
-                Statement::Function(function_statement) => {
-                    self.function_statement(function_statement)?
-                }
-                Statement::LocalFunction(local_function) => self.local_function(local_function)?,
-                Statement::LocalStatement(local_statement) => {
-                    self.local_statement(local_statement)?
-                }
-                Statement::Label(label_statement) => {
-                    self.jump_target(JumpLabel::Named(&label_statement.name))?
-                }
-                Statement::Break => self.jump(JumpLabel::Break)?,
-                Statement::Goto(goto_statement) => {
-                    self.jump(JumpLabel::Named(&goto_statement.name))?
-                }
-                Statement::FunctionCall(function_call) => self.function_call(function_call)?,
-                Statement::Assignment(assignment) => self.assignment(assignment)?,
-            }
+            self.statement(&block.statements[i])?;
         }
 
         if let Some(return_statement) = &block.return_statement {
             self.return_statement(return_statement)?;
         }
-
-        // Whether this block ends in an explicit jump of some kind
-        let has_final_jump = block.return_statement.is_some()
-            || match block.statements.last() {
-                Some(Statement::Goto(_)) => true,
-                Some(Statement::Break) => true,
-                _ => false,
-            };
 
         let current_function = self.current_function();
 
@@ -317,7 +287,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
-        if last_block.owns_upvalues && !has_final_jump && !current_function.blocks.is_empty() {
+        if last_block.owns_upvalues && !current_function.blocks.is_empty() {
             current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
                 close_upvalues: cast(last_block.bottom_local)
@@ -343,9 +313,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         if let Some(end_jump) = block_parameters.end_jump {
-            if !has_final_jump {
-                self.jump(end_jump)?;
-            }
+            self.jump(end_jump)?;
         }
 
         if block_parameters.closing_break {
@@ -358,6 +326,26 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         current_function.jump_targets.drain(bottom_jump_target..);
 
         Ok(())
+    }
+
+    fn statement(&mut self, statement: &'a Statement) -> Result<(), CompilerError> {
+        match statement {
+            Statement::If(if_statement) => self.if_statement(if_statement),
+            Statement::While(while_statement) => self.while_statement(while_statement),
+            Statement::Do(block) => self.block(block, BlockParameters::default()),
+            Statement::For(_) => unimplemented!("for statement unsupported"),
+            Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
+            Statement::Function(function_statement) => self.function_statement(function_statement),
+            Statement::LocalFunction(local_function) => self.local_function(local_function),
+            Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
+            Statement::Label(label_statement) => {
+                self.jump_target(JumpLabel::Named(&label_statement.name))
+            }
+            Statement::Break => self.jump(JumpLabel::Break),
+            Statement::Goto(goto_statement) => self.jump(JumpLabel::Named(&goto_statement.name)),
+            Statement::FunctionCall(function_call) => self.function_call(function_call),
+            Statement::Assignment(assignment) => self.assignment(assignment),
+        }
     }
 
     fn if_statement(&mut self, if_statement: &'a IfStatement) -> Result<(), CompilerError> {
