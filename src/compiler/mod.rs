@@ -167,7 +167,7 @@ struct JumpTarget<'a> {
     // The valid local variables in scope at the target location
     local_count: usize,
     // The index of the active block at the target location.
-    block: usize,
+    block_index: usize,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -175,10 +175,10 @@ struct PendingJump<'a> {
     target: JumpLabel<'a>,
     // The index of the placeholder jump instruction
     instruction: usize,
-    // These are the expected block and local variable count *after* the jump takes place.  These
-    // start as the current block and local count at the time of the jump, but will be lowered as
-    // blocks are exited.
-    block: usize,
+    // These are the expected block index and local variable count *after* the jump takes place.
+    // These start as the current block index and local count at the time of the jump, but will be
+    // lowered as blocks are exited.
+    block_index: usize,
     local_count: usize,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
     close_upvalues: bool,
@@ -278,10 +278,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         // block owned any.
         if !current_function.blocks.is_empty() {
             for pending_jump in current_function.pending_jumps.iter_mut().rev() {
-                if pending_jump.block < current_function.blocks.len() {
+                if pending_jump.block_index < current_function.blocks.len() {
                     break;
                 }
-                pending_jump.block = current_function.blocks.len() - 1;
+                pending_jump.block_index = current_function.blocks.len() - 1;
                 assert!(pending_jump.local_count >= current_function.locals.len());
                 pending_jump.local_count = current_function.locals.len();
                 pending_jump.close_upvalues |= last_block.owns_upvalues;
@@ -1041,7 +1041,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let jmp_inst = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block = current_function.blocks.len().checked_sub(1).unwrap();
+        let current_block_index = current_function.blocks.len().checked_sub(1).unwrap();
 
         let mut target_found = false;
         for jump_target in current_function.jump_targets.iter().rev() {
@@ -1049,9 +1049,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 // We need to close upvalues only if any of the blocks we're jumping over own
                 // upvalues
                 assert!(jump_target.local_count <= current_local_count);
-                assert!(jump_target.block <= current_block);
+                assert!(jump_target.block_index <= current_block_index);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
-                    && (jump_target.block..=current_block)
+                    && (jump_target.block_index..=current_block_index)
                         .any(|i| current_function.blocks[i].owns_upvalues);
 
                 current_function.opcodes.push(OpCode::Jump {
@@ -1079,7 +1079,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             current_function.pending_jumps.push(PendingJump {
                 target: target,
                 instruction: jmp_inst,
-                block: current_block,
+                block_index: current_block_index,
                 local_count: current_local_count,
                 close_upvalues: false,
             });
@@ -1092,10 +1092,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let current_function = self.current_function();
         let target_instruction = current_function.opcodes.len();
         let current_local_count = current_function.locals.len();
-        let current_block = current_function.blocks.len().checked_sub(1).unwrap();
+        let current_block_index = current_function.blocks.len().checked_sub(1).unwrap();
 
         for jump_target in current_function.jump_targets.iter().rev() {
-            if jump_target.block < current_block {
+            if jump_target.block_index < current_block_index {
                 break;
             } else if jump_target.label == jump_label {
                 return Err(CompilerError::DuplicateLabel);
@@ -1106,15 +1106,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             label: jump_label,
             instruction: target_instruction,
             local_count: current_local_count,
-            block: current_block,
+            block_index: current_block_index,
         });
 
         let mut resolving_jumps = Vec::new();
         current_function.pending_jumps.retain(|pending_jump| {
-            assert!(pending_jump.block <= current_block);
+            assert!(pending_jump.block_index <= current_block_index);
             // Labels in inner blocks are out of scope for outer blocks, so skip if the pending jump
             // is from an outer block.
-            if pending_jump.block == current_block && pending_jump.target == jump_label {
+            if pending_jump.block_index == current_block_index && pending_jump.target == jump_label
+            {
                 resolving_jumps.push(*pending_jump);
                 false
             } else {
