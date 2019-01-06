@@ -1051,8 +1051,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 assert!(jump_target.local_count <= current_local_count);
                 assert!(jump_target.block <= current_block);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
-                    && jump_target.block < current_block
-                    && (jump_target.block + 1..=current_block)
+                    && (jump_target.block..=current_block)
                         .any(|i| current_function.blocks[i].owns_upvalues);
 
                 current_function.opcodes.push(OpCode::Jump {

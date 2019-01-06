@@ -1,11 +1,35 @@
-local i = 1
+function test1()
+    local i = 1
 
-if i == 1 then
-    goto last
+    if i == 1 then
+        goto last
+    end
+
+    i = 2
+
+    ::last::
+
+    return i == 1
 end
 
-i = 2
+function test2()
+    local closure
+    local done = false
 
-::last::
+    ::start::
+    if done then
+        local wrong_upval = "wrong"
+        return closure() == 42
+    end
 
-return i == 1
+    local upval = 42
+    closure = function()
+        return upval
+    end
+    done = true
+    goto start
+end
+
+return
+    test1() and
+    test2()
