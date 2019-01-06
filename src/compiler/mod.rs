@@ -11,8 +11,9 @@ use crate::opcode::OpCode;
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FieldSuffix, FunctionCallStatement, FunctionDefinition, FunctionStatement, HeadExpression,
-    IfStatement, LocalStatement, PrimaryExpression, ReturnStatement, SimpleExpression, Statement,
-    SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator, WhileStatement,
+    IfStatement, LocalStatement, PrimaryExpression, RepeatStatement, ReturnStatement,
+    SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
+    WhileStatement,
 };
 use crate::string::String;
 use crate::types::{
@@ -332,7 +333,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Statement::While(while_statement) => self.while_statement(while_statement),
             Statement::Do(block) => self.block(block),
             Statement::For(_) => unimplemented!("for statement unsupported"),
-            Statement::Repeat(_) => unimplemented!("repeat statement unsupported"),
+            Statement::Repeat(repeat_statement) => self.repeat_statement(repeat_statement),
             Statement::Function(function_statement) => self.function_statement(function_statement),
             Statement::LocalFunction(local_function) => self.local_function(local_function),
             Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
@@ -447,6 +448,37 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.exit_block()?;
 
         self.jump_target(end_label)?;
+        Ok(())
+    }
+
+    fn repeat_statement(
+        &mut self,
+        repeat_statement: &'a RepeatStatement,
+    ) -> Result<(), CompilerError> {
+        let start_label = self.unique_jump_label();
+
+        self.enter_block();
+        self.enter_block();
+
+        self.jump_target(start_label)?;
+
+        // `repeat` statements do not follow the trailing label rule, because the variables inside
+        // the block are in scope for the `until` condition at the end.
+        for statement in &repeat_statement.body.statements {
+            self.statement(statement)?;
+        }
+        if let Some(return_statement) = &repeat_statement.body.return_statement {
+            self.return_statement(return_statement)?;
+        }
+
+        let condition = self.expression(&repeat_statement.until)?;
+        self.expr_test(condition, true)?;
+        self.jump(start_label)?;
+
+        self.exit_block()?;
+        self.jump_target(JumpLabel::Break)?;
+        self.exit_block()?;
+
         Ok(())
     }
 
