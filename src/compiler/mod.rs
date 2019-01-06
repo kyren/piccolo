@@ -168,20 +168,26 @@ struct BlockParameters<'a> {
 #[derive(Debug, Copy, Clone)]
 struct JumpTarget<'a> {
     label: JumpLabel<'a>,
+    // The target instruction that will be jumped to
     instruction: usize,
+    // The valid local variables in scope at the target location
     local_count: usize,
+    // The block level at the target location
     block_level: usize,
 }
 
 #[derive(Debug, Copy, Clone)]
 struct PendingJump<'a> {
     target: JumpLabel<'a>,
+    // The index of the placeholder jump instruction
     instruction: usize,
-    local_count: usize,
+    // The block level and local variable count *after* the jump takes place.  These start as the
+    // current block level and local count at the time of the jump, but will be lowered as blocks
+    // are exited.
     block_level: usize,
-    maximum_locals: usize,
-    // The highest block above where this jump took place that owns any upvalues
-    nearest_upvalue_block: Option<usize>,
+    local_count: usize,
+    // Whether there are any upvalues that will go out of scope when the jump takes place.
+    close_upvalues: bool,
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
@@ -302,13 +308,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
             current_function.register_allocator.free(r);
         }
-
-        // When locals go out of scope, we set the maximum locals on all pending jumps to at most
-        // the new local count, to catch any locals newly declared after leaving the block.
-        for pending_jump in &mut current_function.pending_jumps {
-            pending_jump.maximum_locals = pending_jump
-                .maximum_locals
-                .min(current_function.locals.len());
+        // Bring all the pending jumps outward one level, mark them to close upvalues if this block
+        // owned any.
+        for pending_jump in current_function.pending_jumps.iter_mut().rev() {
+            if pending_jump.block_level < current_function.blocks.len() {
+                break;
+            }
+            pending_jump.block_level = current_function.blocks.len() - 1;
+            assert!(pending_jump.local_count >= current_function.locals.len());
+            pending_jump.local_count = current_function.locals.len();
+            pending_jump.close_upvalues |= last_block.owns_upvalues;
         }
 
         for label in trailing_labels {
@@ -1094,12 +1103,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             current_function.pending_jumps.push(PendingJump {
                 target: target,
                 instruction: jmp_inst,
-                local_count: current_local_count,
                 block_level: current_block_level,
-                maximum_locals: current_local_count,
-                nearest_upvalue_block: (0..current_function.blocks.len())
-                    .rev()
-                    .find(|&i| current_function.blocks[i].owns_upvalues),
+                local_count: current_local_count,
+                close_upvalues: false,
             });
         }
 
@@ -1140,12 +1146,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         });
 
         for pending_jump in resolving_jumps {
-            if pending_jump.maximum_locals < current_local_count {
+            if pending_jump.local_count < current_local_count {
                 return Err(CompilerError::JumpLocal);
             }
+            assert_eq!(pending_jump.block_level, current_block_level);
+            assert_eq!(pending_jump.local_count, current_local_count);
 
-            assert!(current_local_count <= pending_jump.local_count);
-            assert!(current_block_level <= pending_jump.block_level);
             match &mut current_function.opcodes[pending_jump.instruction] {
                 OpCode::Jump {
                     offset,
@@ -1153,14 +1159,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 } if *offset == 0 && close_upvalues.is_none() => {
                     *offset = jump_offset(pending_jump.instruction, target_instruction)
                         .ok_or(CompilerError::JumpOverflow)?;
-                    // We need to close upvalues only if any of the blocks we're jumping over in our
-                    // forwards jump own upvalues
-                    if let Some(nearest_upvalue_block) = pending_jump.nearest_upvalue_block {
-                        if current_block_level < nearest_upvalue_block {
-                            *close_upvalues = cast(current_local_count)
-                                .and_then(Opt254::try_some)
-                                .ok_or(CompilerError::Registers)?;
-                        }
+                    if pending_jump.close_upvalues {
+                        *close_upvalues = cast(current_local_count)
+                            .and_then(Opt254::try_some)
+                            .ok_or(CompilerError::Registers)?;
                     };
                 }
                 _ => panic!("jump instruction is not a placeholder jump instruction"),
