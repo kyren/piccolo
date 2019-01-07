@@ -39,8 +39,6 @@ pub enum CompilerError {
     Registers,
     #[fail(display = "too many upvalues")]
     UpValues,
-    #[fail(display = "too many returns")]
-    Returns,
     #[fail(display = "too many fixed parameters")]
     FixedParameters,
     #[fail(display = "too many inner functions")]
@@ -377,7 +375,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_discharge(expr, ExprDestination::PushNew)?;
                     cast(ret_len)
                         .and_then(VarCount::try_constant)
-                        .ok_or(CompilerError::Returns)?
+                        .ok_or(CompilerError::Registers)?
                 }
             };
 
@@ -387,9 +385,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             });
 
             // Free all allocated return registers so that we do not fail the register leak check
-            self.current_function()
-                .register_allocator
-                .pop_to(ret_start as u16);
+            self.current_function().register_allocator.pop_to(ret_start);
         }
 
         Ok(())
@@ -555,7 +551,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         if let Some(var_expr) = trailing_var_expr {
             let names_left = cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
-            let left_varcount = VarCount::try_constant(names_left).ok_or(CompilerError::Returns)?;
+            let left_varcount =
+                VarCount::try_constant(names_left).ok_or(CompilerError::Registers)?;
 
             let dest = match var_expr {
                 ExprDescriptor::FunctionCall { func, args } => {
@@ -1569,7 +1566,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDestination::PushNew => {
                 let r = result.unwrap().0;
                 assert_eq!(
-                    r as u16 + 1,
+                    r + 1,
                     self.current_function().register_allocator.stack_top()
                 );
             }
@@ -1613,9 +1610,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             Some(last_arg) => {
                 self.expr_discharge(last_arg, ExprDestination::PushNew)?;
-                VarCount::constant(cast(args_len).unwrap())
+                cast(args_len)
+                    .and_then(VarCount::try_constant)
+                    .ok_or(CompilerError::Registers)?
             }
-            None => VarCount::constant(cast(args_len).unwrap()),
+            None => cast(args_len)
+                .and_then(VarCount::try_constant)
+                .ok_or(CompilerError::Registers)?,
         };
 
         self.current_function().opcodes.push(OpCode::Call {
@@ -1624,9 +1625,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             returns,
         });
 
-        self.current_function()
-            .register_allocator
-            .pop_to(top_reg.0 as u16);
+        self.current_function().register_allocator.pop_to(top_reg.0);
         Ok(top_reg)
     }
 
