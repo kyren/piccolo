@@ -5,7 +5,7 @@ use crate::types::RegisterIndex;
 /// Register 255 is not allocatable because:
 ///   1) PUC-Rio Lua has a similar maximum
 ///   2) stack_top and stack_size can be expressed as u8 values
-///   3) It is not necessary to separately check whether allocated registers fit into an Opt254
+///   3) All allocated registers can fit into an Opt254
 pub struct RegisterAllocator {
     // The total array of registers, marking whether they are allocated
     registers: [bool; 255],
