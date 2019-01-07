@@ -105,6 +105,7 @@ enum ExprDescriptor<'gc, 'a> {
     },
     UpValue(UpValueIndex),
     Value(Value<'gc>),
+    VarArgs,
     Not(Box<ExprDescriptor<'gc, 'a>>),
     FunctionCall {
         func: Box<ExprDescriptor<'gc, 'a>>,
@@ -530,45 +531,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
+        let mut trailing_var_expr = None;
         for i in 0..val_len {
             let expr = self.expression(&local_statement.values[i])?;
+            let is_variable = match &expr {
+                ExprDescriptor::FunctionCall { .. } | ExprDescriptor::VarArgs => true,
+                _ => false,
+            };
 
             if i >= name_len {
                 self.expr_discharge(expr, ExprDestination::None)?;
-            } else if i == val_len - 1 {
-                match expr {
-                    ExprDescriptor::FunctionCall { func, args } => {
-                        let num_returns =
-                            cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
-                        self.expr_function_call(
-                            *func,
-                            args,
-                            VarCount::try_constant(num_returns).ok_or(CompilerError::Returns)?,
-                        )?;
-
-                        let reg = self
-                            .current_function()
-                            .register_allocator
-                            .push(num_returns)
-                            .ok_or(CompilerError::Registers)?;
-                        for j in 0..num_returns {
-                            self.current_function().locals.push((
-                                &local_statement.names[i + j as usize],
-                                RegisterIndex(reg.0 + j),
-                            ));
-                        }
-
-                        return Ok(());
-                    }
-                    expr => {
-                        let reg = self
-                            .expr_discharge(expr, ExprDestination::AllocateNew)?
-                            .unwrap();
-                        self.current_function()
-                            .locals
-                            .push((&local_statement.names[i], reg));
-                    }
-                }
+            } else if i == val_len - 1 && is_variable {
+                trailing_var_expr = Some(expr);
             } else {
                 let reg = self
                     .expr_discharge(expr, ExprDestination::AllocateNew)?
@@ -579,16 +553,51 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
 
-        for i in local_statement.values.len()..local_statement.names.len() {
-            let reg = self
-                .current_function()
-                .register_allocator
-                .allocate()
-                .ok_or(CompilerError::Registers)?;
-            self.load_nil(reg)?;
-            self.current_function()
-                .locals
-                .push((&local_statement.names[i], reg));
+        if let Some(var_expr) = trailing_var_expr {
+            let names_left = cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
+            let left_varcount = VarCount::try_constant(names_left).ok_or(CompilerError::Returns)?;
+
+            let dest = match var_expr {
+                ExprDescriptor::FunctionCall { func, args } => {
+                    self.expr_function_call(*func, args, left_varcount)?;
+                    self.current_function()
+                        .register_allocator
+                        .push(names_left)
+                        .ok_or(CompilerError::Registers)?
+                }
+                ExprDescriptor::VarArgs => {
+                    let dest = self
+                        .current_function()
+                        .register_allocator
+                        .push(names_left)
+                        .ok_or(CompilerError::Registers)?;
+                    self.current_function().opcodes.push(OpCode::VarArgs {
+                        dest,
+                        count: left_varcount,
+                    });
+                    dest
+                }
+                _ => unreachable!(),
+            };
+
+            for j in 0..names_left {
+                self.current_function().locals.push((
+                    &local_statement.names[val_len - 1 + j as usize],
+                    RegisterIndex(dest.0 + j),
+                ));
+            }
+        } else {
+            for i in local_statement.values.len()..local_statement.names.len() {
+                let reg = self
+                    .current_function()
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerError::Registers)?;
+                self.load_nil(reg)?;
+                self.current_function()
+                    .locals
+                    .push((&local_statement.names[i], reg));
+            }
         }
 
         Ok(())
@@ -730,7 +739,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
             SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
             SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
-            SimpleExpression::VarArgs => unimplemented!("varargs expression unsupported"),
+            SimpleExpression::VarArgs => ExprDescriptor::VarArgs,
             SimpleExpression::TableConstructor(table_constructor) => {
                 self.table_constructor(table_constructor)?
             }
@@ -1415,6 +1424,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
+            ExprDescriptor::VarArgs => {
+                if let Some(dest) = new_destination(self, dest)? {
+                    self.current_function().opcodes.push(OpCode::VarArgs {
+                        dest,
+                        count: VarCount::constant(0),
+                    });
+                    Some(dest)
+                } else {
+                    None
+                }
+            }
+
             ExprDescriptor::Not(mut expr) => {
                 if let Some(dest) = new_destination(self, dest)? {
                     let source = self.expr_any_register(&mut expr)?;
@@ -1571,33 +1592,41 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let top_reg = self
             .expr_discharge(func, ExprDestination::PushNew)?
             .unwrap();
-        let arg_count: u8 = cast(args.len()).ok_or(CompilerError::FixedParameters)?;
+
+        let args_len = args.len();
         let last_arg = args.pop();
         for arg in args {
             self.expr_discharge(arg, ExprDestination::PushNew)?;
         }
 
-        if let Some(ExprDescriptor::FunctionCall { func, args }) = last_arg {
-            self.expr_function_call(*func, args, VarCount::variable())?;
-            self.current_function().opcodes.push(OpCode::Call {
-                func: top_reg,
-                args: VarCount::variable(),
-                returns,
-            });
-        } else {
-            if let Some(last_arg) = last_arg {
-                self.expr_discharge(last_arg, ExprDestination::PushNew)?;
+        let arg_count = match last_arg {
+            Some(ExprDescriptor::FunctionCall { func, args }) => {
+                self.expr_function_call(*func, args, VarCount::variable())?;
+                VarCount::variable()
             }
-            self.current_function().opcodes.push(OpCode::Call {
-                func: top_reg,
-                args: VarCount::try_constant(arg_count).ok_or(CompilerError::FixedParameters)?,
-                returns,
-            });
-        }
+            Some(ExprDescriptor::VarArgs) => {
+                self.current_function().opcodes.push(OpCode::VarArgs {
+                    dest: RegisterIndex(cast(top_reg.0 as usize + args_len).unwrap()),
+                    count: VarCount::variable(),
+                });
+                VarCount::variable()
+            }
+            Some(last_arg) => {
+                self.expr_discharge(last_arg, ExprDestination::PushNew)?;
+                VarCount::constant(cast(args_len).unwrap())
+            }
+            None => VarCount::constant(cast(args_len).unwrap()),
+        };
+
+        self.current_function().opcodes.push(OpCode::Call {
+            func: top_reg,
+            args: arg_count,
+            returns,
+        });
+
         self.current_function()
             .register_allocator
             .pop_to(top_reg.0 as u16);
-
         Ok(top_reg)
     }
 

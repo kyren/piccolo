@@ -98,6 +98,10 @@ pub enum OpCode {
         start: RegisterIndex,
         count: VarCount,
     },
+    VarArgs {
+        dest: RegisterIndex,
+        count: VarCount,
+    },
     Jump {
         offset: i16,
         // If set, close upvalues >= `close_upvalues`

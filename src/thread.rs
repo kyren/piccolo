@@ -344,17 +344,17 @@ impl<'gc> ThreadState<'gc> {
                             self.pc = current_frame.restore_pc;
                             self.frames.pop();
 
-                            // If variable returns were expected, then we set the stack top to
-                            // indicate the number of variable returns.  If we are returning with an
-                            // expected number of results, then we should reset the stack size to
-                            // the size expeted by the previous frame.  The top set when there are
-                            // variable results may be lower than the top expected by the previous
-                            // frame, but this is okay because all variable results ops are
-                            // immediately followed by subsequent ops that consume the variable
-                            // results.  Any operation that consumes variable results without
-                            // producing variable results is expected to reset the stack to the
-                            // correct normal top.
                             if current_frame.returns.is_variable() {
+                                // If variable returns were expected, then we set the stack top to
+                                // indicate the number of variable returns.  If we are returning
+                                // with an expected number of results, then we should reset the
+                                // stack size to the size expeted by the previous frame.  The top
+                                // set when there are variable results may be lower than the top
+                                // expected by the previous frame, but this is okay because all
+                                // variable results ops are immediately followed by subsequent ops
+                                // that consume the variable results.  Any operation that consumes
+                                // variable results without producing variable results is expected
+                                // to reset the stack to the correct normal top.
                                 self.stack.truncate(current_frame.bottom + returning);
                             } else {
                                 let current_frame =
@@ -363,6 +363,29 @@ impl<'gc> ThreadState<'gc> {
                             }
 
                             continue 'function_start;
+                        }
+                    }
+
+                    OpCode::VarArgs { dest, count } => {
+                        let varargs_start = current_frame.bottom + 1;
+                        let varargs_len = current_frame.base - varargs_start;
+                        let dest = current_frame.base + dest.0 as usize;
+                        if let Some(count) = count.get_constant() {
+                            for i in 0..count as usize {
+                                self.stack[dest + i] = if i < varargs_len {
+                                    self.stack[varargs_start + i]
+                                } else {
+                                    Value::Nil
+                                };
+                            }
+                        } else {
+                            // Similarly to `OpCode::Return`, we set the stack top to indicate the
+                            // number of variable arguments.  The next instruction must consume the
+                            // variable results, which will reset the stack to the correct size.
+                            self.stack.resize(dest + varargs_len, Value::Nil);
+                            for i in 0..varargs_len {
+                                self.stack[dest + i] = self.stack[varargs_start + i];
+                            }
                         }
                     }
 
