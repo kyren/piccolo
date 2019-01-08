@@ -1497,29 +1497,31 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             }
 
-            ExprDescriptor::FunctionCall { func, args } => {
-                let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
-                match dest {
-                    ExprDestination::Register(dest) => {
-                        assert_ne!(dest, source);
-                        self.current_function()
-                            .opcodes
-                            .push(OpCode::Move { dest, source });
-                        Some(dest)
-                    }
-                    ExprDestination::AllocateNew | ExprDestination::PushNew => {
-                        assert_eq!(
-                            self.current_function()
-                                .register_allocator
-                                .push(1)
-                                .ok_or(CompilerError::Registers)?,
-                            source
-                        );
-                        Some(source)
-                    }
-                    ExprDestination::None => None,
+            ExprDescriptor::FunctionCall { func, args } => match dest {
+                ExprDestination::Register(dest) => {
+                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
+                    assert_ne!(dest, source);
+                    self.current_function()
+                        .opcodes
+                        .push(OpCode::Move { dest, source });
+                    Some(dest)
                 }
-            }
+                ExprDestination::AllocateNew | ExprDestination::PushNew => {
+                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
+                    assert_eq!(
+                        self.current_function()
+                            .register_allocator
+                            .push(1)
+                            .ok_or(CompilerError::Registers)?,
+                        source
+                    );
+                    Some(source)
+                }
+                ExprDestination::None => {
+                    self.expr_function_call(*func, args, VarCount::constant(0))?;
+                    None
+                }
+            },
 
             ExprDescriptor::Comparison {
                 mut left,
@@ -1634,6 +1636,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         expr: ExprDescriptor<'gc, 'a>,
         count: u8,
     ) -> Result<RegisterIndex, CompilerError> {
+        assert!(count != 0);
         Ok(match expr {
             ExprDescriptor::FunctionCall { func, args } => {
                 let dest = self.expr_function_call(
@@ -1659,9 +1662,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 });
                 dest
             }
-            expr => self
-                .expr_discharge(expr, ExprDestination::PushNew)?
-                .unwrap(),
+            expr => {
+                let dest = self
+                    .expr_discharge(expr, ExprDestination::PushNew)?
+                    .unwrap();
+                if count > 1 {
+                    let current_function = self.current_function();
+                    let nils = current_function
+                        .register_allocator
+                        .push(count - 1)
+                        .ok_or(CompilerError::Registers)?;
+                    self.current_function().opcodes.push(OpCode::LoadNil {
+                        dest: nils,
+                        count: count - 1,
+                    });
+                }
+                dest
+            }
         })
     }
 
