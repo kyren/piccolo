@@ -603,47 +603,47 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
-        for i in 0..val_len {
-            let expr = self.expression(&local_statement.values[i])?;
-            let is_variable = match &expr {
-                ExprDescriptor::FunctionCall { .. } | ExprDescriptor::VarArgs => true,
-                _ => false,
-            };
-
-            if i >= name_len {
-                self.expr_discharge(expr, ExprDestination::None)?;
-            } else if i == val_len - 1 && is_variable {
-                let names_left = cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
-                let dest = self.expr_push_count(expr, names_left)?;
-
-                for j in 0..names_left {
-                    self.current_function().locals.push((
-                        &local_statement.names[val_len - 1 + j as usize],
-                        RegisterIndex(dest.0 + j),
-                    ));
-                }
-
-                return Ok(());
-            } else {
-                let reg = self
-                    .expr_discharge(expr, ExprDestination::AllocateNew)?
-                    .unwrap();
-                self.current_function()
-                    .locals
-                    .push((&local_statement.names[i], reg));
-            }
-        }
-
-        for i in val_len..name_len {
-            let reg = self
-                .current_function()
+        if local_statement.values.is_empty() {
+            let current_function = self.current_function();
+            let count = cast(name_len).ok_or(CompilerError::Registers)?;
+            let dest = current_function
                 .register_allocator
-                .allocate()
+                .push(count)
                 .ok_or(CompilerError::Registers)?;
-            self.load_nil(reg)?;
-            self.current_function()
-                .locals
-                .push((&local_statement.names[i], reg));
+            current_function
+                .opcodes
+                .push(OpCode::LoadNil { dest, count });
+            for i in 0..name_len {
+                current_function
+                    .locals
+                    .push((&local_statement.names[i], RegisterIndex(dest.0 + i as u8)));
+            }
+        } else {
+            for i in 0..val_len {
+                let expr = self.expression(&local_statement.values[i])?;
+
+                if i >= name_len {
+                    self.expr_discharge(expr, ExprDestination::None)?;
+                } else if i == val_len - 1 {
+                    let names_left =
+                        cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
+                    let dest = self.expr_push_count(expr, names_left)?;
+
+                    for j in 0..names_left {
+                        self.current_function().locals.push((
+                            &local_statement.names[val_len - 1 + j as usize],
+                            RegisterIndex(dest.0 + j),
+                        ));
+                    }
+                } else {
+                    let reg = self
+                        .expr_discharge(expr, ExprDestination::AllocateNew)?
+                        .unwrap();
+                    self.current_function()
+                        .locals
+                        .push((&local_statement.names[i], reg));
+                }
+            }
         }
 
         Ok(())
@@ -1096,27 +1096,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         })
     }
 
-    // Emit a LoadNil opcode, possibly combining several sequential LoadNil opcodes into one.
-    fn load_nil(&mut self, dest: RegisterIndex) -> Result<(), CompilerError> {
-        match self.current_function().opcodes.last().cloned() {
-            Some(OpCode::LoadNil {
-                dest: prev_dest,
-                count: prev_count,
-            }) if prev_dest.0 + prev_count == dest.0 => {
-                self.current_function().opcodes.push(OpCode::LoadNil {
-                    dest: prev_dest,
-                    count: prev_count + 1,
-                });
-            }
-            _ => {
-                self.current_function()
-                    .opcodes
-                    .push(OpCode::LoadNil { dest, count: 1 });
-            }
-        }
-        Ok(())
-    }
-
     fn unique_jump_label(&mut self) -> JumpLabel<'a> {
         let current_function = self.current_function();
         let jl = JumpLabel::Unique(current_function.unique_jump_id);
@@ -1448,7 +1427,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 if let Some(dest) = new_destination(self, dest)? {
                     match value {
                         Value::Nil => {
-                            self.load_nil(dest)?;
+                            self.current_function()
+                                .opcodes
+                                .push(OpCode::LoadNil { dest, count: 1 });
                         }
                         Value::Boolean(value) => {
                             self.current_function().opcodes.push(OpCode::LoadBool {
@@ -1662,6 +1643,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 });
                 dest
             }
+            ExprDescriptor::Value(Value::Nil) => {
+                let current_function = self.current_function();
+                let dest = current_function
+                    .register_allocator
+                    .push(count)
+                    .ok_or(CompilerError::Registers)?;
+                current_function
+                    .opcodes
+                    .push(OpCode::LoadNil { dest, count });
+                dest
+            }
             expr => {
                 let dest = self
                     .expr_discharge(expr, ExprDestination::PushNew)?
@@ -1672,7 +1664,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         .register_allocator
                         .push(count - 1)
                         .ok_or(CompilerError::Registers)?;
-                    self.current_function().opcodes.push(OpCode::LoadNil {
+                    current_function.opcodes.push(OpCode::LoadNil {
                         dest: nils,
                         count: count - 1,
                     });
