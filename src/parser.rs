@@ -53,16 +53,16 @@ pub struct WhileStatement {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ForStatement {
-    Num {
+    Numeric {
         name: Box<[u8]>,
         initial: Expression,
         limit: Expression,
         step: Option<Expression>,
         body: Block,
     },
-    List {
+    Generic {
         names: Vec<Box<[u8]>>,
-        lists: Vec<Expression>,
+        arguments: Vec<Expression>,
         body: Block,
     },
 }
@@ -398,7 +398,7 @@ impl<R: Read> Parser<R> {
                 let body = self.parse_block()?;
                 self.expect_next(Token::End)?;
 
-                Ok(ForStatement::Num {
+                Ok(ForStatement::Numeric {
                     name,
                     initial,
                     limit,
@@ -415,13 +415,17 @@ impl<R: Read> Parser<R> {
                     names.push(self.expect_name()?);
                 }
                 self.expect_next(Token::In)?;
-                let lists = self.parse_expression_list()?;
+                let arguments = self.parse_expression_list()?;
 
                 self.expect_next(Token::Do)?;
                 let body = self.parse_block()?;
                 self.expect_next(Token::End)?;
 
-                Ok(ForStatement::List { names, lists, body })
+                Ok(ForStatement::Generic {
+                    names,
+                    arguments,
+                    body,
+                })
             }
 
             _ => Err(format_err!(

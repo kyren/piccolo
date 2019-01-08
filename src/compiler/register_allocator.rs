@@ -40,6 +40,12 @@ impl RegisterAllocator {
         self.stack_size
     }
 
+    /// Returns whether the given register is marked as allocated
+    pub fn is_allocated(&self, r: u8) -> bool {
+        assert!(r != 255, "register 255 is not allocatable");
+        self.registers[r as usize]
+    }
+
     /// Allocates any single available register, returns it if one is available.
     pub fn allocate(&mut self) -> Option<RegisterIndex> {
         if self.first_free < 255 {

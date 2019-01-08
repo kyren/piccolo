@@ -326,7 +326,7 @@ impl<'gc> ThreadState<'gc> {
                             self.pc = current_frame.restore_pc;
                             self.frames.pop();
                             if let Some(frame) = self.frames.last() {
-                                self.stack.truncate(frame.top);
+                                self.stack.resize(frame.top, Value::Nil);
                             } else {
                                 self.stack.clear();
                             }
@@ -359,7 +359,7 @@ impl<'gc> ThreadState<'gc> {
                             } else {
                                 let current_frame =
                                     self.frames.last().expect("top frame is not call boundary");
-                                self.stack.truncate(current_frame.top);
+                                self.stack.resize(current_frame.top, Value::Nil);
                             }
 
                             continue 'function_start;
@@ -393,12 +393,7 @@ impl<'gc> ThreadState<'gc> {
                         offset,
                         close_upvalues,
                     } => {
-                        if offset > 0 {
-                            self.pc = self.pc.checked_add(offset as usize).unwrap();
-                        } else if offset < 0 {
-                            self.pc = self.pc.checked_sub(-offset as usize).unwrap();
-                        }
-
+                        self.pc = add_offset(self.pc, offset);
                         if let Some(r) = close_upvalues.as_u8() {
                             self.close_upvalues(mc, self_thread, current_frame.base + r as usize);
                         }
@@ -456,6 +451,30 @@ impl<'gc> ThreadState<'gc> {
 
                         let closure = Closure(Gc::allocate(mc, ClosureState { proto, upvalues }));
                         self.stack[current_frame.base + dest.0 as usize] = Value::Closure(closure);
+                    }
+
+                    OpCode::ForCall { base, var_count } => {
+                        let base = current_frame.base + base.0 as usize;
+                        self.stack.resize(base + 6, Value::Nil);
+                        for i in 0..3 {
+                            self.stack[base + 3 + i] = self.stack[base + i];
+                        }
+                        self.call_function(
+                            base + 3,
+                            VarCount::constant(2),
+                            VarCount::constant(var_count),
+                            self.pc,
+                            false,
+                        );
+                        continue 'function_start;
+                    }
+
+                    OpCode::ForLoop { base, jump } => {
+                        let base = current_frame.base + base.0 as usize;
+                        if self.stack[base + 1].as_bool() {
+                            self.stack[base] = self.stack[base + 1];
+                            self.pc = add_offset(self.pc, jump);
+                        }
                     }
 
                     OpCode::GetUpValue { source, dest } => {
@@ -665,5 +684,15 @@ fn get_table<'gc>(value: Value<'gc>) -> Table<'gc> {
     match value {
         Value::Table(t) => t,
         _ => panic!("value is not a table"),
+    }
+}
+
+fn add_offset(pc: usize, offset: i16) -> usize {
+    if offset > 0 {
+        pc.checked_add(offset as usize).unwrap()
+    } else if offset < 0 {
+        pc.checked_sub(-offset as usize).unwrap()
+    } else {
+        pc
     }
 }

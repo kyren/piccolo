@@ -125,6 +125,21 @@ pub enum OpCode {
         dest: RegisterIndex,
         proto: PrototypeIndex,
     },
+    // Used to set up for a generic for loop.
+    // R(base + 3), ..., R(base + 2 + var_count) = R(base)(R(base + 1), R(base + 2))
+    ForCall {
+        base: RegisterIndex,
+        var_count: u8,
+    },
+    // Used to iterate a for loop:
+    // if R(base + 1) ~= nil then
+    //     R(base) = R(base + 1)
+    //     pc += jump
+    // end
+    ForLoop {
+        base: RegisterIndex,
+        jump: i16,
+    },
     GetUpValue {
         dest: RegisterIndex,
         source: UpValueIndex,

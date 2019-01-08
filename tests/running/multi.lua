@@ -18,6 +18,25 @@ local function test2()
     return i == 6 and j == nil
 end
 
+local function test3()
+    local function inner(...)
+        local a, b = ...
+        return a + b
+    end
+
+    return inner(2, 3, 4) == 5
+end
+
+local function test4()
+    local function inner(a, ...)
+        return a + ...
+    end
+
+    return inner(2, 3) == 5
+end
+
 return
     test1() and
-    test2()
+    test2() and
+    test3() and
+    test4()
