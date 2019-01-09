@@ -63,14 +63,17 @@ pub fn compile_chunk<'gc>(
 ) -> Result<FunctionProto<'gc>, CompilerError> {
     let mut compiler = Compiler {
         mutation_context: mc,
-        functions: Vec::new(),
+        current_function: CompilerFunction::start(&[], true)?,
+        upper_functions: Vec::new(),
     };
-    compiler.compile_function(&[], true, &chunk.block)
+    compiler.block(&chunk.block)?;
+    compiler.current_function.finish(mc)
 }
 
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
-    functions: Vec<CompilerFunction<'gc, 'a>>,
+    current_function: CompilerFunction<'gc, 'a>,
+    upper_functions: Vec<CompilerFunction<'gc, 'a>>,
 }
 
 #[derive(Default)]
@@ -185,60 +188,6 @@ struct PendingJump<'a> {
 }
 
 impl<'gc, 'a> Compiler<'gc, 'a> {
-    fn compile_function(
-        &mut self,
-        parameters: &'a [Box<[u8]>],
-        has_varargs: bool,
-        body: &'a Block,
-    ) -> Result<FunctionProto<'gc>, CompilerError> {
-        let mut new_function = CompilerFunction::default();
-        let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerError::FixedParameters)?;
-        new_function.register_allocator.push(fixed_params);
-        new_function.has_varargs = has_varargs;
-        new_function.fixed_params = fixed_params;
-        for (i, name) in parameters.iter().enumerate() {
-            new_function
-                .locals
-                .push((name, RegisterIndex(cast(i).unwrap())));
-        }
-
-        self.functions.push(new_function);
-        self.block(&body)?;
-        let mut new_function = self.functions.pop().unwrap();
-
-        new_function.opcodes.push(OpCode::Return {
-            start: RegisterIndex(0),
-            count: VarCount::constant(0),
-        });
-        assert!(new_function.locals.len() == fixed_params as usize);
-        for (_, r) in new_function.locals.drain(..) {
-            new_function.register_allocator.free(r);
-        }
-        assert_eq!(
-            new_function.register_allocator.stack_top(),
-            0,
-            "register leak detected"
-        );
-
-        if !new_function.pending_jumps.is_empty() {
-            return Err(CompilerError::GotoInvalid);
-        }
-
-        Ok(FunctionProto {
-            fixed_params: new_function.fixed_params,
-            has_varargs: false,
-            stack_size: new_function.register_allocator.stack_size(),
-            constants: new_function.constants,
-            opcodes: new_function.opcodes,
-            upvalues: new_function.upvalues.iter().map(|(_, d)| *d).collect(),
-            prototypes: new_function
-                .prototypes
-                .into_iter()
-                .map(|f| Gc::allocate(self.mutation_context, f))
-                .collect(),
-        })
-    }
-
     fn block(&mut self, block: &'a Block) -> Result<(), CompilerError> {
         self.enter_block();
         self.block_statements(block)?;
@@ -246,27 +195,29 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn enter_block(&mut self) {
-        let current_function = self.current_function();
-        current_function.blocks.push(BlockDescriptor {
-            bottom_local: current_function.locals.len(),
-            bottom_jump_target: current_function.jump_targets.len(),
+        self.current_function.blocks.push(BlockDescriptor {
+            bottom_local: self.current_function.locals.len(),
+            bottom_jump_target: self.current_function.jump_targets.len(),
             owns_upvalues: false,
         });
     }
 
     fn exit_block(&mut self) -> Result<(), CompilerError> {
-        let current_function = self.current_function();
-        let last_block = current_function.blocks.pop().unwrap();
+        let last_block = self.current_function.blocks.pop().unwrap();
 
-        for (_, r) in current_function.locals.drain(last_block.bottom_local..) {
-            current_function.register_allocator.free(r);
+        for (_, r) in self
+            .current_function
+            .locals
+            .drain(last_block.bottom_local..)
+        {
+            self.current_function.register_allocator.free(r);
         }
-        current_function
+        self.current_function
             .jump_targets
             .drain(last_block.bottom_jump_target..);
 
-        if last_block.owns_upvalues && !current_function.blocks.is_empty() {
-            current_function.opcodes.push(OpCode::Jump {
+        if last_block.owns_upvalues && !self.current_function.blocks.is_empty() {
+            self.current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
                 close_upvalues: cast(last_block.bottom_local)
                     .and_then(Opt254::try_some)
@@ -276,14 +227,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         // Bring all the pending jumps outward one level, and mark them to close upvalues if this
         // block owned any.
-        if !current_function.blocks.is_empty() {
-            for pending_jump in current_function.pending_jumps.iter_mut().rev() {
-                if pending_jump.block_index < current_function.blocks.len() {
+        if !self.current_function.blocks.is_empty() {
+            for pending_jump in self.current_function.pending_jumps.iter_mut().rev() {
+                if pending_jump.block_index < self.current_function.blocks.len() {
                     break;
                 }
-                pending_jump.block_index = current_function.blocks.len() - 1;
-                assert!(pending_jump.local_count >= current_function.locals.len());
-                pending_jump.local_count = current_function.locals.len();
+                pending_jump.block_index = self.current_function.blocks.len() - 1;
+                assert!(pending_jump.local_count >= self.current_function.locals.len());
+                pending_jump.local_count = self.current_function.locals.len();
                 pending_jump.close_upvalues |= last_block.owns_upvalues;
             }
         }
@@ -353,12 +304,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let ret_len = return_statement.returns.len();
 
         if ret_len == 0 {
-            self.current_function().opcodes.push(OpCode::Return {
+            self.current_function.opcodes.push(OpCode::Return {
                 start: RegisterIndex(0),
                 count: VarCount::constant(0),
             });
         } else {
-            let ret_start = cast(self.current_function().register_allocator.stack_top())
+            let ret_start = cast(self.current_function.register_allocator.stack_top())
                 .ok_or(CompilerError::Registers)?;
 
             for i in 0..ret_len - 1 {
@@ -379,13 +330,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
             };
 
-            self.current_function().opcodes.push(OpCode::Return {
+            self.current_function.opcodes.push(OpCode::Return {
                 start: RegisterIndex(ret_start),
                 count: ret_count,
             });
 
             // Free all allocated return registers so that we do not fail the register leak check
-            self.current_function().register_allocator.pop_to(ret_start);
+            self.current_function.register_allocator.pop_to(ret_start);
         }
 
         Ok(())
@@ -465,28 +416,28 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 let name_count = cast(names.len()).ok_or(CompilerError::Registers)?;
                 let names_reg = self
-                    .current_function()
+                    .current_function
                     .register_allocator
                     .push(name_count)
                     .ok_or(CompilerError::Registers)?;
                 for i in 0..name_count {
-                    self.current_function()
+                    self.current_function
                         .locals
                         .push((&names[i as usize], RegisterIndex(names_reg.0 + i)));
                 }
 
                 self.jump(loop_label)?;
 
-                let start_inst = self.current_function().opcodes.len();
+                let start_inst = self.current_function.opcodes.len();
                 self.block_statements(body)?;
 
                 self.jump_target(loop_label)?;
-                self.current_function().opcodes.push(OpCode::ForCall {
+                self.current_function.opcodes.push(OpCode::ForCall {
                     base,
                     var_count: cast(names.len()).ok_or(CompilerError::Registers)?,
                 });
-                let loop_inst = self.current_function().opcodes.len();
-                self.current_function().opcodes.push(OpCode::ForLoop {
+                let loop_inst = self.current_function.opcodes.len();
+                self.current_function.opcodes.push(OpCode::ForLoop {
                     base: RegisterIndex(base.0 + 2),
                     jump: jump_offset(loop_inst, start_inst).ok_or(CompilerError::JumpOverflow)?,
                 });
@@ -494,7 +445,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump_target(JumpLabel::Break)?;
                 self.exit_block()?;
 
-                self.current_function().register_allocator.pop_to(base.0);
+                self.current_function.register_allocator.pop_to(base.0);
             }
         }
         Ok(())
@@ -575,11 +526,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         )));
 
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
-        self.current_function()
+        self.current_function
             .opcodes
             .push(OpCode::Closure { proto, dest });
         let mut closure = ExprDescriptor::Register {
@@ -604,17 +555,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let val_len = local_statement.values.len();
 
         if local_statement.values.is_empty() {
-            let current_function = self.current_function();
             let count = cast(name_len).ok_or(CompilerError::Registers)?;
-            let dest = current_function
+            let dest = self
+                .current_function
                 .register_allocator
                 .push(count)
                 .ok_or(CompilerError::Registers)?;
-            current_function
+            self.current_function
                 .opcodes
                 .push(OpCode::LoadNil { dest, count });
             for i in 0..name_len {
-                current_function
+                self.current_function
                     .locals
                     .push((&local_statement.names[i], RegisterIndex(dest.0 + i as u8)));
             }
@@ -630,7 +581,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let dest = self.expr_push_count(expr, names_left)?;
 
                     for j in 0..names_left {
-                        self.current_function().locals.push((
+                        self.current_function.locals.push((
                             &local_statement.names[val_len - 1 + j as usize],
                             RegisterIndex(dest.0 + j),
                         ));
@@ -639,7 +590,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let reg = self
                         .expr_discharge(expr, ExprDestination::AllocateNew)?
                         .unwrap();
-                    self.current_function()
+                    self.current_function
                         .locals
                         .push((&local_statement.names[i], reg));
                 }
@@ -682,7 +633,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                     VariableDescriptor::UpValue(dest) => {
                         let source = self.expr_any_register(&mut expr)?;
-                        self.current_function()
+                        self.current_function
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
                         self.expr_discharge(expr, ExprDestination::None)?;
@@ -733,14 +684,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let proto = self.new_prototype(&local_function.definition)?;
 
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
-        self.current_function()
+        self.current_function
             .opcodes
             .push(OpCode::Closure { proto, dest });
-        self.current_function()
+        self.current_function
             .locals
             .push((&local_function.name.name, dest));
 
@@ -803,11 +754,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
-        self.current_function()
+        self.current_function
             .opcodes
             .push(OpCode::NewTable { dest });
 
@@ -823,11 +774,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let proto = self.new_prototype(function)?;
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
-        self.current_function()
+        self.current_function
             .opcodes
             .push(OpCode::Closure { proto, dest });
 
@@ -901,20 +852,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    // Returns the function currently being compiled
-    fn current_function(&mut self) -> &mut CompilerFunction<'gc, 'a> {
-        self.functions.last_mut().expect("no current function")
-    }
-
     fn new_prototype(
         &mut self,
         function: &'a FunctionDefinition,
     ) -> Result<PrototypeIndex, CompilerError> {
-        let proto =
-            self.compile_function(&function.parameters, function.has_varargs, &function.body)?;
-        self.current_function().prototypes.push(proto);
+        let old_current = mem::replace(
+            &mut self.current_function,
+            CompilerFunction::start(&function.parameters, function.has_varargs)?,
+        );
+        self.upper_functions.push(old_current);
+        self.block(&function.body)?;
+        let proto = mem::replace(
+            &mut self.current_function,
+            self.upper_functions.pop().unwrap(),
+        )
+        .finish(self.mutation_context)?;
+        self.current_function.prototypes.push(proto);
         Ok(PrototypeIndex(
-            cast(self.current_function().prototypes.len() - 1).ok_or(CompilerError::Functions)?,
+            cast(self.current_function.prototypes.len() - 1).ok_or(CompilerError::Functions)?,
         ))
     }
 
@@ -937,12 +892,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.expr_discharge(expr, ExprDestination::None)?;
 
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
         let unop_opcode = unop_opcode(unop, dest, source);
-        self.current_function().opcodes.push(unop_opcode);
+        self.current_function.opcodes.push(unop_opcode);
         Ok(ExprDescriptor::Register {
             register: dest,
             is_temporary: true,
@@ -971,13 +926,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.expr_discharge(right, ExprDestination::None)?;
 
                 let dest = self
-                    .current_function()
+                    .current_function
                     .register_allocator
                     .allocate()
                     .ok_or(CompilerError::Registers)?;
                 let simple_binop_opcode =
                     simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
-                self.current_function().opcodes.push(simple_binop_opcode);
+                self.current_function.opcodes.push(simple_binop_opcode);
 
                 Ok(ExprDescriptor::Register {
                     register: dest,
@@ -1012,37 +967,49 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, CompilerError> {
-        let function_len = self.functions.len();
+        // We need to be able to index functions from the top-level chunk function (index 0), up to
+        // the current function
+        let current_function = self.upper_functions.len();
+        fn get_function<'gc, 'a, 's>(
+            this: &'s mut Compiler<'gc, 'a>,
+            i: usize,
+        ) -> &'s mut CompilerFunction<'gc, 'a> {
+            if i == this.upper_functions.len() {
+                &mut this.current_function
+            } else {
+                &mut this.upper_functions[i]
+            }
+        };
 
-        for i in (0..function_len).rev() {
-            for j in (0..self.functions[i].locals.len()).rev() {
-                let (local_name, register) = self.functions[i].locals[j];
+        for i in (0..=current_function).rev() {
+            for j in (0..get_function(self, i).locals.len()).rev() {
+                let (local_name, register) = get_function(self, i).locals[j];
                 if name == local_name {
-                    if i == function_len - 1 {
+                    if i == current_function {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
                         // If we've found an upvalue in an upper function, we need to mark the
                         // blocks in that function as owning an upvalue.  This allows us to skip
                         // closing upvalues in jumps if we know the block does not own any upvalues.
-                        for block in self.functions[i].blocks.iter_mut().rev() {
+                        for block in get_function(self, i).blocks.iter_mut().rev() {
                             if block.bottom_local <= register.0 as usize {
                                 block.owns_upvalues = true;
                             }
                         }
 
-                        self.functions[i + 1]
+                        get_function(self, i + 1)
                             .upvalues
                             .push((name, UpValueDescriptor::ParentLocal(register)));
                         let mut upvalue_index = UpValueIndex(
-                            cast(self.functions[i + 1].upvalues.len() - 1)
+                            cast(get_function(self, i + 1).upvalues.len() - 1)
                                 .ok_or(CompilerError::UpValues)?,
                         );
-                        for k in i + 2..function_len {
-                            self.functions[k]
+                        for k in i + 2..=current_function {
+                            get_function(self, k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
-                                cast(self.functions[k].upvalues.len() - 1)
+                                cast(get_function(self, k).upvalues.len() - 1)
                                     .ok_or(CompilerError::UpValues)?,
                             );
                         }
@@ -1053,24 +1020,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             // The top-level function has an implicit _ENV upvalue (this is the only upvalue it can
             // have), and we add it if it is ever referenced.
-            if i == 0 && name == b"_ENV" && self.functions[i].upvalues.is_empty() {
-                self.functions[0]
+            if i == 0 && name == b"_ENV" && get_function(self, i).upvalues.is_empty() {
+                get_function(self, 0)
                     .upvalues
                     .push((b"_ENV", UpValueDescriptor::Environment));
             }
 
-            for j in 0..self.functions[i].upvalues.len() {
-                if name == self.functions[i].upvalues[j].0 {
-                    if i == function_len - 1 {
+            for j in 0..get_function(self, i).upvalues.len() {
+                if name == get_function(self, i).upvalues[j].0 {
+                    if i == current_function {
                         return Ok(VariableDescriptor::UpValue(UpValueIndex(cast(j).unwrap())));
                     } else {
                         let mut upvalue_index = UpValueIndex(cast(j).unwrap());
-                        for k in i + 1..function_len {
-                            self.functions[k]
+                        for k in i + 1..=current_function {
+                            get_function(self, k)
                                 .upvalues
                                 .push((name, UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
-                                cast(self.functions[k].upvalues.len() - 1)
+                                cast(get_function(self, k).upvalues.len() - 1)
                                     .ok_or(CompilerError::UpValues)?,
                             );
                         }
@@ -1097,20 +1064,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn unique_jump_label(&mut self) -> JumpLabel<'a> {
-        let current_function = self.current_function();
-        let jl = JumpLabel::Unique(current_function.unique_jump_id);
-        current_function.unique_jump_id = current_function.unique_jump_id.checked_add(1).unwrap();
+        let jl = JumpLabel::Unique(self.current_function.unique_jump_id);
+        self.current_function.unique_jump_id =
+            self.current_function.unique_jump_id.checked_add(1).unwrap();
         jl
     }
 
     fn jump(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
-        let current_function = self.current_function();
-        let jmp_inst = current_function.opcodes.len();
-        let current_local_count = current_function.locals.len();
-        let current_block_index = current_function.blocks.len().checked_sub(1).unwrap();
+        let jmp_inst = self.current_function.opcodes.len();
+        let current_local_count = self.current_function.locals.len();
+        let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
         let mut target_found = false;
-        for jump_target in current_function.jump_targets.iter().rev() {
+        for jump_target in self.current_function.jump_targets.iter().rev() {
             if jump_target.label == target {
                 // We need to close upvalues only if any of the blocks we're jumping over own
                 // upvalues
@@ -1118,9 +1084,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 assert!(jump_target.block_index <= current_block_index);
                 let needs_close_upvalues = jump_target.local_count < current_local_count
                     && (jump_target.block_index..=current_block_index)
-                        .any(|i| current_function.blocks[i].owns_upvalues);
+                        .any(|i| self.current_function.blocks[i].owns_upvalues);
 
-                current_function.opcodes.push(OpCode::Jump {
+                self.current_function.opcodes.push(OpCode::Jump {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
                         .ok_or(CompilerError::JumpOverflow)?,
                     close_upvalues: if needs_close_upvalues {
@@ -1137,12 +1103,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         if !target_found {
-            current_function.opcodes.push(OpCode::Jump {
+            self.current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
                 close_upvalues: Opt254::none(),
             });
 
-            current_function.pending_jumps.push(PendingJump {
+            self.current_function.pending_jumps.push(PendingJump {
                 target: target,
                 instruction: jmp_inst,
                 block_index: current_block_index,
@@ -1155,12 +1121,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
-        let current_function = self.current_function();
-        let target_instruction = current_function.opcodes.len();
-        let current_local_count = current_function.locals.len();
-        let current_block_index = current_function.blocks.len().checked_sub(1).unwrap();
+        let target_instruction = self.current_function.opcodes.len();
+        let current_local_count = self.current_function.locals.len();
+        let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
-        for jump_target in current_function.jump_targets.iter().rev() {
+        for jump_target in self.current_function.jump_targets.iter().rev() {
             if jump_target.block_index < current_block_index {
                 break;
             } else if jump_target.label == jump_label {
@@ -1168,7 +1133,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
 
-        current_function.jump_targets.push(JumpTarget {
+        self.current_function.jump_targets.push(JumpTarget {
             label: jump_label,
             instruction: target_instruction,
             local_count: current_local_count,
@@ -1176,7 +1141,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         });
 
         let mut resolving_jumps = Vec::new();
-        current_function.pending_jumps.retain(|pending_jump| {
+        self.current_function.pending_jumps.retain(|pending_jump| {
             assert!(pending_jump.block_index <= current_block_index);
             // Labels in inner blocks are out of scope for outer blocks, so skip if the pending jump
             // is from an outer block.
@@ -1195,7 +1160,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 return Err(CompilerError::JumpLocal);
             }
 
-            match &mut current_function.opcodes[pending_jump.instruction] {
+            match &mut self.current_function.opcodes[pending_jump.instruction] {
                 OpCode::Jump {
                     offset,
                     close_upvalues,
@@ -1217,7 +1182,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, CompilerError> {
         if let Some(constant) = self
-            .current_function()
+            .current_function
             .constant_table
             .get(&ConstantValue(constant))
             .cloned()
@@ -1225,10 +1190,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(constant)
         } else {
             let c = ConstantIndex16(
-                cast(self.current_function().constants.len()).ok_or(CompilerError::Constants)?,
+                cast(self.current_function.constants.len()).ok_or(CompilerError::Constants)?,
             );
-            self.current_function().constants.push(constant);
-            self.current_function()
+            self.current_function.constants.push(constant);
+            self.current_function
                 .constant_table
                 .insert(ConstantValue(constant), c);
             Ok(c)
@@ -1241,7 +1206,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         key: &mut ExprDescriptor<'gc, 'a>,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let dest = self
-            .current_function()
+            .current_function
             .register_allocator
             .allocate()
             .ok_or(CompilerError::Registers)?;
@@ -1259,7 +1224,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        self.current_function().opcodes.push(op);
+        self.current_function.opcodes.push(op);
         Ok(ExprDescriptor::Register {
             register: dest,
             is_temporary: true,
@@ -1314,7 +1279,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        self.current_function().opcodes.push(op);
+        self.current_function.opcodes.push(op);
         Ok(())
     }
 
@@ -1367,19 +1332,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         dest: ExprDestination,
     ) -> Result<Option<RegisterIndex>, CompilerError> {
         fn new_destination<'gc, 'a>(
-            comp: &mut Compiler<'gc, 'a>,
+            this: &mut Compiler<'gc, 'a>,
             dest: ExprDestination,
         ) -> Result<Option<RegisterIndex>, CompilerError> {
             Ok(match dest {
                 ExprDestination::Register(dest) => Some(dest),
                 ExprDestination::AllocateNew => Some(
-                    comp.current_function()
+                    this.current_function
                         .register_allocator
                         .allocate()
                         .ok_or(CompilerError::Registers)?,
                 ),
                 ExprDestination::PushNew => Some(
-                    comp.current_function()
+                    this.current_function
                         .register_allocator
                         .push(1)
                         .ok_or(CompilerError::Registers)?,
@@ -1397,11 +1362,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     Some(source)
                 } else {
                     if is_temporary {
-                        self.current_function().register_allocator.free(source);
+                        self.current_function.register_allocator.free(source);
                     }
                     if let Some(dest) = new_destination(self, dest)? {
                         if dest != source {
-                            self.current_function()
+                            self.current_function
                                 .opcodes
                                 .push(OpCode::Move { dest, source });
                         }
@@ -1414,7 +1379,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             ExprDescriptor::UpValue(source) => {
                 if let Some(dest) = new_destination(self, dest)? {
-                    self.current_function()
+                    self.current_function
                         .opcodes
                         .push(OpCode::GetUpValue { source, dest });
                     Some(dest)
@@ -1427,12 +1392,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 if let Some(dest) = new_destination(self, dest)? {
                     match value {
                         Value::Nil => {
-                            self.current_function()
+                            self.current_function
                                 .opcodes
                                 .push(OpCode::LoadNil { dest, count: 1 });
                         }
                         Value::Boolean(value) => {
-                            self.current_function().opcodes.push(OpCode::LoadBool {
+                            self.current_function.opcodes.push(OpCode::LoadBool {
                                 dest,
                                 value,
                                 skip_next: false,
@@ -1440,7 +1405,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         }
                         val => {
                             let constant = self.get_constant(val)?;
-                            self.current_function()
+                            self.current_function
                                 .opcodes
                                 .push(OpCode::LoadConstant { dest, constant });
                         }
@@ -1453,7 +1418,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             ExprDescriptor::VarArgs => {
                 if let Some(dest) = new_destination(self, dest)? {
-                    self.current_function().opcodes.push(OpCode::VarArgs {
+                    self.current_function.opcodes.push(OpCode::VarArgs {
                         dest,
                         count: VarCount::constant(1),
                     });
@@ -1471,7 +1436,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let source = self.expr_any_register(&mut expr)?;
                     self.expr_discharge(*expr, ExprDestination::None)?;
                     let dest = new_destination(self, dest)?.unwrap();
-                    self.current_function()
+                    self.current_function
                         .opcodes
                         .push(OpCode::Not { dest, source });
                     Some(dest)
@@ -1482,7 +1447,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 ExprDestination::Register(dest) => {
                     let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
                     assert_ne!(dest, source);
-                    self.current_function()
+                    self.current_function
                         .opcodes
                         .push(OpCode::Move { dest, source });
                     Some(dest)
@@ -1490,7 +1455,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 ExprDestination::AllocateNew | ExprDestination::PushNew => {
                     let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
                     assert_eq!(
-                        self.current_function()
+                        self.current_function
                             .register_allocator
                             .push(1)
                             .ok_or(CompilerError::Registers)?,
@@ -1518,7 +1483,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let comparison_opcode =
                     comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
 
-                let opcodes = &mut self.current_function().opcodes;
+                let opcodes = &mut self.current_function.opcodes;
                 if let Some(dest) = dest {
                     opcodes.push(comparison_opcode);
                     opcodes.push(OpCode::Jump {
@@ -1575,7 +1540,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         is_true: test_op_true,
                     }
                 };
-                self.current_function().opcodes.push(test_op);
+                self.current_function.opcodes.push(test_op);
 
                 let skip = self.unique_jump_label();
                 self.jump(skip)?;
@@ -1600,7 +1565,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 // Make sure we placed the register at the top of the stack *after* deallocating any
                 // registers in the provided expression
                 let r = result.unwrap().0;
-                let allocator = &self.current_function().register_allocator;
+                let allocator = &self.current_function.register_allocator;
                 assert_eq!(r + 1, allocator.stack_top());
                 assert!(r == 0 || allocator.is_allocated(r - 1));
             }
@@ -1625,7 +1590,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     args,
                     VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
                 )?;
-                self.current_function()
+                self.current_function
                     .register_allocator
                     .push(count)
                     .ok_or(CompilerError::Registers)?;
@@ -1633,23 +1598,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             ExprDescriptor::VarArgs => {
                 let dest = self
-                    .current_function()
+                    .current_function
                     .register_allocator
                     .push(count)
                     .ok_or(CompilerError::Registers)?;
-                self.current_function().opcodes.push(OpCode::VarArgs {
+                self.current_function.opcodes.push(OpCode::VarArgs {
                     dest,
                     count: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
                 });
                 dest
             }
             ExprDescriptor::Value(Value::Nil) => {
-                let current_function = self.current_function();
-                let dest = current_function
+                let dest = self
+                    .current_function
                     .register_allocator
                     .push(count)
                     .ok_or(CompilerError::Registers)?;
-                current_function
+                self.current_function
                     .opcodes
                     .push(OpCode::LoadNil { dest, count });
                 dest
@@ -1659,12 +1624,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .expr_discharge(expr, ExprDestination::PushNew)?
                     .unwrap();
                 if count > 1 {
-                    let current_function = self.current_function();
-                    let nils = current_function
+                    let nils = self
+                        .current_function
                         .register_allocator
                         .push(count - 1)
                         .ok_or(CompilerError::Registers)?;
-                    current_function.opcodes.push(OpCode::LoadNil {
+                    self.current_function.opcodes.push(OpCode::LoadNil {
                         dest: nils,
                         count: count - 1,
                     });
@@ -1700,7 +1665,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 VarCount::variable()
             }
             Some(ExprDescriptor::VarArgs) => {
-                self.current_function().opcodes.push(OpCode::VarArgs {
+                self.current_function.opcodes.push(OpCode::VarArgs {
                     dest: RegisterIndex(cast(top_reg.0 as usize + args_len).unwrap()),
                     count: VarCount::variable(),
                 });
@@ -1717,13 +1682,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .ok_or(CompilerError::Registers)?,
         };
 
-        self.current_function().opcodes.push(OpCode::Call {
+        self.current_function.opcodes.push(OpCode::Call {
             func: top_reg,
             args: arg_count,
             returns,
         });
 
-        self.current_function().register_allocator.pop_to(top_reg.0);
+        self.current_function.register_allocator.pop_to(top_reg.0);
         Ok(top_reg)
     }
 
@@ -1735,32 +1700,32 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         skip_if: bool,
     ) -> Result<(), CompilerError> {
         fn gen_comparison<'gc, 'a>(
-            comp: &mut Compiler<'gc, 'a>,
+            this: &mut Compiler<'gc, 'a>,
             mut left: ExprDescriptor<'gc, 'a>,
             op: ComparisonBinOp,
             mut right: ExprDescriptor<'gc, 'a>,
             skip_if: bool,
         ) -> Result<(), CompilerError> {
-            let left_reg_cons = comp.expr_any_register_or_constant(&mut left)?;
-            let right_reg_cons = comp.expr_any_register_or_constant(&mut right)?;
-            comp.expr_discharge(left, ExprDestination::None)?;
-            comp.expr_discharge(right, ExprDestination::None)?;
+            let left_reg_cons = this.expr_any_register_or_constant(&mut left)?;
+            let right_reg_cons = this.expr_any_register_or_constant(&mut right)?;
+            this.expr_discharge(left, ExprDestination::None)?;
+            this.expr_discharge(right, ExprDestination::None)?;
 
             let comparison_opcode =
                 comparison_binop_opcode(op, left_reg_cons, right_reg_cons, skip_if);
-            comp.current_function().opcodes.push(comparison_opcode);
+            this.current_function.opcodes.push(comparison_opcode);
 
             Ok(())
         }
 
         fn gen_test<'gc, 'a>(
-            comp: &mut Compiler<'gc, 'a>,
+            this: &mut Compiler<'gc, 'a>,
             mut expr: ExprDescriptor<'gc, 'a>,
             is_true: bool,
         ) -> Result<(), CompilerError> {
-            let test_reg = comp.expr_any_register(&mut expr)?;
-            comp.expr_discharge(expr, ExprDestination::None)?;
-            comp.current_function().opcodes.push(OpCode::Test {
+            let test_reg = this.expr_any_register(&mut expr)?;
+            this.expr_discharge(expr, ExprDestination::None)?;
+            this.current_function.opcodes.push(OpCode::Test {
                 value: test_reg,
                 is_true,
             });
@@ -1771,7 +1736,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         match expr {
             ExprDescriptor::Value(value) => {
                 if value.as_bool() == skip_if {
-                    self.current_function().opcodes.push(OpCode::Jump {
+                    self.current_function.opcodes.push(OpCode::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),
                     });
@@ -1790,6 +1755,59 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         Ok(())
+    }
+}
+
+impl<'gc, 'a> CompilerFunction<'gc, 'a> {
+    fn start(
+        parameters: &'a [Box<[u8]>],
+        has_varargs: bool,
+    ) -> Result<CompilerFunction<'gc, 'a>, CompilerError> {
+        let mut function = CompilerFunction::default();
+        let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerError::FixedParameters)?;
+        function.register_allocator.push(fixed_params);
+        function.has_varargs = has_varargs;
+        function.fixed_params = fixed_params;
+        for (i, name) in parameters.iter().enumerate() {
+            function
+                .locals
+                .push((name, RegisterIndex(cast(i).unwrap())));
+        }
+        Ok(function)
+    }
+
+    fn finish(mut self, mc: MutationContext<'gc, 'a>) -> Result<FunctionProto<'gc>, CompilerError> {
+        self.opcodes.push(OpCode::Return {
+            start: RegisterIndex(0),
+            count: VarCount::constant(0),
+        });
+        assert!(self.locals.len() == self.fixed_params as usize);
+        for (_, r) in self.locals.drain(..) {
+            self.register_allocator.free(r);
+        }
+        assert_eq!(
+            self.register_allocator.stack_top(),
+            0,
+            "register leak detected"
+        );
+
+        if !self.pending_jumps.is_empty() {
+            return Err(CompilerError::GotoInvalid);
+        }
+
+        Ok(FunctionProto {
+            fixed_params: self.fixed_params,
+            has_varargs: self.has_varargs,
+            stack_size: self.register_allocator.stack_size(),
+            constants: self.constants,
+            opcodes: self.opcodes,
+            upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
+            prototypes: self
+                .prototypes
+                .into_iter()
+                .map(|f| Gc::allocate(mc, f))
+                .collect(),
+        })
     }
 }
 
