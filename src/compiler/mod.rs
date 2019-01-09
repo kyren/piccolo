@@ -132,8 +132,6 @@ enum ExprDestination {
     AllocateNew,
     // Place the expression in a newly allocated register at the top of the stack
     PushNew,
-    // Evaluate the expression but do not place it anywhere
-    None,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -391,9 +389,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.expr_push_count(args, 3)?
                 } else {
                     let iterator = self.expression(&arguments[0])?;
-                    let top = self
-                        .expr_discharge(iterator, ExprDestination::PushNew)?
-                        .unwrap();
+                    let top = self.expr_discharge(iterator, ExprDestination::PushNew)?;
 
                     let state = if let Some(state) = arguments.get(1) {
                         self.expression(state)?
@@ -540,9 +536,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.set_table(&mut env, &mut name, &mut closure)?;
 
-        self.expr_discharge(env, ExprDestination::None)?;
-        self.expr_discharge(name, ExprDestination::None)?;
-        self.expr_discharge(closure, ExprDestination::None)?;
+        self.expr_discard(env)?;
+        self.expr_discard(name)?;
+        self.expr_discard(closure)?;
 
         Ok(())
     }
@@ -574,7 +570,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let expr = self.expression(&local_statement.values[i])?;
 
                 if i >= name_len {
-                    self.expr_discharge(expr, ExprDestination::None)?;
+                    self.expr_discard(expr)?;
                 } else if i == val_len - 1 {
                     let names_left =
                         cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
@@ -587,9 +583,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         ));
                     }
                 } else {
-                    let reg = self
-                        .expr_discharge(expr, ExprDestination::AllocateNew)?
-                        .unwrap();
+                    let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
                     self.current_function
                         .locals
                         .push((&local_statement.names[i], reg));
@@ -636,7 +630,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.current_function
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
-                        self.expr_discharge(expr, ExprDestination::None)?;
+                        self.expr_discard(expr)?;
                     }
                     VariableDescriptor::Global(name) => {
                         let mut env = self.get_environment()?;
@@ -645,9 +639,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             name,
                         )));
                         self.set_table(&mut env, &mut key, &mut expr)?;
-                        self.expr_discharge(env, ExprDestination::None)?;
-                        self.expr_discharge(key, ExprDestination::None)?;
-                        self.expr_discharge(expr, ExprDestination::None)?;
+                        self.expr_discard(env)?;
+                        self.expr_discard(key)?;
+                        self.expr_discard(expr)?;
                     }
                 },
 
@@ -660,9 +654,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     self.set_table(&mut table, &mut key, &mut expr)?;
-                    self.expr_discharge(table, ExprDestination::None)?;
-                    self.expr_discharge(key, ExprDestination::None)?;
-                    self.expr_discharge(expr, ExprDestination::None)?;
+                    self.expr_discard(table)?;
+                    self.expr_discard(key)?;
+                    self.expr_discard(expr)?;
                 }
             }
         }
@@ -803,8 +797,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     let res = self.get_table(&mut expr, &mut key)?;
-                    self.expr_discharge(expr, ExprDestination::None)?;
-                    self.expr_discharge(key, ExprDestination::None)?;
+                    self.expr_discard(expr)?;
+                    self.expr_discard(key)?;
                     expr = res;
                 }
                 SuffixPart::Call(call_suffix) => match call_suffix {
@@ -843,8 +837,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         name,
                     )));
                     let res = self.get_table(&mut env, &mut key)?;
-                    self.expr_discharge(env, ExprDestination::None)?;
-                    self.expr_discharge(key, ExprDestination::None)?;
+                    self.expr_discard(env)?;
+                    self.expr_discard(key)?;
                     res
                 }
             }),
@@ -889,7 +883,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         let source = self.expr_any_register(&mut expr)?;
-        self.expr_discharge(expr, ExprDestination::None)?;
+        self.expr_discard(expr)?;
 
         let dest = self
             .current_function
@@ -922,8 +916,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
                 let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discharge(left, ExprDestination::None)?;
-                self.expr_discharge(right, ExprDestination::None)?;
+                self.expr_discard(left)?;
+                self.expr_discard(right)?;
 
                 let dest = self
                     .current_function
@@ -1294,12 +1288,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         } else {
             // The given expresison will be invalid if `expr_discharge` errors, but this is fine,
             // compiler errors always halt compilation.
-            let register = self
-                .expr_discharge(
-                    mem::replace(expr, ExprDescriptor::Value(Value::Nil)),
-                    ExprDestination::AllocateNew,
-                )?
-                .unwrap();
+            let register = self.expr_discharge(
+                mem::replace(expr, ExprDescriptor::Value(Value::Nil)),
+                ExprDestination::AllocateNew,
+            )?;
             *expr = ExprDescriptor::Register {
                 register,
                 is_temporary: true,
@@ -1323,33 +1315,30 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
     }
 
-    // Consume an expression, placing it in the given destination.  If the desitnation is not None,
-    // then the resulting register is returned.  The returned register (if any) will always be
-    // marked as allocated, so it must be placed into another expression or freed.
+    // Consume an expression, placing it in the given destination and returning the resulting
+    // register.  The returned register will always be marked as allocated, so it must be placed
+    // into another expression or freed.
     fn expr_discharge(
         &mut self,
         expr: ExprDescriptor<'gc, 'a>,
         dest: ExprDestination,
-    ) -> Result<Option<RegisterIndex>, CompilerError> {
+    ) -> Result<RegisterIndex, CompilerError> {
         fn new_destination<'gc, 'a>(
             this: &mut Compiler<'gc, 'a>,
             dest: ExprDestination,
-        ) -> Result<Option<RegisterIndex>, CompilerError> {
+        ) -> Result<RegisterIndex, CompilerError> {
             Ok(match dest {
-                ExprDestination::Register(dest) => Some(dest),
-                ExprDestination::AllocateNew => Some(
-                    this.current_function
-                        .register_allocator
-                        .allocate()
-                        .ok_or(CompilerError::Registers)?,
-                ),
-                ExprDestination::PushNew => Some(
-                    this.current_function
-                        .register_allocator
-                        .push(1)
-                        .ok_or(CompilerError::Registers)?,
-                ),
-                ExprDestination::None => None,
+                ExprDestination::Register(dest) => dest,
+                ExprDestination::AllocateNew => this
+                    .current_function
+                    .register_allocator
+                    .allocate()
+                    .ok_or(CompilerError::Registers)?,
+                ExprDestination::PushNew => this
+                    .current_function
+                    .register_allocator
+                    .push(1)
+                    .ok_or(CompilerError::Registers)?,
             })
         }
 
@@ -1359,88 +1348,71 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 is_temporary,
             } => {
                 if dest == ExprDestination::AllocateNew && is_temporary {
-                    Some(source)
+                    source
                 } else {
                     if is_temporary {
                         self.current_function.register_allocator.free(source);
                     }
-                    if let Some(dest) = new_destination(self, dest)? {
-                        if dest != source {
-                            self.current_function
-                                .opcodes
-                                .push(OpCode::Move { dest, source });
-                        }
-                        Some(dest)
-                    } else {
-                        None
+                    let dest = new_destination(self, dest)?;
+                    if dest != source {
+                        self.current_function
+                            .opcodes
+                            .push(OpCode::Move { dest, source });
                     }
+                    dest
                 }
             }
 
             ExprDescriptor::UpValue(source) => {
-                if let Some(dest) = new_destination(self, dest)? {
-                    self.current_function
-                        .opcodes
-                        .push(OpCode::GetUpValue { source, dest });
-                    Some(dest)
-                } else {
-                    None
-                }
+                let dest = new_destination(self, dest)?;
+                self.current_function
+                    .opcodes
+                    .push(OpCode::GetUpValue { source, dest });
+                dest
             }
 
             ExprDescriptor::Value(value) => {
-                if let Some(dest) = new_destination(self, dest)? {
-                    match value {
-                        Value::Nil => {
-                            self.current_function
-                                .opcodes
-                                .push(OpCode::LoadNil { dest, count: 1 });
-                        }
-                        Value::Boolean(value) => {
-                            self.current_function.opcodes.push(OpCode::LoadBool {
-                                dest,
-                                value,
-                                skip_next: false,
-                            });
-                        }
-                        val => {
-                            let constant = self.get_constant(val)?;
-                            self.current_function
-                                .opcodes
-                                .push(OpCode::LoadConstant { dest, constant });
-                        }
+                let dest = new_destination(self, dest)?;
+                match value {
+                    Value::Nil => {
+                        self.current_function
+                            .opcodes
+                            .push(OpCode::LoadNil { dest, count: 1 });
                     }
-                    Some(dest)
-                } else {
-                    None
+                    Value::Boolean(value) => {
+                        self.current_function.opcodes.push(OpCode::LoadBool {
+                            dest,
+                            value,
+                            skip_next: false,
+                        });
+                    }
+                    val => {
+                        let constant = self.get_constant(val)?;
+                        self.current_function
+                            .opcodes
+                            .push(OpCode::LoadConstant { dest, constant });
+                    }
                 }
+                dest
             }
 
             ExprDescriptor::VarArgs => {
-                if let Some(dest) = new_destination(self, dest)? {
-                    self.current_function.opcodes.push(OpCode::VarArgs {
-                        dest,
-                        count: VarCount::constant(1),
-                    });
-                    Some(dest)
-                } else {
-                    None
-                }
+                let dest = new_destination(self, dest)?;
+                self.current_function.opcodes.push(OpCode::VarArgs {
+                    dest,
+                    count: VarCount::constant(1),
+                });
+                dest
             }
 
             ExprDescriptor::Not(mut expr) => {
-                if dest == ExprDestination::None {
-                    self.expr_discharge(*expr, ExprDestination::None)?;
-                    None
-                } else {
-                    let source = self.expr_any_register(&mut expr)?;
-                    self.expr_discharge(*expr, ExprDestination::None)?;
-                    let dest = new_destination(self, dest)?.unwrap();
-                    self.current_function
-                        .opcodes
-                        .push(OpCode::Not { dest, source });
-                    Some(dest)
-                }
+                let source = self.expr_any_register(&mut expr)?;
+                self.expr_discard(*expr)?;
+                let dest = new_destination(self, dest)?;
+                self.current_function
+                    .opcodes
+                    .push(OpCode::Not { dest, source });
+                dest
             }
 
             ExprDescriptor::FunctionCall { func, args } => match dest {
@@ -1450,7 +1422,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.current_function
                         .opcodes
                         .push(OpCode::Move { dest, source });
-                    Some(dest)
+                    dest
                 }
                 ExprDestination::AllocateNew | ExprDestination::PushNew => {
                     let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
@@ -1461,11 +1433,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .ok_or(CompilerError::Registers)?,
                         source
                     );
-                    Some(source)
-                }
-                ExprDestination::None => {
-                    self.expr_function_call(*func, args, VarCount::constant(0))?;
-                    None
+                    source
                 }
             },
 
@@ -1476,37 +1444,29 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             } => {
                 let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
                 let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discharge(*left, ExprDestination::None)?;
-                self.expr_discharge(*right, ExprDestination::None)?;
+                self.expr_discard(*left)?;
+                self.expr_discard(*right)?;
 
                 let dest = new_destination(self, dest)?;
                 let comparison_opcode =
                     comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
 
                 let opcodes = &mut self.current_function.opcodes;
-                if let Some(dest) = dest {
-                    opcodes.push(comparison_opcode);
-                    opcodes.push(OpCode::Jump {
-                        offset: 1,
-                        close_upvalues: Opt254::none(),
-                    });
-                    opcodes.push(OpCode::LoadBool {
-                        dest,
-                        value: false,
-                        skip_next: true,
-                    });
-                    opcodes.push(OpCode::LoadBool {
-                        dest,
-                        value: true,
-                        skip_next: false,
-                    });
-                } else {
-                    opcodes.push(comparison_opcode);
-                    opcodes.push(OpCode::Jump {
-                        offset: 0,
-                        close_upvalues: Opt254::none(),
-                    });
-                }
+                opcodes.push(comparison_opcode);
+                opcodes.push(OpCode::Jump {
+                    offset: 1,
+                    close_upvalues: Opt254::none(),
+                });
+                opcodes.push(OpCode::LoadBool {
+                    dest,
+                    value: false,
+                    skip_next: true,
+                });
+                opcodes.push(OpCode::LoadBool {
+                    dest,
+                    value: true,
+                    skip_next: false,
+                });
 
                 dest
             }
@@ -1517,25 +1477,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 right,
             } => {
                 let left_register = self.expr_any_register(&mut left)?;
-                self.expr_discharge(*left, ExprDestination::None)?;
+                self.expr_discard(*left)?;
                 let dest = new_destination(self, dest)?;
 
                 let test_op_true = op == ShortCircuitBinOp::And;
-                let test_op = if let Some(dest) = dest {
-                    if left_register == dest {
-                        OpCode::Test {
-                            value: left_register,
-                            is_true: test_op_true,
-                        }
-                    } else {
-                        OpCode::TestSet {
-                            dest,
-                            value: left_register,
-                            is_true: test_op_true,
-                        }
+                let test_op = if left_register == dest {
+                    OpCode::Test {
+                        value: left_register,
+                        is_true: test_op_true,
                     }
                 } else {
-                    OpCode::Test {
+                    OpCode::TestSet {
+                        dest,
                         value: left_register,
                         is_true: test_op_true,
                     }
@@ -1546,11 +1499,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump(skip)?;
 
                 let right = self.expression(right)?;
-                if let Some(dest) = dest {
-                    self.expr_discharge(right, ExprDestination::Register(dest))?;
-                } else {
-                    self.expr_discharge(right, ExprDestination::None)?;
-                }
+                self.expr_discharge(right, ExprDestination::Register(dest))?;
 
                 self.jump_target(skip)?;
 
@@ -1558,18 +1507,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         };
 
-        match dest {
-            ExprDestination::Register(reg) => assert_eq!(result, Some(reg)),
-            ExprDestination::AllocateNew => assert!(result.is_some()),
-            ExprDestination::PushNew => {
-                // Make sure we placed the register at the top of the stack *after* deallocating any
-                // registers in the provided expression
-                let r = result.unwrap().0;
-                let allocator = &self.current_function.register_allocator;
-                assert_eq!(r + 1, allocator.stack_top());
-                assert!(r == 0 || allocator.is_allocated(r - 1));
-            }
-            ExprDestination::None => assert!(result.is_none()),
+        if dest == ExprDestination::PushNew {
+            // Make sure we placed the register at the top of the stack *after* deallocating any
+            // registers in the provided expression
+            let allocator = &self.current_function.register_allocator;
+            assert_eq!(result.0 + 1, allocator.stack_top());
+            assert!(result.0 == 0 || allocator.is_allocated(result.0 - 1));
         }
 
         Ok(result)
@@ -1620,9 +1563,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
             expr => {
-                let dest = self
-                    .expr_discharge(expr, ExprDestination::PushNew)?
-                    .unwrap();
+                let dest = self.expr_discharge(expr, ExprDestination::PushNew)?;
                 if count > 1 {
                     let nils = self
                         .current_function
@@ -1649,9 +1590,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         mut args: Vec<ExprDescriptor<'gc, 'a>>,
         returns: VarCount,
     ) -> Result<RegisterIndex, CompilerError> {
-        let top_reg = self
-            .expr_discharge(func, ExprDestination::PushNew)?
-            .unwrap();
+        let top_reg = self.expr_discharge(func, ExprDestination::PushNew)?;
 
         let args_len = args.len();
         let last_arg = args.pop();
@@ -1708,8 +1647,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         ) -> Result<(), CompilerError> {
             let left_reg_cons = this.expr_any_register_or_constant(&mut left)?;
             let right_reg_cons = this.expr_any_register_or_constant(&mut right)?;
-            this.expr_discharge(left, ExprDestination::None)?;
-            this.expr_discharge(right, ExprDestination::None)?;
+            this.expr_discard(left)?;
+            this.expr_discard(right)?;
 
             let comparison_opcode =
                 comparison_binop_opcode(op, left_reg_cons, right_reg_cons, skip_if);
@@ -1724,7 +1663,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             is_true: bool,
         ) -> Result<(), CompilerError> {
             let test_reg = this.expr_any_register(&mut expr)?;
-            this.expr_discharge(expr, ExprDestination::None)?;
+            this.expr_discard(expr)?;
             this.current_function.opcodes.push(OpCode::Test {
                 value: test_reg,
                 is_true,
@@ -1752,6 +1691,75 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 expr => gen_test(self, expr, !skip_if)?,
             },
             expr => gen_test(self, expr, skip_if)?,
+        }
+
+        Ok(())
+    }
+
+    // Evaluate an expression, but discard the result
+    fn expr_discard(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), CompilerError> {
+        match expr {
+            ExprDescriptor::Register {
+                register: source,
+                is_temporary,
+            } => {
+                if is_temporary {
+                    self.current_function.register_allocator.free(source);
+                }
+            }
+
+            ExprDescriptor::Not(expr) => {
+                self.expr_discard(*expr)?;
+            }
+
+            ExprDescriptor::FunctionCall { func, args } => {
+                self.expr_function_call(*func, args, VarCount::constant(0))?;
+            }
+
+            ExprDescriptor::Comparison {
+                mut left,
+                op,
+                mut right,
+            } => {
+                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
+                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
+                self.expr_discard(*left)?;
+                self.expr_discard(*right)?;
+
+                let comparison_opcode =
+                    comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
+
+                self.current_function.opcodes.push(comparison_opcode);
+                self.current_function.opcodes.push(OpCode::Jump {
+                    offset: 0,
+                    close_upvalues: Opt254::none(),
+                });
+            }
+
+            ExprDescriptor::ShortCircuitBinOp {
+                mut left,
+                op,
+                right,
+            } => {
+                let left_register = self.expr_any_register(&mut left)?;
+                self.expr_discard(*left)?;
+
+                let test_op_true = op == ShortCircuitBinOp::And;
+                self.current_function.opcodes.push(OpCode::Test {
+                    value: left_register,
+                    is_true: test_op_true,
+                });
+
+                let skip = self.unique_jump_label();
+                self.jump(skip)?;
+
+                let right = self.expression(right)?;
+                self.expr_discard(right)?;
+
+                self.jump_target(skip)?;
+            }
+
+            ExprDescriptor::UpValue(_) | ExprDescriptor::Value(_) | ExprDescriptor::VarArgs => {}
         }
 
         Ok(())
