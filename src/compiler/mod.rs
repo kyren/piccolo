@@ -152,7 +152,7 @@ enum VariableDescriptor<'a> {
 struct BlockDescriptor {
     // The index of the first local variable in this block.  All locals above this will be freed
     // when this block is exited.
-    bottom_local: usize,
+    stack_bottom: u8,
     // The index of the first jump target in this block.  All jump targets above this will go out of
     // scope when the block ends.
     bottom_jump_target: usize,
@@ -166,7 +166,7 @@ struct JumpTarget<'a> {
     // The target instruction that will be jumped to
     instruction: usize,
     // The valid local variables in scope at the target location
-    local_count: usize,
+    stack_top: u8,
     // The index of the active block at the target location.
     block_index: usize,
 }
@@ -176,11 +176,11 @@ struct PendingJump<'a> {
     target: JumpLabel<'a>,
     // The index of the placeholder jump instruction
     instruction: usize,
-    // These are the expected block index and local variable count *after* the jump takes place.
-    // These start as the current block index and local count at the time of the jump, but will be
-    // lowered as blocks are exited.
+    // These are the expected block index and stack top *after* the jump takes place.  These start
+    // as the current block index and local count at the time of the jump, but will be lowered as
+    // blocks are exited.
     block_index: usize,
-    local_count: usize,
+    stack_top: u8,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
     close_upvalues: bool,
 }
@@ -194,7 +194,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn enter_block(&mut self) {
         self.current_function.blocks.push(BlockDescriptor {
-            bottom_local: self.current_function.locals.len(),
+            stack_bottom: self.current_function.register_allocator.stack_top(),
             bottom_jump_target: self.current_function.jump_targets.len(),
             owns_upvalues: false,
         });
@@ -203,12 +203,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn exit_block(&mut self) -> Result<(), CompilerError> {
         let last_block = self.current_function.blocks.pop().unwrap();
 
-        for (_, r) in self
-            .current_function
-            .locals
-            .drain(last_block.bottom_local..)
-        {
-            self.current_function.register_allocator.free(r);
+        while let Some((_, last)) = self.current_function.locals.last() {
+            if last.0 >= last_block.stack_bottom {
+                self.current_function.register_allocator.free(*last);
+                self.current_function.locals.pop();
+            } else {
+                break;
+            }
         }
         self.current_function
             .jump_targets
@@ -217,7 +218,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         if last_block.owns_upvalues && !self.current_function.blocks.is_empty() {
             self.current_function.opcodes.push(OpCode::Jump {
                 offset: 0,
-                close_upvalues: cast(last_block.bottom_local)
+                close_upvalues: cast(last_block.stack_bottom)
                     .and_then(Opt254::try_some)
                     .ok_or(CompilerError::Registers)?,
             });
@@ -231,8 +232,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     break;
                 }
                 pending_jump.block_index = self.current_function.blocks.len() - 1;
-                assert!(pending_jump.local_count >= self.current_function.locals.len());
-                pending_jump.local_count = self.current_function.locals.len();
+                assert!(
+                    pending_jump.stack_top >= self.current_function.register_allocator.stack_top()
+                );
+                pending_jump.stack_top = self.current_function.register_allocator.stack_top();
                 pending_jump.close_upvalues |= last_block.owns_upvalues;
             }
         }
@@ -649,7 +652,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         ));
                     }
                 } else {
-                    let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                    let reg = self.expr_discharge(expr, ExprDestination::PushNew)?;
                     self.current_function
                         .locals
                         .push((&local_statement.names[i], reg));
@@ -746,7 +749,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let dest = self
             .current_function
             .register_allocator
-            .allocate()
+            .push(1)
             .ok_or(CompilerError::Registers)?;
         self.current_function
             .opcodes
@@ -1052,8 +1055,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         // blocks in that function as owning an upvalue.  This allows us to skip
                         // closing upvalues in jumps if we know the block does not own any upvalues.
                         for block in get_function(self, i).blocks.iter_mut().rev() {
-                            if block.bottom_local <= register.0 as usize {
+                            if block.stack_bottom <= register.0 {
                                 block.owns_upvalues = true;
+                                break;
                             }
                         }
 
@@ -1133,7 +1137,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn jump(&mut self, target: JumpLabel<'a>) -> Result<(), CompilerError> {
         let jmp_inst = self.current_function.opcodes.len();
-        let current_local_count = self.current_function.locals.len();
+        let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
         let mut target_found = false;
@@ -1141,9 +1145,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             if jump_target.label == target {
                 // We need to close upvalues only if any of the blocks we're jumping over own
                 // upvalues
-                assert!(jump_target.local_count <= current_local_count);
+                assert!(jump_target.stack_top <= current_stack_top);
                 assert!(jump_target.block_index <= current_block_index);
-                let needs_close_upvalues = jump_target.local_count < current_local_count
+                let needs_close_upvalues = jump_target.stack_top < current_stack_top
                     && (jump_target.block_index..=current_block_index)
                         .any(|i| self.current_function.blocks[i].owns_upvalues);
 
@@ -1151,7 +1155,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
                         .ok_or(CompilerError::JumpOverflow)?,
                     close_upvalues: if needs_close_upvalues {
-                        cast(jump_target.local_count)
+                        cast(jump_target.stack_top)
                             .and_then(Opt254::try_some)
                             .ok_or(CompilerError::Registers)?
                     } else {
@@ -1173,7 +1177,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 target: target,
                 instruction: jmp_inst,
                 block_index: current_block_index,
-                local_count: current_local_count,
+                stack_top: current_stack_top,
                 close_upvalues: false,
             });
         }
@@ -1183,7 +1187,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn jump_target(&mut self, jump_label: JumpLabel<'a>) -> Result<(), CompilerError> {
         let target_instruction = self.current_function.opcodes.len();
-        let current_local_count = self.current_function.locals.len();
+        let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
         for jump_target in self.current_function.jump_targets.iter().rev() {
@@ -1197,7 +1201,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         self.current_function.jump_targets.push(JumpTarget {
             label: jump_label,
             instruction: target_instruction,
-            local_count: current_local_count,
+            stack_top: current_stack_top,
             block_index: current_block_index,
         });
 
@@ -1216,8 +1220,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         });
 
         for pending_jump in resolving_jumps {
-            assert!(pending_jump.local_count <= current_local_count);
-            if pending_jump.local_count < current_local_count {
+            assert!(pending_jump.stack_top <= current_stack_top);
+            if pending_jump.stack_top < current_stack_top {
                 return Err(CompilerError::JumpLocal);
             }
 
@@ -1229,7 +1233,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     *offset = jump_offset(pending_jump.instruction, target_instruction)
                         .ok_or(CompilerError::JumpOverflow)?;
                     if pending_jump.close_upvalues {
-                        *close_upvalues = cast(current_local_count)
+                        *close_upvalues = cast(current_stack_top)
                             .and_then(Opt254::try_some)
                             .ok_or(CompilerError::Registers)?;
                     };
