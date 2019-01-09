@@ -375,7 +375,71 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn for_statement(&mut self, for_statement: &'a ForStatement) -> Result<(), CompilerError> {
         match for_statement {
-            ForStatement::Numeric { .. } => unimplemented!(),
+            ForStatement::Numeric {
+                name,
+                initial,
+                limit,
+                step,
+                body,
+            } => {
+                let initial = self.expression(initial)?;
+                let base = self.expr_discharge(initial, ExprDestination::PushNew)?;
+
+                let limit = self.expression(limit)?;
+                self.expr_discharge(limit, ExprDestination::PushNew)?;
+
+                let step = if let Some(step) = step {
+                    self.expression(step)?
+                } else {
+                    ExprDescriptor::Value(Value::Integer(1))
+                };
+                self.expr_discharge(step, ExprDestination::PushNew)?;
+
+                let for_prep_index = self.current_function.opcodes.len();
+                self.current_function
+                    .opcodes
+                    .push(OpCode::NumericForPrep { base, jump: 0 });
+
+                self.enter_block();
+                self.enter_block();
+
+                let loop_var = self
+                    .current_function
+                    .register_allocator
+                    .push(1)
+                    .ok_or(CompilerError::Registers)?;
+                self.current_function.locals.push((name, loop_var));
+
+                self.block_statements(body)?;
+                self.exit_block()?;
+
+                let for_loop_index = self.current_function.opcodes.len();
+                self.current_function.opcodes.push(OpCode::NumericForLoop {
+                    base: RegisterIndex(base.0),
+                    jump: jump_offset(for_loop_index, for_prep_index + 1)
+                        .ok_or(CompilerError::JumpOverflow)?,
+                });
+                match &mut self.current_function.opcodes[for_prep_index] {
+                    OpCode::NumericForPrep {
+                        base: prep_base,
+                        jump,
+                    } => {
+                        assert!(
+                            *prep_base == base && *jump == 0,
+                            "instruction is not placeholder NumericForPrep"
+                        );
+                        *jump = jump_offset(for_prep_index, for_loop_index)
+                            .ok_or(CompilerError::JumpOverflow)?;
+                    }
+                    _ => panic!("instruction is not placeholder NumericForPrep"),
+                }
+
+                self.jump_target(JumpLabel::Break)?;
+                self.exit_block()?;
+
+                self.current_function.register_allocator.pop_to(base.0);
+            }
+
             ForStatement::Generic {
                 names,
                 arguments,
@@ -409,6 +473,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 };
 
                 self.enter_block();
+                self.enter_block();
 
                 let name_count = cast(names.len()).ok_or(CompilerError::Registers)?;
                 let names_reg = self
@@ -426,14 +491,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 let start_inst = self.current_function.opcodes.len();
                 self.block_statements(body)?;
+                self.exit_block()?;
 
                 self.jump_target(loop_label)?;
-                self.current_function.opcodes.push(OpCode::ForCall {
+                self.current_function.opcodes.push(OpCode::GenericForCall {
                     base,
                     var_count: cast(names.len()).ok_or(CompilerError::Registers)?,
                 });
                 let loop_inst = self.current_function.opcodes.len();
-                self.current_function.opcodes.push(OpCode::ForLoop {
+                self.current_function.opcodes.push(OpCode::GenericForLoop {
                     base: RegisterIndex(base.0 + 2),
                     jump: jump_offset(loop_inst, start_inst).ok_or(CompilerError::JumpOverflow)?,
                 });

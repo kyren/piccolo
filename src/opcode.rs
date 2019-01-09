@@ -125,18 +125,42 @@ pub enum OpCode {
         dest: RegisterIndex,
         proto: PrototypeIndex,
     },
-    // Used to set up for a generic for loop.
+    // Used to set up for a numeric for loop:
+    //
+    // R(base) -= R(base + 2)
+    // pc += jump
+    NumericForPrep {
+        base: RegisterIndex,
+        jump: i16,
+    },
+    // Used to iterate a numeric for loop:
+    //
+    // R(base) += R(base + 2)
+    // if R(base) <?= R(base + 1) then
+    //     pc += jump
+    //     R(base + 3) = R(base)
+    // end
+    //
+    // The `<?=` operator here means "less than" if the step (aka R(base + 2)) is positive, and
+    // "greater than" if the step is negative
+    NumericForLoop {
+        base: RegisterIndex,
+        jump: i16,
+    },
+    // Used to set up for a generic for loop:
+    //
     // R(base + 3), ..., R(base + 2 + var_count) = R(base)(R(base + 1), R(base + 2))
-    ForCall {
+    GenericForCall {
         base: RegisterIndex,
         var_count: u8,
     },
-    // Used to iterate a for loop:
+    // Used to iterate a generic for loop:
+    //
     // if R(base + 1) ~= nil then
     //     R(base) = R(base + 1)
     //     pc += jump
     // end
-    ForLoop {
+    GenericForLoop {
         base: RegisterIndex,
         jump: i16,
     },
