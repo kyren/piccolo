@@ -1022,10 +1022,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             for j in 0..get_function(self, i).upvalues.len() {
                 if name == get_function(self, i).upvalues[j].0 {
+                    let upvalue_index = UpValueIndex(cast(j).ok_or(CompilerError::UpValues)?);
                     if i == current_function {
-                        return Ok(VariableDescriptor::UpValue(UpValueIndex(cast(j).unwrap())));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index));
                     } else {
-                        let mut upvalue_index = UpValueIndex(cast(j).unwrap());
+                        let mut upvalue_index = upvalue_index;
                         for k in i + 1..=current_function {
                             get_function(self, k)
                                 .upvalues
@@ -1605,7 +1606,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             Some(ExprDescriptor::VarArgs) => {
                 self.current_function.opcodes.push(OpCode::VarArgs {
-                    dest: RegisterIndex(cast(top_reg.0 as usize + args_len).unwrap()),
+                    dest: RegisterIndex(
+                        cast(top_reg.0 as usize + args_len).ok_or(CompilerError::Registers)?,
+                    ),
                     count: VarCount::variable(),
                 });
                 VarCount::variable()
@@ -1776,10 +1779,10 @@ impl<'gc, 'a> CompilerFunction<'gc, 'a> {
         function.register_allocator.push(fixed_params);
         function.has_varargs = has_varargs;
         function.fixed_params = fixed_params;
-        for (i, name) in parameters.iter().enumerate() {
+        for i in 0..fixed_params {
             function
                 .locals
-                .push((name, RegisterIndex(cast(i).unwrap())));
+                .push((&parameters[i as usize], RegisterIndex(i)));
         }
         Ok(function)
     }
