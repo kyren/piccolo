@@ -100,16 +100,17 @@ struct CompilerFunction<'gc, 'a> {
 
 #[derive(Debug)]
 enum ExprDescriptor<'gc, 'a> {
-    Register {
-        register: RegisterIndex,
-        is_temporary: bool,
-    },
-    UpValue(UpValueIndex),
+    Variable(VariableDescriptor<'a>),
     Value(Value<'gc>),
     VarArgs,
-    FunctionCall {
-        func: Box<ExprDescriptor<'gc, 'a>>,
-        args: Vec<ExprDescriptor<'gc, 'a>>,
+    UnaryOperator {
+        op: UnaryOperator,
+        expr: Box<ExprDescriptor<'gc, 'a>>,
+    },
+    SimpleBinaryOperator {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: SimpleBinOp,
+        right: Box<ExprDescriptor<'gc, 'a>>,
     },
     Comparison {
         left: Box<ExprDescriptor<'gc, 'a>>,
@@ -122,21 +123,22 @@ enum ExprDescriptor<'gc, 'a> {
         right: &'a Expression,
     },
     TableConstructor,
-    Function(PrototypeIndex),
     TableField {
         table: Box<ExprDescriptor<'gc, 'a>>,
         key: Box<ExprDescriptor<'gc, 'a>>,
     },
+    Closure(PrototypeIndex),
+    FunctionCall {
+        func: Box<ExprDescriptor<'gc, 'a>>,
+        args: Vec<ExprDescriptor<'gc, 'a>>,
+    },
+}
+
+#[derive(Debug)]
+enum VariableDescriptor<'a> {
+    Local(RegisterIndex),
+    UpValue(UpValueIndex),
     Global(&'a [u8]),
-    UnaryOperator {
-        op: UnaryOperator,
-        expr: Box<ExprDescriptor<'gc, 'a>>,
-    },
-    SimpleBinaryOperator {
-        left: Box<ExprDescriptor<'gc, 'a>>,
-        op: SimpleBinOp,
-        right: Box<ExprDescriptor<'gc, 'a>>,
-    },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -154,13 +156,6 @@ enum JumpLabel<'a> {
     Unique(u64),
     Named(&'a [u8]),
     Break,
-}
-
-#[derive(Debug)]
-enum VariableDescriptor<'a> {
-    Local(RegisterIndex),
-    UpValue(UpValueIndex),
-    Global(&'a [u8]),
 }
 
 #[derive(Debug)]
@@ -599,32 +594,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             unimplemented!("no method support");
         }
 
-        let proto = self.new_prototype(&function_statement.definition)?;
-
-        let mut env = self.get_environment()?;
-        let mut name = ExprDescriptor::Value(Value::String(String::new(
+        let env = self.get_environment()?;
+        let name = ExprDescriptor::Value(Value::String(String::new(
             self.mutation_context,
             &*function_statement.name,
         )));
 
-        let dest = self
-            .current_function
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        self.current_function
-            .opcodes
-            .push(OpCode::Closure { proto, dest });
-        let mut closure = ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
-        };
+        let closure = ExprDescriptor::Closure(self.new_prototype(&function_statement.definition)?);
 
-        self.set_table(&mut env, &mut name, &mut closure)?;
-
-        self.expr_discard(env)?;
-        self.expr_discard(name)?;
-        self.expr_discard(closure)?;
+        self.set_table(env, name, closure)?;
 
         Ok(())
     }
@@ -703,7 +681,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         assignment: &'a AssignmentStatement,
     ) -> Result<(), CompilerError> {
         for (i, target) in assignment.targets.iter().enumerate() {
-            let mut expr = if i < assignment.values.len() {
+            let expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
             } else {
                 ExprDescriptor::Value(Value::Nil)
@@ -715,37 +693,33 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         self.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
                     VariableDescriptor::UpValue(dest) => {
-                        let source = self.expr_any_register(&mut expr)?;
+                        let (source, source_is_temp) = self.expr_any_register(expr)?;
                         self.current_function
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
-                        self.expr_discard(expr)?;
+                        if source_is_temp {
+                            self.current_function.register_allocator.free(source);
+                        }
                     }
                     VariableDescriptor::Global(name) => {
-                        let mut env = self.get_environment()?;
-                        let mut key = ExprDescriptor::Value(Value::String(String::new(
+                        let env = self.get_environment()?;
+                        let key = ExprDescriptor::Value(Value::String(String::new(
                             self.mutation_context,
                             name,
                         )));
-                        self.set_table(&mut env, &mut key, &mut expr)?;
-                        self.expr_discard(env)?;
-                        self.expr_discard(key)?;
-                        self.expr_discard(expr)?;
+                        self.set_table(env, key, expr)?;
                     }
                 },
 
                 AssignmentTarget::Field(table, field) => {
-                    let mut table = self.suffixed_expression(table)?;
-                    let mut key = match field {
+                    let table = self.suffixed_expression(table)?;
+                    let key = match field {
                         FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(
                             String::new(self.mutation_context, name),
                         )),
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
-                    self.set_table(&mut table, &mut key, &mut expr)?;
-                    self.expr_discard(table)?;
-                    self.expr_discard(key)?;
-                    self.expr_discard(expr)?;
+                    self.set_table(table, key, expr)?;
                 }
             }
         }
@@ -836,7 +810,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         function: &'a FunctionDefinition,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let proto = self.new_prototype(function)?;
-        Ok(ExprDescriptor::Function(proto))
+        Ok(ExprDescriptor::Closure(proto))
     }
 
     fn suffixed_expression(
@@ -881,14 +855,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         primary_expression: &'a PrimaryExpression,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match primary_expression {
-            PrimaryExpression::Name(name) => Ok(match self.find_variable(name)? {
-                VariableDescriptor::Local(register) => ExprDescriptor::Register {
-                    register,
-                    is_temporary: false,
-                },
-                VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-                VariableDescriptor::Global(name) => ExprDescriptor::Global(name),
-            }),
+            PrimaryExpression::Name(name) => {
+                Ok(ExprDescriptor::Variable(self.find_variable(name)?))
+            }
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
         }
     }
@@ -1065,14 +1034,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
     // _ENV.
     fn get_environment(&mut self) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
-        Ok(match self.find_variable(b"_ENV")? {
-            VariableDescriptor::Local(register) => ExprDescriptor::Register {
-                register,
-                is_temporary: false,
-            },
-            VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-            VariableDescriptor::Global(_) => unreachable!("there should always be an _ENV upvalue"),
-        })
+        Ok(ExprDescriptor::Variable(self.find_variable(b"_ENV")?))
     }
 
     fn unique_jump_label(&mut self) -> JumpLabel<'a> {
@@ -1214,16 +1176,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn set_table(
         &mut self,
-        table: &mut ExprDescriptor<'gc, 'a>,
-        key: &mut ExprDescriptor<'gc, 'a>,
-        value: &mut ExprDescriptor<'gc, 'a>,
+        table: ExprDescriptor<'gc, 'a>,
+        key: ExprDescriptor<'gc, 'a>,
+        value: ExprDescriptor<'gc, 'a>,
     ) -> Result<(), CompilerError> {
-        let op = match table {
-            &mut ExprDescriptor::UpValue(table) => {
-                match (
-                    self.expr_any_register_or_constant(key)?,
-                    self.expr_any_register_or_constant(value)?,
-                ) {
+        match table {
+            ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+                let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
+                let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
+
+                if let Some(to_free) = key_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+                if let Some(to_free) = value_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+
+                self.current_function.opcodes.push(match (key, value) {
                     (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
                         OpCode::SetUpTableRR { table, key, value }
                     }
@@ -1236,14 +1205,24 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
                         OpCode::SetUpTableCC { table, key, value }
                     }
-                }
+                });
             }
             table => {
-                let table = self.expr_any_register(table)?;
-                match (
-                    self.expr_any_register_or_constant(key)?,
-                    self.expr_any_register_or_constant(value)?,
-                ) {
+                let (table, table_is_temp) = self.expr_any_register(table)?;
+                let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
+                let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
+
+                if table_is_temp {
+                    self.current_function.register_allocator.free(table);
+                }
+                if let Some(to_free) = key_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+                if let Some(to_free) = value_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+
+                self.current_function.opcodes.push(match (key, value) {
                     (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
                         OpCode::SetTableRR { table, key, value }
                     }
@@ -1256,50 +1235,50 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
                         OpCode::SetTableCC { table, key, value }
                     }
-                }
+                });
             }
         };
 
-        self.current_function.opcodes.push(op);
         Ok(())
     }
 
-    // Modify an expression so that it contains its result in any register, and return that
-    // register.
+    // Evaluate an expression and place its result in *any* register, and return that register and a
+    // flag indicating whether that register is temporary and must be freed.
     fn expr_any_register(
         &mut self,
-        expr: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterIndex, CompilerError> {
-        if let ExprDescriptor::Register { register, .. } = *expr {
-            Ok(register)
-        } else {
-            // The given expresison will be invalid if `expr_discharge` errors, but this is fine,
-            // compiler errors always halt compilation.
-            let register = self.expr_discharge(
-                mem::replace(expr, ExprDescriptor::Value(Value::Nil)),
-                ExprDestination::AllocateNew,
-            )?;
-            *expr = ExprDescriptor::Register {
-                register,
-                is_temporary: true,
-            };
-            Ok(register)
-        }
+        expr: ExprDescriptor<'gc, 'a>,
+    ) -> Result<(RegisterIndex, bool), CompilerError> {
+        Ok(
+            if let ExprDescriptor::Variable(VariableDescriptor::Local(register)) = expr {
+                (register, false)
+            } else {
+                (
+                    self.expr_discharge(expr, ExprDestination::AllocateNew)?,
+                    true,
+                )
+            },
+        )
     }
 
     // If the expression is a constant value *and* fits into an 8-bit constant index, return that
-    // constant index, otherwise modify the expression so that it is contained in a register and
-    // return that register.
+    // constant index, otherwise evaluate the expression so that it contains its result in any
+    // register and return that register.  If there is a register that must be freed, returns that
+    // register as the second return value.
     fn expr_any_register_or_constant(
         &mut self,
-        expr: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<RegisterOrConstant, CompilerError> {
-        if let &mut ExprDescriptor::Value(cons) = expr {
+        expr: ExprDescriptor<'gc, 'a>,
+    ) -> Result<(RegisterOrConstant, Option<RegisterIndex>), CompilerError> {
+        if let ExprDescriptor::Value(cons) = expr {
             if let Some(c8) = cast(self.get_constant(cons)?.0) {
-                return Ok(RegisterOrConstant::Constant(ConstantIndex8(c8)));
+                return Ok((RegisterOrConstant::Constant(ConstantIndex8(c8)), None));
             }
         }
-        Ok(RegisterOrConstant::Register(self.expr_any_register(expr)?))
+
+        let (reg, is_temp) = self.expr_any_register(expr)?;
+        Ok((
+            RegisterOrConstant::Register(reg),
+            if is_temp { Some(reg) } else { None },
+        ))
     }
 
     // Consume an expression, placing it in the given destination and returning the resulting
@@ -1331,66 +1310,73 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         fn get_table<'gc, 'a>(
             this: &mut Compiler<'gc, 'a>,
-            mut table: ExprDescriptor<'gc, 'a>,
-            mut key: ExprDescriptor<'gc, 'a>,
+            table: ExprDescriptor<'gc, 'a>,
+            key: ExprDescriptor<'gc, 'a>,
             dest: ExprDestination,
         ) -> Result<RegisterIndex, CompilerError> {
-            let dest = new_destination(this, dest)?;
-            let op = match &mut table {
-                &mut ExprDescriptor::UpValue(table) => {
-                    match this.expr_any_register_or_constant(&mut key)? {
+            Ok(match table {
+                ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+                    let (key_reg_cons, key_to_free) = this.expr_any_register_or_constant(key)?;
+                    if let Some(to_free) = key_to_free {
+                        this.current_function.register_allocator.free(to_free);
+                    }
+                    let dest = new_destination(this, dest)?;
+                    this.current_function.opcodes.push(match key_reg_cons {
                         RegisterOrConstant::Constant(key) => {
                             OpCode::GetUpTableC { dest, table, key }
                         }
                         RegisterOrConstant::Register(key) => {
                             OpCode::GetUpTableR { dest, table, key }
                         }
-                    }
+                    });
+                    dest
                 }
                 table => {
-                    let table = this.expr_any_register(table)?;
-                    match this.expr_any_register_or_constant(&mut key)? {
+                    let (table, table_is_temp) = this.expr_any_register(table)?;
+                    let (key_reg_cons, key_to_free) = this.expr_any_register_or_constant(key)?;
+                    if table_is_temp {
+                        this.current_function.register_allocator.free(table);
+                    }
+                    if let Some(to_free) = key_to_free {
+                        this.current_function.register_allocator.free(to_free);
+                    }
+                    let dest = new_destination(this, dest)?;
+                    this.current_function.opcodes.push(match key_reg_cons {
                         RegisterOrConstant::Constant(key) => OpCode::GetTableC { dest, table, key },
                         RegisterOrConstant::Register(key) => OpCode::GetTableR { dest, table, key },
-                    }
+                    });
+                    dest
                 }
-            };
-            this.current_function.opcodes.push(op);
-
-            this.expr_discard(table)?;
-            this.expr_discard(key)?;
-
-            Ok(dest)
+            })
         }
 
         let result = match expr {
-            ExprDescriptor::Register {
-                register: source,
-                is_temporary,
-            } => {
-                if dest == ExprDestination::AllocateNew && is_temporary {
-                    source
-                } else {
-                    if is_temporary {
-                        self.current_function.register_allocator.free(source);
-                    }
+            ExprDescriptor::Variable(variable) => match variable {
+                VariableDescriptor::Local(source) => {
                     let dest = new_destination(self, dest)?;
-                    if dest != source {
-                        self.current_function
-                            .opcodes
-                            .push(OpCode::Move { dest, source });
-                    }
+                    self.current_function
+                        .opcodes
+                        .push(OpCode::Move { dest, source });
                     dest
                 }
-            }
 
-            ExprDescriptor::UpValue(source) => {
-                let dest = new_destination(self, dest)?;
-                self.current_function
-                    .opcodes
-                    .push(OpCode::GetUpValue { source, dest });
-                dest
-            }
+                VariableDescriptor::UpValue(source) => {
+                    let dest = new_destination(self, dest)?;
+                    self.current_function
+                        .opcodes
+                        .push(OpCode::GetUpValue { source, dest });
+                    dest
+                }
+
+                VariableDescriptor::Global(name) => {
+                    let env = self.get_environment()?;
+                    let key = ExprDescriptor::Value(Value::String(String::new(
+                        self.mutation_context,
+                        name,
+                    )));
+                    get_table(self, env, key, dest)?
+                }
+            },
 
             ExprDescriptor::Value(value) => {
                 let dest = new_destination(self, dest)?;
@@ -1426,37 +1412,45 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::FunctionCall { func, args } => match dest {
-                ExprDestination::Register(dest) => {
-                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
-                    assert_ne!(dest, source);
-                    self.current_function
-                        .opcodes
-                        .push(OpCode::Move { dest, source });
-                    dest
+            ExprDescriptor::UnaryOperator { op, expr } => {
+                let (source, source_is_temp) = self.expr_any_register(*expr)?;
+                if source_is_temp {
+                    self.current_function.register_allocator.free(source);
                 }
-                ExprDestination::AllocateNew | ExprDestination::PushNew => {
-                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
-                    assert_eq!(
-                        self.current_function
-                            .register_allocator
-                            .push(1)
-                            .ok_or(CompilerError::Registers)?,
-                        source
-                    );
-                    source
-                }
-            },
 
-            ExprDescriptor::Comparison {
-                mut left,
-                op,
-                mut right,
-            } => {
-                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
-                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discard(*left)?;
-                self.expr_discard(*right)?;
+                let dest = new_destination(self, dest)?;
+                let unop_opcode = unop_opcode(op, dest, source);
+                self.current_function.opcodes.push(unop_opcode);
+                dest
+            }
+
+            ExprDescriptor::SimpleBinaryOperator { left, op, right } => {
+                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
+                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
+                if let Some(to_free) = left_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+                if let Some(to_free) = right_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+
+                let dest = new_destination(self, dest)?;
+                let simple_binop_opcode =
+                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
+                self.current_function.opcodes.push(simple_binop_opcode);
+
+                dest
+            }
+
+            ExprDescriptor::Comparison { left, op, right } => {
+                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
+                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
+                if let Some(to_free) = left_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+                if let Some(to_free) = right_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
 
                 let dest = new_destination(self, dest)?;
                 let comparison_opcode =
@@ -1482,13 +1476,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::ShortCircuitBinOp {
-                mut left,
-                op,
-                right,
-            } => {
-                let left_register = self.expr_any_register(&mut left)?;
-                self.expr_discard(*left)?;
+            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
+                let (left_register, left_is_temp) = self.expr_any_register(*left)?;
+                if left_is_temp {
+                    self.current_function.register_allocator.free(left_register);
+                }
+
                 let dest = new_destination(self, dest)?;
 
                 let test_op_true = op == ShortCircuitBinOp::And;
@@ -1525,7 +1518,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::Function(proto) => {
+            ExprDescriptor::TableField { table, key } => get_table(self, *table, *key, dest)?,
+
+            ExprDescriptor::Closure(proto) => {
                 let dest = new_destination(self, dest)?;
                 self.current_function
                     .opcodes
@@ -1533,42 +1528,27 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::TableField { table, key } => get_table(self, *table, *key, dest)?,
-
-            ExprDescriptor::Global(name) => {
-                let env = self.get_environment()?;
-                let key =
-                    ExprDescriptor::Value(Value::String(String::new(self.mutation_context, name)));
-                get_table(self, env, key, dest)?
-            }
-
-            ExprDescriptor::UnaryOperator { op, mut expr } => {
-                let source = self.expr_any_register(&mut expr)?;
-                self.expr_discard(*expr)?;
-
-                let dest = new_destination(self, dest)?;
-                let unop_opcode = unop_opcode(op, dest, source);
-                self.current_function.opcodes.push(unop_opcode);
-                dest
-            }
-
-            ExprDescriptor::SimpleBinaryOperator {
-                mut left,
-                op,
-                mut right,
-            } => {
-                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
-                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discard(*left)?;
-                self.expr_discard(*right)?;
-
-                let dest = new_destination(self, dest)?;
-                let simple_binop_opcode =
-                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
-                self.current_function.opcodes.push(simple_binop_opcode);
-
-                dest
-            }
+            ExprDescriptor::FunctionCall { func, args } => match dest {
+                ExprDestination::Register(dest) => {
+                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
+                    assert_ne!(dest, source);
+                    self.current_function
+                        .opcodes
+                        .push(OpCode::Move { dest, source });
+                    dest
+                }
+                ExprDestination::AllocateNew | ExprDestination::PushNew => {
+                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
+                    assert_eq!(
+                        self.current_function
+                            .register_allocator
+                            .push(1)
+                            .ok_or(CompilerError::Registers)?,
+                        source
+                    );
+                    source
+                }
+            },
         };
 
         if dest == ExprDestination::PushNew {
@@ -1582,7 +1562,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(result)
     }
 
-    // Consumes an expression and pushes it to a range of newly allocated registers at the top of
+    // Evaluates an expression and pushes it to a range of newly allocated registers at the top of
     // the stack.  For single value expressions this sets the rest of the values to Nil.
     fn expr_push_count(
         &mut self,
@@ -1697,7 +1677,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(top_reg)
     }
 
-    // Consumes the given expression and tests it, skipping the following instruction if the boolean
+    // Evaluates the given expression and tests it, skipping the following instruction if the boolean
     // result is equal to `skip_if`
     fn expr_test(
         &mut self,
@@ -1706,15 +1686,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<(), CompilerError> {
         fn gen_comparison<'gc, 'a>(
             this: &mut Compiler<'gc, 'a>,
-            mut left: ExprDescriptor<'gc, 'a>,
+            left: ExprDescriptor<'gc, 'a>,
             op: ComparisonBinOp,
-            mut right: ExprDescriptor<'gc, 'a>,
+            right: ExprDescriptor<'gc, 'a>,
             skip_if: bool,
         ) -> Result<(), CompilerError> {
-            let left_reg_cons = this.expr_any_register_or_constant(&mut left)?;
-            let right_reg_cons = this.expr_any_register_or_constant(&mut right)?;
-            this.expr_discard(left)?;
-            this.expr_discard(right)?;
+            let (left_reg_cons, left_to_free) = this.expr_any_register_or_constant(left)?;
+            let (right_reg_cons, right_to_free) = this.expr_any_register_or_constant(right)?;
+            if let Some(to_free) = left_to_free {
+                this.current_function.register_allocator.free(to_free);
+            }
+            if let Some(to_free) = right_to_free {
+                this.current_function.register_allocator.free(to_free);
+            }
 
             let comparison_opcode =
                 comparison_binop_opcode(op, left_reg_cons, right_reg_cons, skip_if);
@@ -1725,11 +1709,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         fn gen_test<'gc, 'a>(
             this: &mut Compiler<'gc, 'a>,
-            mut expr: ExprDescriptor<'gc, 'a>,
+            expr: ExprDescriptor<'gc, 'a>,
             is_true: bool,
         ) -> Result<(), CompilerError> {
-            let test_reg = this.expr_any_register(&mut expr)?;
-            this.expr_discard(expr)?;
+            let (test_reg, test_is_temp) = this.expr_any_register(expr)?;
+            if test_is_temp {
+                this.current_function.register_allocator.free(test_reg);
+            }
             this.current_function.opcodes.push(OpCode::Test {
                 value: test_reg,
                 is_true,
@@ -1765,31 +1751,22 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Evaluate an expression, but discard the result
+    // Evaluate an expression, but discards the result
     fn expr_discard(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), CompilerError> {
         match expr {
-            ExprDescriptor::Register {
-                register: source,
-                is_temporary,
-            } => {
-                if is_temporary {
-                    self.current_function.register_allocator.free(source);
-                }
-            }
-
             ExprDescriptor::FunctionCall { func, args } => {
                 self.expr_function_call(*func, args, VarCount::constant(0))?;
             }
 
-            ExprDescriptor::Comparison {
-                mut left,
-                op,
-                mut right,
-            } => {
-                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
-                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discard(*left)?;
-                self.expr_discard(*right)?;
+            ExprDescriptor::Comparison { left, op, right } => {
+                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
+                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
+                if let Some(to_free) = left_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
+                if let Some(to_free) = right_to_free {
+                    self.current_function.register_allocator.free(to_free);
+                }
 
                 let comparison_opcode =
                     comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
@@ -1801,13 +1778,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 });
             }
 
-            ExprDescriptor::ShortCircuitBinOp {
-                mut left,
-                op,
-                right,
-            } => {
-                let left_register = self.expr_any_register(&mut left)?;
-                self.expr_discard(*left)?;
+            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
+                let (left_register, left_is_temp) = self.expr_any_register(*left)?;
+                if left_is_temp {
+                    self.current_function.register_allocator.free(left_register);
+                }
 
                 let test_op_true = op == ShortCircuitBinOp::And;
                 self.current_function.opcodes.push(OpCode::Test {
@@ -1824,19 +1799,20 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump_target(skip)?;
             }
 
-            expr @ ExprDescriptor::TableField { .. }
-            | expr @ ExprDescriptor::Global(_)
+            expr @ ExprDescriptor::Variable(VariableDescriptor::Global(_))
+            | expr @ ExprDescriptor::TableField { .. }
             | expr @ ExprDescriptor::UnaryOperator { .. }
             | expr @ ExprDescriptor::SimpleBinaryOperator { .. } => {
                 let res = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
                 self.current_function.register_allocator.free(res);
             }
 
-            ExprDescriptor::UpValue(_)
+            ExprDescriptor::Variable(VariableDescriptor::Local(_))
+            | ExprDescriptor::Variable(VariableDescriptor::UpValue(_))
             | ExprDescriptor::Value(_)
             | ExprDescriptor::VarArgs
             | ExprDescriptor::TableConstructor
-            | ExprDescriptor::Function(_) => {}
+            | ExprDescriptor::Closure(_) => {}
         }
 
         Ok(())
