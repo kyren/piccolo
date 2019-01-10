@@ -120,7 +120,7 @@ enum ExprDescriptor<'gc, 'a> {
     ShortCircuitBinOp {
         left: Box<ExprDescriptor<'gc, 'a>>,
         op: ShortCircuitBinOp,
-        right: &'a Expression,
+        right: Box<ExprDescriptor<'gc, 'a>>,
     },
     TableConstructor,
     TableField {
@@ -754,6 +754,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
+            let right = self.expression(&right)?;
             expr = self.binary_operator_expression(expr, *binop, right)?;
         }
         Ok(expr)
@@ -883,11 +884,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
-        right: &'a Expression,
+        right: ExprDescriptor<'gc, 'a>,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
-                let right = self.expression(right)?;
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = simple_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
@@ -901,7 +901,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             BinOpCategory::Comparison(op) => {
-                let right = self.expression(right)?;
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = comparison_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
@@ -917,7 +916,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             BinOpCategory::ShortCircuit(op) => Ok(ExprDescriptor::ShortCircuitBinOp {
                 left: Box::new(left),
                 op,
-                right,
+                right: Box::new(right),
             }),
 
             BinOpCategory::Concat => unimplemented!("no support for concat operator"),
@@ -1502,8 +1501,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let skip = self.unique_jump_label();
                 self.jump(skip)?;
 
-                let right = self.expression(right)?;
-                self.expr_discharge(right, ExprDestination::Register(dest))?;
+                self.expr_discharge(*right, ExprDestination::Register(dest))?;
 
                 self.jump_target(skip)?;
 
@@ -1784,18 +1782,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     self.current_function.register_allocator.free(left_register);
                 }
 
+                let skip = self.unique_jump_label();
                 let test_op_true = op == ShortCircuitBinOp::And;
                 self.current_function.opcodes.push(OpCode::Test {
                     value: left_register,
                     is_true: test_op_true,
                 });
-
-                let skip = self.unique_jump_label();
                 self.jump(skip)?;
 
-                let right = self.expression(right)?;
-                self.expr_discard(right)?;
-
+                self.expr_discard(*right)?;
                 self.jump_target(skip)?;
             }
 
