@@ -29,7 +29,7 @@ use self::constant::ConstantValue;
 use self::operators::{
     categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
     simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
-    ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp,
+    ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp, SimpleBinOp,
 };
 use self::register_allocator::RegisterAllocator;
 
@@ -107,7 +107,6 @@ enum ExprDescriptor<'gc, 'a> {
     UpValue(UpValueIndex),
     Value(Value<'gc>),
     VarArgs,
-    Not(Box<ExprDescriptor<'gc, 'a>>),
     FunctionCall {
         func: Box<ExprDescriptor<'gc, 'a>>,
         args: Vec<ExprDescriptor<'gc, 'a>>,
@@ -121,6 +120,22 @@ enum ExprDescriptor<'gc, 'a> {
         left: Box<ExprDescriptor<'gc, 'a>>,
         op: ShortCircuitBinOp,
         right: &'a Expression,
+    },
+    TableConstructor,
+    Function(PrototypeIndex),
+    TableField {
+        table: Box<ExprDescriptor<'gc, 'a>>,
+        key: Box<ExprDescriptor<'gc, 'a>>,
+    },
+    Global(&'a [u8]),
+    UnaryOperator {
+        op: UnaryOperator,
+        expr: Box<ExprDescriptor<'gc, 'a>>,
+    },
+    SimpleBinaryOperator {
+        left: Box<ExprDescriptor<'gc, 'a>>,
+        op: SimpleBinOp,
+        right: Box<ExprDescriptor<'gc, 'a>>,
     },
 }
 
@@ -813,20 +828,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         if !table_constructor.fields.is_empty() {
             unimplemented!("only empty table constructors supported");
         }
-
-        let dest = self
-            .current_function
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        self.current_function
-            .opcodes
-            .push(OpCode::NewTable { dest });
-
-        Ok(ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
-        })
+        Ok(ExprDescriptor::TableConstructor)
     }
 
     fn function_expression(
@@ -834,19 +836,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         function: &'a FunctionDefinition,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let proto = self.new_prototype(function)?;
-        let dest = self
-            .current_function
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        self.current_function
-            .opcodes
-            .push(OpCode::Closure { proto, dest });
-
-        Ok(ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
-        })
+        Ok(ExprDescriptor::Function(proto))
     }
 
     fn suffixed_expression(
@@ -857,16 +847,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         for suffix in &suffixed_expression.suffixes {
             match suffix {
                 SuffixPart::Field(field) => {
-                    let mut key = match field {
+                    let key = match field {
                         FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(
                             String::new(self.mutation_context, name),
                         )),
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
-                    let res = self.get_table(&mut expr, &mut key)?;
-                    self.expr_discard(expr)?;
-                    self.expr_discard(key)?;
-                    expr = res;
+                    expr = ExprDescriptor::TableField {
+                        table: Box::new(expr),
+                        key: Box::new(key),
+                    };
                 }
                 SuffixPart::Call(call_suffix) => match call_suffix {
                     CallSuffix::Function(args) => {
@@ -897,17 +887,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     is_temporary: false,
                 },
                 VariableDescriptor::UpValue(upvalue) => ExprDescriptor::UpValue(upvalue),
-                VariableDescriptor::Global(name) => {
-                    let mut env = self.get_environment()?;
-                    let mut key = ExprDescriptor::Value(Value::String(String::new(
-                        self.mutation_context,
-                        name,
-                    )));
-                    let res = self.get_table(&mut env, &mut key)?;
-                    self.expr_discard(env)?;
-                    self.expr_discard(key)?;
-                    res
-                }
+                VariableDescriptor::Global(name) => ExprDescriptor::Global(name),
             }),
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
         }
@@ -916,7 +896,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn unary_operator_expression(
         &mut self,
         unop: UnaryOperator,
-        mut expr: ExprDescriptor<'gc, 'a>,
+        expr: ExprDescriptor<'gc, 'a>,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         if let &ExprDescriptor::Value(v) = &expr {
             if let Some(v) = unop_const_fold(unop, v) {
@@ -924,71 +904,40 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
 
-        if unop == UnaryOperator::Not {
-            return Ok(ExprDescriptor::Not(Box::new(expr)));
-        }
-
-        let source = self.expr_any_register(&mut expr)?;
-        self.expr_discard(expr)?;
-
-        let dest = self
-            .current_function
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        let unop_opcode = unop_opcode(unop, dest, source);
-        self.current_function.opcodes.push(unop_opcode);
-        Ok(ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
+        Ok(ExprDescriptor::UnaryOperator {
+            op: unop,
+            expr: Box::new(expr),
         })
     }
 
     fn binary_operator_expression(
         &mut self,
-        mut left: ExprDescriptor<'gc, 'a>,
+        left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
         right: &'a Expression,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
-                let mut right = self.expression(right)?;
-
+                let right = self.expression(right)?;
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = simple_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
-
-                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
-                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
-                self.expr_discard(left)?;
-                self.expr_discard(right)?;
-
-                let dest = self
-                    .current_function
-                    .register_allocator
-                    .allocate()
-                    .ok_or(CompilerError::Registers)?;
-                let simple_binop_opcode =
-                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
-                self.current_function.opcodes.push(simple_binop_opcode);
-
-                Ok(ExprDescriptor::Register {
-                    register: dest,
-                    is_temporary: true,
+                Ok(ExprDescriptor::SimpleBinaryOperator {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
                 })
             }
 
             BinOpCategory::Comparison(op) => {
                 let right = self.expression(right)?;
-
                 if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
                     if let Some(v) = comparison_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Value(v));
                     }
                 }
-
                 Ok(ExprDescriptor::Comparison {
                     left: Box::new(left),
                     op,
@@ -1263,37 +1212,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn get_table(
-        &mut self,
-        table: &mut ExprDescriptor<'gc, 'a>,
-        key: &mut ExprDescriptor<'gc, 'a>,
-    ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
-        let dest = self
-            .current_function
-            .register_allocator
-            .allocate()
-            .ok_or(CompilerError::Registers)?;
-        let op = match table {
-            &mut ExprDescriptor::UpValue(table) => match self.expr_any_register_or_constant(key)? {
-                RegisterOrConstant::Constant(key) => OpCode::GetUpTableC { dest, table, key },
-                RegisterOrConstant::Register(key) => OpCode::GetUpTableR { dest, table, key },
-            },
-            table => {
-                let table = self.expr_any_register(table)?;
-                match self.expr_any_register_or_constant(key)? {
-                    RegisterOrConstant::Constant(key) => OpCode::GetTableC { dest, table, key },
-                    RegisterOrConstant::Register(key) => OpCode::GetTableR { dest, table, key },
-                }
-            }
-        };
-
-        self.current_function.opcodes.push(op);
-        Ok(ExprDescriptor::Register {
-            register: dest,
-            is_temporary: true,
-        })
-    }
-
     fn set_table(
         &mut self,
         table: &mut ExprDescriptor<'gc, 'a>,
@@ -1411,6 +1329,40 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             })
         }
 
+        fn get_table<'gc, 'a>(
+            this: &mut Compiler<'gc, 'a>,
+            mut table: ExprDescriptor<'gc, 'a>,
+            mut key: ExprDescriptor<'gc, 'a>,
+            dest: ExprDestination,
+        ) -> Result<RegisterIndex, CompilerError> {
+            let dest = new_destination(this, dest)?;
+            let op = match &mut table {
+                &mut ExprDescriptor::UpValue(table) => {
+                    match this.expr_any_register_or_constant(&mut key)? {
+                        RegisterOrConstant::Constant(key) => {
+                            OpCode::GetUpTableC { dest, table, key }
+                        }
+                        RegisterOrConstant::Register(key) => {
+                            OpCode::GetUpTableR { dest, table, key }
+                        }
+                    }
+                }
+                table => {
+                    let table = this.expr_any_register(table)?;
+                    match this.expr_any_register_or_constant(&mut key)? {
+                        RegisterOrConstant::Constant(key) => OpCode::GetTableC { dest, table, key },
+                        RegisterOrConstant::Register(key) => OpCode::GetTableR { dest, table, key },
+                    }
+                }
+            };
+            this.current_function.opcodes.push(op);
+
+            this.expr_discard(table)?;
+            this.expr_discard(key)?;
+
+            Ok(dest)
+        }
+
         let result = match expr {
             ExprDescriptor::Register {
                 register: source,
@@ -1471,16 +1423,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     dest,
                     count: VarCount::constant(1),
                 });
-                dest
-            }
-
-            ExprDescriptor::Not(mut expr) => {
-                let source = self.expr_any_register(&mut expr)?;
-                self.expr_discard(*expr)?;
-                let dest = new_destination(self, dest)?;
-                self.current_function
-                    .opcodes
-                    .push(OpCode::Not { dest, source });
                 dest
             }
 
@@ -1571,6 +1513,59 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.expr_discharge(right, ExprDestination::Register(dest))?;
 
                 self.jump_target(skip)?;
+
+                dest
+            }
+
+            ExprDescriptor::TableConstructor => {
+                let dest = new_destination(self, dest)?;
+                self.current_function
+                    .opcodes
+                    .push(OpCode::NewTable { dest });
+                dest
+            }
+
+            ExprDescriptor::Function(proto) => {
+                let dest = new_destination(self, dest)?;
+                self.current_function
+                    .opcodes
+                    .push(OpCode::Closure { proto, dest });
+                dest
+            }
+
+            ExprDescriptor::TableField { table, key } => get_table(self, *table, *key, dest)?,
+
+            ExprDescriptor::Global(name) => {
+                let env = self.get_environment()?;
+                let key =
+                    ExprDescriptor::Value(Value::String(String::new(self.mutation_context, name)));
+                get_table(self, env, key, dest)?
+            }
+
+            ExprDescriptor::UnaryOperator { op, mut expr } => {
+                let source = self.expr_any_register(&mut expr)?;
+                self.expr_discard(*expr)?;
+
+                let dest = new_destination(self, dest)?;
+                let unop_opcode = unop_opcode(op, dest, source);
+                self.current_function.opcodes.push(unop_opcode);
+                dest
+            }
+
+            ExprDescriptor::SimpleBinaryOperator {
+                mut left,
+                op,
+                mut right,
+            } => {
+                let left_reg_cons = self.expr_any_register_or_constant(&mut left)?;
+                let right_reg_cons = self.expr_any_register_or_constant(&mut right)?;
+                self.expr_discard(*left)?;
+                self.expr_discard(*right)?;
+
+                let dest = new_destination(self, dest)?;
+                let simple_binop_opcode =
+                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
+                self.current_function.opcodes.push(simple_binop_opcode);
 
                 dest
             }
@@ -1755,7 +1750,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             ExprDescriptor::Comparison { left, op, right } => {
                 gen_comparison(self, *left, op, *right, skip_if)?
             }
-            ExprDescriptor::Not(expr) => match *expr {
+            ExprDescriptor::UnaryOperator {
+                op: UnaryOperator::Not,
+                expr,
+            } => match *expr {
                 ExprDescriptor::Comparison { left, op, right } => {
                     gen_comparison(self, *left, op, *right, !skip_if)?
                 }
@@ -1777,10 +1775,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 if is_temporary {
                     self.current_function.register_allocator.free(source);
                 }
-            }
-
-            ExprDescriptor::Not(expr) => {
-                self.expr_discard(*expr)?;
             }
 
             ExprDescriptor::FunctionCall { func, args } => {
@@ -1830,7 +1824,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump_target(skip)?;
             }
 
-            ExprDescriptor::UpValue(_) | ExprDescriptor::Value(_) | ExprDescriptor::VarArgs => {}
+            expr @ ExprDescriptor::TableField { .. }
+            | expr @ ExprDescriptor::Global(_)
+            | expr @ ExprDescriptor::UnaryOperator { .. }
+            | expr @ ExprDescriptor::SimpleBinaryOperator { .. } => {
+                let res = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                self.current_function.register_allocator.free(res);
+            }
+
+            ExprDescriptor::UpValue(_)
+            | ExprDescriptor::Value(_)
+            | ExprDescriptor::VarArgs
+            | ExprDescriptor::TableConstructor
+            | ExprDescriptor::Function(_) => {}
         }
 
         Ok(())
