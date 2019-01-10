@@ -168,6 +168,22 @@ pub enum OpCode {
         base: RegisterIndex,
         jump: i16,
     },
+    // Used for calling methods on tables:
+    // R(base + 1) = R(table)
+    // R(base) = R(table)[R(key)]
+    SelfR {
+        base: RegisterIndex,
+        table: RegisterIndex,
+        key: RegisterIndex,
+    },
+    // Used for calling methods on tables:
+    // R(base + 1) = R(table)
+    // R(base) = R(table)[C(key)]
+    SelfC {
+        base: RegisterIndex,
+        table: RegisterIndex,
+        key: ConstantIndex8,
+    },
     GetUpValue {
         dest: RegisterIndex,
         source: UpValueIndex,

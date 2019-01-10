@@ -536,6 +536,22 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
+                    OpCode::SelfR { base, table, key } => {
+                        let base = current_frame.base + base.0 as usize;
+                        let table = self.stack[current_frame.base + table.0 as usize];
+                        let key = current_function.0.proto.constants[key.0 as usize];
+                        self.stack[base + 1] = table;
+                        self.stack[base] = get_table(table).get(key);
+                    }
+
+                    OpCode::SelfC { base, table, key } => {
+                        let base = current_frame.base + base.0 as usize;
+                        let table = self.stack[current_frame.base + table.0 as usize];
+                        let key = self.stack[current_frame.base + key.0 as usize];
+                        self.stack[base + 1] = table;
+                        self.stack[base] = get_table(table).get(key);
+                    }
+
                     OpCode::GetUpValue { source, dest } => {
                         self.stack[current_frame.base + dest.0 as usize] = self.get_upvalue(
                             self_thread,

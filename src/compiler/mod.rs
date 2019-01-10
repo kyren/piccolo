@@ -580,22 +580,28 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         function_statement: &'a FunctionStatement,
     ) -> Result<(), CompilerError> {
-        if !function_statement.fields.is_empty() {
-            unimplemented!("no function name fields support");
-        }
         if function_statement.method.is_some() {
             unimplemented!("no method support");
         }
 
-        let env = self.get_environment()?;
-        let name = ExprDescriptor::Value(Value::String(String::new(
+        let closure = ExprDescriptor::Closure(self.new_prototype(&function_statement.definition)?);
+
+        let mut table = self.get_environment()?;
+        let mut name = ExprDescriptor::Value(Value::String(String::new(
             self.mutation_context,
             &*function_statement.name,
         )));
 
-        let closure = ExprDescriptor::Closure(self.new_prototype(&function_statement.definition)?);
+        for field in &function_statement.fields {
+            table = ExprDescriptor::TableField {
+                table: Box::new(table),
+                key: Box::new(name),
+            };
+            name =
+                ExprDescriptor::Value(Value::String(String::new(self.mutation_context, &*field)));
+        }
 
-        self.set_table(env, name, closure)?;
+        self.set_table(table, name, closure)?;
 
         Ok(())
     }
