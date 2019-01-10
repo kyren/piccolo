@@ -286,15 +286,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Statement::For(for_statement) => self.for_statement(for_statement),
             Statement::Repeat(repeat_statement) => self.repeat_statement(repeat_statement),
             Statement::Function(function_statement) => self.function_statement(function_statement),
-            Statement::LocalFunction(local_function) => self.local_function(local_function),
+            Statement::LocalFunction(local_function) => {
+                self.local_function_statement(local_function)
+            }
             Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
             Statement::Label(label_statement) => {
                 self.jump_target(JumpLabel::Named(&label_statement.name))
             }
             Statement::Break => self.jump(JumpLabel::Break),
             Statement::Goto(goto_statement) => self.jump(JumpLabel::Named(&goto_statement.name)),
-            Statement::FunctionCall(function_call) => self.function_call(function_call),
-            Statement::Assignment(assignment) => self.assignment(assignment),
+            Statement::FunctionCall(function_call) => self.function_call_statement(function_call),
+            Statement::Assignment(assignment) => self.assignment_statement(assignment),
         }
     }
 
@@ -663,7 +665,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn function_call(
+    fn function_call_statement(
         &mut self,
         function_call: &'a FunctionCallStatement,
     ) -> Result<(), CompilerError> {
@@ -681,7 +683,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn assignment(&mut self, assignment: &'a AssignmentStatement) -> Result<(), CompilerError> {
+    fn assignment_statement(
+        &mut self,
+        assignment: &'a AssignmentStatement,
+    ) -> Result<(), CompilerError> {
         for (i, target) in assignment.targets.iter().enumerate() {
             let mut expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
@@ -733,7 +738,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn local_function(
+    fn local_function_statement(
         &mut self,
         local_function: &'a LocalFunctionStatement,
     ) -> Result<(), CompilerError> {
@@ -760,7 +765,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
-            expr = self.binary_operator(expr, *binop, right)?;
+            expr = self.binary_operator_expression(expr, *binop, right)?;
         }
         Ok(expr)
     }
@@ -773,7 +778,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(unop, expr) => {
                 let expr = self.expression(expr)?;
-                self.unary_operator(*unop, expr)
+                self.unary_operator_expression(*unop, expr)
             }
         }
     }
@@ -794,14 +799,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
             SimpleExpression::VarArgs => ExprDescriptor::VarArgs,
             SimpleExpression::TableConstructor(table_constructor) => {
-                self.table_constructor(table_constructor)?
+                self.table_constructor_expression(table_constructor)?
             }
             SimpleExpression::Function(function) => self.function_expression(function)?,
             SimpleExpression::Suffixed(suffixed) => self.suffixed_expression(suffixed)?,
         })
     }
 
-    fn table_constructor(
+    fn table_constructor_expression(
         &mut self,
         table_constructor: &'a TableConstructor,
     ) -> Result<ExprDescriptor<'gc, 'a>, CompilerError> {
@@ -908,28 +913,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
     }
 
-    fn new_prototype(
-        &mut self,
-        function: &'a FunctionDefinition,
-    ) -> Result<PrototypeIndex, CompilerError> {
-        let old_current = mem::replace(
-            &mut self.current_function,
-            CompilerFunction::start(&function.parameters, function.has_varargs)?,
-        );
-        self.upper_functions.push(old_current);
-        self.block(&function.body)?;
-        let proto = mem::replace(
-            &mut self.current_function,
-            self.upper_functions.pop().unwrap(),
-        )
-        .finish(self.mutation_context)?;
-        self.current_function.prototypes.push(proto);
-        Ok(PrototypeIndex(
-            cast(self.current_function.prototypes.len() - 1).ok_or(CompilerError::Functions)?,
-        ))
-    }
-
-    fn unary_operator(
+    fn unary_operator_expression(
         &mut self,
         unop: UnaryOperator,
         mut expr: ExprDescriptor<'gc, 'a>,
@@ -960,7 +944,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         })
     }
 
-    fn binary_operator(
+    fn binary_operator_expression(
         &mut self,
         mut left: ExprDescriptor<'gc, 'a>,
         binop: BinaryOperator,
@@ -1020,6 +1004,27 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             BinOpCategory::Concat => unimplemented!("no support for concat operator"),
         }
+    }
+
+    fn new_prototype(
+        &mut self,
+        function: &'a FunctionDefinition,
+    ) -> Result<PrototypeIndex, CompilerError> {
+        let old_current = mem::replace(
+            &mut self.current_function,
+            CompilerFunction::start(&function.parameters, function.has_varargs)?,
+        );
+        self.upper_functions.push(old_current);
+        self.block(&function.body)?;
+        let proto = mem::replace(
+            &mut self.current_function,
+            self.upper_functions.pop().unwrap(),
+        )
+        .finish(self.mutation_context)?;
+        self.current_function.prototypes.push(proto);
+        Ok(PrototypeIndex(
+            cast(self.current_function.prototypes.len() - 1).ok_or(CompilerError::Functions)?,
+        ))
     }
 
     fn find_variable(&mut self, name: &'a [u8]) -> Result<VariableDescriptor<'a>, CompilerError> {
