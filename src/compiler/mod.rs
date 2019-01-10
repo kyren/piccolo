@@ -627,7 +627,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let expr = self.expression(&local_statement.values[i])?;
 
                 if i >= name_len {
-                    self.expr_discard(expr)?;
+                    let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                    self.current_function.register_allocator.free(reg);
                 } else if i == val_len - 1 {
                     let names_left =
                         cast(1 + name_len - val_len).ok_or(CompilerError::Registers)?;
@@ -1757,70 +1758,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 expr => gen_test(self, expr, !skip_if)?,
             },
             expr => gen_test(self, expr, skip_if)?,
-        }
-
-        Ok(())
-    }
-
-    // Evaluate an expression, but discards the result
-    fn expr_discard(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), CompilerError> {
-        match expr {
-            ExprDescriptor::FunctionCall { func, args } => {
-                self.call_function(*func, args, VarCount::constant(0))?;
-            }
-
-            ExprDescriptor::Comparison { left, op, right } => {
-                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
-                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
-                if let Some(to_free) = left_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-                if let Some(to_free) = right_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-
-                let comparison_opcode =
-                    comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
-
-                self.current_function.opcodes.push(comparison_opcode);
-                self.current_function.opcodes.push(OpCode::Jump {
-                    offset: 0,
-                    close_upvalues: Opt254::none(),
-                });
-            }
-
-            ExprDescriptor::ShortCircuitBinOp { left, op, right } => {
-                let (left_register, left_is_temp) = self.expr_any_register(*left)?;
-                if left_is_temp {
-                    self.current_function.register_allocator.free(left_register);
-                }
-
-                let skip = self.unique_jump_label();
-                let test_op_true = op == ShortCircuitBinOp::And;
-                self.current_function.opcodes.push(OpCode::Test {
-                    value: left_register,
-                    is_true: test_op_true,
-                });
-                self.jump(skip)?;
-
-                self.expr_discard(*right)?;
-                self.jump_target(skip)?;
-            }
-
-            expr @ ExprDescriptor::Variable(VariableDescriptor::Global(_))
-            | expr @ ExprDescriptor::TableField { .. }
-            | expr @ ExprDescriptor::UnaryOperator { .. }
-            | expr @ ExprDescriptor::SimpleBinaryOperator { .. } => {
-                let res = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
-                self.current_function.register_allocator.free(res);
-            }
-
-            ExprDescriptor::Variable(VariableDescriptor::Local(_))
-            | ExprDescriptor::Variable(VariableDescriptor::UpValue(_))
-            | ExprDescriptor::Value(_)
-            | ExprDescriptor::VarArgs
-            | ExprDescriptor::TableConstructor
-            | ExprDescriptor::Closure(_) => {}
         }
 
         Ok(())
