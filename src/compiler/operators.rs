@@ -100,6 +100,34 @@ pub fn simple_binop_opcode(
                 OpCode::AddCC { dest, left, right }
             }
         },
+        SimpleBinOp::Sub => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::SubRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::SubRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::SubCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::SubCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::Mul => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::MulRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::MulRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::MulCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::MulCC { dest, left, right }
+            }
+        },
         _ => panic!("unsupported binary operator {:?}", simple_binop),
     }
 }
@@ -111,6 +139,8 @@ pub fn simple_binop_const_fold<'gc>(
 ) -> Option<Value<'gc>> {
     match simple_binop {
         SimpleBinOp::Add => left.add(right),
+        SimpleBinOp::Sub => left.subtract(right),
+        SimpleBinOp::Mul => left.multiply(right),
         _ => None,
     }
 }

@@ -216,4 +216,44 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    SubRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    SubRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    SubCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    SubCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    MulRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    MulRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    MulCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    MulCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
 }

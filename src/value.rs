@@ -63,7 +63,7 @@ impl<'gc> Value<'gc> {
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
         match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a + b)),
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_add(b))),
             (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
             (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
             (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
@@ -73,10 +73,20 @@ impl<'gc> Value<'gc> {
 
     pub fn subtract(self, other: Value<'gc>) -> Option<Value<'gc>> {
         match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a - b)),
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_sub(b))),
             (Value::Number(a), Value::Number(b)) => Some(Value::Number(a - b)),
             (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 - b)),
             (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a - b as f64)),
+            _ => None,
+        }
+    }
+
+    pub fn multiply(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_mul(b))),
+            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a * b)),
+            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 * b)),
+            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a * b as f64)),
             _ => None,
         }
     }

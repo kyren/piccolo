@@ -611,6 +611,70 @@ impl<'gc> ThreadState<'gc> {
                         self.stack[current_frame.base + dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
+
+                    OpCode::SubRR { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .subtract(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::SubRC { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .subtract(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::SubCR { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .subtract(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::SubCC { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .subtract(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::MulRR { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .multiply(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::MulRC { dest, left, right } => {
+                        let left = self.stack[current_frame.base + left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .multiply(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::MulCR { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = self.stack[current_frame.base + right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .multiply(right)
+                            .expect("could not apply binary operator");
+                    }
+
+                    OpCode::MulCC { dest, left, right } => {
+                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize];
+                        self.stack[current_frame.base + dest.0 as usize] = left
+                            .multiply(right)
+                            .expect("could not apply binary operator");
+                    }
                 }
 
                 if instructions == 0 {
