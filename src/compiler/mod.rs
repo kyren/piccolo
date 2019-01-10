@@ -11,9 +11,9 @@ use crate::opcode::OpCode;
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
     FieldSuffix, ForStatement, FunctionCallStatement, FunctionDefinition, FunctionStatement,
-    HeadExpression, IfStatement, LocalStatement, PrimaryExpression, RepeatStatement,
-    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
-    UnaryOperator, WhileStatement,
+    HeadExpression, IfStatement, LocalFunctionStatement, LocalStatement, PrimaryExpression,
+    RepeatStatement, ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
+    TableConstructor, UnaryOperator, WhileStatement,
 };
 use crate::string::String;
 use crate::types::{
@@ -575,10 +575,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         function_statement: &'a FunctionStatement,
     ) -> Result<(), CompilerError> {
-        if !function_statement.name.fields.is_empty() {
+        if !function_statement.fields.is_empty() {
             unimplemented!("no function name fields support");
         }
-        if function_statement.name.method.is_some() {
+        if function_statement.method.is_some() {
             unimplemented!("no method support");
         }
 
@@ -587,7 +587,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let mut env = self.get_environment()?;
         let mut name = ExprDescriptor::Value(Value::String(String::new(
             self.mutation_context,
-            &*function_statement.name.name,
+            &*function_statement.name,
         )));
 
         let dest = self
@@ -735,15 +735,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn local_function(
         &mut self,
-        local_function: &'a FunctionStatement,
+        local_function: &'a LocalFunctionStatement,
     ) -> Result<(), CompilerError> {
-        if !local_function.name.fields.is_empty() {
-            unimplemented!("no function name fields support");
-        }
-        if local_function.name.method.is_some() {
-            unimplemented!("no method support");
-        }
-
         let proto = self.new_prototype(&local_function.definition)?;
 
         let dest = self
@@ -756,7 +749,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .push(OpCode::Closure { proto, dest });
         self.current_function
             .locals
-            .push((&local_function.name.name, dest));
+            .push((&local_function.name, dest));
 
         Ok(())
     }

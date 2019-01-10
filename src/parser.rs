@@ -24,7 +24,7 @@ pub enum Statement {
     For(ForStatement),
     Repeat(RepeatStatement),
     Function(FunctionStatement),
-    LocalFunction(FunctionStatement),
+    LocalFunction(LocalFunctionStatement),
     LocalStatement(LocalStatement),
     Label(LabelStatement),
     Break,
@@ -85,7 +85,15 @@ pub struct GotoStatement {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionStatement {
-    pub name: FunctionName,
+    pub name: Box<[u8]>,
+    pub fields: Vec<Box<[u8]>>,
+    pub method: Option<Box<[u8]>>,
+    pub definition: FunctionDefinition,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LocalFunctionStatement {
+    pub name: Box<[u8]>,
     pub definition: FunctionDefinition,
 }
 
@@ -210,13 +218,6 @@ pub enum AssignmentTarget {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FunctionName {
-    pub name: Box<[u8]>,
-    pub fields: Vec<Box<[u8]>>,
-    pub method: Option<Box<[u8]>>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub struct TableConstructor {
     pub fields: Vec<ConstructorField>,
 }
@@ -304,7 +305,7 @@ impl<R: Read> Parser<R> {
             Token::Local => {
                 if self.check_ahead(1, Token::Function)? {
                     self.take_next()?;
-                    Statement::LocalFunction(self.parse_function_statement()?)
+                    Statement::LocalFunction(self.parse_local_function_statement()?)
                 } else {
                     Statement::LocalStatement(self.parse_local_statement()?)
                 }
@@ -445,10 +446,42 @@ impl<R: Read> Parser<R> {
 
     fn parse_function_statement(&mut self) -> Result<FunctionStatement, Error> {
         self.expect_next(Token::Function)?;
-        let name = self.parse_function_name()?;
+
+        let name = self.expect_name()?;
+        let mut fields = Vec::new();
+        let mut method = None;
+        loop {
+            match self.look_ahead(0)? {
+                Some(&Token::Dot) => {
+                    self.take_next()?;
+                    fields.push(self.expect_name()?);
+                }
+                Some(&Token::Colon) => {
+                    self.take_next()?;
+                    method = Some(self.expect_name()?);
+                    break;
+                }
+                _ => break,
+            }
+        }
+
         let definition = self.parse_function_definition()?;
 
-        Ok(FunctionStatement { name, definition })
+        Ok(FunctionStatement {
+            name,
+            fields,
+            method,
+            definition,
+        })
+    }
+
+    fn parse_local_function_statement(&mut self) -> Result<LocalFunctionStatement, Error> {
+        self.expect_next(Token::Function)?;
+
+        let name = self.expect_name()?;
+        let definition = self.parse_function_definition()?;
+
+        Ok(LocalFunctionStatement { name, definition })
     }
 
     fn parse_local_statement(&mut self) -> Result<LocalStatement, Error> {
@@ -727,32 +760,6 @@ impl<R: Read> Parser<R> {
         }
 
         Ok(SuffixedExpression { primary, suffixes })
-    }
-
-    fn parse_function_name(&mut self) -> Result<FunctionName, Error> {
-        let name = self.expect_name()?;
-        let mut fields = Vec::new();
-        let mut method = None;
-        loop {
-            match self.look_ahead(0)? {
-                Some(&Token::Dot) => {
-                    self.take_next()?;
-                    fields.push(self.expect_name()?);
-                }
-                Some(&Token::Colon) => {
-                    self.take_next()?;
-                    method = Some(self.expect_name()?);
-                    break;
-                }
-                _ => break,
-            }
-        }
-
-        Ok(FunctionName {
-            name,
-            fields,
-            method,
-        })
     }
 
     fn parse_function_definition(&mut self) -> Result<FunctionDefinition, Error> {
