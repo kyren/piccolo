@@ -465,19 +465,18 @@ impl<'gc> ThreadState<'gc> {
                         const ERR_MSG: &str = "non numeric for loop parameter";
 
                         let base = current_frame.base + base.0 as usize;
-                        self.stack[base] = self.stack[base]
-                            .subtract(self.stack[base + 2])
-                            .expect(ERR_MSG);
+                        self.stack[base] =
+                            self.stack[base].add(self.stack[base + 2]).expect(ERR_MSG);
                         let past_end = if self.stack[base + 2]
                             .less_than(Value::Integer(0))
                             .expect(ERR_MSG)
                         {
-                            self.stack[base + 1]
-                                .less_than(self.stack[base])
-                                .expect(ERR_MSG)
-                        } else {
                             self.stack[base]
                                 .less_than(self.stack[base + 1])
+                                .expect(ERR_MSG)
+                        } else {
+                            self.stack[base + 1]
+                                .less_than(self.stack[base])
                                 .expect(ERR_MSG)
                         };
                         if !past_end {
