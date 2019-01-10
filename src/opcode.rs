@@ -94,6 +94,10 @@ pub enum OpCode {
         args: VarCount,
         returns: VarCount,
     },
+    TailCall {
+        func: RegisterIndex,
+        args: VarCount,
+    },
     Return {
         start: RegisterIndex,
         count: VarCount,

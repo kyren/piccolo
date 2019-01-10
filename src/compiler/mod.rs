@@ -143,11 +143,11 @@ enum VariableDescriptor<'a> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ExprDestination {
-    // Place the expression in the given previously allocated register
+    // Evaluate the expression in an existing register
     Register(RegisterIndex),
-    // Place the expression in a newly allocated register anywhere
+    // Allocate a new register anywhere and evaluate the expression there.
     AllocateNew,
-    // Place the expression in a newly allocated register at the top of the stack
+    // Allocate a new register at the top of the stack and evaluate the expression there.
     PushNew,
 }
 
@@ -314,43 +314,36 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         return_statement: &'a ReturnStatement,
     ) -> Result<(), CompilerError> {
-        let ret_len = return_statement.returns.len();
+        let mut returns = return_statement
+            .returns
+            .iter()
+            .map(|arg| self.expression(arg))
+            .collect::<Result<Vec<_>, CompilerError>>()?;
 
-        if ret_len == 0 {
-            self.current_function.opcodes.push(OpCode::Return {
-                start: RegisterIndex(0),
-                count: VarCount::constant(0),
-            });
-        } else {
-            let ret_start = cast(self.current_function.register_allocator.stack_top())
-                .ok_or(CompilerError::Registers)?;
-
-            for i in 0..ret_len - 1 {
-                let expr = self.expression(&return_statement.returns[i])?;
-                self.expr_discharge(expr, ExprDestination::PushNew)?;
-            }
-
-            let ret_count = match self.expression(&return_statement.returns[ret_len - 1])? {
+        // A return of a single function call is a tail call, and this is the only thing
+        // in Lua that is considered a tail call
+        if returns.len() == 1 {
+            match returns.pop().unwrap() {
                 ExprDescriptor::FunctionCall { func, args } => {
-                    self.expr_function_call(*func, args, VarCount::variable())?;
-                    VarCount::variable()
-                }
-                expr => {
-                    self.expr_discharge(expr, ExprDestination::PushNew)?;
-                    cast(ret_len)
-                        .and_then(VarCount::try_constant)
-                        .ok_or(CompilerError::Registers)?
-                }
-            };
+                    let func = self.expr_discharge(*func, ExprDestination::PushNew)?;
+                    let (_, args) = self.push_arguments(args)?;
+                    self.current_function
+                        .opcodes
+                        .push(OpCode::TailCall { func, args });
+                    self.current_function.register_allocator.free(func);
 
-            self.current_function.opcodes.push(OpCode::Return {
-                start: RegisterIndex(ret_start),
-                count: ret_count,
-            });
-
-            // Free all allocated return registers so that we do not fail the register leak check
-            self.current_function.register_allocator.pop_to(ret_start);
+                    return Ok(());
+                }
+                other => {
+                    returns.push(other);
+                }
+            }
         }
+
+        let (start, count) = self.push_arguments(returns)?;
+        self.current_function
+            .opcodes
+            .push(OpCode::Return { start, count });
 
         Ok(())
     }
@@ -669,7 +662,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .iter()
                     .map(|arg| self.expression(arg))
                     .collect::<Result<_, CompilerError>>()?;
-                self.expr_function_call(func_expr, arg_exprs, VarCount::constant(0))?;
+                self.call_function(func_expr, arg_exprs, VarCount::constant(0))?;
             }
             CallSuffix::Method(_, _) => unimplemented!("method call unsupported"),
         }
@@ -1241,6 +1234,79 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
+    // Performs a function call, consuming the func and args registers.  At the end of the function
+    // call, the return values will be left at the top of the stack.  The returns are potentially
+    // variable, so none of the returns are marked as allocated.  Returns the register at which the
+    // returns (if any) are placed, which will always be the current register allocator top.
+    fn call_function(
+        &mut self,
+        func: ExprDescriptor<'gc, 'a>,
+        args: Vec<ExprDescriptor<'gc, 'a>>,
+        returns: VarCount,
+    ) -> Result<RegisterIndex, CompilerError> {
+        let func = self.expr_discharge(func, ExprDestination::PushNew)?;
+        let (_, args) = self.push_arguments(args)?;
+
+        self.current_function.opcodes.push(OpCode::Call {
+            func,
+            args,
+            returns,
+        });
+
+        // OpCode::Call places returns at the previous location of the function
+        self.current_function.register_allocator.free(func);
+        Ok(func)
+    }
+
+    // Pushes the given arguments to the top of the stack in preparation for a function call or
+    // return statement.  The arguemnts are *not* marked as allocated in the register allocator, as
+    // they are potentially variable.  Returns the register at which the arguments start, as well as
+    // their arity.
+    fn push_arguments(
+        &mut self,
+        mut args: Vec<ExprDescriptor<'gc, 'a>>,
+    ) -> Result<(RegisterIndex, VarCount), CompilerError> {
+        let top = self.current_function.register_allocator.stack_top();
+        let args_len = args.len();
+
+        Ok(if let Some(last_arg) = args.pop() {
+            for arg in args {
+                self.expr_discharge(arg, ExprDestination::PushNew)?;
+            }
+
+            let arg_count = match last_arg {
+                ExprDescriptor::FunctionCall { func, args } => {
+                    self.call_function(*func, args, VarCount::variable())?;
+                    VarCount::variable()
+                }
+                ExprDescriptor::VarArgs => {
+                    self.current_function.opcodes.push(OpCode::VarArgs {
+                        dest: RegisterIndex(
+                            cast(top as usize + args_len - 1).ok_or(CompilerError::Registers)?,
+                        ),
+                        count: VarCount::variable(),
+                    });
+                    VarCount::variable()
+                }
+                last_arg => {
+                    self.expr_discharge(last_arg, ExprDestination::PushNew)?;
+                    cast(args_len)
+                        .and_then(VarCount::try_constant)
+                        .ok_or(CompilerError::Registers)?
+                }
+            };
+
+            self.current_function.register_allocator.pop_to(top);
+
+            (RegisterIndex(top), arg_count)
+        } else {
+            (
+                RegisterIndex(self.current_function.register_allocator.stack_top()),
+                VarCount::constant(0),
+            )
+        })
+    }
+
     // Evaluate an expression and place its result in *any* register, and return that register and a
     // flag indicating whether that register is temporary and must be freed.
     fn expr_any_register(
@@ -1281,8 +1347,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Consume an expression, placing it in the given destination and returning the resulting
-    // register.  The returned register will always be marked as allocated, so it must be placed
-    // into another expression or freed.
+    // register.
     fn expr_discharge(
         &mut self,
         expr: ExprDescriptor<'gc, 'a>,
@@ -1526,27 +1591,28 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::FunctionCall { func, args } => match dest {
-                ExprDestination::Register(dest) => {
-                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
-                    assert_ne!(dest, source);
-                    self.current_function
-                        .opcodes
-                        .push(OpCode::Move { dest, source });
-                    dest
-                }
-                ExprDestination::AllocateNew | ExprDestination::PushNew => {
-                    let source = self.expr_function_call(*func, args, VarCount::constant(1))?;
-                    assert_eq!(
+            ExprDescriptor::FunctionCall { func, args } => {
+                let source = self.call_function(*func, args, VarCount::constant(1))?;
+                match dest {
+                    ExprDestination::Register(dest) => {
+                        assert_ne!(dest, source);
                         self.current_function
-                            .register_allocator
-                            .push(1)
-                            .ok_or(CompilerError::Registers)?,
+                            .opcodes
+                            .push(OpCode::Move { dest, source });
+                        dest
+                    }
+                    ExprDestination::AllocateNew | ExprDestination::PushNew => {
+                        assert_eq!(
+                            self.current_function
+                                .register_allocator
+                                .push(1)
+                                .ok_or(CompilerError::Registers)?,
+                            source
+                        );
                         source
-                    );
-                    source
+                    }
                 }
-            },
+            }
         };
 
         if dest == ExprDestination::PushNew {
@@ -1570,7 +1636,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         assert!(count != 0);
         Ok(match expr {
             ExprDescriptor::FunctionCall { func, args } => {
-                let dest = self.expr_function_call(
+                let dest = self.call_function(
                     *func,
                     args,
                     VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
@@ -1620,59 +1686,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
         })
-    }
-
-    // Performs a function call, consuming the func and args registers.  At the end of the function
-    // call, the return values will be left at the top of the stack, and this method does not mark
-    // the return registers as allocated.  Returns the register at which the returns (if any) are
-    // placed (which will also be the current register allocator top).
-    fn expr_function_call(
-        &mut self,
-        func: ExprDescriptor<'gc, 'a>,
-        mut args: Vec<ExprDescriptor<'gc, 'a>>,
-        returns: VarCount,
-    ) -> Result<RegisterIndex, CompilerError> {
-        let top_reg = self.expr_discharge(func, ExprDestination::PushNew)?;
-
-        let args_len = args.len();
-        let last_arg = args.pop();
-        for arg in args {
-            self.expr_discharge(arg, ExprDestination::PushNew)?;
-        }
-
-        let arg_count = match last_arg {
-            Some(ExprDescriptor::FunctionCall { func, args }) => {
-                self.expr_function_call(*func, args, VarCount::variable())?;
-                VarCount::variable()
-            }
-            Some(ExprDescriptor::VarArgs) => {
-                self.current_function.opcodes.push(OpCode::VarArgs {
-                    dest: RegisterIndex(
-                        cast(top_reg.0 as usize + args_len).ok_or(CompilerError::Registers)?,
-                    ),
-                    count: VarCount::variable(),
-                });
-                VarCount::variable()
-            }
-            Some(last_arg) => {
-                self.expr_discharge(last_arg, ExprDestination::PushNew)?;
-                cast(args_len)
-                    .and_then(VarCount::try_constant)
-                    .ok_or(CompilerError::Registers)?
-            }
-            None => cast(args_len)
-                .and_then(VarCount::try_constant)
-                .ok_or(CompilerError::Registers)?,
-        };
-
-        self.current_function.opcodes.push(OpCode::Call {
-            func: top_reg,
-            args: arg_count,
-            returns,
-        });
-
-        self.current_function.register_allocator.pop_to(top_reg.0);
-        Ok(top_reg)
     }
 
     // Evaluates the given expression and tests it, skipping the following instruction if the boolean
@@ -1753,7 +1766,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn expr_discard(&mut self, expr: ExprDescriptor<'gc, 'a>) -> Result<(), CompilerError> {
         match expr {
             ExprDescriptor::FunctionCall { func, args } => {
-                self.expr_function_call(*func, args, VarCount::constant(0))?;
+                self.call_function(*func, args, VarCount::constant(0))?;
             }
 
             ExprDescriptor::Comparison { left, op, right } => {

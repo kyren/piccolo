@@ -305,6 +305,33 @@ impl<'gc> ThreadState<'gc> {
                         continue 'function_start;
                     }
 
+                    OpCode::TailCall { func, args } => {
+                        self.close_upvalues(mc, self_thread, current_frame.bottom);
+
+                        let func = current_frame.base + func.0 as usize;
+                        let arg_len = if let Some(args) = args.get_constant() {
+                            args as usize
+                        } else {
+                            self.stack.len() - func - 1
+                        };
+
+                        self.stack[current_frame.bottom] = self.stack[func];
+                        for i in 0..arg_len {
+                            self.stack[current_frame.bottom + 1 + i] = self.stack[func + 1 + i];
+                        }
+                        self.stack.truncate(current_frame.bottom + 1 + arg_len);
+                        self.frames.pop();
+
+                        self.call_function(
+                            current_frame.bottom,
+                            args,
+                            current_frame.returns,
+                            current_frame.restore_pc,
+                            current_frame.call_boundary,
+                        );
+                        continue 'function_start;
+                    }
+
                     OpCode::Return { start, count } => {
                         self.close_upvalues(mc, self_thread, current_frame.bottom);
 
