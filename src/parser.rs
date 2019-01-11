@@ -1,106 +1,107 @@
+use std::fmt;
 use std::io::Read;
 use std::rc::Rc;
 
-use failure::{err_msg, format_err, Error};
+use failure::Fail;
 
-use crate::lexer::{Lexer, Token};
+use crate::lexer::{Lexer, LexerError, Token};
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Chunk {
-    pub block: Block,
+pub struct Chunk<S> {
+    pub block: Block<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Block {
-    pub statements: Vec<Statement>,
-    pub return_statement: Option<ReturnStatement>,
+pub struct Block<S> {
+    pub statements: Vec<Statement<S>>,
+    pub return_statement: Option<ReturnStatement<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Statement {
-    If(IfStatement),
-    While(WhileStatement),
-    Do(Block),
-    For(ForStatement),
-    Repeat(RepeatStatement),
-    Function(FunctionStatement),
-    LocalFunction(LocalFunctionStatement),
-    LocalStatement(LocalStatement),
-    Label(LabelStatement),
+pub enum Statement<S> {
+    If(IfStatement<S>),
+    While(WhileStatement<S>),
+    Do(Block<S>),
+    For(ForStatement<S>),
+    Repeat(RepeatStatement<S>),
+    Function(FunctionStatement<S>),
+    LocalFunction(LocalFunctionStatement<S>),
+    LocalStatement(LocalStatement<S>),
+    Label(LabelStatement<S>),
     Break,
-    Goto(GotoStatement),
-    FunctionCall(FunctionCallStatement),
-    Assignment(AssignmentStatement),
+    Goto(GotoStatement<S>),
+    FunctionCall(FunctionCallStatement<S>),
+    Assignment(AssignmentStatement<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct ReturnStatement {
-    pub returns: Vec<Expression>,
+pub struct ReturnStatement<S> {
+    pub returns: Vec<Expression<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct IfStatement {
-    pub if_part: (Expression, Block),
-    pub else_if_parts: Vec<(Expression, Block)>,
-    pub else_part: Option<Block>,
+pub struct IfStatement<S> {
+    pub if_part: (Expression<S>, Block<S>),
+    pub else_if_parts: Vec<(Expression<S>, Block<S>)>,
+    pub else_part: Option<Block<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct WhileStatement {
-    pub condition: Expression,
-    pub block: Block,
+pub struct WhileStatement<S> {
+    pub condition: Expression<S>,
+    pub block: Block<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ForStatement {
+pub enum ForStatement<S> {
     Numeric {
-        name: Box<[u8]>,
-        initial: Expression,
-        limit: Expression,
-        step: Option<Expression>,
-        body: Block,
+        name: S,
+        initial: Expression<S>,
+        limit: Expression<S>,
+        step: Option<Expression<S>>,
+        body: Block<S>,
     },
     Generic {
-        names: Vec<Box<[u8]>>,
-        arguments: Vec<Expression>,
-        body: Block,
+        names: Vec<S>,
+        arguments: Vec<Expression<S>>,
+        body: Block<S>,
     },
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct RepeatStatement {
-    pub body: Block,
-    pub until: Expression,
+pub struct RepeatStatement<S> {
+    pub body: Block<S>,
+    pub until: Expression<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct LabelStatement {
-    pub name: Box<[u8]>,
+pub struct LabelStatement<S> {
+    pub name: S,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct GotoStatement {
-    pub name: Box<[u8]>,
+pub struct GotoStatement<S> {
+    pub name: S,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FunctionStatement {
-    pub name: Box<[u8]>,
-    pub fields: Vec<Box<[u8]>>,
-    pub method: Option<Box<[u8]>>,
-    pub definition: FunctionDefinition,
+pub struct FunctionStatement<S> {
+    pub name: S,
+    pub fields: Vec<S>,
+    pub method: Option<S>,
+    pub definition: FunctionDefinition<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct LocalFunctionStatement {
-    pub name: Box<[u8]>,
-    pub definition: FunctionDefinition,
+pub struct LocalFunctionStatement<S> {
+    pub name: S,
+    pub definition: FunctionDefinition<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct LocalStatement {
-    pub names: Vec<Box<[u8]>>,
-    pub values: Vec<Expression>,
+pub struct LocalStatement<S> {
+    pub names: Vec<S>,
+    pub values: Vec<Expression<S>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
@@ -137,129 +138,186 @@ pub enum UnaryOperator {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Expression {
-    pub head: Box<HeadExpression>,
-    pub tail: Vec<(BinaryOperator, Expression)>,
+pub struct Expression<S> {
+    pub head: Box<HeadExpression<S>>,
+    pub tail: Vec<(BinaryOperator, Expression<S>)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum HeadExpression {
-    Simple(SimpleExpression),
-    UnaryOperator(UnaryOperator, Expression),
+pub enum HeadExpression<S> {
+    Simple(SimpleExpression<S>),
+    UnaryOperator(UnaryOperator, Expression<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SimpleExpression {
+pub enum SimpleExpression<S> {
     Float(f64),
     Integer(i64),
-    String(Box<[u8]>),
+    String(S),
     Nil,
     True,
     False,
     VarArgs,
-    TableConstructor(TableConstructor),
-    Function(FunctionDefinition),
-    Suffixed(SuffixedExpression),
+    TableConstructor(TableConstructor<S>),
+    Function(FunctionDefinition<S>),
+    Suffixed(SuffixedExpression<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum PrimaryExpression {
-    Name(Box<[u8]>),
-    GroupedExpression(Expression),
+pub enum PrimaryExpression<S> {
+    Name(S),
+    GroupedExpression(Expression<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FieldSuffix {
-    Named(Box<[u8]>),
-    Indexed(Expression),
+pub enum FieldSuffix<S> {
+    Named(S),
+    Indexed(Expression<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum CallSuffix {
-    Method(Box<[u8]>, Vec<Expression>),
-    Function(Vec<Expression>),
+pub enum CallSuffix<S> {
+    Method(S, Vec<Expression<S>>),
+    Function(Vec<Expression<S>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SuffixPart {
-    Field(FieldSuffix),
-    Call(CallSuffix),
+pub enum SuffixPart<S> {
+    Field(FieldSuffix<S>),
+    Call(CallSuffix<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SuffixedExpression {
-    pub primary: PrimaryExpression,
-    pub suffixes: Vec<SuffixPart>,
+pub struct SuffixedExpression<S> {
+    pub primary: PrimaryExpression<S>,
+    pub suffixes: Vec<SuffixPart<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FunctionDefinition {
-    pub parameters: Vec<Box<[u8]>>,
+pub struct FunctionDefinition<S> {
+    pub parameters: Vec<S>,
     pub has_varargs: bool,
-    pub body: Block,
+    pub body: Block<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FunctionCallStatement {
-    pub head: SuffixedExpression,
-    pub call: CallSuffix,
+pub struct FunctionCallStatement<S> {
+    pub head: SuffixedExpression<S>,
+    pub call: CallSuffix<S>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct AssignmentStatement {
-    pub targets: Vec<AssignmentTarget>,
-    pub values: Vec<Expression>,
+pub struct AssignmentStatement<S> {
+    pub targets: Vec<AssignmentTarget<S>>,
+    pub values: Vec<Expression<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum AssignmentTarget {
-    Name(Box<[u8]>),
-    Field(SuffixedExpression, FieldSuffix),
+pub enum AssignmentTarget<S> {
+    Name(S),
+    Field(SuffixedExpression<S>, FieldSuffix<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct TableConstructor {
-    pub fields: Vec<ConstructorField>,
+pub struct TableConstructor<S> {
+    pub fields: Vec<ConstructorField<S>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ConstructorField {
-    Array(Expression),
-    Record(RecordKey, Expression),
+pub enum ConstructorField<S> {
+    Array(Expression<S>),
+    Record(RecordKey<S>, Expression<S>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum RecordKey {
-    Named(Box<[u8]>),
-    Indexed(Expression),
+pub enum RecordKey<S> {
+    Named(S),
+    Indexed(Expression<S>),
 }
 
-pub fn parse_chunk<R: Read>(source: R) -> Result<Chunk, Error> {
+#[derive(Fail, Debug)]
+pub enum ParserError {
+    Unexpected {
+        unexpected: String,
+        expected: Option<String>,
+    },
+    EndOfStream {
+        expected: Option<String>,
+    },
+    AssignToExpression,
+    ExpressionNotStatement,
+    RecursionLimit,
+    LexerError(LexerError),
+}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let write_expected = |f: &mut fmt::Formatter, expected: &Option<String>| {
+            match expected {
+                Some(expected) => {
+                    write!(f, ", expected {}", expected)?;
+                }
+                None => {}
+            }
+            Ok(())
+        };
+
+        match self {
+            ParserError::Unexpected {
+                unexpected,
+                expected,
+            } => {
+                write!(f, "found {:?}", unexpected)?;
+                write_expected(f, expected)
+            }
+            ParserError::EndOfStream { expected } => {
+                write!(f, "unexpected end of token stream")?;
+                write_expected(f, expected)
+            }
+            ParserError::AssignToExpression => write!(f, "cannot assign to expression"),
+            ParserError::ExpressionNotStatement => write!(f, "expression is not a statement"),
+            ParserError::RecursionLimit => write!(f, "recursion limit reached"),
+            ParserError::LexerError(lexer_error) => write!(f, "{}", lexer_error),
+        }
+    }
+}
+
+pub fn parse_chunk<R, S, CS>(source: R, create_string: CS) -> Result<Chunk<S>, ParserError>
+where
+    R: Read,
+    S: fmt::Debug + PartialEq,
+    CS: FnMut(&[u8]) -> S,
+{
     Parser {
-        lexer: Lexer::new(source),
+        lexer: Lexer::new(source, create_string),
         read_buffer: Vec::new(),
         recursion_guard: Rc::new(()),
     }
     .parse_chunk()
 }
 
-struct Parser<R: Read> {
-    lexer: Lexer<R>,
-    read_buffer: Vec<Token>,
+struct Parser<R, S, CS> {
+    lexer: Lexer<R, CS>,
+    read_buffer: Vec<Token<S>>,
     recursion_guard: Rc<()>,
 }
 
-impl<R: Read> Parser<R> {
-    fn parse_chunk(&mut self) -> Result<Chunk, Error> {
+impl<R, S, CS> Parser<R, S, CS>
+where
+    R: Read,
+    S: fmt::Debug + PartialEq,
+    CS: FnMut(&[u8]) -> S,
+{
+    fn parse_chunk(&mut self) -> Result<Chunk<S>, ParserError> {
         let block = self.parse_block()?;
         if self.look_ahead(0)? != None {
-            Err(err_msg("expected end of token stream"))
+            Err(ParserError::EndOfStream { expected: None })
         } else {
             Ok(Chunk { block })
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block, Error> {
+    fn parse_block(&mut self) -> Result<Block<S>, ParserError> {
         let mut statements = Vec::new();
         let mut return_statement = None;
 
@@ -287,7 +345,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_statement(&mut self) -> Result<Statement, Error> {
+    fn parse_statement(&mut self) -> Result<Statement<S>, ParserError> {
         let _recursion_guard = self.recursion_guard()?;
 
         Ok(match *self.get_next()? {
@@ -320,7 +378,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<ReturnStatement, Error> {
+    fn parse_return_statement(&mut self) -> Result<ReturnStatement<S>, ParserError> {
         self.expect_next(Token::Return)?;
         let returns = match self.look_ahead(0)? {
             None
@@ -337,7 +395,7 @@ impl<R: Read> Parser<R> {
         Ok(ReturnStatement { returns })
     }
 
-    fn parse_if_statement(&mut self) -> Result<IfStatement, Error> {
+    fn parse_if_statement(&mut self) -> Result<IfStatement<S>, ParserError> {
         self.expect_next(Token::If)?;
         let if_cond = self.parse_expression()?;
         self.expect_next(Token::Then)?;
@@ -368,7 +426,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_while_statement(&mut self) -> Result<WhileStatement, Error> {
+    fn parse_while_statement(&mut self) -> Result<WhileStatement<S>, ParserError> {
         self.expect_next(Token::While)?;
         let condition = self.parse_expression()?;
         self.expect_next(Token::Do)?;
@@ -378,7 +436,7 @@ impl<R: Read> Parser<R> {
         Ok(WhileStatement { condition, block })
     }
 
-    fn parse_for_statement(&mut self) -> Result<ForStatement, Error> {
+    fn parse_for_statement(&mut self) -> Result<ForStatement<S>, ParserError> {
         self.expect_next(Token::For)?;
         let name = self.expect_name()?;
 
@@ -429,14 +487,14 @@ impl<R: Read> Parser<R> {
                 })
             }
 
-            _ => Err(format_err!(
-                "unexpected token {:?} expected '=' or 'in'",
-                self.take_next()?,
-            )),
+            token => Err(ParserError::Unexpected {
+                unexpected: format!("{:?}", token),
+                expected: Some("'=' or 'in'".to_owned()),
+            }),
         }
     }
 
-    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement, Error> {
+    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S>, ParserError> {
         self.expect_next(Token::Repeat)?;
         let body = self.parse_block()?;
         self.expect_next(Token::Until)?;
@@ -444,7 +502,7 @@ impl<R: Read> Parser<R> {
         Ok(RepeatStatement { body, until })
     }
 
-    fn parse_function_statement(&mut self) -> Result<FunctionStatement, Error> {
+    fn parse_function_statement(&mut self) -> Result<FunctionStatement<S>, ParserError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?;
@@ -475,7 +533,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_local_function_statement(&mut self) -> Result<LocalFunctionStatement, Error> {
+    fn parse_local_function_statement(&mut self) -> Result<LocalFunctionStatement<S>, ParserError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?;
@@ -484,7 +542,7 @@ impl<R: Read> Parser<R> {
         Ok(LocalFunctionStatement { name, definition })
     }
 
-    fn parse_local_statement(&mut self) -> Result<LocalStatement, Error> {
+    fn parse_local_statement(&mut self) -> Result<LocalStatement<S>, ParserError> {
         self.expect_next(Token::Local)?;
         let mut names = Vec::new();
         names.push(self.expect_name()?);
@@ -503,20 +561,20 @@ impl<R: Read> Parser<R> {
         Ok(LocalStatement { names, values })
     }
 
-    fn parse_label_statement(&mut self) -> Result<LabelStatement, Error> {
+    fn parse_label_statement(&mut self) -> Result<LabelStatement<S>, ParserError> {
         self.expect_next(Token::DoubleColon)?;
         let name = self.expect_name()?;
         self.expect_next(Token::DoubleColon)?;
         Ok(LabelStatement { name })
     }
 
-    fn parse_goto_statement(&mut self) -> Result<GotoStatement, Error> {
+    fn parse_goto_statement(&mut self) -> Result<GotoStatement<S>, ParserError> {
         self.expect_next(Token::Goto)?;
         let name = self.expect_name()?;
         Ok(GotoStatement { name })
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Statement, Error> {
+    fn parse_expression_statement(&mut self) -> Result<Statement<S>, ParserError> {
         let mut suffixed_expression = self.parse_suffixed_expression()?;
         if self.check_ahead(0, Token::Assign)? || self.check_ahead(0, Token::Comma)? {
             let mut targets = Vec::new();
@@ -527,13 +585,13 @@ impl<R: Read> Parser<R> {
                             AssignmentTarget::Field(suffixed_expression, field_suffix)
                         }
                         SuffixPart::Call(_) => {
-                            return Err(err_msg("cannot assign to expression"));
+                            return Err(ParserError::AssignToExpression);
                         }
                     }
                 } else {
                     match suffixed_expression.primary {
                         PrimaryExpression::Name(name) => AssignmentTarget::Name(name),
-                        _ => return Err(err_msg("cannot assign to expression")),
+                        _ => return Err(ParserError::AssignToExpression),
                     }
                 };
                 targets.push(assignment_target);
@@ -562,19 +620,19 @@ impl<R: Read> Parser<R> {
                             call: call_suffix,
                         }))
                     }
-                    SuffixPart::Field(_) => Err(err_msg("expression is not a statement")),
+                    SuffixPart::Field(_) => Err(ParserError::ExpressionNotStatement),
                 }
             } else {
-                Err(err_msg("expression is not a statement"))
+                Err(ParserError::ExpressionNotStatement)
             }
         }
     }
 
-    fn parse_expression(&mut self) -> Result<Expression, Error> {
+    fn parse_expression(&mut self) -> Result<Expression<S>, ParserError> {
         self.parse_sub_expression(MIN_PRIORITY)
     }
 
-    fn parse_expression_list(&mut self) -> Result<Vec<Expression>, Error> {
+    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S>>, ParserError> {
         let mut expressions = Vec::new();
         expressions.push(self.parse_expression()?);
         while self.check_ahead(0, Token::Comma)? {
@@ -584,7 +642,7 @@ impl<R: Read> Parser<R> {
         Ok(expressions)
     }
 
-    fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression, Error> {
+    fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression<S>, ParserError> {
         let _recursion_guard = self.recursion_guard()?;
 
         let head = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
@@ -612,7 +670,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_simple_expression(&mut self) -> Result<SimpleExpression, Error> {
+    fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S>, ParserError> {
         Ok(match *self.get_next()? {
             Token::Float(f) => {
                 self.take_next()?;
@@ -648,7 +706,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression, Error> {
+    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S>, ParserError> {
         match self.take_next()? {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
@@ -656,15 +714,15 @@ impl<R: Read> Parser<R> {
                 Ok(PrimaryExpression::GroupedExpression(expr))
             }
             Token::Name(n) => Ok(PrimaryExpression::Name(n)),
-            t => Err(format_err!(
-                "unexpected token {:?} expected grouped expression or name",
-                t
-            )),
+            token => Err(ParserError::Unexpected {
+                unexpected: format!("{:?}", token),
+                expected: Some("grouped expression or name".to_owned()),
+            }),
         }
     }
 
-    fn parse_field_suffix(&mut self) -> Result<FieldSuffix, Error> {
-        match *self.get_next()? {
+    fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S>, ParserError> {
+        match self.get_next()? {
             Token::Dot => {
                 self.take_next()?;
                 Ok(FieldSuffix::Named(self.expect_name()?))
@@ -675,14 +733,14 @@ impl<R: Read> Parser<R> {
                 self.expect_next(Token::RightBracket)?;
                 Ok(FieldSuffix::Indexed(expr))
             }
-            _ => Err(format_err!(
-                "unexpected token {:?} expected field suffix",
-                self.take_next()?
-            )),
+            token => Err(ParserError::Unexpected {
+                unexpected: format!("{:?}", token),
+                expected: Some("field or suffix".to_owned()),
+            }),
         }
     }
 
-    fn parse_call_suffix(&mut self) -> Result<CallSuffix, Error> {
+    fn parse_call_suffix(&mut self) -> Result<CallSuffix<S>, ParserError> {
         let method_name = match *self.get_next()? {
             Token::Colon => {
                 self.take_next()?;
@@ -691,7 +749,7 @@ impl<R: Read> Parser<R> {
             _ => None,
         };
 
-        let args = match *self.get_next()? {
+        let args = match self.get_next()? {
             Token::LeftParen => {
                 self.take_next()?;
                 let args = if *self.get_next()? != Token::RightParen {
@@ -714,11 +772,11 @@ impl<R: Read> Parser<R> {
                 ))),
                 tail: vec![],
             }],
-            _ => {
-                return Err(format_err!(
-                    "unexpected token {:?} expected function arguments",
-                    self.take_next()?
-                ));
+            token => {
+                return Err(ParserError::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: Some("function arguments".to_owned()),
+                })
             }
         };
 
@@ -729,20 +787,20 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_suffix_part(&mut self) -> Result<SuffixPart, Error> {
-        match *self.get_next()? {
+    fn parse_suffix_part(&mut self) -> Result<SuffixPart<S>, ParserError> {
+        match self.get_next()? {
             Token::Dot | Token::LeftBracket => Ok(SuffixPart::Field(self.parse_field_suffix()?)),
             Token::Colon | Token::LeftParen | Token::LeftBrace | Token::String(_) => {
                 Ok(SuffixPart::Call(self.parse_call_suffix()?))
             }
-            _ => Err(format_err!(
-                "unexpected token {:?} expected expression suffix",
-                self.take_next()?
-            )),
+            token => Err(ParserError::Unexpected {
+                unexpected: format!("{:?}", token),
+                expected: Some("expression suffix".to_owned()),
+            }),
         }
     }
 
-    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression, Error> {
+    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression<S>, ParserError> {
         let primary = self.parse_primary_expression()?;
         let mut suffixes = Vec::new();
         loop {
@@ -762,7 +820,7 @@ impl<R: Read> Parser<R> {
         Ok(SuffixedExpression { primary, suffixes })
     }
 
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinition, Error> {
+    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S>, ParserError> {
         self.expect_next(Token::LeftParen)?;
 
         let mut parameters = Vec::new();
@@ -776,10 +834,10 @@ impl<R: Read> Parser<R> {
                         break;
                     }
                     token => {
-                        return Err(format_err!(
-                            "unexpected token {:?} expected parameter name or '...'",
-                            token,
-                        ))
+                        return Err(ParserError::Unexpected {
+                            unexpected: format!("{:?}", token),
+                            expected: Some("parameter name or '...'".to_owned()),
+                        })
                     }
                 }
                 if self.check_ahead(0, Token::Comma)? {
@@ -801,7 +859,7 @@ impl<R: Read> Parser<R> {
         })
     }
 
-    fn parse_table_constructor(&mut self) -> Result<TableConstructor, Error> {
+    fn parse_table_constructor(&mut self) -> Result<TableConstructor<S>, ParserError> {
         self.expect_next(Token::LeftBrace)?;
         let mut fields = Vec::new();
         loop {
@@ -820,7 +878,7 @@ impl<R: Read> Parser<R> {
         Ok(TableConstructor { fields })
     }
 
-    fn parse_constructor_field(&mut self) -> Result<ConstructorField, Error> {
+    fn parse_constructor_field(&mut self) -> Result<ConstructorField<S>, ParserError> {
         Ok(match *self.get_next()? {
             Token::Name(_) => {
                 if self.check_ahead(1, Token::Assign)? {
@@ -846,91 +904,99 @@ impl<R: Read> Parser<R> {
 
     // Error if we have more than MAX_RECURSION guards live, otherwise return a new recursion guard
     // (a recursion guard is just an Rc used solely for its live count).
-    fn recursion_guard(&self) -> Result<Rc<()>, Error> {
+    fn recursion_guard(&self) -> Result<Rc<()>, ParserError> {
         if Rc::strong_count(&self.recursion_guard) < MAX_RECURSION {
             Ok(self.recursion_guard.clone())
         } else {
-            Err(err_msg("recursion limit reached"))
+            Err(ParserError::RecursionLimit)
         }
     }
 
     // Return a reference to the next token in the stream, erroring if we are at the end.
-    fn get_next(&mut self) -> Result<&Token, Error> {
+    fn get_next(&mut self) -> Result<&Token<S>, ParserError> {
         self.read_ahead(1)?;
         if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
         } else {
-            Err(format_err!("unexpected end of token stream"))
+            Err(ParserError::EndOfStream { expected: None })
         }
     }
 
     // Consumes the next token, returning an error if it does not match the given token.
-    fn expect_next(&mut self, token: Token) -> Result<(), Error> {
+    fn expect_next(&mut self, token: Token<S>) -> Result<(), ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(format_err!(
-                "unexpected end of token stream, expected {:?}",
-                token
-            ))
+            Err(ParserError::EndOfStream {
+                expected: Some(format!("{:?}", token)),
+            })
         } else {
             let next_token = self.read_buffer.remove(0);
             if next_token == token {
                 Ok(())
             } else {
-                Err(format_err!(
-                    "expected token {:?} found {:?}",
-                    token,
-                    next_token,
-                ))
+                Err(ParserError::Unexpected {
+                    unexpected: format!("{:?}", next_token),
+                    expected: Some(format!("{:?}", token)),
+                })
             }
         }
     }
 
     // Consume the next token which should be a name, and return it, otherwise error.
-    fn expect_name(&mut self) -> Result<Box<[u8]>, Error> {
+    fn expect_name(&mut self) -> Result<S, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(err_msg("unexpected end of token stream, expected name"))
+            Err(ParserError::EndOfStream {
+                expected: Some("name".to_owned()),
+            })
         } else {
             match self.read_buffer.remove(0) {
                 Token::Name(name) => Ok(name),
-                token => Err(format_err!("expected name found {:?}", token)),
+                token => Err(ParserError::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: Some("name".to_owned()),
+                }),
             }
         }
     }
 
     // Consume the next token which should be a string, and return it, otherwise error.
-    fn expect_string(&mut self) -> Result<Box<[u8]>, Error> {
+    fn expect_string(&mut self) -> Result<S, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(err_msg("unexpected end of token stream, expected string"))
+            Err(ParserError::EndOfStream {
+                expected: Some("string".to_owned()),
+            })
         } else {
             match self.read_buffer.remove(0) {
                 Token::String(string) => Ok(string),
-                token => Err(format_err!("expected string found {:?}", token)),
+                token => Err(ParserError::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: Some("string".to_owned()),
+                }),
             }
         }
     }
 
     // Take the next token in the stream by value, erroring if we are at the end.
-    fn take_next(&mut self) -> Result<Token, Error> {
+    fn take_next(&mut self) -> Result<Token<S>, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(err_msg("unexpected end of token stream"))
+            Err(ParserError::EndOfStream { expected: None })
         } else {
             Ok(self.read_buffer.remove(0))
         }
     }
 
     // Return the nth token ahead in the stream, if it is not past the end.
-    fn look_ahead(&mut self, n: usize) -> Result<Option<&Token>, Error> {
+    fn look_ahead(&mut self, n: usize) -> Result<Option<&Token<S>>, ParserError> {
         self.read_ahead(n + 1)?;
         Ok(self.read_buffer.get(n))
     }
 
     // Return true if the nth token ahead in the stream matches the given token.  If this would read
     // past the end of the stream, this will simply return false.
-    fn check_ahead(&mut self, n: usize, token: Token) -> Result<bool, Error> {
+    fn check_ahead(&mut self, n: usize, token: Token<S>) -> Result<bool, ParserError> {
         self.read_ahead(n)?;
         Ok(if let Some(t) = self.read_buffer.get(n) {
             *t == token
@@ -941,9 +1007,9 @@ impl<R: Read> Parser<R> {
 
     // Read at least `n` tokens ahead in the stream, filling the read buffer up to size `n` (if
     // possible).
-    fn read_ahead(&mut self, n: usize) -> Result<(), Error> {
+    fn read_ahead(&mut self, n: usize) -> Result<(), ParserError> {
         while self.read_buffer.len() <= n {
-            if let Some(token) = self.lexer.read_token()? {
+            if let Some(token) = self.lexer.read_token().map_err(ParserError::LexerError)? {
                 self.read_buffer.push(token);
             } else {
                 break;
@@ -989,7 +1055,7 @@ fn binary_priority(operator: BinaryOperator) -> (u8, u8) {
 }
 
 // Get the unary operator associated with the given token, if it exists.
-fn get_unary_operator(token: &Token) -> Option<UnaryOperator> {
+fn get_unary_operator<S>(token: &Token<S>) -> Option<UnaryOperator> {
     match *token {
         Token::Not => Some(UnaryOperator::Not),
         Token::Minus => Some(UnaryOperator::Minus),
@@ -1000,7 +1066,7 @@ fn get_unary_operator(token: &Token) -> Option<UnaryOperator> {
 }
 
 // Get the binary operator associated with the given token, if it exists.
-fn get_binary_operator(token: &Token) -> Option<BinaryOperator> {
+fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOperator> {
     match *token {
         Token::Minus => Some(BinaryOperator::Sub),
         Token::Add => Some(BinaryOperator::Add),

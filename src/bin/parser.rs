@@ -13,12 +13,12 @@ use luster::parser::parse_chunk;
 fn main() -> Result<(), Error> {
     let mut args = env::args();
     args.next();
-    let file = File::open(
+    let file = buffered_read(File::open(
         args.next()
             .ok_or_else(|| err_msg("no file argument given"))?,
-    )?;
+    )?)?;
 
-    let chunk = parse_chunk(buffered_read(file)?)?;
+    let chunk = parse_chunk(file, |s| s.as_ref().to_vec().into_boxed_slice())?;
     println!("output: {:#?}", chunk);
 
     Ok(())

@@ -1,7 +1,10 @@
+use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
-use gc_arena::{Collect, Gc, MutationContext};
+use fnv::FnvHashSet;
+
+use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]
@@ -50,9 +53,24 @@ impl<'gc> Deref for String<'gc> {
     }
 }
 
-impl<'gc> PartialEq for String<'gc> {
-    fn eq(&self, other: &String<'gc>) -> bool {
-        self.as_bytes() == other.as_bytes()
+impl<'gc> AsRef<[u8]> for String<'gc> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl<'gc> Borrow<[u8]> for String<'gc> {
+    fn borrow(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl<'gc, T> PartialEq<T> for String<'gc>
+where
+    T: AsRef<[u8]>,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.as_bytes() == other.as_ref()
     }
 }
 
@@ -61,5 +79,25 @@ impl<'gc> Eq for String<'gc> {}
 impl<'gc> Hash for String<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_bytes().hash(state);
+    }
+}
+
+#[derive(Collect, Clone, Copy)]
+#[collect(require_copy)]
+pub struct InternedStringSet<'gc>(GcCell<'gc, FnvHashSet<String<'gc>>>);
+
+impl<'gc> InternedStringSet<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
+        InternedStringSet(GcCell::allocate(mc, FnvHashSet::default()))
+    }
+
+    pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+        if let Some(found) = self.0.read().get(s) {
+            return *found;
+        }
+
+        let s = String::new(mc, s);
+        self.0.write(mc).insert(s);
+        s
     }
 }

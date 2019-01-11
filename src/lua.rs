@@ -5,6 +5,7 @@ use failure::Error;
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
 
 use crate::sequence::{Sequence, SequenceExt};
+use crate::string::InternedStringSet;
 use crate::table::Table;
 use crate::thread::Thread;
 
@@ -13,6 +14,7 @@ use crate::thread::Thread;
 pub struct LuaContext<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,
+    pub interned_strings: InternedStringSet<'gc>,
 }
 
 pub struct Lua {
@@ -25,10 +27,19 @@ impl Lua {
             context: LuaContext {
                 main_thread: Thread::new(mc),
                 globals: Table::new(mc),
+                interned_strings: InternedStringSet::new(mc),
             },
             current_sequence: GcCell::allocate(mc, None),
         });
         Lua { arena }
+    }
+
+    pub fn mutate<F, R>(&mut self, f: F) -> R
+    where
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>) -> R,
+    {
+        self.arena
+            .mutate(move |mc, lua_root| f(mc, lua_root.context))
     }
 
     pub fn sequence<F, R>(&mut self, f: F) -> Result<R, Error>

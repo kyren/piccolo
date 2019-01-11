@@ -7,7 +7,10 @@ use luster::parser::{
 #[test]
 fn test_function_call() {
     assert_eq!(
-        parse_chunk("print(10, 20);print'foo';print{30.0}".as_bytes()).unwrap(),
+        parse_chunk("print(10, 20);print'foo';print{30.0}".as_bytes(), |s| s
+            .to_vec()
+            .into_boxed_slice())
+        .unwrap(),
         Chunk {
             block: Block {
                 statements: vec![

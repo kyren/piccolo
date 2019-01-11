@@ -2,8 +2,8 @@ use std::f64;
 
 use luster::lexer::{Lexer, Token};
 
-fn test_tokens(source: &str, tokens: &[Token]) {
-    let mut lexer = Lexer::new(source.as_bytes());
+fn test_tokens(source: &str, tokens: &[Token<Box<[u8]>>]) {
+    let mut lexer = Lexer::new(source.as_bytes(), |s| s.to_vec().into_boxed_slice());
     let mut i = 0;
     while let Some(token) = lexer.read_token().unwrap() {
         assert!(i < tokens.len(), "too many tokens");
@@ -13,8 +13,8 @@ fn test_tokens(source: &str, tokens: &[Token]) {
     assert!(i == tokens.len(), "not enough tokens");
 }
 
-fn test_tokens_lines(source: &str, tokens: &[(Token, u64)]) {
-    let mut lexer = Lexer::new(source.as_bytes());
+fn test_tokens_lines(source: &str, tokens: &[(Token<Box<[u8]>>, u64)]) {
+    let mut lexer = Lexer::new(source.as_bytes(), |s| s.to_vec().into_boxed_slice());
     let mut i = 0;
     loop {
         lexer.skip_whitespace().unwrap();
@@ -31,11 +31,11 @@ fn test_tokens_lines(source: &str, tokens: &[(Token, u64)]) {
     assert!(i == tokens.len(), "not enough tokens");
 }
 
-fn str_token(s: &str) -> Token {
+fn str_token(s: &str) -> Token<Box<[u8]>> {
     Token::String(s.as_bytes().to_vec().into_boxed_slice())
 }
 
-fn name_token(s: &str) -> Token {
+fn name_token(s: &str) -> Token<Box<[u8]>> {
     Token::Name(s.as_bytes().to_vec().into_boxed_slice())
 }
 

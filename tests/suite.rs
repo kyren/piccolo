@@ -1,20 +1,13 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
-use std::path::PathBuf;
 
-use failure::Error;
-
-use luster::compiler::compile_chunk;
+use luster::compiler::compile;
 use luster::function::Closure;
 use luster::io::buffered_read;
 use luster::lua::Lua;
-use luster::parser::{parse_chunk, Chunk};
+use luster::parser::parse_chunk;
 use luster::sequence::SequenceExt;
 use luster::value::Value;
-
-fn parse_file(path: &PathBuf) -> Result<Chunk, Error> {
-    parse_chunk(buffered_read(File::open(path)?)?)
-}
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -24,56 +17,53 @@ fn test_dir(dir: &str, run_code: bool) {
 
     for dir in read_dir(dir).expect("could not list dir contents") {
         let path = dir.expect("could not read dir entry").path();
+        let file = buffered_read(File::open(&path).unwrap()).unwrap();
         if let Some(ext) = path.extension() {
             if ext == "lua" {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
-                match parse_file(&path) {
-                    Err(err) => {
+                if run_code {
+                    let mut lua = Lua::new();
+                    let r = lua.sequence(move |mc, lc| {
+                        Ok(Box::new(
+                            lc.main_thread
+                                .call_function(
+                                    mc,
+                                    Closure::new(
+                                        mc,
+                                        compile(mc, lc.interned_strings, file)?,
+                                        Some(lc.globals),
+                                    )?,
+                                    &[],
+                                    64,
+                                )
+                                .map(|_, r| match &r[..] {
+                                    &[Value::Boolean(true)] => Ok(false),
+                                    v => {
+                                        let _ = writeln!(
+                                            stdout(),
+                                            "error: unexpected return values: {:?}",
+                                            v
+                                        );
+                                        Ok(true)
+                                    }
+                                }),
+                        ))
+                    });
+
+                    match r {
+                        Err(err) => {
+                            let _ = writeln!(stdout(), "error encountered running: {:?}", err);
+                            file_failed = true;
+                        }
+                        Ok(true) => {
+                            file_failed = true;
+                        }
+                        Ok(false) => {}
+                    }
+                } else {
+                    if let Err(err) = parse_chunk(file, |s| s.to_vec().into_boxed_slice()) {
                         let _ = writeln!(stdout(), "error encountered parsing: {:?}", err);
                         file_failed = true;
-                    }
-                    Ok(chunk) => {
-                        if run_code {
-                            let mut lua = Lua::new();
-                            let r = lua.sequence(move |mc, lc| {
-                                Ok(Box::new(
-                                    lc.main_thread
-                                        .call_function(
-                                            mc,
-                                            Closure::new(
-                                                mc,
-                                                compile_chunk(mc, &chunk)?,
-                                                Some(lc.globals),
-                                            )?,
-                                            &[],
-                                            64,
-                                        )
-                                        .map(|_, r| match &r[..] {
-                                            &[Value::Boolean(true)] => Ok(false),
-                                            v => {
-                                                let _ = writeln!(
-                                                    stdout(),
-                                                    "error: unexpected return values: {:?}",
-                                                    v
-                                                );
-                                                Ok(true)
-                                            }
-                                        }),
-                                ))
-                            });
-
-                            match r {
-                                Err(err) => {
-                                    let _ =
-                                        writeln!(stdout(), "error encountered running: {:?}", err);
-                                    file_failed = true;
-                                }
-                                Ok(true) => {
-                                    file_failed = true;
-                                }
-                                Ok(false) => {}
-                            }
-                        }
                     }
                 }
             }

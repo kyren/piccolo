@@ -12,7 +12,6 @@ members = [
 [dependencies]
 failure = "0.1"
 fnv = "1.0"
-lazy_static = "1.0"
 num-traits = "0.2"
 
 gc-arena = { path = "./gc-arena" }

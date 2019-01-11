@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
 
 use crate::collect::Collect;
@@ -149,6 +149,24 @@ where
     }
 }
 
+unsafe impl<T, S> Collect for HashSet<T, S>
+where
+    T: Eq + Hash + Collect,
+    S: BuildHasher,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        for v in self {
+            v.trace(cc);
+        }
+    }
+}
+
 unsafe impl<K, V> Collect for BTreeMap<K, V>
 where
     K: Eq + Ord + Collect,
@@ -163,6 +181,23 @@ where
     fn trace(&self, cc: CollectionContext) {
         for (k, v) in self {
             k.trace(cc);
+            v.trace(cc);
+        }
+    }
+}
+
+unsafe impl<T> Collect for BTreeSet<T>
+where
+    T: Eq + Ord + Collect,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        for v in self {
             v.trace(cc);
         }
     }
