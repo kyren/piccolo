@@ -23,7 +23,7 @@ pub enum UpValueDescriptor {
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
     pub has_varargs: bool,
-    pub stack_size: u8,
+    pub stack_size: u16,
     pub constants: Vec<Value<'gc>>,
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,

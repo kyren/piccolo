@@ -167,7 +167,7 @@ enum JumpLabel<'gc> {
 struct BlockDescriptor {
     // The index of the first local variable in this block.  All locals above this will be freed
     // when this block is exited.
-    stack_bottom: u8,
+    stack_bottom: u16,
     // The index of the first jump target in this block.  All jump targets above this will go out of
     // scope when the block ends.
     bottom_jump_target: usize,
@@ -181,7 +181,7 @@ struct JumpTarget<'gc> {
     // The target instruction that will be jumped to
     instruction: usize,
     // The valid local variables in scope at the target location
-    stack_top: u8,
+    stack_top: u16,
     // The index of the active block at the target location.
     block_index: usize,
 }
@@ -195,7 +195,7 @@ struct PendingJump<'gc> {
     // as the current block index and local count at the time of the jump, but will be lowered as
     // blocks are exited.
     block_index: usize,
-    stack_top: u8,
+    stack_top: u16,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
     close_upvalues: bool,
 }
@@ -219,7 +219,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         let last_block = self.current_function.blocks.pop().unwrap();
 
         while let Some((_, last)) = self.current_function.locals.last() {
-            if last.0 >= last_block.stack_bottom {
+            if last.0 as u16 >= last_block.stack_bottom {
                 self.current_function.register_allocator.free(*last);
                 self.current_function.locals.pop();
             } else {
@@ -331,7 +331,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             match returns.pop().unwrap() {
                 ExprDescriptor::FunctionCall { func, args } => {
                     let func = self.expr_discharge(*func, ExprDestination::PushNew)?;
-                    let (_, args) = self.push_arguments(args)?;
+                    let args = self.push_arguments(args)?;
                     self.current_function
                         .opcodes
                         .push(OpCode::TailCall { func, args });
@@ -345,10 +345,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
         }
 
-        let (start, count) = self.push_arguments(returns)?;
-        self.current_function
-            .opcodes
-            .push(OpCode::Return { start, count });
+        let count = self.push_arguments(returns)?;
+        self.current_function.opcodes.push(OpCode::Return {
+            start: RegisterIndex(
+                cast(self.current_function.register_allocator.stack_top()).unwrap(),
+            ),
+            count,
+        });
 
         Ok(())
     }
@@ -456,7 +459,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump_target(JumpLabel::Break)?;
                 self.exit_block()?;
 
-                self.current_function.register_allocator.pop_to(base.0);
+                self.current_function
+                    .register_allocator
+                    .pop_to(base.0 as u16);
             }
 
             ForStatement::Generic {
@@ -526,7 +531,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump_target(JumpLabel::Break)?;
                 self.exit_block()?;
 
-                self.current_function.register_allocator.pop_to(base.0);
+                self.current_function
+                    .register_allocator
+                    .pop_to(base.0 as u16);
             }
         }
         Ok(())
@@ -1029,7 +1036,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         // blocks in that function as owning an upvalue.  This allows us to skip
                         // closing upvalues in jumps if we know the block does not own any upvalues.
                         for block in get_function(self, i).blocks.iter_mut().rev() {
-                            if block.stack_bottom <= register.0 {
+                            if block.stack_bottom <= register.0 as u16 {
                                 block.owns_upvalues = true;
                                 break;
                             }
@@ -1316,7 +1323,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         returns: VarCount,
     ) -> Result<RegisterIndex, CompilerError> {
         let func = self.expr_discharge(func, ExprDestination::PushNew)?;
-        let (_, args) = self.push_arguments(args)?;
+        let args = self.push_arguments(args)?;
 
         self.current_function.opcodes.push(OpCode::Call {
             func,
@@ -1359,7 +1366,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             RegisterOrConstant::Constant(key) => OpCode::SelfC { base, table, key },
         });
 
-        let (_, args) = self.push_arguments(args)?;
+        let args = self.push_arguments(args)?;
         let args = match args.as_constant() {
             Some(args) => args
                 .checked_add(1)
@@ -1373,7 +1380,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             returns,
         });
 
-        self.current_function.register_allocator.pop_to(base.0);
+        self.current_function
+            .register_allocator
+            .pop_to(base.0 as u16);
 
         Ok(base)
     }
@@ -1385,7 +1394,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn push_arguments(
         &mut self,
         mut args: Vec<ExprDescriptor<'gc>>,
-    ) -> Result<(RegisterIndex, VarCount), CompilerError> {
+    ) -> Result<VarCount, CompilerError> {
         let top = self.current_function.register_allocator.stack_top();
         let args_len = args.len();
 
@@ -1418,12 +1427,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             self.current_function.register_allocator.pop_to(top);
 
-            (RegisterIndex(top), arg_count)
+            arg_count
         } else {
-            (
-                RegisterIndex(self.current_function.register_allocator.stack_top()),
-                VarCount::constant(0),
-            )
+            VarCount::constant(0)
         })
     }
 
@@ -1902,7 +1908,9 @@ impl<'gc> CompilerFunction<'gc> {
     ) -> Result<CompilerFunction<'gc>, CompilerError> {
         let mut function = CompilerFunction::default();
         let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerError::FixedParameters)?;
-        function.register_allocator.push(fixed_params);
+        if fixed_params != 0 {
+            function.register_allocator.push(fixed_params).unwrap();
+        }
         function.has_varargs = has_varargs;
         function.fixed_params = fixed_params;
         for i in 0..fixed_params {
