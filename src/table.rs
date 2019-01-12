@@ -11,7 +11,7 @@ use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]
-pub struct Table<'gc>(GcCell<'gc, TableState<'gc>>);
+pub struct Table<'gc>(pub GcCell<'gc, TableState<'gc>>);
 
 #[derive(Fail, Debug)]
 pub enum InvalidTableKey {
@@ -56,13 +56,13 @@ impl<'gc> Table<'gc> {
 
 #[derive(Debug, Collect, Default)]
 #[collect(empty_drop)]
-struct TableState<'gc> {
+pub struct TableState<'gc> {
     array: Vec<Value<'gc>>,
     map: FnvHashMap<TableKey<'gc>, Value<'gc>>,
 }
 
 impl<'gc> TableState<'gc> {
-    fn get(&self, key: Value<'gc>) -> Value<'gc> {
+    pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
         if let Some(index) = to_array_index(key) {
             if index < self.array.len() {
                 return self.array[index];
@@ -76,7 +76,11 @@ impl<'gc> TableState<'gc> {
         }
     }
 
-    fn set(&mut self, key: Value<'gc>, value: Value<'gc>) -> Result<Value<'gc>, InvalidTableKey> {
+    pub fn set(
+        &mut self,
+        key: Value<'gc>,
+        value: Value<'gc>,
+    ) -> Result<Value<'gc>, InvalidTableKey> {
         let index_key = to_array_index(key);
         if let Some(index) = index_key {
             if index < self.array.len() {

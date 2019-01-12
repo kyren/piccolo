@@ -48,7 +48,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         self.0.cell.as_ptr()
     }
 
-    pub fn read(&self) -> Ref<T> {
+    pub fn read<'a>(&'a self) -> Ref<'a, T> {
         self.0.cell.borrow()
     }
 
@@ -56,10 +56,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         self.0.cell.try_borrow()
     }
 
-    pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T>
-    where
-        'gc: 'a,
-    {
+    pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
         let b = self.0.cell.borrow_mut();
         Gc::write_barrier(mc, self.0);
         b
