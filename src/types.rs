@@ -111,7 +111,7 @@ impl VarCount {
         self.0.is_none()
     }
 
-    pub fn get_constant(&self) -> Option<u8> {
+    pub fn as_constant(&self) -> Option<u8> {
         self.0.as_u8()
     }
 }

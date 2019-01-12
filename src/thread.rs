@@ -309,7 +309,7 @@ impl<'gc> ThreadState<'gc> {
                         self.close_upvalues(mc, self_thread, current_frame.bottom);
 
                         let func = current_frame.base + func.0 as usize;
-                        let arg_len = if let Some(args) = args.get_constant() {
+                        let arg_len = if let Some(args) = args.as_constant() {
                             args as usize
                         } else {
                             self.stack.len() - func - 1
@@ -337,13 +337,13 @@ impl<'gc> ThreadState<'gc> {
 
                         let start = current_frame.base + start.0 as usize;
                         let count = count
-                            .get_constant()
+                            .as_constant()
                             .map(|c| c as usize)
                             .unwrap_or(self.stack.len() - start);
 
                         let returning = current_frame
                             .returns
-                            .get_constant()
+                            .as_constant()
                             .map(|c| c as usize)
                             .unwrap_or(count);
 
@@ -397,7 +397,7 @@ impl<'gc> ThreadState<'gc> {
                         let varargs_start = current_frame.bottom + 1;
                         let varargs_len = current_frame.base - varargs_start;
                         let dest = current_frame.base + dest.0 as usize;
-                        if let Some(count) = count.get_constant() {
+                        if let Some(count) = count.as_constant() {
                             for i in 0..count as usize {
                                 self.stack[dest + i] = if i < varargs_len {
                                     self.stack[varargs_start + i]
@@ -547,7 +547,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::SelfC { base, table, key } => {
                         let base = current_frame.base + base.0 as usize;
                         let table = self.stack[current_frame.base + table.0 as usize];
-                        let key = self.stack[current_frame.base + key.0 as usize];
+                        let key = current_function.0.proto.constants[key.0 as usize];
                         self.stack[base + 1] = table;
                         self.stack[base] = get_table(table).get(key);
                     }
@@ -742,7 +742,7 @@ impl<'gc> ThreadState<'gc> {
             _ => panic!("not a closure"),
         };
 
-        let arg_count = if let Some(constant) = args.get_constant() {
+        let arg_count = if let Some(constant) = args.as_constant() {
             let constant = constant as usize;
             assert!(self.stack.len() - closure_index - 1 >= constant);
             self.stack.truncate(closure_index + constant + 1);

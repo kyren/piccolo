@@ -132,6 +132,11 @@ enum ExprDescriptor<'gc> {
         func: Box<ExprDescriptor<'gc>>,
         args: Vec<ExprDescriptor<'gc>>,
     },
+    MethodCall {
+        table: Box<ExprDescriptor<'gc>>,
+        method: Box<ExprDescriptor<'gc>>,
+        args: Vec<ExprDescriptor<'gc>>,
+    },
 }
 
 #[derive(Debug)]
@@ -586,24 +591,55 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         function_statement: &FunctionStatement<String<'gc>>,
     ) -> Result<(), CompilerError> {
-        if function_statement.method.is_some() {
-            unimplemented!("no method support");
+        let mut table = None;
+        let mut name = function_statement.name;
+
+        for field in function_statement
+            .fields
+            .iter()
+            .chain(&function_statement.method)
+        {
+            table = Some(if let Some(table) = table {
+                ExprDescriptor::TableField {
+                    table: Box::new(table),
+                    key: Box::new(ExprDescriptor::Value(Value::String(name))),
+                }
+            } else {
+                ExprDescriptor::Variable(self.find_variable(name)?)
+            });
+            name = *field;
         }
 
-        let closure = ExprDescriptor::Closure(self.new_prototype(&function_statement.definition)?);
+        let table = if let Some(table) = table {
+            table
+        } else {
+            self.get_environment()?
+        };
 
-        let mut table = self.get_environment()?;
-        let mut name = ExprDescriptor::Value(Value::String(function_statement.name));
+        let proto = if function_statement.method.is_some() {
+            let mut parameters = vec![self
+                .interned_strings
+                .new_string(self.mutation_context, b"self")];
+            parameters.extend(&function_statement.definition.parameters);
 
-        for field in &function_statement.fields {
-            table = ExprDescriptor::TableField {
-                table: Box::new(table),
-                key: Box::new(name),
-            };
-            name = ExprDescriptor::Value(Value::String(*field));
-        }
+            self.new_prototype(
+                &parameters,
+                function_statement.definition.has_varargs,
+                &function_statement.definition.body,
+            )?
+        } else {
+            self.new_prototype(
+                &function_statement.definition.parameters,
+                function_statement.definition.has_varargs,
+                &function_statement.definition.body,
+            )?
+        };
 
-        self.set_table(table, name, closure)?;
+        self.set_table(
+            table,
+            ExprDescriptor::Value(Value::String(name)),
+            ExprDescriptor::Closure(proto),
+        )?;
 
         Ok(())
     }
@@ -664,16 +700,27 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         function_call: &FunctionCallStatement<String<'gc>>,
     ) -> Result<(), CompilerError> {
-        let func_expr = self.suffixed_expression(&function_call.head)?;
+        let head_expr = self.suffixed_expression(&function_call.head)?;
         match &function_call.call {
             CallSuffix::Function(args) => {
                 let arg_exprs = args
                     .iter()
                     .map(|arg| self.expression(arg))
                     .collect::<Result<_, CompilerError>>()?;
-                self.call_function(func_expr, arg_exprs, VarCount::constant(0))?;
+                self.call_function(head_expr, arg_exprs, VarCount::constant(0))?;
             }
-            CallSuffix::Method(_, _) => unimplemented!("method call unsupported"),
+            CallSuffix::Method(method, args) => {
+                let arg_exprs = args
+                    .iter()
+                    .map(|arg| self.expression(arg))
+                    .collect::<Result<_, CompilerError>>()?;
+                self.call_method(
+                    head_expr,
+                    ExprDescriptor::Value(Value::String(*method)),
+                    arg_exprs,
+                    VarCount::constant(0),
+                )?;
+            }
         }
         Ok(())
     }
@@ -728,7 +775,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         local_function: &LocalFunctionStatement<String<'gc>>,
     ) -> Result<(), CompilerError> {
-        let proto = self.new_prototype(&local_function.definition)?;
+        let proto = self.new_prototype(
+            &local_function.definition.parameters,
+            local_function.definition.has_varargs,
+            &local_function.definition.body,
+        )?;
 
         let dest = self
             .current_function
@@ -804,7 +855,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         function: &FunctionDefinition<String<'gc>>,
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        let proto = self.new_prototype(function)?;
+        let proto =
+            self.new_prototype(&function.parameters, function.has_varargs, &function.body)?;
         Ok(ExprDescriptor::Closure(proto))
     }
 
@@ -836,7 +888,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             args,
                         };
                     }
-                    CallSuffix::Method(_, _) => unimplemented!("methods not supported yet"),
+                    CallSuffix::Method(method, args) => {
+                        let args = args
+                            .iter()
+                            .map(|arg| self.expression(arg))
+                            .collect::<Result<_, CompilerError>>()?;
+                        expr = ExprDescriptor::MethodCall {
+                            table: Box::new(expr),
+                            method: Box::new(ExprDescriptor::Value(Value::String(*method))),
+                            args,
+                        };
+                    }
                 },
             }
         }
@@ -917,14 +979,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn new_prototype(
         &mut self,
-        function: &FunctionDefinition<String<'gc>>,
+        parameters: &[String<'gc>],
+        has_varargs: bool,
+        body: &Block<String<'gc>>,
     ) -> Result<PrototypeIndex, CompilerError> {
         let old_current = mem::replace(
             &mut self.current_function,
-            CompilerFunction::start(&function.parameters, function.has_varargs)?,
+            CompilerFunction::start(parameters, has_varargs)?,
         );
         self.upper_functions.push(old_current);
-        self.block(&function.body)?;
+        self.block(body)?;
         let proto = mem::replace(
             &mut self.current_function,
             self.upper_functions.pop().unwrap(),
@@ -1241,10 +1305,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Performs a function call, consuming the func and args registers.  At the end of the function
-    // call, the return values will be left at the top of the stack.  The returns are potentially
-    // variable, so none of the returns are marked as allocated.  Returns the register at which the
-    // returns (if any) are placed, which will always be the current register allocator top.
+    // Performs a function call.  At the end of the function call, the return values will be left at
+    // the top of the stack.  The returns are potentially variable, so none of the returns are
+    // marked as allocated.  Returns the register at which the returns (if any) are placed, which
+    // will always be the current register allocator top.
     fn call_function(
         &mut self,
         func: ExprDescriptor<'gc>,
@@ -1263,6 +1327,55 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         // OpCode::Call places returns at the previous location of the function
         self.current_function.register_allocator.free(func);
         Ok(func)
+    }
+
+    // Performs a method call similarly to how `call_function` works.  Method calls have a special
+    // opcode that make them more efficient than executing them in a naive way.
+    fn call_method(
+        &mut self,
+        table: ExprDescriptor<'gc>,
+        method: ExprDescriptor<'gc>,
+        args: Vec<ExprDescriptor<'gc>>,
+        returns: VarCount,
+    ) -> Result<RegisterIndex, CompilerError> {
+        let (table, table_is_temp) = self.expr_any_register(table)?;
+        let (method, method_to_free) = self.expr_any_register_or_constant(method)?;
+
+        if table_is_temp {
+            self.current_function.register_allocator.free(table);
+        }
+        if let Some(to_free) = method_to_free {
+            self.current_function.register_allocator.free(to_free);
+        }
+
+        let base = self
+            .current_function
+            .register_allocator
+            .push(2)
+            .ok_or(CompilerError::Registers)?;
+
+        self.current_function.opcodes.push(match method {
+            RegisterOrConstant::Register(key) => OpCode::SelfR { base, table, key },
+            RegisterOrConstant::Constant(key) => OpCode::SelfC { base, table, key },
+        });
+
+        let (_, args) = self.push_arguments(args)?;
+        let args = match args.as_constant() {
+            Some(args) => args
+                .checked_add(1)
+                .and_then(VarCount::try_constant)
+                .ok_or(CompilerError::Registers)?,
+            None => VarCount::variable(),
+        };
+        self.current_function.opcodes.push(OpCode::Call {
+            func: base,
+            args,
+            returns,
+        });
+
+        self.current_function.register_allocator.pop_to(base.0);
+
+        Ok(base)
     }
 
     // Pushes the given arguments to the top of the stack in preparation for a function call or
@@ -1617,15 +1730,34 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                 }
             }
-        };
 
-        if dest == ExprDestination::PushNew {
-            // Make sure we placed the register at the top of the stack *after* deallocating any
-            // registers in the provided expression
-            let allocator = &self.current_function.register_allocator;
-            assert_eq!(result.0 + 1, allocator.stack_top());
-            assert!(result.0 == 0 || allocator.is_allocated(result.0 - 1));
-        }
+            ExprDescriptor::MethodCall {
+                table,
+                method,
+                args,
+            } => {
+                let source = self.call_method(*table, *method, args, VarCount::constant(1))?;
+                match dest {
+                    ExprDestination::Register(dest) => {
+                        assert_ne!(dest, source);
+                        self.current_function
+                            .opcodes
+                            .push(OpCode::Move { dest, source });
+                        dest
+                    }
+                    ExprDestination::AllocateNew | ExprDestination::PushNew => {
+                        assert_eq!(
+                            self.current_function
+                                .register_allocator
+                                .push(1)
+                                .ok_or(CompilerError::Registers)?,
+                            source
+                        );
+                        source
+                    }
+                }
+            }
+        };
 
         Ok(result)
     }
