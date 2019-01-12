@@ -5,7 +5,7 @@ use std::{f64, mem, usize};
 
 use crate::arena::ArenaParameters;
 use crate::collect::Collect;
-use crate::util::{GcBox, GcColor, GcFlags, Invariant};
+use crate::types::{GcBox, GcColor, GcFlags, Invariant};
 
 /// Handle value given by arena callbacks during construction and mutation.  Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
@@ -129,7 +129,7 @@ impl Context {
     // sleeping gc phase.  The unit of "work" here is a byte count of objects either turned black or
     // freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units of
     // work, whatever percentage of them are live or not.  Returns the amount of work actually
-    // performed, which may be less if we have entered the sleep phase early.
+    // performed, which may be less if we are entering the sleep phase.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
@@ -176,7 +176,7 @@ impl Context {
                         (*gc_box.value.get()).trace(cc);
                         gc_box.flags.set_color(GcColor::Black);
                     } else {
-                        // If we have no objects left in the normal gray queue, we enter the sleep
+                        // If we have no objects left in the normal gray queue, we enter the sweep
                         // phase.
                         self.phase.set(Phase::Sweep);
                         self.sweep.set(self.all.get());
@@ -283,8 +283,8 @@ impl Context {
 
     unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
-        // object to it and invalidate the black invariant.  Turn black obejcts to gray to prevent
-        // this.
+        // object to it and invalidate the invariant that black objects may not point to white
+        // objects.  Turn black obejcts to gray to prevent this.
         let gc_box = ptr.as_ref();
         if self.phase.get() == Phase::Propagate && gc_box.flags.color() == GcColor::Black {
             gc_box.flags.set_color(GcColor::Gray);

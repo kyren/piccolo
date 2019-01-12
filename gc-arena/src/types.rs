@@ -35,11 +35,12 @@ impl GcFlags {
 
     pub(crate) fn set_color(&self, color: GcColor) {
         self.0.set(
-            (self.0.get() & !0x3) | match color {
-                GcColor::White => 0x0,
-                GcColor::Gray => 0x1,
-                GcColor::Black => 0x2,
-            },
+            (self.0.get() & !0x3)
+                | match color {
+                    GcColor::White => 0x0,
+                    GcColor::Gray => 0x1,
+                    GcColor::Black => 0x2,
+                },
         )
     }
 

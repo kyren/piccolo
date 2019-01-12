@@ -8,7 +8,7 @@ mod context;
 mod gc;
 mod gc_cell;
 mod static_collect;
-mod util;
+mod types;
 
 pub use self::arena::*;
 pub use self::collect::*;
