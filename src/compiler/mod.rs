@@ -9,7 +9,6 @@ use crate::parser::parse_chunk;
 use crate::string::InternedStringSet;
 
 mod compiler;
-mod constant;
 mod operators;
 mod register_allocator;
 

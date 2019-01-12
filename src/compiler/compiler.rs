@@ -6,6 +6,7 @@ use num_traits::cast;
 
 use gc_arena::{Gc, MutationContext};
 
+use crate::constant::Constant;
 use crate::function::{FunctionProto, UpValueDescriptor};
 use crate::opcode::OpCode;
 use crate::parser::{
@@ -20,9 +21,7 @@ use crate::string::String;
 use crate::types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
-use crate::value::Value;
 
-use super::constant::ConstantValue;
 use super::operators::{
     categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
     simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
@@ -78,8 +77,8 @@ struct Compiler<'gc, 'a> {
 
 #[derive(Default)]
 struct CompilerFunction<'gc> {
-    constants: Vec<Value<'gc>>,
-    constant_table: HashMap<ConstantValue<'gc>, ConstantIndex16>,
+    constants: Vec<Constant<'gc>>,
+    constant_table: HashMap<Constant<'gc>, ConstantIndex16>,
 
     upvalues: Vec<(String<'gc>, UpValueDescriptor)>,
     prototypes: Vec<FunctionProto<'gc>>,
@@ -101,7 +100,7 @@ struct CompilerFunction<'gc> {
 #[derive(Debug)]
 enum ExprDescriptor<'gc> {
     Variable(VariableDescriptor<'gc>),
-    Value(Value<'gc>),
+    Constant(Constant<'gc>),
     VarArgs,
     UnaryOperator {
         op: UnaryOperator,
@@ -413,7 +412,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 let step = if let Some(step) = step {
                     self.expression(step)?
                 } else {
-                    ExprDescriptor::Value(Value::Integer(1))
+                    ExprDescriptor::Constant(Constant::Integer(1))
                 };
                 self.expr_discharge(step, ExprDestination::PushNew)?;
 
@@ -482,14 +481,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let state = if let Some(state) = arguments.get(1) {
                         self.expression(state)?
                     } else {
-                        ExprDescriptor::Value(Value::Nil)
+                        ExprDescriptor::Constant(Constant::Nil)
                     };
                     self.expr_discharge(state, ExprDestination::PushNew)?;
 
                     let control = if let Some(control) = arguments.get(2) {
                         self.expression(control)?
                     } else {
-                        ExprDescriptor::Value(Value::Nil)
+                        ExprDescriptor::Constant(Constant::Nil)
                     };
                     self.expr_discharge(control, ExprDestination::PushNew)?;
 
@@ -609,7 +608,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             table = Some(if let Some(table) = table {
                 ExprDescriptor::TableField {
                     table: Box::new(table),
-                    key: Box::new(ExprDescriptor::Value(Value::String(name))),
+                    key: Box::new(ExprDescriptor::Constant(Constant::String(name))),
                 }
             } else {
                 ExprDescriptor::Variable(self.find_variable(name)?)
@@ -644,7 +643,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         self.set_table(
             table,
-            ExprDescriptor::Value(Value::String(name)),
+            ExprDescriptor::Constant(Constant::String(name)),
             ExprDescriptor::Closure(proto),
         )?;
 
@@ -723,7 +722,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .collect::<Result<_, CompilerError>>()?;
                 self.call_method(
                     head_expr,
-                    ExprDescriptor::Value(Value::String(*method)),
+                    ExprDescriptor::Constant(Constant::String(*method)),
                     arg_exprs,
                     VarCount::constant(0),
                 )?;
@@ -740,7 +739,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             let expr = if i < assignment.values.len() {
                 self.expression(&assignment.values[i])?
             } else {
-                ExprDescriptor::Value(Value::Nil)
+                ExprDescriptor::Constant(Constant::Nil)
             };
 
             match target {
@@ -759,7 +758,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     }
                     VariableDescriptor::Global(name) => {
                         let env = self.get_environment()?;
-                        let key = ExprDescriptor::Value(Value::String(name));
+                        let key = ExprDescriptor::Constant(Constant::String(name));
                         self.set_table(env, key, expr)?;
                     }
                 },
@@ -767,7 +766,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 AssignmentTarget::Field(table, field) => {
                     let table = self.suffixed_expression(table)?;
                     let key = match field {
-                        FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(*name)),
+                        FieldSuffix::Named(name) => {
+                            ExprDescriptor::Constant(Constant::String(*name))
+                        }
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     self.set_table(table, key, expr)?;
@@ -833,12 +834,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         simple_expression: &SimpleExpression<String<'gc>>,
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
         Ok(match simple_expression {
-            SimpleExpression::Float(f) => ExprDescriptor::Value(Value::Number(*f)),
-            SimpleExpression::Integer(i) => ExprDescriptor::Value(Value::Integer(*i)),
-            SimpleExpression::String(s) => ExprDescriptor::Value(Value::String(*s)),
-            SimpleExpression::Nil => ExprDescriptor::Value(Value::Nil),
-            SimpleExpression::True => ExprDescriptor::Value(Value::Boolean(true)),
-            SimpleExpression::False => ExprDescriptor::Value(Value::Boolean(false)),
+            SimpleExpression::Float(f) => ExprDescriptor::Constant(Constant::Number(*f)),
+            SimpleExpression::Integer(i) => ExprDescriptor::Constant(Constant::Integer(*i)),
+            SimpleExpression::String(s) => ExprDescriptor::Constant(Constant::String(*s)),
+            SimpleExpression::Nil => ExprDescriptor::Constant(Constant::Nil),
+            SimpleExpression::True => ExprDescriptor::Constant(Constant::Boolean(true)),
+            SimpleExpression::False => ExprDescriptor::Constant(Constant::Boolean(false)),
             SimpleExpression::VarArgs => ExprDescriptor::VarArgs,
             SimpleExpression::TableConstructor(table_constructor) => {
                 self.table_constructor_expression(table_constructor)?
@@ -876,7 +877,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             match suffix {
                 SuffixPart::Field(field) => {
                     let key = match field {
-                        FieldSuffix::Named(name) => ExprDescriptor::Value(Value::String(*name)),
+                        FieldSuffix::Named(name) => {
+                            ExprDescriptor::Constant(Constant::String(*name))
+                        }
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
                     expr = ExprDescriptor::TableField {
@@ -902,7 +905,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .collect::<Result<_, CompilerError>>()?;
                         expr = ExprDescriptor::MethodCall {
                             table: Box::new(expr),
-                            method: Box::new(ExprDescriptor::Value(Value::String(*method))),
+                            method: Box::new(ExprDescriptor::Constant(Constant::String(*method))),
                             args,
                         };
                     }
@@ -929,9 +932,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         unop: UnaryOperator,
         expr: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        if let &ExprDescriptor::Value(v) = &expr {
+        if let &ExprDescriptor::Constant(v) = &expr {
             if let Some(v) = unop_const_fold(unop, v) {
-                return Ok(ExprDescriptor::Value(v));
+                return Ok(ExprDescriptor::Constant(v));
             }
         }
 
@@ -949,9 +952,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
-                if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
+                if let (&ExprDescriptor::Constant(a), &ExprDescriptor::Constant(b)) =
+                    (&left, &right)
+                {
                     if let Some(v) = simple_binop_const_fold(op, a, b) {
-                        return Ok(ExprDescriptor::Value(v));
+                        return Ok(ExprDescriptor::Constant(v));
                     }
                 }
                 Ok(ExprDescriptor::SimpleBinaryOperator {
@@ -962,9 +967,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             BinOpCategory::Comparison(op) => {
-                if let (&ExprDescriptor::Value(a), &ExprDescriptor::Value(b)) = (&left, &right) {
+                if let (&ExprDescriptor::Constant(a), &ExprDescriptor::Constant(b)) =
+                    (&left, &right)
+                {
                     if let Some(v) = comparison_binop_const_fold(op, a, b) {
-                        return Ok(ExprDescriptor::Value(v));
+                        return Ok(ExprDescriptor::Constant(v));
                     }
                 }
                 Ok(ExprDescriptor::Comparison {
@@ -1224,22 +1231,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn get_constant(&mut self, constant: Value<'gc>) -> Result<ConstantIndex16, CompilerError> {
-        if let Some(constant) = self
-            .current_function
-            .constant_table
-            .get(&ConstantValue(constant))
-            .cloned()
-        {
+    fn get_constant(&mut self, constant: Constant<'gc>) -> Result<ConstantIndex16, CompilerError> {
+        if let Some(constant) = self.current_function.constant_table.get(&constant).cloned() {
             Ok(constant)
         } else {
             let c = ConstantIndex16(
                 cast(self.current_function.constants.len()).ok_or(CompilerError::Constants)?,
             );
             self.current_function.constants.push(constant);
-            self.current_function
-                .constant_table
-                .insert(ConstantValue(constant), c);
+            self.current_function.constant_table.insert(constant, c);
             Ok(c)
         }
     }
@@ -1367,7 +1367,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         });
 
         let args = self.push_arguments(args)?;
-        let args = match args.as_constant() {
+        let args = match args.to_constant() {
             Some(args) => args
                 .checked_add(1)
                 .and_then(VarCount::try_constant)
@@ -1459,7 +1459,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         expr: ExprDescriptor<'gc>,
     ) -> Result<(RegisterOrConstant, Option<RegisterIndex>), CompilerError> {
-        if let ExprDescriptor::Value(cons) = expr {
+        if let ExprDescriptor::Constant(cons) = expr {
             if let Some(c8) = cast(self.get_constant(cons)?.0) {
                 return Ok((RegisterOrConstant::Constant(ConstantIndex8(c8)), None));
             }
@@ -1560,20 +1560,20 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                 VariableDescriptor::Global(name) => {
                     let env = self.get_environment()?;
-                    let key = ExprDescriptor::Value(Value::String(name));
+                    let key = ExprDescriptor::Constant(Constant::String(name));
                     get_table(self, env, key, dest)?
                 }
             },
 
-            ExprDescriptor::Value(value) => {
+            ExprDescriptor::Constant(value) => {
                 let dest = new_destination(self, dest)?;
                 match value {
-                    Value::Nil => {
+                    Constant::Nil => {
                         self.current_function
                             .opcodes
                             .push(OpCode::LoadNil { dest, count: 1 });
                     }
-                    Value::Boolean(value) => {
+                    Constant::Boolean(value) => {
                         self.current_function.opcodes.push(OpCode::LoadBool {
                             dest,
                             value,
@@ -1801,7 +1801,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 });
                 dest
             }
-            ExprDescriptor::Value(Value::Nil) => {
+            ExprDescriptor::Constant(Constant::Nil) => {
                 let dest = self
                     .current_function
                     .register_allocator
@@ -1874,8 +1874,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         match expr {
-            ExprDescriptor::Value(value) => {
-                if value.as_bool() == skip_if {
+            ExprDescriptor::Constant(cons) => {
+                if cons.to_value().to_bool() == skip_if {
                     self.current_function.opcodes.push(OpCode::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),

@@ -1,7 +1,7 @@
+use crate::constant::Constant;
 use crate::opcode::OpCode;
 use crate::parser::{BinaryOperator, UnaryOperator};
 use crate::types::{ConstantIndex8, RegisterIndex};
-use crate::value::Value;
 
 // Binary operators which map directly to a single opcode
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
@@ -134,15 +134,18 @@ pub fn simple_binop_opcode(
 
 pub fn simple_binop_const_fold<'gc>(
     simple_binop: SimpleBinOp,
-    left: Value<'gc>,
-    right: Value<'gc>,
-) -> Option<Value<'gc>> {
+    left: Constant<'gc>,
+    right: Constant<'gc>,
+) -> Option<Constant<'gc>> {
+    let left = left.to_value();
+    let right = right.to_value();
     match simple_binop {
         SimpleBinOp::Add => left.add(right),
         SimpleBinOp::Sub => left.subtract(right),
         SimpleBinOp::Mul => left.multiply(right),
         _ => None,
     }
+    .and_then(Constant::from_value)
 }
 
 pub fn comparison_binop_opcode(
@@ -218,11 +221,11 @@ pub fn comparison_binop_opcode(
 
 pub fn comparison_binop_const_fold<'gc>(
     comparison_binop: ComparisonBinOp,
-    left: Value<'gc>,
-    right: Value<'gc>,
-) -> Option<Value<'gc>> {
+    left: Constant<'gc>,
+    right: Constant<'gc>,
+) -> Option<Constant<'gc>> {
     match comparison_binop {
-        ComparisonBinOp::Equal => Some(Value::Boolean(left == right)),
+        ComparisonBinOp::Equal => Some(Constant::Boolean(left == right)),
         _ => None,
     }
 }
@@ -234,9 +237,9 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
     }
 }
 
-pub fn unop_const_fold<'gc>(unop: UnaryOperator, value: Value<'gc>) -> Option<Value<'gc>> {
+pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<Constant<'gc>> {
     match unop {
-        UnaryOperator::Not => Some(Value::Boolean(!value.as_bool())),
+        UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
         _ => None,
     }
 }

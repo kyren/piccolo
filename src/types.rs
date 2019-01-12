@@ -62,14 +62,14 @@ impl Opt254 {
     }
 
     pub fn is_some(self) -> bool {
-        self.as_u8().is_some()
+        self.to_u8().is_some()
     }
 
     pub fn is_none(self) -> bool {
-        self.as_u8().is_none()
+        self.to_u8().is_none()
     }
 
-    pub fn as_u8(self) -> Option<u8> {
+    pub fn to_u8(self) -> Option<u8> {
         if self.0 == 255 {
             None
         } else {
@@ -111,7 +111,7 @@ impl VarCount {
         self.0.is_none()
     }
 
-    pub fn as_constant(&self) -> Option<u8> {
-        self.0.as_u8()
+    pub fn to_constant(&self) -> Option<u8> {
+        self.0.to_u8()
     }
 }

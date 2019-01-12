@@ -4,6 +4,7 @@ use failure::{bail, Error};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
+use crate::constant::Constant;
 use crate::opcode::OpCode;
 use crate::table::Table;
 use crate::thread::Thread;
@@ -24,7 +25,7 @@ pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
-    pub constants: Vec<Value<'gc>>,
+    pub constants: Vec<Constant<'gc>>,
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,
     pub prototypes: Vec<Gc<'gc, FunctionProto<'gc>>>,

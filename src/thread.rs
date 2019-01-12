@@ -143,7 +143,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::LoadConstant { dest, constant } => {
                         self.stack[current_frame.base + dest.0 as usize] =
-                            current_function.0.proto.constants[constant.0 as usize];
+                            current_function.0.proto.constants[constant.0 as usize].to_value();
                     }
 
                     OpCode::LoadBool {
@@ -177,7 +177,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::GetTableC { dest, table, key } => {
                         self.stack[current_frame.base + dest.0 as usize] =
                             get_table(self.stack[current_frame.base + table.0 as usize])
-                                .get(current_function.0.proto.constants[key.0 as usize]);
+                                .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
                     OpCode::SetTableRR { table, key, value } => {
@@ -195,7 +195,7 @@ impl<'gc> ThreadState<'gc> {
                             .set(
                                 mc,
                                 self.stack[current_frame.base + key.0 as usize],
-                                current_function.0.proto.constants[value.0 as usize],
+                                current_function.0.proto.constants[value.0 as usize].to_value(),
                             )
                             .expect("could not set table value");
                     }
@@ -204,7 +204,7 @@ impl<'gc> ThreadState<'gc> {
                         get_table(self.stack[current_frame.base + table.0 as usize])
                             .set(
                                 mc,
-                                current_function.0.proto.constants[key.0 as usize],
+                                current_function.0.proto.constants[key.0 as usize].to_value(),
                                 self.stack[current_frame.base + value.0 as usize],
                             )
                             .expect("could not set table value");
@@ -214,8 +214,8 @@ impl<'gc> ThreadState<'gc> {
                         get_table(self.stack[current_frame.base + table.0 as usize])
                             .set(
                                 mc,
-                                current_function.0.proto.constants[key.0 as usize],
-                                current_function.0.proto.constants[value.0 as usize],
+                                current_function.0.proto.constants[key.0 as usize].to_value(),
+                                current_function.0.proto.constants[value.0 as usize].to_value(),
                             )
                             .expect("could not set table value");
                     }
@@ -235,7 +235,7 @@ impl<'gc> ThreadState<'gc> {
                                 self_thread,
                                 current_function.0.upvalues[table.0 as usize],
                             ))
-                            .get(current_function.0.proto.constants[key.0 as usize]);
+                            .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
                     OpCode::SetUpTableRR { table, key, value } => {
@@ -259,7 +259,7 @@ impl<'gc> ThreadState<'gc> {
                         .set(
                             mc,
                             self.stack[current_frame.base + key.0 as usize],
-                            current_function.0.proto.constants[value.0 as usize],
+                            current_function.0.proto.constants[value.0 as usize].to_value(),
                         )
                         .expect("could not set table value");
                     }
@@ -271,7 +271,7 @@ impl<'gc> ThreadState<'gc> {
                         ))
                         .set(
                             mc,
-                            current_function.0.proto.constants[key.0 as usize],
+                            current_function.0.proto.constants[key.0 as usize].to_value(),
                             self.stack[current_frame.base + value.0 as usize],
                         )
                         .expect("could not set table value");
@@ -284,8 +284,8 @@ impl<'gc> ThreadState<'gc> {
                         ))
                         .set(
                             mc,
-                            current_function.0.proto.constants[key.0 as usize],
-                            current_function.0.proto.constants[value.0 as usize],
+                            current_function.0.proto.constants[key.0 as usize].to_value(),
+                            current_function.0.proto.constants[value.0 as usize].to_value(),
                         )
                         .expect("could not set table value");
                     }
@@ -309,7 +309,7 @@ impl<'gc> ThreadState<'gc> {
                         self.close_upvalues(mc, self_thread, current_frame.bottom);
 
                         let func = current_frame.base + func.0 as usize;
-                        let arg_len = if let Some(args) = args.as_constant() {
+                        let arg_len = if let Some(args) = args.to_constant() {
                             args as usize
                         } else {
                             self.stack.len() - func - 1
@@ -337,13 +337,13 @@ impl<'gc> ThreadState<'gc> {
 
                         let start = current_frame.base + start.0 as usize;
                         let count = count
-                            .as_constant()
+                            .to_constant()
                             .map(|c| c as usize)
                             .unwrap_or(self.stack.len() - start);
 
                         let returning = current_frame
                             .returns
-                            .as_constant()
+                            .to_constant()
                             .map(|c| c as usize)
                             .unwrap_or(count);
 
@@ -397,7 +397,7 @@ impl<'gc> ThreadState<'gc> {
                         let varargs_start = current_frame.bottom + 1;
                         let varargs_len = current_frame.base - varargs_start;
                         let dest = current_frame.base + dest.0 as usize;
-                        if let Some(count) = count.as_constant() {
+                        if let Some(count) = count.to_constant() {
                             for i in 0..count as usize {
                                 self.stack[dest + i] = if i < varargs_len {
                                     self.stack[varargs_start + i]
@@ -421,14 +421,14 @@ impl<'gc> ThreadState<'gc> {
                         close_upvalues,
                     } => {
                         self.pc = add_offset(self.pc, offset);
-                        if let Some(r) = close_upvalues.as_u8() {
+                        if let Some(r) = close_upvalues.to_u8() {
                             self.close_upvalues(mc, self_thread, current_frame.base + r as usize);
                         }
                     }
 
                     OpCode::Test { value, is_true } => {
                         let value = self.stack[current_frame.base + value.0 as usize];
-                        if value.as_bool() == is_true {
+                        if value.to_bool() == is_true {
                             self.pc += 1;
                         }
                     }
@@ -439,7 +439,7 @@ impl<'gc> ThreadState<'gc> {
                         is_true,
                     } => {
                         let value = self.stack[current_frame.base + value.0 as usize];
-                        if value.as_bool() == is_true {
+                        if value.to_bool() == is_true {
                             self.pc += 1;
                         } else {
                             self.stack[current_frame.base + dest.0 as usize] = value;
@@ -530,7 +530,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::GenericForLoop { base, jump } => {
                         let base = current_frame.base + base.0 as usize;
-                        if self.stack[base + 1].as_bool() {
+                        if self.stack[base + 1].to_bool() {
                             self.stack[base] = self.stack[base + 1];
                             self.pc = add_offset(self.pc, jump);
                         }
@@ -539,7 +539,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::SelfR { base, table, key } => {
                         let base = current_frame.base + base.0 as usize;
                         let table = self.stack[current_frame.base + table.0 as usize];
-                        let key = current_function.0.proto.constants[key.0 as usize];
+                        let key = current_function.0.proto.constants[key.0 as usize].to_value();
                         self.stack[base + 1] = table;
                         self.stack[base] = get_table(table).get(key);
                     }
@@ -547,7 +547,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::SelfC { base, table, key } => {
                         let base = current_frame.base + base.0 as usize;
                         let table = self.stack[current_frame.base + table.0 as usize];
-                        let key = current_function.0.proto.constants[key.0 as usize];
+                        let key = current_function.0.proto.constants[key.0 as usize].to_value();
                         self.stack[base + 1] = table;
                         self.stack[base] = get_table(table).get(key);
                     }
@@ -592,7 +592,7 @@ impl<'gc> ThreadState<'gc> {
                         right,
                     } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         if (left == right) == skip_if {
                             self.pc += 1;
                         }
@@ -603,7 +603,7 @@ impl<'gc> ThreadState<'gc> {
                         left,
                         right,
                     } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = self.stack[current_frame.base + right.0 as usize];
                         if (left == right) == skip_if {
                             self.pc += 1;
@@ -636,21 +636,21 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::AddRC { dest, left, right } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::AddCR { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = self.stack[current_frame.base + right.0 as usize];
                         self.stack[current_frame.base + dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::AddCC { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
@@ -665,14 +665,14 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::SubRC { dest, left, right } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::SubCR { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = self.stack[current_frame.base + right.0 as usize];
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .subtract(right)
@@ -680,8 +680,8 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::SubCC { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
@@ -697,14 +697,14 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::MulRC { dest, left, right } => {
                         let left = self.stack[current_frame.base + left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::MulCR { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = self.stack[current_frame.base + right.0 as usize];
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .multiply(right)
@@ -712,8 +712,8 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::MulCC { dest, left, right } => {
-                        let left = current_function.0.proto.constants[left.0 as usize];
-                        let right = current_function.0.proto.constants[right.0 as usize];
+                        let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                        let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         self.stack[current_frame.base + dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
@@ -742,7 +742,7 @@ impl<'gc> ThreadState<'gc> {
             _ => panic!("not a closure"),
         };
 
-        let arg_count = if let Some(constant) = args.as_constant() {
+        let arg_count = if let Some(constant) = args.to_constant() {
             let constant = constant as usize;
             assert!(self.stack.len() - closure_index - 1 >= constant);
             self.stack.truncate(closure_index + constant + 1);

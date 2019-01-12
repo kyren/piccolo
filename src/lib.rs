@@ -1,4 +1,5 @@
 pub mod compiler;
+pub mod constant;
 pub mod function;
 pub mod io;
 pub mod lexer;

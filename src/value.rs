@@ -49,7 +49,7 @@ impl<'gc> PartialEq for Value<'gc> {
 
 impl<'gc> Value<'gc> {
     /// Lua `nil` and `false` are false, anything else is true.
-    pub fn as_bool(self) -> bool {
+    pub fn to_bool(self) -> bool {
         match self {
             Value::Nil => false,
             Value::Boolean(false) => false,
@@ -58,7 +58,7 @@ impl<'gc> Value<'gc> {
     }
 
     pub fn not(self) -> Value<'gc> {
-        Value::Boolean(!self.as_bool())
+        Value::Boolean(!self.to_bool())
     }
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
