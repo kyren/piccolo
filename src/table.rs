@@ -2,8 +2,8 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 use failure::Fail;
-use fnv::FnvHashMap;
 use num_traits::cast;
+use rustc_hash::FxHashMap;
 
 use gc_arena::{Collect, GcCell, MutationContext};
 
@@ -52,13 +52,17 @@ impl<'gc> Table<'gc> {
     ) -> Result<Value<'gc>, InvalidTableKey> {
         self.0.write(mc).set(key, value)
     }
+
+    pub fn length(&self) -> i64 {
+        self.0.read().length()
+    }
 }
 
 #[derive(Debug, Collect, Default)]
 #[collect(empty_drop)]
 pub struct TableState<'gc> {
     array: Vec<Value<'gc>>,
-    map: FnvHashMap<TableKey<'gc>, Value<'gc>>,
+    map: FxHashMap<TableKey<'gc>, Value<'gc>>,
 }
 
 impl<'gc> TableState<'gc> {
@@ -181,6 +185,68 @@ impl<'gc> TableState<'gc> {
             Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
         }
     }
+
+    /// Returns a 'border' for this table, which is the length of the table if this table is a
+    /// 'sequence'.
+    ///
+    /// A 'border' for a table is any i >= 0 where:
+    /// `(i == 0 or table[i] ~= nil) and table[i + 1] == nil`
+    ///
+    /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
+    /// length.
+    pub fn length(&self) -> i64 {
+        // Binary search for a border.  Entry at max must be Nil, min must be 0 or entry at min must
+        // be != Nil
+        fn binary_search<F: Fn(i64) -> bool>(mut min: i64, mut max: i64, is_nil: F) -> i64 {
+            while max - min > 1 {
+                let mid = min + (max - min) / 2;
+                if is_nil(mid) {
+                    max = mid;
+                } else {
+                    min = mid;
+                }
+            }
+            min
+        }
+
+        let array_len =
+            cast(self.array.len()).expect("cannot have array part longer than i64::MAX");
+
+        if !self.array.is_empty() && self.array[array_len as usize - 1] == Value::Nil {
+            // If the array part ends in a Nil, there must be a border inside it
+            binary_search(0, array_len, |i| self.array[i as usize - 1] == Value::Nil)
+        } else if self.map.is_empty() {
+            // If there is no border in the arraay but the map part is empty, then the array length
+            // is a border
+            array_len
+        } else {
+            // Otherwise, we must check the map part for a border.  We need to find some nil value
+            // in the map part as the max for a binary search.
+            let min = array_len;
+            let mut max = array_len + 1;
+            while self.map.contains_key(&TableKey(Value::Integer(max))) {
+                if let Some(double_max) = max.checked_mul(2) {
+                    max = double_max;
+                } else {
+                    // If we can't find a nil entry by doubling, then the table is pathological,
+                    // resort to linear search of the map.
+                    let mut i = min;
+                    loop {
+                        let next = i.checked_add(1).expect("length check overflow");
+                        if !self.map.contains_key(&TableKey(Value::Integer(next))) {
+                            // table[i + 1] == nil, table[i] ~= nil, so this is a border
+                            return i;
+                        }
+                        i = next;
+                    }
+                }
+            }
+            // We have found a max where table[max] == nil, so we can now binary search
+            binary_search(min, max, |i| {
+                !self.map.contains_key(&TableKey(Value::Integer(i)))
+            })
+        }
+    }
 }
 
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
@@ -226,7 +292,17 @@ impl<'gc> TableKey<'gc> {
     fn new(value: Value<'gc>) -> Result<TableKey<'gc>, InvalidTableKey> {
         match value {
             Value::Nil => Err(InvalidTableKey::IsNil),
-            Value::Number(n) if n.is_nan() => Err(InvalidTableKey::IsNaN),
+            Value::Number(n) => {
+                // NaN keys are disallowed, all f64 keys which are in i64 range *whether or not they
+                // lose precision* are considered integer keys.
+                if n.is_nan() {
+                    Err(InvalidTableKey::IsNaN)
+                } else if let Some(i) = cast::<_, i64>(n) {
+                    Ok(TableKey(Value::Integer(i)))
+                } else {
+                    Ok(TableKey(Value::Number(n)))
+                }
+            }
             v => Ok(TableKey(v)),
         }
     }

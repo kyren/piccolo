@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
-use fnv::FnvHashSet;
+use rustc_hash::FxHashSet;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
@@ -84,11 +84,11 @@ impl<'gc> Hash for String<'gc> {
 
 #[derive(Collect, Clone, Copy)]
 #[collect(require_copy)]
-pub struct InternedStringSet<'gc>(GcCell<'gc, FnvHashSet<String<'gc>>>);
+pub struct InternedStringSet<'gc>(GcCell<'gc, FxHashSet<String<'gc>>>);
 
 impl<'gc> InternedStringSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
-        InternedStringSet(GcCell::allocate(mc, FnvHashSet::default()))
+        InternedStringSet(GcCell::allocate(mc, FxHashSet::default()))
     }
 
     pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {

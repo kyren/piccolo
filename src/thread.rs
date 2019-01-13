@@ -574,6 +574,12 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
 
+                    OpCode::Length { dest, source } => {
+                        self.stack[current_frame.base + dest.0 as usize] = Value::Integer(
+                            get_table(self.stack[current_frame.base + source.0 as usize]).length(),
+                        );
+                    }
+
                     OpCode::EqRR {
                         skip_if,
                         left,

@@ -233,6 +233,7 @@ pub fn comparison_binop_const_fold<'gc>(
 pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterIndex) -> OpCode {
     match unop {
         UnaryOperator::Not => OpCode::Not { dest, source },
+        UnaryOperator::Len => OpCode::Length { dest, source },
         _ => panic!("unimplemented unary operator {:?}", unop),
     }
 }

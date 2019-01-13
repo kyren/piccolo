@@ -192,6 +192,10 @@ pub enum OpCode {
         dest: UpValueIndex,
         source: RegisterIndex,
     },
+    Length {
+        dest: RegisterIndex,
+        source: RegisterIndex,
+    },
     EqRR {
         skip_if: bool,
         left: RegisterIndex,
