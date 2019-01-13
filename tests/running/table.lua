@@ -44,7 +44,18 @@ function test3()
     return passed
 end
 
+function test4()
+    t = {
+        1,
+        2,
+        [3] = 3,
+        a = "a"
+    }
+    return t[1] == 1 and t[2] == 2 and t[3] == 3 and t.a == "a"
+end
+
 return
     test1() and
     test2() and
-    test3()
+    test3() and
+    test4()

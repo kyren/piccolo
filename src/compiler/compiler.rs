@@ -10,11 +10,12 @@ use crate::constant::Constant;
 use crate::function::{FunctionProto, UpValueDescriptor};
 use crate::opcode::OpCode;
 use crate::parser::{
-    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk, Expression,
-    FieldSuffix, ForStatement, FunctionCallStatement, FunctionDefinition, FunctionStatement,
-    HeadExpression, IfStatement, LocalFunctionStatement, LocalStatement, PrimaryExpression,
-    RepeatStatement, ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
-    TableConstructor, UnaryOperator, WhileStatement,
+    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
+    ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
+    FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalFunctionStatement,
+    LocalStatement, PrimaryExpression, RecordKey, RepeatStatement, ReturnStatement,
+    SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
+    WhileStatement,
 };
 use crate::string::InternedStringSet;
 use crate::string::String;
@@ -121,7 +122,7 @@ enum ExprDescriptor<'gc> {
         op: ShortCircuitBinOp,
         right: Box<ExprDescriptor<'gc>>,
     },
-    TableConstructor,
+    TableConstructor(Vec<(ExprDescriptor<'gc>, ExprDescriptor<'gc>)>),
     TableField {
         table: Box<ExprDescriptor<'gc>>,
         key: Box<ExprDescriptor<'gc>>,
@@ -853,10 +854,27 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         table_constructor: &TableConstructor<String<'gc>>,
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        if !table_constructor.fields.is_empty() {
-            unimplemented!("only empty table constructors supported");
+        let mut array_index = 0;
+        let mut fields = Vec::new();
+        for field in &table_constructor.fields {
+            fields.push(match field {
+                ConstructorField::Array(value) => {
+                    array_index += 1;
+                    (
+                        ExprDescriptor::Constant(Constant::Integer(array_index)),
+                        self.expression(value)?,
+                    )
+                }
+                ConstructorField::Record(key, value) => (
+                    match key {
+                        RecordKey::Named(key) => ExprDescriptor::Constant(Constant::String(*key)),
+                        RecordKey::Indexed(key) => self.expression(key)?,
+                    },
+                    self.expression(value)?,
+                ),
+            });
         }
-        Ok(ExprDescriptor::TableConstructor)
+        Ok(ExprDescriptor::TableConstructor(fields))
     }
 
     fn function_expression(
@@ -1252,62 +1270,83 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     ) -> Result<(), CompilerError> {
         match table {
             ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
-                let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
-                let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
-
-                if let Some(to_free) = key_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-                if let Some(to_free) = value_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-
-                self.current_function.opcodes.push(match (key, value) {
-                    (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
-                        OpCode::SetUpTableRR { table, key, value }
-                    }
-                    (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
-                        OpCode::SetUpTableRC { table, key, value }
-                    }
-                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
-                        OpCode::SetUpTableCR { table, key, value }
-                    }
-                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
-                        OpCode::SetUpTableCC { table, key, value }
-                    }
-                });
+                self.set_uptable(table, key, value)?;
             }
             table => {
                 let (table, table_is_temp) = self.expr_any_register(table)?;
-                let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
-                let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
-
+                self.set_rtable(table, key, value)?;
                 if table_is_temp {
                     self.current_function.register_allocator.free(table);
                 }
-                if let Some(to_free) = key_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-                if let Some(to_free) = value_to_free {
-                    self.current_function.register_allocator.free(to_free);
-                }
-
-                self.current_function.opcodes.push(match (key, value) {
-                    (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
-                        OpCode::SetTableRR { table, key, value }
-                    }
-                    (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
-                        OpCode::SetTableRC { table, key, value }
-                    }
-                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
-                        OpCode::SetTableCR { table, key, value }
-                    }
-                    (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
-                        OpCode::SetTableCC { table, key, value }
-                    }
-                });
             }
-        };
+        }
+        Ok(())
+    }
+
+    fn set_uptable(
+        &mut self,
+        table: UpValueIndex,
+        key: ExprDescriptor<'gc>,
+        value: ExprDescriptor<'gc>,
+    ) -> Result<(), CompilerError> {
+        let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
+        let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
+
+        if let Some(to_free) = key_to_free {
+            self.current_function.register_allocator.free(to_free);
+        }
+        if let Some(to_free) = value_to_free {
+            self.current_function.register_allocator.free(to_free);
+        }
+
+        self.current_function.opcodes.push(match (key, value) {
+            (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
+                OpCode::SetUpTableRR { table, key, value }
+            }
+            (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
+                OpCode::SetUpTableRC { table, key, value }
+            }
+            (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
+                OpCode::SetUpTableCR { table, key, value }
+            }
+            (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
+                OpCode::SetUpTableCC { table, key, value }
+            }
+        });
+
+        Ok(())
+    }
+
+    fn set_rtable(
+        &mut self,
+        table: RegisterIndex,
+        key: ExprDescriptor<'gc>,
+        value: ExprDescriptor<'gc>,
+    ) -> Result<(), CompilerError> {
+        let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
+        let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
+
+        if let Some(to_free) = key_to_free {
+            self.current_function.register_allocator.free(to_free);
+        }
+        if let Some(to_free) = value_to_free {
+            self.current_function.register_allocator.free(to_free);
+        }
+
+        self.current_function.opcodes.push(match (key, value) {
+            (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
+                OpCode::SetTableRR { table, key, value }
+            }
+            (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
+                OpCode::SetTableRC { table, key, value }
+            }
+            (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
+                OpCode::SetTableCR { table, key, value }
+            }
+            (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
+                OpCode::SetTableCC { table, key, value }
+            }
+        });
 
         Ok(())
     }
@@ -1696,11 +1735,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 dest
             }
 
-            ExprDescriptor::TableConstructor => {
+            ExprDescriptor::TableConstructor(fields) => {
                 let dest = new_destination(self, dest)?;
                 self.current_function
                     .opcodes
                     .push(OpCode::NewTable { dest });
+
+                for (key, value) in fields {
+                    self.set_rtable(dest, key, value)?;
+                }
+
                 dest
             }
 

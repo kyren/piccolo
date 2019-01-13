@@ -186,8 +186,7 @@ impl<'gc> TableState<'gc> {
         }
     }
 
-    /// Returns a 'border' for this table, which is the length of the table if this table is a
-    /// 'sequence'.
+    /// Returns a 'border' for this table.
     ///
     /// A 'border' for a table is any i >= 0 where:
     /// `(i == 0 or table[i] ~= nil) and table[i + 1] == nil`
