@@ -297,7 +297,11 @@ impl<'gc> TableKey<'gc> {
                 if n.is_nan() {
                     Err(InvalidTableKey::IsNaN)
                 } else if let Some(i) = cast::<_, i64>(n) {
-                    Ok(TableKey(Value::Integer(i)))
+                    if i as f64 == n {
+                        Ok(TableKey(Value::Integer(i)))
+                    } else {
+                        Ok(TableKey(Value::Number(n)))
+                    }
                 } else {
                     Ok(TableKey(Value::Number(n)))
                 }
