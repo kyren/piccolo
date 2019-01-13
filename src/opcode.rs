@@ -184,6 +184,12 @@ pub enum OpCode {
         table: RegisterIndex,
         key: ConstantIndex8,
     },
+    // Concatenate the given arguments into a string
+    Concat {
+        dest: RegisterIndex,
+        source: RegisterIndex,
+        count: u8,
+    },
     GetUpValue {
         dest: RegisterIndex,
         source: UpValueIndex,

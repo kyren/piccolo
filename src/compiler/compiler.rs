@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{iter, mem};
 
 use failure::Fail;
@@ -137,6 +137,7 @@ enum ExprDescriptor<'gc> {
         method: Box<ExprDescriptor<'gc>>,
         args: Vec<ExprDescriptor<'gc>>,
     },
+    Concat(VecDeque<ExprDescriptor<'gc>>),
 }
 
 #[derive(Debug)]
@@ -180,7 +181,7 @@ struct JumpTarget<'gc> {
     label: JumpLabel<'gc>,
     // The target instruction that will be jumped to
     instruction: usize,
-    // The valid local variables in scope at the target location
+    // The number of stack slots in use at the target location
     stack_top: u16,
     // The index of the active block at the target location.
     block_index: usize,
@@ -192,7 +193,7 @@ struct PendingJump<'gc> {
     // The index of the placeholder jump instruction
     instruction: usize,
     // These are the expected block index and stack top *after* the jump takes place.  These start
-    // as the current block index and local count at the time of the jump, but will be lowered as
+    // as the current block index and stack top at the time of the jump, but will be lowered as
     // blocks are exited.
     block_index: usize,
     stack_top: u16,
@@ -1005,7 +1006,26 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 right: Box::new(right),
             }),
 
-            BinOpCategory::Concat => unimplemented!("no support for concat operator"),
+            BinOpCategory::Concat => Ok(match (left, right) {
+                (ExprDescriptor::Concat(mut left), ExprDescriptor::Concat(right)) => {
+                    left.extend(right);
+                    ExprDescriptor::Concat(left)
+                }
+                (ExprDescriptor::Concat(mut left), right) => {
+                    left.push_back(right);
+                    ExprDescriptor::Concat(left)
+                }
+                (left, ExprDescriptor::Concat(mut right)) => {
+                    right.push_front(left);
+                    ExprDescriptor::Concat(right)
+                }
+                (left, right) => {
+                    let mut exprs = VecDeque::new();
+                    exprs.push_back(left);
+                    exprs.push_back(right);
+                    ExprDescriptor::Concat(exprs)
+                }
+            }),
         }
     }
 
@@ -1729,7 +1749,6 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.jump(skip)?;
 
                 self.expr_discharge(*right, ExprDestination::Register(dest))?;
-
                 self.jump_target(skip)?;
 
                 dest
@@ -1806,6 +1825,40 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         source
                     }
                 }
+            }
+
+            ExprDescriptor::Concat(mut exprs) => {
+                assert!(!exprs.is_empty());
+                let dest = new_destination(self, dest)?;
+                let source =
+                    self.expr_discharge(exprs.pop_front().unwrap(), ExprDestination::PushNew)?;
+                let mut count = 1;
+                while !exprs.is_empty() {
+                    if let Some(new) = self.current_function.register_allocator.push(1) {
+                        let next = exprs.pop_front().unwrap();
+                        self.expr_discharge(next, ExprDestination::Register(new))?;
+                        count += 1;
+                    } else {
+                        self.current_function.opcodes.push(OpCode::Concat {
+                            dest: source,
+                            source,
+                            count,
+                        });
+                        self.current_function
+                            .register_allocator
+                            .pop_to(source.0 as u16 + 1);
+                        count = 1;
+                    }
+                }
+                self.current_function.opcodes.push(OpCode::Concat {
+                    dest,
+                    source,
+                    count,
+                });
+                self.current_function
+                    .register_allocator
+                    .pop_to(source.0 as u16);
+                dest
             }
         };
 

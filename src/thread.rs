@@ -8,6 +8,7 @@ use gc_arena::{Collect, Gc, GcCell, MutationContext};
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::opcode::OpCode;
 use crate::sequence::Sequence;
+use crate::string::String;
 use crate::table::Table;
 use crate::types::VarCount;
 use crate::value::Value;
@@ -550,6 +551,21 @@ impl<'gc> ThreadState<'gc> {
                         let key = current_function.0.proto.constants[key.0 as usize].to_value();
                         self.stack[base + 1] = table;
                         self.stack[base] = get_table(table).get(key);
+                    }
+
+                    OpCode::Concat {
+                        dest,
+                        source,
+                        count,
+                    } => {
+                        self.stack[current_frame.base + dest.0 as usize] = Value::String(
+                            String::concat(
+                                mc,
+                                &self.stack[current_frame.base + source.0 as usize
+                                    ..current_frame.base + source.0 as usize + count as usize],
+                            )
+                            .unwrap(),
+                        );
                     }
 
                     OpCode::GetUpValue { source, dest } => {

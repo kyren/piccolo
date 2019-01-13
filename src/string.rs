@@ -1,10 +1,14 @@
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::ops::Deref;
 
+use failure::{err_msg, Error};
 use rustc_hash::FxHashSet;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
+
+use crate::value::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]
@@ -29,6 +33,25 @@ impl<'gc> String<'gc> {
         } else {
             String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice()))
         }
+    }
+
+    pub fn concat(
+        mc: MutationContext<'gc, '_>,
+        values: &[Value<'gc>],
+    ) -> Result<String<'gc>, Error> {
+        let mut bytes = Vec::new();
+        for value in values {
+            match value {
+                Value::Nil => write!(&mut bytes, "nil").unwrap(),
+                Value::Boolean(b) => write!(&mut bytes, "{}", b).unwrap(),
+                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::String(s) => bytes.extend(s.as_bytes()),
+                Value::Table(_) => return Err(err_msg("cannot concat table")),
+                Value::Closure(_) => return Err(err_msg("cannot concat closure")),
+            }
+        }
+        Ok(String::Long(Gc::allocate(mc, bytes.into_boxed_slice())))
     }
 
     pub fn new_static(&self, s: &'static [u8]) -> String<'gc> {

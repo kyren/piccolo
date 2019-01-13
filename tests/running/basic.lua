@@ -46,10 +46,19 @@ local function test6()
     return i == 5
 end
 
+local function test_short_circuit_large()
+    local a = 1
+    local b = 2
+    local c = 3
+    local d = false
+    return (a + 2 + (a == 1 and (d or (c + (b + 2))))) == 10
+end
+
 return
     test1() and
     test2() and
     test3() and
     test4() and
     test5() and
-    test6()
+    test6() and
+    test_short_circuit_large()
