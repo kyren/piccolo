@@ -195,10 +195,8 @@ impl<'gc> TableState<'gc> {
     /// length.
     pub fn length(&self) -> i64 {
         // Binary search for a border.  Entry at max must be Nil, min must be 0 or entry at min must
-        // be != Nil.  Only checks entries in the range (min, max), only returns entries in the
-        // range [min, max).  Binary searching for a border is done on `u64` instead of `i64` to
-        // include an extra guaranteed Nil entry at `i64::MAX + 1`.
-        fn binary_search<F: Fn(u64) -> bool>(mut min: u64, mut max: u64, is_nil: F) -> u64 {
+        // be != Nil.
+        fn binary_search<F: Fn(i64) -> bool>(mut min: i64, mut max: i64, is_nil: F) -> i64 {
             while max - min > 1 {
                 let mid = min + (max - min) / 2;
                 if is_nil(mid) {
@@ -214,9 +212,7 @@ impl<'gc> TableState<'gc> {
 
         if !self.array.is_empty() && self.array[array_len as usize - 1] == Value::Nil {
             // If the array part ends in a Nil, there must be a border inside it
-            binary_search(0, array_len as u64, |i| {
-                self.array[i as usize - 1] == Value::Nil
-            }) as i64
+            binary_search(0, array_len, |i| self.array[i as usize - 1] == Value::Nil)
         } else if self.map.is_empty() {
             // If there is no border in the arraay but the map part is empty, then the array length
             // is a border
@@ -224,27 +220,25 @@ impl<'gc> TableState<'gc> {
         } else {
             // Otherwise, we must check the map part for a border.  We need to find some nil value
             // in the map part as the max for a binary search.
-            let min = array_len as u64;
-            let mut max = array_len as u64 + 1;
-            loop {
-                if let Some(max_i64) = cast(max) {
-                    if !self.map.contains_key(&TableKey(Value::Integer(max_i64))) {
-                        break;
-                    }
-                    max *= 2;
-                } else {
-                    // If we can't find a nil entry by doubling, then the table is pathological.  We
+            let min = array_len;
+            let mut max = array_len.checked_add(1).unwrap();
+            while self.map.contains_key(&TableKey(Value::Integer(max))) {
+                if max == i64::MAX {
+                    // If we can't find a nil entry by doubling, then the table is pathalogical.  We
                     // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
                     // table, therefore it is Nil, so i64::MAX can always be a border.
-                    max = i64::MAX as u64 + 1;
-                    break;
+                    return i64::MAX;
+                } else if let Some(double_max) = max.checked_mul(2) {
+                    max = double_max;
+                } else {
+                    max = i64::MAX;
                 }
             }
 
             // We have found a max where table[max] == nil, so we can now binary search
             binary_search(min, max, |i| {
-                !self.map.contains_key(&TableKey(Value::Integer(i as i64)))
-            }) as i64
+                !self.map.contains_key(&TableKey(Value::Integer(i)))
+            })
         }
     }
 }
