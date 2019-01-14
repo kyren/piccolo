@@ -611,20 +611,18 @@ where
                 targets,
                 values,
             }))
-        } else {
-            if let Some(suffix) = suffixed_expression.suffixes.pop() {
-                match suffix {
-                    SuffixPart::Call(call_suffix) => {
-                        Ok(Statement::FunctionCall(FunctionCallStatement {
-                            head: suffixed_expression,
-                            call: call_suffix,
-                        }))
-                    }
-                    SuffixPart::Field(_) => Err(ParserError::ExpressionNotStatement),
+        } else if let Some(suffix) = suffixed_expression.suffixes.pop() {
+            match suffix {
+                SuffixPart::Call(call_suffix) => {
+                    Ok(Statement::FunctionCall(FunctionCallStatement {
+                        head: suffixed_expression,
+                        call: call_suffix,
+                    }))
                 }
-            } else {
-                Err(ParserError::ExpressionNotStatement)
+                SuffixPart::Field(_) => Err(ParserError::ExpressionNotStatement),
             }
+        } else {
+            Err(ParserError::ExpressionNotStatement)
         }
     }
 

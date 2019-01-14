@@ -18,10 +18,9 @@ pub fn skip_prefix<R: BufRead>(r: &mut R) -> Result<(), Error> {
         r.consume(3);
     }
 
-    if {
-        let buf = r.fill_buf()?;
-        buf.len() >= 1 && buf[0] == b'#'
-    } {
+    let buf = r.fill_buf()?;
+    let has_shebang = buf.len() >= 1 && buf[0] == b'#';
+    if has_shebang {
         r.consume(1);
         loop {
             let to_consume = {

@@ -116,7 +116,7 @@ impl<'gc> TableState<'gc> {
                 }
             }
 
-            for (k, _) in &self.map {
+            for k in self.map.keys() {
                 if let Some(i) = to_array_index(k.0) {
                     array_counts[highest_bit(i)] += 1;
                     array_total += 1;
@@ -369,7 +369,7 @@ fn highest_bit(mut i: usize) -> usize {
     let mut hb = 0;
     while i >= 256 {
         hb += 8;
-        i = i >> 8;
+        i >>= 8;
     }
 
     hb + LOG_2[i] as usize

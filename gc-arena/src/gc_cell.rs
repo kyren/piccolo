@@ -44,7 +44,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         ))
     }
 
-    pub fn as_ptr(&self) -> *mut T {
+    pub fn as_ptr(self) -> *mut T {
         self.0.cell.as_ptr()
     }
 

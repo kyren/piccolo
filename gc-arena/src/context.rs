@@ -16,11 +16,11 @@ pub struct MutationContext<'gc, 'context> {
 }
 
 impl<'gc, 'context> MutationContext<'gc, 'context> {
-    pub(crate) unsafe fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBox<T>> {
+    pub(crate) unsafe fn allocate<T: 'gc + Collect>(self, t: T) -> NonNull<GcBox<T>> {
         self.context.allocate(t)
     }
 
-    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) {
         self.context.write_barrier(ptr)
     }
 }
@@ -33,7 +33,7 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
-    pub(crate) unsafe fn trace<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn trace<T: Collect>(self, ptr: NonNull<GcBox<T>>) {
         self.context.trace(ptr)
     }
 }
@@ -252,10 +252,9 @@ impl Context {
         let alloc_size = mem::size_of::<GcBox<T>>();
         self.total_allocated
             .set(self.total_allocated.get() + alloc_size);
-        if self.phase.get() == Phase::Sleep {
-            if self.total_allocated.get() > self.wakeup_total.get() {
-                self.phase.set(Phase::Wake);
-            }
+        if self.phase.get() == Phase::Sleep && self.total_allocated.get() > self.wakeup_total.get()
+        {
+            self.phase.set(Phase::Wake);
         }
 
         if self.phase.get() != Phase::Sleep {

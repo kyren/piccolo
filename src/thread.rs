@@ -37,7 +37,7 @@ impl<'gc> Thread<'gc> {
     /// time, so any later constructed `ThreadSequence`s must be run to completion before earlier
     /// ones can be completed.
     pub fn call_function(
-        &self,
+        self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
@@ -59,7 +59,7 @@ impl<'gc> Thread<'gc> {
         );
 
         ThreadSequence {
-            thread: Some(*self),
+            thread: Some(self),
             granularity,
         }
     }
@@ -124,11 +124,7 @@ impl<'gc> ThreadState<'gc> {
         mut instructions: u32,
     ) -> Option<Vec<Value<'gc>>> {
         'function_start: loop {
-            let current_frame = self
-                .frames
-                .last()
-                .expect("no current ThreadState frame")
-                .clone();
+            let current_frame = *self.frames.last().expect("no current ThreadState frame");
 
             let current_function = get_closure(self.stack[current_frame.bottom]);
 

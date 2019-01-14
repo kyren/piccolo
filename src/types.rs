@@ -107,11 +107,11 @@ impl VarCount {
         Opt254::try_some(constant).map(VarCount)
     }
 
-    pub fn is_variable(&self) -> bool {
+    pub fn is_variable(self) -> bool {
         self.0.is_none()
     }
 
-    pub fn to_constant(&self) -> Option<u8> {
+    pub fn to_constant(self) -> Option<u8> {
         self.0.to_u8()
     }
 }

@@ -197,7 +197,7 @@ where
     }
 
     /// Reads the next token, or None if the end of the source has been reached.
-    pub fn read_token<'a>(&mut self) -> Result<Option<Token<S>>, LexerError> {
+    pub fn read_token(&mut self) -> Result<Option<Token<S>>, LexerError> {
         self.skip_whitespace()?;
 
         let mut do_read_token = || {
@@ -309,13 +309,11 @@ where
                                 self.advance(2);
                                 Token::Concat
                             }
+                        } else if self.peek(1)?.map(is_digit).unwrap_or(false) {
+                            self.read_numeral()?
                         } else {
-                            if self.peek(1)?.map(|c| is_digit(c)).unwrap_or(false) {
-                                self.read_numeral()?
-                            } else {
-                                self.advance(1);
-                                Token::Dot
-                            }
+                            self.advance(1);
+                            Token::Dot
                         }
                     }
 
@@ -418,7 +416,7 @@ where
             if c == b'\\' {
                 match self
                     .peek(0)?
-                    .ok_or(LexerError::UnfinishedShortString(start_quote))?
+                    .ok_or_else(|| LexerError::UnfinishedShortString(start_quote))?
                 {
                     b'a' => {
                         self.advance(1);
@@ -653,10 +651,7 @@ where
                 self.string_buffer.push(b'.');
                 has_radix = true;
                 self.advance(1);
-            } else if !is_hex && is_digit(c) {
-                self.string_buffer.push(c);
-                self.advance(1);
-            } else if is_hex && is_hex_digit(c) {
+            } else if (!is_hex && is_digit(c)) || (is_hex && is_hex_digit(c)) {
                 self.string_buffer.push(c);
                 self.advance(1);
             } else {
@@ -696,10 +691,9 @@ where
                 if let Some(i) = read_hex_integer(&self.string_buffer) {
                     return Ok(Token::Integer(i));
                 }
-            } else {
-                if let Some(i) = read_integer(&self.string_buffer) {
-                    return Ok(Token::Integer(i));
-                }
+            }
+            if let Some(i) = read_integer(&self.string_buffer) {
+                return Ok(Token::Integer(i));
             }
         }
 
@@ -824,8 +818,8 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
     let mut significant_digits: u32 = 0;
     let mut non_significant_digits: u32 = 0;
     let mut found_dot = false;
-    let mut r: f64 = 0.0;
-    let mut e: i32 = 0;
+    let mut base: f64 = 0.0;
+    let mut exp: i32 = 0;
     let mut i = 2;
 
     while i < s.len() {
@@ -840,12 +834,14 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
                 non_significant_digits += 1;
             } else if significant_digits < MAX_SIGNIFICANT_DIGITS {
                 significant_digits += 1;
-                r = (r * 16.0) + d as f64;
+                base = (base * 16.0) + d as f64;
             } else {
-                e = e.checked_add(1)?;
+                // ignore the digit, but count it towards the expontent
+                exp = exp.checked_add(4)?;
             }
             if found_dot {
-                e = e.checked_sub(1)?;
+                // Correct exponent for the fractional part
+                exp = exp.checked_sub(4)?;
             }
         } else {
             break;
@@ -857,8 +853,6 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
         return None;
     }
 
-    e = e.checked_mul(4)?;
-
     if i + 1 < s.len() && (s[i] == b'p' || s[i] == b'P') {
         let (exp_neg, exp_s) = read_neg(&s[i + 1..]);
         let mut exp1: i32 = 0;
@@ -869,16 +863,16 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
         if exp_neg {
             exp1 = -exp1;
         }
-        e = e.saturating_add(exp1);
+        exp = exp.saturating_add(exp1);
     } else if i != s.len() {
         return None;
     }
 
     if is_neg {
-        r = -r;
+        base = -base;
     }
 
-    Some(r * (e as f64).exp2())
+    Some(base * (exp as f64).exp2())
 }
 
 fn read_neg(s: &[u8]) -> (bool, &[u8]) {

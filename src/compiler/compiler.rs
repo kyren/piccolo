@@ -951,7 +951,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         unop: UnaryOperator,
         expr: ExprDescriptor<'gc>,
     ) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        if let &ExprDescriptor::Constant(v) = &expr {
+        if let ExprDescriptor::Constant(v) = expr {
             if let Some(v) = unop_const_fold(unop, v) {
                 return Ok(ExprDescriptor::Constant(v));
             }
@@ -1198,7 +1198,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             });
 
             self.current_function.pending_jumps.push(PendingJump {
-                target: target,
+                target,
                 instruction: jmp_inst,
                 block_index: current_block_index,
                 stack_top: current_stack_top,
