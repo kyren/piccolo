@@ -226,7 +226,8 @@ impl<'gc> TableState<'gc> {
                 if max == i64::MAX {
                     // If we can't find a nil entry by doubling, then the table is pathalogical.  We
                     // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
-                    // table, therefore it is Nil, so i64::MAX can always be a border.
+                    // table, therefore it is Nil, so since the table contains i64::MAX, i64::MAX is
+                    // a border.
                     return i64::MAX;
                 } else if let Some(double_max) = max.checked_mul(2) {
                     max = double_max;
