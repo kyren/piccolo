@@ -288,8 +288,8 @@ impl<'gc> TableKey<'gc> {
         match value {
             Value::Nil => Err(InvalidTableKey::IsNil),
             Value::Number(n) => {
-                // NaN keys are disallowed, all f64 keys which are in i64 range *whether or not they
-                // lose precision* are considered integer keys.
+                // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
+                // to themselves when cast back to f64 are considered integer keys.
                 if n.is_nan() {
                     Err(InvalidTableKey::IsNaN)
                 } else if let Some(i) = cast::<_, i64>(n) {
