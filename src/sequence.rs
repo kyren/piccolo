@@ -45,7 +45,7 @@ where
 pub fn sequence_fn_with<'gc, C, F, R>(c: C, f: F) -> SequenceFnWith<C, F>
 where
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, C) -> Result<R, Error>,
 {
     SequenceFnWith::new(c, f)
 }
