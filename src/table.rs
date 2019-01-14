@@ -292,18 +292,25 @@ impl<'gc> TableKey<'gc> {
                 // to themselves when cast back to f64 are considered integer keys.
                 if n.is_nan() {
                     Err(InvalidTableKey::IsNaN)
-                } else if let Some(i) = cast::<_, i64>(n) {
-                    if i as f64 == n {
-                        Ok(TableKey(Value::Integer(i)))
-                    } else {
-                        Ok(TableKey(Value::Number(n)))
-                    }
+                } else if let Some(i) = f64_to_i64(n) {
+                    Ok(TableKey(Value::Integer(i)))
                 } else {
                     Ok(TableKey(Value::Number(n)))
                 }
             }
             v => Ok(TableKey(v)),
         }
+    }
+}
+
+// Returns the closest i64 to a given f64 such that casting the i64 back to an f64 results in an
+// equal value, if such an integer exists.
+fn f64_to_i64(n: f64) -> Option<i64> {
+    let i = cast::<_, i64>(n)?;
+    if i as f64 == n {
+        Some(i)
+    } else {
+        None
     }
 }
 
@@ -324,13 +331,13 @@ fn canonical_float_bytes(f: f64) -> u64 {
 // usize::MAX), returns the associated array index.
 fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
     let i = match key {
-        Value::Integer(i) => cast::<_, usize>(i)?,
+        Value::Integer(i) => cast::<_, i64>(i)?,
         Value::Number(f) => {
-            let i = cast::<_, usize>(f)?;
-            if i as f64 != f {
+            if let Some(i) = f64_to_i64(f) {
+                i
+            } else {
                 return None;
             }
-            i
         }
         _ => {
             return None;
@@ -338,7 +345,7 @@ fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
     };
 
     if i > 0 {
-        Some(i - 1)
+        Some(i as usize - 1)
     } else {
         None
     }
