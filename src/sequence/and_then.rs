@@ -4,39 +4,55 @@ use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
+use super::into_sequence::IntoSequence;
+
 #[must_use = "sequences do nothing unless pumped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct AndThen<S, F>(Option<(S, StaticCollect<F>)>);
+pub enum AndThen<'gc, S, F, R>
+where
+    S: Sequence<'gc>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> R,
+    R: IntoSequence<'gc>,
+{
+    First(S, Option<StaticCollect<F>>),
+    Second(R::Sequence),
+}
 
-impl<S, F> AndThen<S, F> {
-    pub fn new(s: S, f: F) -> AndThen<S, F> {
-        AndThen(Some((s, StaticCollect(f))))
+impl<'gc, S, F, R> AndThen<'gc, S, F, R>
+where
+    S: Sequence<'gc>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> R,
+    R: IntoSequence<'gc>,
+{
+    pub fn new(s: S, f: F) -> AndThen<'gc, S, F, R> {
+        AndThen::First(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, F, R> Sequence<'gc> for AndThen<S, F>
+impl<'gc, S, F, R> Sequence<'gc> for AndThen<'gc, S, F, R>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> R,
+    R: IntoSequence<'gc>,
 {
-    type Item = R;
+    type Item = R::Item;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R, Error>> {
-        match self.0.take() {
-            Some((mut a, StaticCollect(f))) => match a.pump(mc, lc) {
-                Some(Ok(r)) => Some(f(mc, lc, r)),
-                Some(Err(e)) => Some(Err(e)),
-                None => {
-                    self.0 = Some((a, StaticCollect(f)));
+    ) -> Option<Result<R::Item, Error>> {
+        match self {
+            AndThen::First(s1, f) => match s1.pump(mc, lc) {
+                Some(Ok(res)) => {
+                    *self = AndThen::Second(f.take().unwrap().0(mc, lc, res).into_sequence());
                     None
                 }
+                Some(Err(err)) => Some(Err(err)),
+                None => None,
             },
-            None => panic!("cannot pump a finished sequence"),
+            AndThen::Second(s2) => s2.pump(mc, lc),
         }
     }
 }
@@ -44,37 +60,54 @@ where
 #[must_use = "sequences do nothing unless pumped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct AndThenWith<S, C, F>(Option<(S, C, StaticCollect<F>)>);
-
-impl<S, C, F> AndThenWith<S, C, F> {
-    pub fn new(s: S, c: C, f: F) -> AndThenWith<S, C, F> {
-        AndThenWith(Some((s, c, StaticCollect(f))))
-    }
-}
-
-impl<'gc, S, C, F, R> Sequence<'gc> for AndThenWith<S, C, F>
+pub enum AndThenWith<'gc, S, C, F, R>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
+    R: IntoSequence<'gc>,
 {
-    type Item = R;
+    First(S, Option<(C, StaticCollect<F>)>),
+    Second(R::Sequence),
+}
+
+impl<'gc, S, C, F, R> AndThenWith<'gc, S, C, F, R>
+where
+    S: Sequence<'gc>,
+    C: Collect,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
+    R: IntoSequence<'gc>,
+{
+    pub fn new(s: S, c: C, f: F) -> AndThenWith<'gc, S, C, F, R> {
+        AndThenWith::First(s, Some((c, StaticCollect(f))))
+    }
+}
+
+impl<'gc, S, C, F, R> Sequence<'gc> for AndThenWith<'gc, S, C, F, R>
+where
+    S: Sequence<'gc>,
+    C: Collect,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
+    R: IntoSequence<'gc>,
+{
+    type Item = R::Item;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R, Error>> {
-        match self.0.take() {
-            Some((mut a, c, StaticCollect(f))) => match a.pump(mc, lc) {
-                Some(Ok(r)) => Some(f(mc, lc, c, r)),
-                Some(Err(e)) => Some(Err(e)),
-                None => {
-                    self.0 = Some((a, c, StaticCollect(f)));
+    ) -> Option<Result<R::Item, Error>> {
+        match self {
+            AndThenWith::First(s1, f) => match s1.pump(mc, lc) {
+                Some(Ok(res)) => {
+                    let (c, StaticCollect(f)) = f.take().unwrap();
+                    *self = AndThenWith::Second(f(mc, lc, c, res).into_sequence());
                     None
                 }
+                Some(Err(err)) => Some(Err(err)),
+                None => None,
             },
-            None => panic!("cannot pump a finished sequence"),
+            AndThenWith::Second(s2) => s2.pump(mc, lc),
         }
     }
 }

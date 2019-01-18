@@ -19,23 +19,15 @@ fn main() -> Result<(), Box<Error>> {
     )?)?;
 
     let mut lua = Lua::new();
-    lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(lc
-        .main_thread
-        .call_function(
-            mc,
-            Closure::new(
-                mc,
-                compile(mc, lc.interned_strings, file)?,
-                Some(lc.globals),
-            )?,
-            &[],
-            64,
-        )
-        .and_then(|_, _, r| {
-            println!("results: {:?}", r);
-            Ok(())
-        })))
-    .flatten()))?;
+    lua.sequence(gen_sequence!(sequence_fn(|mc, lc| Ok(Closure::new(
+        mc,
+        compile(mc, lc.interned_strings, file)?,
+        Some(lc.globals),
+    )?))
+    .and_then(|mc, lc, closure| lc.main_thread.call_function(mc, closure, &[], 64,))
+    .map(|_, _, r| {
+        println!("results: {:?}", r);
+    })))?;
 
     Ok(())
 }

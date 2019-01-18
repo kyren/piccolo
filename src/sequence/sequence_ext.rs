@@ -5,7 +5,8 @@ use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
 use super::and_then::{AndThen, AndThenWith};
-use super::flatten::Flatten;
+use super::into_sequence::IntoSequence;
+use super::map::{Map, MapWith};
 use super::then::{Then, ThenWith};
 
 /// Extension trait for `Sequence` that provides useful combinator methods, similarly to
@@ -15,98 +16,54 @@ use super::then::{Then, ThenWith};
 /// capture `Collect` implementing types.  Tuples up to size 16 automatically implement `Collect`,
 /// so this is a convenient way to manually capture a reasonable number of such values.
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
-    fn then<F, R>(self, f: F) -> Then<Self, F>
+    fn map<F, R>(self, f: F) -> Map<Self, F>
+    where
+        F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> R,
+    {
+        Map::new(self, f)
+    }
+
+    fn map_with<C, F, R>(self, c: C, f: F) -> MapWith<Self, C, F>
+    where
+        F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> R,
+    {
+        MapWith::new(self, c, f)
+    }
+
+    fn then<F, R>(self, f: F) -> Then<'gc, Self, F, R>
     where
         F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                LuaContext<'gc>,
-                Result<Self::Item, Error>,
-            ) -> Result<R, Error>,
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<Self::Item, Error>) -> R,
+        R: IntoSequence<'gc>,
     {
         Then::new(self, f)
     }
 
-    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<Self, C, F>
+    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<'gc, Self, C, F, R>
     where
         C: Collect,
         F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                LuaContext<'gc>,
-                C,
-                Result<Self::Item, Error>,
-            ) -> Result<R, Error>,
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<Self::Item, Error>) -> R,
+        R: IntoSequence<'gc>,
     {
         ThenWith::new(self, c, f)
     }
 
-    fn and_then<F, R>(self, f: F) -> AndThen<Self, F>
+    fn and_then<F, R>(self, f: F) -> AndThen<'gc, Self, F, R>
     where
-        F: 'static
-            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> Result<R, Error>,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> R,
+        R: IntoSequence<'gc>,
     {
         AndThen::new(self, f)
     }
 
-    fn and_then_with<C, F, R>(self, c: C, f: F) -> AndThenWith<Self, C, F>
+    fn and_then_with<C, F, R>(self, c: C, f: F) -> AndThenWith<'gc, Self, C, F, R>
     where
         C: Collect,
-        F: 'static
-            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> Result<R, Error>,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> R,
+        R: IntoSequence<'gc>,
     {
         AndThenWith::new(self, c, f)
-    }
-
-    fn flatten(self) -> Flatten<'gc, Self> {
-        Flatten::new(self)
-    }
-
-    fn sequence<F, N>(self, f: F) -> Flatten<'gc, Then<Self, F>>
-    where
-        F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                LuaContext<'gc>,
-                Result<Self::Item, Error>,
-            ) -> Result<N, Error>,
-        N: Sequence<'gc>,
-    {
-        self.then(f).flatten()
-    }
-
-    fn sequence_with<C, F, N>(self, c: C, f: F) -> Flatten<'gc, ThenWith<Self, C, F>>
-    where
-        C: Collect,
-        F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                LuaContext<'gc>,
-                C,
-                Result<Self::Item, Error>,
-            ) -> Result<N, Error>,
-        N: Sequence<'gc>,
-    {
-        self.then_with(c, f).flatten()
-    }
-
-    fn and_sequence<F, N>(self, f: F) -> Flatten<'gc, AndThen<Self, F>>
-    where
-        F: 'static
-            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> Result<N, Error>,
-        N: Sequence<'gc>,
-    {
-        self.and_then(f).flatten()
-    }
-
-    fn and_seqence_with<C, F, N>(self, c: C, f: F) -> Flatten<'gc, AndThenWith<Self, C, F>>
-    where
-        C: Collect,
-        F: 'static
-            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> Result<N, Error>,
-        N: Sequence<'gc>,
-    {
-        self.and_then_with(c, f).flatten()
     }
 }
 

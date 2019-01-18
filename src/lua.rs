@@ -42,7 +42,7 @@ impl Lua {
             .mutate(move |mc, lua_root| -> Result<(), Error> {
                 *lua_root.current_sequence.write(mc) = Some(Box::new(
                     g.gen_sequence()
-                        .and_then(move |_, _, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
+                        .map(move |_, _, r| -> Box<Any> { Box::new(r) }),
                 ));
                 Ok(())
             })?;

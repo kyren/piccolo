@@ -24,27 +24,26 @@ fn test_dir(dir: &str, run_code: bool) {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
                 if run_code {
                     let mut lua = Lua::new();
-                    let r = lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(lc
-                        .main_thread
-                        .call_function(
+                    let r = lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(
+                        Closure::new(
                             mc,
-                            Closure::new(
-                                mc,
-                                compile(mc, lc.interned_strings, file)?,
-                                Some(lc.globals),
-                            )?,
-                            &[],
-                            64,
-                        )
-                        .and_then(|_, _, r| match &r[..] {
-                            &[Value::Boolean(true)] => Ok(false),
-                            v => {
-                                let _ =
-                                    writeln!(stdout(), "error: unexpected return values: {:?}", v);
-                                Ok(true)
-                            }
-                        })))
-                    .flatten()));
+                            compile(mc, lc.interned_strings, file)?,
+                            Some(lc.globals),
+                        )?
+                    ))
+                    .and_then(move |mc, lc, closure| lc.main_thread.call_function(
+                        mc,
+                        closure,
+                        &[],
+                        64,
+                    ))
+                    .map(|_, _, r| match &r[..] {
+                        &[Value::Boolean(true)] => false,
+                        v => {
+                            let _ = writeln!(stdout(), "error: unexpected return values: {:?}", v);
+                            true
+                        }
+                    })));
 
                     match r {
                         Err(err) => {

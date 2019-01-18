@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use super::Sequence;
 
-/// A trait to construct `Sequence` types.  This trait is used via the `gen_sequence` macro to
-/// make using the `Sequence` API less painful.
+/// A trait to construct `Sequence` types.  This trait is used via the `gen_sequence` macro to make
+/// consuming a `Sequence` less painful.
 ///
 /// Generally types taking a `Sequence` need to take something like:
 ///
