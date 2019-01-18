@@ -54,7 +54,7 @@ impl Lua {
             .mutate(move |mc, lua_root| -> Result<(), Error> {
                 *lua_root.current_sequence.write(mc) = Some(Box::new(
                     f(mc, lua_root.context)?
-                        .map(move |_, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
+                        .finally(move |_, _, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
                 ));
                 Ok(())
             })?;
@@ -67,7 +67,7 @@ impl Lua {
                     .write(mc)
                     .as_mut()
                     .unwrap()
-                    .pump(mc);
+                    .pump(mc, lua_root.context);
                 if r.is_some() {
                     *lua_root.current_sequence.write(mc) = None;
                 }

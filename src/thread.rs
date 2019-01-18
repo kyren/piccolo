@@ -6,6 +6,7 @@ use failure::Error;
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
+use crate::lua::LuaContext;
 use crate::opcode::OpCode;
 use crate::sequence::Sequence;
 use crate::string::String;
@@ -75,7 +76,11 @@ pub struct ThreadSequence<'gc> {
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     type Item = Vec<Value<'gc>>;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<Vec<Value<'gc>>, Error>> {
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        _: LuaContext<'gc>,
+    ) -> Option<Result<Vec<Value<'gc>>, Error>> {
         let thread = self.thread.expect("cannot pump a finished ThreadSequence");
         let mut state = thread.0.write(mc);
         if let Some(res) = state.run(mc, thread, self.granularity) {

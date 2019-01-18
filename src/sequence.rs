@@ -2,6 +2,8 @@ use failure::Error;
 
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
+use crate::lua::LuaContext;
+
 /// A trait that describes a sequence of VM actions to perform with an eventual result.
 ///
 /// This trait is similar to the `Future` trait in that it is not designed to be used directly, but
@@ -32,12 +34,16 @@ pub trait Sequence<'gc>: Collect {
 
     /// Perform a single unit of work, returning `Some` on completion, whether succsessful or not.
     /// Calling `pump` again after completion is an API violation and may panic.
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<Self::Item, Error>>;
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<Self::Item, Error>>;
 }
 
 pub fn sequence_fn<'gc, F, R>(f: F) -> SequenceFn<F>
 where
-    F: 'static + FnOnce(MutationContext<'gc, '_>) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>) -> Result<R, Error>,
 {
     SequenceFn::new(f)
 }
@@ -45,7 +51,7 @@ where
 pub fn sequence_fn_with<'gc, C, F, R>(c: C, f: F) -> SequenceFnWith<C, F>
 where
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C) -> Result<R, Error>,
 {
     SequenceFnWith::new(c, f)
 }
@@ -57,24 +63,27 @@ where
 /// capture `Collect` implementing types.  Tuples up to size 16 automatically implement `Collect`,
 /// so this is a convenient way to manually capture a reasonable number of such values.
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
-    fn map<F, R>(self, f: F) -> Map<Self, F>
+    fn finally<F, R>(self, f: F) -> Finally<Self, F>
     where
-        F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Item) -> Result<R, Error>,
+        F: 'static
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> Result<R, Error>,
     {
-        Map::new(self, f)
+        Finally::new(self, f)
     }
 
-    fn map_with<C, F, R>(self, c: C, f: F) -> MapWith<Self, C, F>
+    fn finally_with<C, F, R>(self, c: C, f: F) -> FinallyWith<Self, C, F>
     where
         C: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Item) -> Result<R, Error>,
+        F: 'static
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> Result<R, Error>,
     {
-        MapWith::new(self, c, f)
+        FinallyWith::new(self, c, f)
     }
 
     fn and_then<F, N>(self, f: F) -> AndThen<Self, F, N>
     where
-        F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Item) -> Result<N, Error>,
+        F: 'static
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> Result<N, Error>,
         N: Sequence<'gc>,
     {
         AndThen::new(self, f)
@@ -83,7 +92,8 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     fn and_then_with<C, F, N>(self, c: C, f: F) -> AndThenWith<Self, C, F, N>
     where
         C: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Item) -> Result<N, Error>,
+        F: 'static
+            + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Self::Item) -> Result<N, Error>,
         N: Sequence<'gc>,
     {
         AndThenWith::new(self, c, f)
@@ -92,7 +102,11 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     fn then<F, N>(self, f: F) -> Then<Self, F, N>
     where
         F: 'static
-            + FnOnce(MutationContext<'gc, '_>, Result<Self::Item, Error>) -> Result<N, Error>,
+            + FnOnce(
+                MutationContext<'gc, '_>,
+                LuaContext<'gc>,
+                Result<Self::Item, Error>,
+            ) -> Result<N, Error>,
         N: Sequence<'gc>,
     {
         Then::new(self, f)
@@ -102,7 +116,11 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     where
         C: Collect,
         F: 'static
-            + FnOnce(MutationContext<'gc, '_>, Result<Self::Item, Error>) -> Result<N, Error>,
+            + FnOnce(
+                MutationContext<'gc, '_>,
+                LuaContext<'gc>,
+                Result<Self::Item, Error>,
+            ) -> Result<N, Error>,
         N: Sequence<'gc>,
     {
         ThenWith::new(self, c, f)
@@ -114,8 +132,12 @@ impl<'gc, T> SequenceExt<'gc> for T where T: Sequence<'gc> {}
 impl<'gc, T: ?Sized + Sequence<'gc>> Sequence<'gc> for Box<T> {
     type Item = T::Item;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<Self::Item, Error>> {
-        T::pump(&mut (*self), mc)
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<Self::Item, Error>> {
+        T::pump(&mut (*self), mc, lc)
     }
 }
 
@@ -132,13 +154,17 @@ impl<F> SequenceFn<F> {
 
 impl<'gc, F, R> Sequence<'gc> for SequenceFn<F>
 where
-    F: 'static + FnOnce(MutationContext<'gc, '_>) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>) -> Result<R, Error>,
 {
     type Item = R;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R, Error>> {
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<R, Error>> {
         Some(self.0.take().expect("cannot pump a finished sequence").0(
-            mc,
+            mc, lc,
         ))
     }
 }
@@ -157,38 +183,46 @@ impl<C, F> SequenceFnWith<C, F> {
 impl<'gc, C, F, R> Sequence<'gc> for SequenceFnWith<C, F>
 where
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C) -> Result<R, Error>,
 {
     type Item = R;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R, Error>> {
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<R, Error>> {
         let (c, f) = self.0.take().expect("cannot pump a finished sequence");
-        Some(f.0(mc, c))
+        Some(f.0(mc, lc, c))
     }
 }
 
 #[must_use = "sequences do nothing unless pumped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct Map<S, F>(Option<(S, StaticCollect<F>)>);
+pub struct Finally<S, F>(Option<(S, StaticCollect<F>)>);
 
-impl<S, F> Map<S, F> {
-    fn new(s: S, f: F) -> Map<S, F> {
-        Map(Some((s, StaticCollect(f))))
+impl<S, F> Finally<S, F> {
+    fn new(s: S, f: F) -> Finally<S, F> {
+        Finally(Some((s, StaticCollect(f))))
     }
 }
 
-impl<'gc, S, F, R> Sequence<'gc> for Map<S, F>
+impl<'gc, S, F, R> Sequence<'gc> for Finally<S, F>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, S::Item) -> Result<R, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> Result<R, Error>,
 {
     type Item = R;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R, Error>> {
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<R, Error>> {
         match self.0.take() {
-            Some((mut a, StaticCollect(f))) => match a.pump(mc) {
-                Some(Ok(r)) => Some(f(mc, r)),
+            Some((mut a, StaticCollect(f))) => match a.pump(mc, lc) {
+                Some(Ok(r)) => Some(f(mc, lc, r)),
                 Some(Err(e)) => Some(Err(e)),
                 None => {
                     self.0 = Some((a, StaticCollect(f)));
@@ -203,26 +237,30 @@ where
 #[must_use = "sequences do nothing unless pumped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct MapWith<S, C, F>(Option<(S, C, StaticCollect<F>)>);
+pub struct FinallyWith<S, C, F>(Option<(S, C, StaticCollect<F>)>);
 
-impl<S, C, F> MapWith<S, C, F> {
-    fn new(s: S, c: C, f: F) -> MapWith<S, C, F> {
-        MapWith(Some((s, c, StaticCollect(f))))
+impl<S, C, F> FinallyWith<S, C, F> {
+    fn new(s: S, c: C, f: F) -> FinallyWith<S, C, F> {
+        FinallyWith(Some((s, c, StaticCollect(f))))
     }
 }
 
-impl<'gc, S, C, F, R> Sequence<'gc> for MapWith<S, C, F>
+impl<'gc, S, C, F, R> Sequence<'gc> for FinallyWith<S, C, F>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Item) -> R,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
 {
     type Item = R;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R, Error>> {
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<R, Error>> {
         match self.0.take() {
-            Some((mut a, c, StaticCollect(f))) => match a.pump(mc) {
-                Some(Ok(r)) => Some(Ok(f(mc, c, r))),
+            Some((mut a, c, StaticCollect(f))) => match a.pump(mc, lc) {
+                Some(Ok(r)) => Some(Ok(f(mc, lc, c, r))),
                 Some(Err(e)) => Some(Err(e)),
                 None => None,
             },
@@ -245,13 +283,17 @@ impl<S, F, N> AndThen<S, F, N> {
 impl<'gc, S, F, N> Sequence<'gc> for AndThen<S, F, N>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, S::Item) -> Result<N, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> Result<N, Error>,
     N: Sequence<'gc>,
 {
     type Item = N::Item;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<N::Item, Error>> {
-        self.0.pump(mc, |mc, f, r| f.0(mc, r?))
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<N::Item, Error>> {
+        self.0.pump(mc, lc, |mc, lc, f, r| f.0(mc, lc, r?))
     }
 }
 
@@ -270,13 +312,17 @@ impl<'gc, S, C, F, N> Sequence<'gc> for AndThenWith<S, C, F, N>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Item) -> Result<N, Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> Result<N, Error>,
     N: Sequence<'gc>,
 {
     type Item = N::Item;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<N::Item, Error>> {
-        self.0.pump(mc, |mc, (c, f), r| f.0(mc, c, r?))
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<N::Item, Error>> {
+        self.0.pump(mc, lc, |mc, lc, (c, f), r| f.0(mc, lc, c, r?))
     }
 }
 
@@ -294,13 +340,22 @@ impl<S, F, N> Then<S, F, N> {
 impl<'gc, S, F, N> Sequence<'gc> for Then<S, F, N>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, Result<S::Item, Error>) -> Result<N, Error>,
+    F: 'static
+        + FnOnce(
+            MutationContext<'gc, '_>,
+            LuaContext<'gc>,
+            Result<S::Item, Error>,
+        ) -> Result<N, Error>,
     N: Sequence<'gc>,
 {
     type Item = N::Item;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<N::Item, Error>> {
-        self.0.pump(mc, |mc, f, r| f.0(mc, r))
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<N::Item, Error>> {
+        self.0.pump(mc, lc, |mc, lc, f, r| f.0(mc, lc, r))
     }
 }
 
@@ -319,13 +374,23 @@ impl<'gc, S, C, F, N> Sequence<'gc> for ThenWith<S, C, F, N>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, Result<S::Item, Error>) -> Result<N, Error>,
+    F: 'static
+        + FnOnce(
+            MutationContext<'gc, '_>,
+            LuaContext<'gc>,
+            C,
+            Result<S::Item, Error>,
+        ) -> Result<N, Error>,
     N: Sequence<'gc>,
 {
     type Item = N::Item;
 
-    fn pump(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<N::Item, Error>> {
-        self.0.pump(mc, |mc, (c, f), r| f.0(mc, c, r))
+    fn pump(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<N::Item, Error>> {
+        self.0.pump(mc, lc, |mc, lc, (c, f), r| f.0(mc, lc, c, r))
     }
 }
 
@@ -350,13 +415,23 @@ where
     C: Collect,
     N: Sequence<'gc>,
 {
-    fn pump<F>(&mut self, mc: MutationContext<'gc, '_>, f: F) -> Option<Result<N::Item, Error>>
+    fn pump<F>(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+        f: F,
+    ) -> Option<Result<N::Item, Error>>
     where
-        F: FnOnce(MutationContext<'gc, '_>, C, Result<S::Item, Error>) -> Result<N, Error>,
+        F: FnOnce(
+            MutationContext<'gc, '_>,
+            LuaContext<'gc>,
+            C,
+            Result<S::Item, Error>,
+        ) -> Result<N, Error>,
     {
         match self {
-            Chain::First(s, c) => match s.pump(mc) {
-                Some(r) => match f(mc, c.take().unwrap(), r) {
+            Chain::First(s, c) => match s.pump(mc, lc) {
+                Some(r) => match f(mc, lc, c.take().unwrap(), r) {
                     Ok(n) => {
                         *self = Chain::Second(n);
                         None
@@ -365,7 +440,7 @@ where
                 },
                 None => None,
             },
-            Chain::Second(n) => match n.pump(mc) {
+            Chain::Second(n) => match n.pump(mc, lc) {
                 Some(r) => {
                     *self = Chain::Done;
                     Some(r)

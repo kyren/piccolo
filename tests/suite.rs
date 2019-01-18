@@ -36,7 +36,7 @@ fn test_dir(dir: &str, run_code: bool) {
                                     &[],
                                     64,
                                 )
-                                .map(|_, r| match &r[..] {
+                                .finally(|_, _, r| match &r[..] {
                                     &[Value::Boolean(true)] => Ok(false),
                                     v => {
                                         let _ = writeln!(

@@ -34,7 +34,7 @@ fn main() -> Result<(), Error> {
                     &[],
                     64,
                 )
-                .map(|_, r| {
+                .finally(|_, _, r| {
                     println!("results: {:?}", r);
                     Ok(())
                 }),
