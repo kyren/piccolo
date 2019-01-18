@@ -1,7 +1,6 @@
-use failure::Error;
-
 use gc_arena::{Collect, MutationContext};
 
+use crate::error::Error;
 use crate::lua::LuaContext;
 
 /// A trait that describes a sequence of VM actions to perform with an eventual result.

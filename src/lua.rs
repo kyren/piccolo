@@ -1,9 +1,8 @@
 use std::any::Any;
 
-use failure::Error;
-
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
+use crate::error::Error;
 use crate::sequence::{GenSequence, Sequence, SequenceExt};
 use crate::string::InternedStringSet;
 use crate::table::Table;

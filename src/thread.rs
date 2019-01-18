@@ -1,10 +1,9 @@
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
 
-use failure::Error;
-
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
+use crate::error::Error;
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::lua::LuaContext;
 use crate::opcode::OpCode;

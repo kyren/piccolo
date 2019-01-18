@@ -1,6 +1,5 @@
+use std::fmt;
 use std::hash::{Hash, Hasher};
-
-use failure::{bail, Error};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
@@ -67,26 +66,48 @@ impl<'gc> Hash for Closure<'gc> {
     }
 }
 
+#[derive(Debug, Collect)]
+#[collect(require_static)]
+pub enum ClosureError {
+    HasUpValues,
+    RequiresEnv,
+}
+
+impl fmt::Display for ClosureError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ClosureError::HasUpValues => write!(
+                fmt,
+                "cannot use prototype with upvalues other than _ENV to create top-level closure"
+            ),
+            ClosureError::RequiresEnv => write!(
+                fmt,
+                "closure requires _ENV upvalue but no environment was provided"
+            ),
+        }
+    }
+}
+
 impl<'gc> Closure<'gc> {
     /// Create a top-level closure, prototype must not have any upvalues besides _ENV.
     pub fn new(
         mc: MutationContext<'gc, '_>,
         proto: FunctionProto<'gc>,
         environment: Option<Table<'gc>>,
-    ) -> Result<Closure<'gc>, Error> {
+    ) -> Result<Closure<'gc>, ClosureError> {
         let proto = Gc::allocate(mc, proto);
         let mut upvalues = Vec::new();
 
         if !proto.upvalues.is_empty() {
             if proto.upvalues.len() > 1 || proto.upvalues[0] != UpValueDescriptor::Environment {
-                bail!("cannot use prototype with upvalues other than _ENV to create top-level closure")
+                return Err(ClosureError::HasUpValues);
             } else if let Some(environment) = environment {
                 upvalues.push(UpValue(GcCell::allocate(
                     mc,
                     UpValueState::Closed(Value::Table(environment)),
                 )));
             } else {
-                bail!("closure requires _ENV upvalue but no environment was provided")
+                return Err(ClosureError::RequiresEnv);
             }
         }
 

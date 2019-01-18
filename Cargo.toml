@@ -10,7 +10,6 @@ members = [
 ]
 
 [dependencies]
-failure = "0.1"
 rustc-hash = "1.0"
 num-traits = "0.2"
 

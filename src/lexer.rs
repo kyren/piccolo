@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 use std::{char, fmt, i32, i64, str};
 
-use failure::Fail;
+use gc_arena::Collect;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<S> {
@@ -68,7 +68,8 @@ pub enum Token<S> {
     String(S),
 }
 
-#[derive(Fail, Debug)]
+#[derive(Debug, Collect)]
+#[collect(require_static)]
 pub enum LexerError {
     UnfinishedShortString(u8),
     UnexpectedCharacter(u8),

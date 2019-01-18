@@ -1,7 +1,6 @@
 use std::hash::{Hash, Hasher};
-use std::{i64, mem};
+use std::{fmt, i64, mem};
 
-use failure::Fail;
 use num_traits::cast;
 use rustc_hash::FxHashMap;
 
@@ -13,12 +12,20 @@ use crate::value::Value;
 #[collect(require_copy)]
 pub struct Table<'gc>(pub GcCell<'gc, TableState<'gc>>);
 
-#[derive(Fail, Debug)]
+#[derive(Debug, Collect)]
+#[collect(require_static)]
 pub enum InvalidTableKey {
-    #[fail(display = "table key is NaN")]
     IsNaN,
-    #[fail(display = "table key is Nil")]
     IsNil,
+}
+
+impl fmt::Display for InvalidTableKey {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InvalidTableKey::IsNaN => write!(fmt, "table key is NaN"),
+            InvalidTableKey::IsNil => write!(fmt, "table key is Nil"),
+        }
+    }
 }
 
 impl<'gc> PartialEq for Table<'gc> {

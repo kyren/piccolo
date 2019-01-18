@@ -1,10 +1,9 @@
 use std::collections::{HashMap, VecDeque};
-use std::{iter, mem};
+use std::{fmt, iter, mem};
 
-use failure::Fail;
 use num_traits::cast;
 
-use gc_arena::{Gc, MutationContext};
+use gc_arena::{Collect, Gc, MutationContext};
 
 use crate::constant::Constant;
 use crate::function::{FunctionProto, UpValueDescriptor};
@@ -30,28 +29,36 @@ use super::operators::{
 };
 use super::register_allocator::RegisterAllocator;
 
-#[derive(Fail, Debug)]
+#[derive(Debug, Collect)]
+#[collect(require_static)]
 pub enum CompilerError {
-    #[fail(display = "insufficient available registers")]
     Registers,
-    #[fail(display = "too many upvalues")]
     UpValues,
-    #[fail(display = "too many fixed parameters")]
     FixedParameters,
-    #[fail(display = "too many inner functions")]
     Functions,
-    #[fail(display = "too many constants")]
     Constants,
-    #[fail(display = "too many opcodes")]
     OpCodes,
-    #[fail(display = "label defined multiple times")]
     DuplicateLabel,
-    #[fail(display = "goto target label not found")]
     GotoInvalid,
-    #[fail(display = "jump into new scope of new local variable")]
     JumpLocal,
-    #[fail(display = "jump offset overflow")]
     JumpOverflow,
+}
+
+impl fmt::Display for CompilerError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CompilerError::Registers => write!(fmt, "insufficient available registers"),
+            CompilerError::UpValues => write!(fmt, "too many upvalues"),
+            CompilerError::FixedParameters => write!(fmt, "too many fixed parameters"),
+            CompilerError::Functions => write!(fmt, "too many inner functions"),
+            CompilerError::Constants => write!(fmt, "too many constants"),
+            CompilerError::OpCodes => write!(fmt, "too many opcodes"),
+            CompilerError::DuplicateLabel => write!(fmt, "label defined multiple times"),
+            CompilerError::GotoInvalid => write!(fmt, "goto target label not found"),
+            CompilerError::JumpLocal => write!(fmt, "jump into scope of new local variable"),
+            CompilerError::JumpOverflow => write!(fmt, "jump offset overflow"),
+        }
+    }
 }
 
 pub fn compile_chunk<'gc>(

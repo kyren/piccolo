@@ -1,8 +1,9 @@
+use std::error::Error as StdError;
 use std::fmt;
 use std::io::Read;
 use std::rc::Rc;
 
-use failure::Fail;
+use gc_arena::Collect;
 
 use crate::lexer::{Lexer, LexerError, Token};
 
@@ -235,7 +236,8 @@ pub enum RecordKey<S> {
     Indexed(Expression<S>),
 }
 
-#[derive(Fail, Debug)]
+#[derive(Debug, Collect)]
+#[collect(require_static)]
 pub enum ParserError {
     Unexpected {
         unexpected: String,
@@ -249,6 +251,8 @@ pub enum ParserError {
     RecursionLimit,
     LexerError(LexerError),
 }
+
+impl StdError for ParserError {}
 
 impl fmt::Display for ParserError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -774,7 +778,7 @@ where
                 return Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
                     expected: Some("function arguments".to_owned()),
-                })
+                });
             }
         };
 
@@ -835,7 +839,7 @@ where
                         return Err(ParserError::Unexpected {
                             unexpected: format!("{:?}", token),
                             expected: Some("parameter name or '...'".to_owned()),
-                        })
+                        });
                     }
                 }
                 if self.check_ahead(0, Token::Comma)? {

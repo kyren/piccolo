@@ -76,17 +76,6 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
 
     let mode = mode.expect("deriving `Collect` requires a `#[collect(<mode>)]` attribute, where `<mode>` is one of \"require_static\", \"require_copy\", \"empty_drop\", or \"unsafe_drop\"");
 
-    let mut needs_trace_body = TokenStream::new();
-    quote!(false).to_tokens(&mut needs_trace_body);
-    for v in s.variants() {
-        for b in v.bindings() {
-            let ty = &b.ast().ty;
-            quote!(|| <#ty as gc_arena::Collect>::needs_trace()).to_tokens(&mut needs_trace_body);
-        }
-    }
-
-    let trace_body = s.each(|bi| quote!(gc_arena::Collect::trace(#bi, cc)));
-
     let where_clause = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
     } else if mode == Mode::RequireCopy {
@@ -95,19 +84,42 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
         quote!()
     };
 
-    let collect_impl = s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
-        gen unsafe impl gc_arena::Collect for @Self #where_clause {
-            #[inline]
-            fn needs_trace() -> bool {
-                #needs_trace_body
+    let collect_impl = if mode == Mode::RequireStatic {
+        s.clone().add_bounds(AddBounds::None).gen_impl(quote! {
+            gen unsafe impl gc_arena::Collect for @Self #where_clause {
+                #[inline]
+                fn needs_trace() -> bool {
+                    false
+                }
             }
-
-            #[inline]
-            fn trace(&self, cc: ::gc_arena::CollectionContext) {
-                match *self { #trace_body }
+        })
+    } else {
+        let mut needs_trace_body = TokenStream::new();
+        quote!(false).to_tokens(&mut needs_trace_body);
+        for v in s.variants() {
+            for b in v.bindings() {
+                let ty = &b.ast().ty;
+                quote!(|| <#ty as gc_arena::Collect>::needs_trace())
+                    .to_tokens(&mut needs_trace_body);
             }
         }
-    });
+
+        let trace_body = s.each(|bi| quote!(gc_arena::Collect::trace(#bi, cc)));
+
+        s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
+            gen unsafe impl gc_arena::Collect for @Self #where_clause {
+                #[inline]
+                fn needs_trace() -> bool {
+                    #needs_trace_body
+                }
+
+                #[inline]
+                fn trace(&self, cc: ::gc_arena::CollectionContext) {
+                    match *self { #trace_body }
+                }
+            }
+        })
+    };
 
     let drop_impl = if mode == Mode::EmptyDrop {
         let mut s = s;

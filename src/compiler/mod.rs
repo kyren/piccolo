@@ -1,9 +1,8 @@
 use std::io::Read;
 
-use failure::Error;
-
 use gc_arena::MutationContext;
 
+use crate::error::Error;
 use crate::function::FunctionProto;
 use crate::parser::parse_chunk;
 use crate::string::InternedStringSet;

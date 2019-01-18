@@ -1,7 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use failure::Error;
-
+use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
