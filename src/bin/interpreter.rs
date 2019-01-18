@@ -8,9 +8,10 @@ use failure::{err_msg, Error};
 
 use luster::compiler::compile;
 use luster::function::Closure;
+use luster::gen_sequence;
 use luster::io::buffered_read;
 use luster::lua::Lua;
-use luster::sequence::SequenceExt;
+use luster::sequence::{sequence_fn, SequenceExt};
 
 fn main() -> Result<(), Error> {
     let mut args = env::args();
@@ -21,25 +22,23 @@ fn main() -> Result<(), Error> {
     )?)?;
 
     let mut lua = Lua::new();
-    lua.sequence(move |mc, lc| {
-        Ok(Box::new(
-            lc.main_thread
-                .call_function(
-                    mc,
-                    Closure::new(
-                        mc,
-                        compile(mc, lc.interned_strings, file)?,
-                        Some(lc.globals),
-                    )?,
-                    &[],
-                    64,
-                )
-                .finally(|_, _, r| {
-                    println!("results: {:?}", r);
-                    Ok(())
-                }),
-        ))
-    })?;
+    lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(lc
+        .main_thread
+        .call_function(
+            mc,
+            Closure::new(
+                mc,
+                compile(mc, lc.interned_strings, file)?,
+                Some(lc.globals),
+            )?,
+            &[],
+            64,
+        )
+        .and_then(|_, _, r| {
+            println!("results: {:?}", r);
+            Ok(())
+        })))
+    .flatten()))?;
 
     Ok(())
 }

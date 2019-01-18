@@ -3,10 +3,11 @@ use std::io::{stdout, Write};
 
 use luster::compiler::compile;
 use luster::function::Closure;
+use luster::gen_sequence;
 use luster::io::buffered_read;
 use luster::lua::Lua;
 use luster::parser::parse_chunk;
-use luster::sequence::SequenceExt;
+use luster::sequence::{sequence_fn, SequenceExt};
 use luster::value::Value;
 
 fn test_dir(dir: &str, run_code: bool) {
@@ -23,32 +24,27 @@ fn test_dir(dir: &str, run_code: bool) {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
                 if run_code {
                     let mut lua = Lua::new();
-                    let r = lua.sequence(move |mc, lc| {
-                        Ok(Box::new(
-                            lc.main_thread
-                                .call_function(
-                                    mc,
-                                    Closure::new(
-                                        mc,
-                                        compile(mc, lc.interned_strings, file)?,
-                                        Some(lc.globals),
-                                    )?,
-                                    &[],
-                                    64,
-                                )
-                                .finally(|_, _, r| match &r[..] {
-                                    &[Value::Boolean(true)] => Ok(false),
-                                    v => {
-                                        let _ = writeln!(
-                                            stdout(),
-                                            "error: unexpected return values: {:?}",
-                                            v
-                                        );
-                                        Ok(true)
-                                    }
-                                }),
-                        ))
-                    });
+                    let r = lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(lc
+                        .main_thread
+                        .call_function(
+                            mc,
+                            Closure::new(
+                                mc,
+                                compile(mc, lc.interned_strings, file)?,
+                                Some(lc.globals),
+                            )?,
+                            &[],
+                            64,
+                        )
+                        .and_then(|_, _, r| match &r[..] {
+                            &[Value::Boolean(true)] => Ok(false),
+                            v => {
+                                let _ =
+                                    writeln!(stdout(), "error: unexpected return values: {:?}", v);
+                                Ok(true)
+                            }
+                        })))
+                    .flatten()));
 
                     match r {
                         Err(err) => {

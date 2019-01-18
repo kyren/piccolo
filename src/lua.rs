@@ -2,9 +2,9 @@ use std::any::Any;
 
 use failure::Error;
 
-use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
+use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
-use crate::sequence::{Sequence, SequenceExt};
+use crate::sequence::{GenSequence, Sequence, SequenceExt};
 use crate::string::InternedStringSet;
 use crate::table::Table;
 use crate::thread::Thread;
@@ -34,31 +34,19 @@ impl Lua {
         Lua { arena }
     }
 
-    pub fn mutate<F, R>(&mut self, f: F) -> R
+    pub fn sequence<G>(&mut self, g: G) -> Result<G::Item, Error>
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>) -> R,
-    {
-        self.arena
-            .mutate(move |mc, lua_root| f(mc, lua_root.context))
-    }
-
-    pub fn sequence<F, R>(&mut self, f: F) -> Result<R, Error>
-    where
-        F: for<'gc> FnOnce(
-            MutationContext<'gc, '_>,
-            LuaContext<'gc>,
-        ) -> Result<Box<dyn Sequence<'gc, Item = R> + 'gc>, Error>,
-        R: 'static,
+        G: GenSequence,
+        G::Item: 'static,
     {
         self.arena
             .mutate(move |mc, lua_root| -> Result<(), Error> {
                 *lua_root.current_sequence.write(mc) = Some(Box::new(
-                    f(mc, lua_root.context)?
-                        .finally(move |_, _, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
+                    g.gen_sequence()
+                        .and_then(move |_, _, r| -> Result<Box<Any>, Error> { Ok(Box::new(r)) }),
                 ));
                 Ok(())
             })?;
-        self.arena.collect_debt();
 
         loop {
             let r = self.arena.mutate(move |mc, lua_root| {
