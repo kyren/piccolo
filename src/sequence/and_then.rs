@@ -1,6 +1,5 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
@@ -34,15 +33,16 @@ impl<'gc, S, F, R> Sequence<'gc> for AndThen<'gc, S, F, R>
 where
     S: Sequence<'gc>,
     F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> R,
-    R: IntoSequence<'gc>,
+    R: IntoSequence<'gc, Error = S::Error>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             AndThen::First(s1, f) => match s1.pump(mc, lc) {
                 Some(Ok(res)) => {
@@ -88,15 +88,16 @@ where
     S: Sequence<'gc>,
     C: Collect,
     F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
-    R: IntoSequence<'gc>,
+    R: IntoSequence<'gc, Error = S::Error>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             AndThenWith::First(s1, f) => match s1.pump(mc, lc) {
                 Some(Ok(res)) => {

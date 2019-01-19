@@ -26,22 +26,24 @@ use super::Sequence;
 /// results in a `Sequence`.
 pub trait GenSequence {
     type Item;
+    type Error;
 
-    fn gen_sequence<'gc>(self) -> Box<Sequence<'gc, Item = Self::Item> + 'gc>;
+    fn gen_sequence<'gc>(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc>;
 }
 
 #[derive(Copy, Clone)]
-pub struct GenSequenceFn<F, R>(pub F)
+pub struct GenSequenceFn<F, I, E>(pub F)
 where
-    F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = R> + 'gc>;
+    F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = I, Error = E> + 'gc>;
 
-impl<F, R> GenSequence for GenSequenceFn<F, R>
+impl<F, I, E> GenSequence for GenSequenceFn<F, I, E>
 where
-    F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = R> + 'gc>,
+    F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = I, Error = E> + 'gc>,
 {
-    type Item = R;
+    type Item = I;
+    type Error = E;
 
-    fn gen_sequence<'gc>(self) -> Box<Sequence<'gc, Item = Self::Item> + 'gc> {
+    fn gen_sequence<'gc>(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc> {
         self.0(PhantomData)
     }
 }

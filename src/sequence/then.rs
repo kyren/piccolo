@@ -1,6 +1,5 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
@@ -12,7 +11,7 @@ use super::into_sequence::IntoSequence;
 pub enum Then<'gc, S, F, R>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, Error>) -> R,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     First(S, Option<StaticCollect<F>>),
@@ -22,7 +21,7 @@ where
 impl<'gc, S, F, R> Then<'gc, S, F, R>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, Error>) -> R,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     pub fn new(s: S, f: F) -> Then<'gc, S, F, R> {
@@ -33,16 +32,17 @@ where
 impl<'gc, S, F, R> Sequence<'gc> for Then<'gc, S, F, R>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, Error>) -> R,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             Then::First(s1, f) => match s1.pump(mc, lc) {
                 Some(res) => {
@@ -63,7 +63,8 @@ pub enum ThenWith<'gc, S, C, F, R>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, Error>) -> R,
+    F: 'static
+        + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     First(S, Option<(C, StaticCollect<F>)>),
@@ -74,7 +75,8 @@ impl<'gc, S, C, F, R> ThenWith<'gc, S, C, F, R>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, Error>) -> R,
+    F: 'static
+        + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     pub fn new(s: S, c: C, f: F) -> ThenWith<'gc, S, C, F, R> {
@@ -86,16 +88,18 @@ impl<'gc, S, C, F, R> Sequence<'gc> for ThenWith<'gc, S, C, F, R>
 where
     S: Sequence<'gc>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, Error>) -> R,
+    F: 'static
+        + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, Result<S::Item, S::Error>) -> R,
     R: IntoSequence<'gc>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             ThenWith::First(s1, f) => match s1.pump(mc, lc) {
                 Some(res) => {

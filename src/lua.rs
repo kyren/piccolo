@@ -2,7 +2,6 @@ use std::any::Any;
 
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
-use crate::error::Error;
 use crate::sequence::{GenSequence, Sequence, SequenceExt};
 use crate::string::InternedStringSet;
 use crate::table::Table;
@@ -33,19 +32,19 @@ impl Lua {
         Lua { arena }
     }
 
-    pub fn sequence<G>(&mut self, g: G) -> Result<G::Item, Error>
+    pub fn sequence<G>(&mut self, g: G) -> Result<G::Item, G::Error>
     where
         G: GenSequence,
         G::Item: 'static,
+        G::Error: 'static,
     {
-        self.arena
-            .mutate(move |mc, lua_root| -> Result<(), Error> {
-                *lua_root.current_sequence.write(mc) = Some(Box::new(
-                    g.gen_sequence()
-                        .map(move |_, _, r| -> Box<Any> { Box::new(r) }),
-                ));
-                Ok(())
-            })?;
+        self.arena.mutate(move |mc, lua_root| {
+            *lua_root.current_sequence.write(mc) = Some(Box::new(
+                g.gen_sequence()
+                    .map(|r| -> Box<Any> { Box::new(r) })
+                    .map_err(|e| -> Box<Any> { Box::new(e) }),
+            ));
+        });
 
         loop {
             let r = self.arena.mutate(move |mc, lua_root| {
@@ -68,7 +67,7 @@ impl Lua {
                         return Ok(*Box::<Any + 'static>::downcast(r).unwrap());
                     }
                     Err(e) => {
-                        return Err(e);
+                        return Err(*Box::<Any + 'static>::downcast(e).unwrap());
                     }
                 }
             }
@@ -80,8 +79,15 @@ impl Lua {
 #[collect(empty_drop)]
 struct LuaRoot<'gc> {
     context: LuaContext<'gc>,
-    current_sequence:
-        GcCell<'gc, Option<Box<dyn Sequence<'gc, Item = Box<dyn Any + 'static>> + 'gc>>>,
+    current_sequence: GcCell<
+        'gc,
+        Option<
+            Box<
+                dyn Sequence<'gc, Item = Box<dyn Any + 'static>, Error = Box<dyn Any + 'static>>
+                    + 'gc,
+            >,
+        >,
+    >,
 }
 
 make_arena!(LuaArena, LuaRoot);

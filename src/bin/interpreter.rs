@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<Error>> {
         Some(lc.globals),
     )?))
     .and_then(|mc, lc, closure| lc.main_thread.call_function(mc, closure, &[], 64,))
-    .map(|_, _, r| {
+    .map(|r| {
         println!("results: {:?}", r);
     })))?;
 

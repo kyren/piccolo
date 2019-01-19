@@ -1,6 +1,5 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::error::Error;
 use crate::lua::LuaContext;
 
 /// A trait that describes a sequence of VM actions to perform with an eventual result.
@@ -29,6 +28,7 @@ use crate::lua::LuaContext;
 ///    returning through all of the real Rust frames in the call stack, but it *is* possible to stop
 ///    arbitrarily at any point in a Sequence and resume later.
 pub trait Sequence<'gc>: Collect {
+    type Error;
     type Item;
 
     /// Perform a single unit of work, returning `Some` on completion, whether succsessful or not.
@@ -37,17 +37,18 @@ pub trait Sequence<'gc>: Collect {
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<Self::Item, Error>>;
+    ) -> Option<Result<Self::Item, Self::Error>>;
 }
 
 impl<'gc, T: ?Sized + Sequence<'gc>> Sequence<'gc> for Box<T> {
+    type Error = T::Error;
     type Item = T::Item;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<Self::Item, Error>> {
+    ) -> Option<Result<Self::Item, Self::Error>> {
         T::pump(&mut (*self), mc, lc)
     }
 }

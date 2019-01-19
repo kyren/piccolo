@@ -1,6 +1,5 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
@@ -18,17 +17,18 @@ impl<S, F> Map<S, F> {
 impl<'gc, S, F, R> Sequence<'gc> for Map<S, F>
 where
     S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, S::Item) -> R,
+    F: 'static + FnOnce(S::Item) -> R,
 {
     type Item = R;
+    type Error = S::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R, Error>> {
+    ) -> Option<Result<R, S::Error>> {
         match self.0.pump(mc, lc) {
-            Some(Ok(res)) => Some(Ok(self.1.take().unwrap().0(mc, lc, res))),
+            Some(Ok(res)) => Some(Ok(self.1.take().unwrap().0(res))),
             Some(Err(err)) => Some(Err(err)),
             None => None,
         }
@@ -38,33 +38,30 @@ where
 #[must_use = "sequences do nothing unless pumped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct MapWith<S, C, F>(S, Option<(C, StaticCollect<F>)>);
+pub struct MapError<S, F>(S, Option<StaticCollect<F>>);
 
-impl<S, C, F> MapWith<S, C, F> {
-    pub fn new(s: S, c: C, f: F) -> MapWith<S, C, F> {
-        MapWith(s, Some((c, StaticCollect(f))))
+impl<S, F> MapError<S, F> {
+    pub fn new(s: S, f: F) -> MapError<S, F> {
+        MapError(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, C, F, R> Sequence<'gc> for MapWith<S, C, F>
+impl<'gc, S, F, R> Sequence<'gc> for MapError<S, F>
 where
     S: Sequence<'gc>,
-    C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, C, S::Item) -> R,
+    F: 'static + FnOnce(S::Error) -> R,
 {
-    type Item = R;
+    type Item = S::Item;
+    type Error = R;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R, Error>> {
+    ) -> Option<Result<S::Item, R>> {
         match self.0.pump(mc, lc) {
-            Some(Ok(res)) => {
-                let (c, StaticCollect(f)) = self.1.take().unwrap();
-                Some(Ok(f(mc, lc, c, res)))
-            }
-            Some(Err(err)) => Some(Err(err)),
+            Some(Ok(res)) => Some(Ok(res)),
+            Some(Err(err)) => Some(Err(self.1.take().unwrap().0(err))),
             None => None,
         }
     }

@@ -37,7 +37,7 @@ fn test_dir(dir: &str, run_code: bool) {
                         &[],
                         64,
                     ))
-                    .map(|_, _, r| match &r[..] {
+                    .map(|r| match &r[..] {
                         &[Value::Boolean(true)] => false,
                         v => {
                             let _ = writeln!(stdout(), "error: unexpected return values: {:?}", v);

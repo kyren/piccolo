@@ -1,6 +1,5 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::error::Error;
 use crate::lua::LuaContext;
 use crate::sequence::IntoSequence;
 use crate::sequence::Sequence;
@@ -50,12 +49,13 @@ where
     R: IntoSequence<'gc>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             SequenceFn::First(f) => {
                 *self = SequenceFn::Second(f.take().unwrap().0(mc, lc).into_sequence());
@@ -97,12 +97,13 @@ where
     R: IntoSequence<'gc>,
 {
     type Item = R::Item;
+    type Error = R::Error;
 
     fn pump(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<R::Item, Error>> {
+    ) -> Option<Result<R::Item, R::Error>> {
         match self {
             SequenceFnWith::First(f) => {
                 let (c, StaticCollect(f)) = f.take().unwrap();

@@ -74,6 +74,7 @@ pub struct ThreadSequence<'gc> {
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     type Item = Vec<Value<'gc>>;
+    type Error = Error;
 
     fn pump(
         &mut self,
