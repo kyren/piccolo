@@ -75,19 +75,14 @@ impl Lua {
     }
 }
 
+type DynSequence<'gc> =
+    dyn Sequence<'gc, Item = Box<dyn Any + 'static>, Error = Box<dyn Any + 'static>> + 'gc;
+
 #[derive(Collect)]
 #[collect(empty_drop)]
 struct LuaRoot<'gc> {
     context: LuaContext<'gc>,
-    current_sequence: GcCell<
-        'gc,
-        Option<
-            Box<
-                dyn Sequence<'gc, Item = Box<dyn Any + 'static>, Error = Box<dyn Any + 'static>>
-                    + 'gc,
-            >,
-        >,
-    >,
+    current_sequence: GcCell<'gc, Option<Box<DynSequence<'gc>>>>,
 }
 
 make_arena!(LuaArena, LuaRoot);
