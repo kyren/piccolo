@@ -1,8 +1,9 @@
 use std::any::Any;
+use std::marker::PhantomData;
 
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
-use crate::sequence::{GenSequence, Sequence, SequenceExt};
+use crate::sequence::{Sequence, SequenceExt};
 use crate::string::InternedStringSet;
 use crate::table::Table;
 use crate::thread::Thread;
@@ -32,15 +33,29 @@ impl Lua {
         Lua { arena }
     }
 
-    pub fn sequence<G>(&mut self, g: G) -> Result<G::Item, G::Error>
+    /// We would like to accept a type like:
+    ///
+    /// `S: for<'gc> Sequence<'gc> + 'gc`
+    ///
+    /// here, but this is problematic.  There is no way to specify such a bound in Rust, so we
+    /// instead specify a bound like:
+    ///
+    /// `F: for<'gc> Fn(PhantomData<&'gc ()>) -> Box<Sequence<'gc> + 'gc>`
+    ///
+    /// The `PhantomData` is required because it is required that the lifetime `'gc` be used in the
+    /// Fn trait type parameters (arguments).
+    ///
+    /// This is somewhat unweildy, so there is a `gen_sequence` macro to construct this type out of
+    /// an expression yielding a `Sequence`.
+    pub fn sequence<F, I, E>(&mut self, f: F) -> Result<I, E>
     where
-        G: GenSequence,
-        G::Item: 'static,
-        G::Error: 'static,
+        I: 'static,
+        E: 'static,
+        F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = I, Error = E> + 'gc>,
     {
         self.arena.mutate(move |mc, lua_root| {
             *lua_root.current_sequence.write(mc) = Some(Box::new(
-                g.gen_sequence()
+                f(PhantomData)
                     .map(|r| -> Box<Any> { Box::new(r) })
                     .map_err(|e| -> Box<Any> { Box::new(e) }),
             ));
@@ -86,3 +101,10 @@ struct LuaRoot<'gc> {
 }
 
 make_arena!(LuaArena, LuaRoot);
+
+#[macro_export]
+macro_rules! gen_sequence {
+    ($f:expr) => {
+        |_| Box::new($f)
+    };
+}
