@@ -55,7 +55,7 @@ impl Lua {
                     .write(mc)
                     .as_mut()
                     .unwrap()
-                    .pump(mc, lua_root.context)
+                    .step(mc, lua_root.context)
             });
             self.arena.collect_debt();
 
@@ -91,7 +91,8 @@ make_arena!(LuaArena, LuaRoot);
 
 /// Runs a sequence of actions inside the given Lua context and return the result.
 ///
-/// The first argument must be a `Lua` instance, and the second argument must be a function of type:
+/// The first argument must be a `Lua` instance, and the second argument must be an expression of
+/// type:
 ///
 /// `S: for<'gc> Sequence<'gc> + 'gc`
 ///

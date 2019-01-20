@@ -3,7 +3,7 @@ use gc_arena::{Collect, MutationContext, StaticCollect};
 use crate::lua::LuaContext;
 use crate::sequence::Sequence;
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless steped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct Map<S, F>(S, Option<StaticCollect<F>>);
@@ -22,12 +22,12 @@ where
     type Item = R;
     type Error = S::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<R, S::Error>> {
-        match self.0.pump(mc, lc) {
+        match self.0.step(mc, lc) {
             Some(Ok(res)) => Some(Ok(self.1.take().unwrap().0(res))),
             Some(Err(err)) => Some(Err(err)),
             None => None,
@@ -35,7 +35,7 @@ where
     }
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct MapError<S, F>(S, Option<StaticCollect<F>>);
@@ -54,12 +54,12 @@ where
     type Item = S::Item;
     type Error = R;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<S::Item, R>> {
-        match self.0.pump(mc, lc) {
+        match self.0.step(mc, lc) {
             Some(Ok(res)) => Some(Ok(res)),
             Some(Err(err)) => Some(Err(self.1.take().unwrap().0(err))),
             None => None,

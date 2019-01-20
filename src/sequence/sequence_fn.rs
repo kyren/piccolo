@@ -21,7 +21,7 @@ where
     SequenceFnWith::new(c, f)
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless steped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum SequenceFn<'gc, F, R>
@@ -51,7 +51,7 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
@@ -61,12 +61,12 @@ where
                 *self = SequenceFn::Second(f.take().unwrap().0(mc, lc).into_sequence());
                 None
             }
-            SequenceFn::Second(s) => s.pump(mc, lc),
+            SequenceFn::Second(s) => s.step(mc, lc),
         }
     }
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless steped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum SequenceFnWith<'gc, C, F, R>
@@ -99,7 +99,7 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
@@ -110,7 +110,7 @@ where
                 *self = SequenceFnWith::Second(f(mc, lc, c).into_sequence());
                 None
             }
-            SequenceFnWith::Second(s) => s.pump(mc, lc),
+            SequenceFnWith::Second(s) => s.step(mc, lc),
         }
     }
 }

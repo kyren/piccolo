@@ -5,7 +5,7 @@ use crate::sequence::Sequence;
 
 use super::into_sequence::IntoSequence;
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum Then<'gc, S, F, R>
@@ -38,25 +38,25 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<R::Item, R::Error>> {
         match self {
-            Then::First(s1, f) => match s1.pump(mc, lc) {
+            Then::First(s1, f) => match s1.step(mc, lc) {
                 Some(res) => {
                     *self = Then::Second(f.take().unwrap().0(mc, lc, res).into_sequence());
                     None
                 }
                 None => None,
             },
-            Then::Second(s2) => s2.pump(mc, lc),
+            Then::Second(s2) => s2.step(mc, lc),
         }
     }
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum ThenWith<'gc, S, C, F, R>
@@ -95,13 +95,13 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<R::Item, R::Error>> {
         match self {
-            ThenWith::First(s1, f) => match s1.pump(mc, lc) {
+            ThenWith::First(s1, f) => match s1.step(mc, lc) {
                 Some(res) => {
                     let (c, StaticCollect(f)) = f.take().unwrap();
                     *self = ThenWith::Second(f(mc, lc, c, res).into_sequence());
@@ -109,7 +109,7 @@ where
                 }
                 None => None,
             },
-            ThenWith::Second(s2) => s2.pump(mc, lc),
+            ThenWith::Second(s2) => s2.step(mc, lc),
         }
     }
 }

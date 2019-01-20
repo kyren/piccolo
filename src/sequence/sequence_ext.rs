@@ -16,7 +16,7 @@ use super::then::{Then, ThenWith};
 /// so this is a convenient way to manually capture a reasonable number of such values.
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     /// Map a function over result of this sequence.  The given function is run as soon as the
-    /// result is produced in the *same* call to `Sequence::pump`, so there does not necessarily
+    /// result is produced in the *same* call to `Sequence::step`, so there does not necessarily
     /// have to be a `Collect` bound on the `R` result type.
     fn map<F, R>(self, f: F) -> Map<Self, F>
     where
@@ -35,7 +35,7 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     }
 
     /// Execute another sequence step after this sequence completes, regardless of the success or
-    /// failure status.  The given callback is executed during a separate `Sequence::pump` call
+    /// failure status.  The given callback is executed during a separate `Sequence::step` call
     /// after this sequence completes, so the return value must implement `Collect` so that it can
     /// be stored between gc mutations.
     fn then<F, R>(self, f: F) -> Then<'gc, Self, F, R>
@@ -65,7 +65,7 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
 
     /// Similar to `then`, but only calls the given function if this sequence completes
     /// *successfully*.  Also similarly to `then`, it calls the given function in a separate
-    /// `Sequence::pump` work unit.
+    /// `Sequence::step` work unit.
     fn and_then<F, R>(self, f: F) -> AndThen<'gc, Self, F, R>
     where
         F: 'static + FnOnce(MutationContext<'gc, '_>, LuaContext<'gc>, Self::Item) -> R,

@@ -5,7 +5,7 @@ use crate::sequence::Sequence;
 
 use super::into_sequence::IntoSequence;
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum AndThen<'gc, S, F, R>
@@ -38,13 +38,13 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<R::Item, R::Error>> {
         match self {
-            AndThen::First(s1, f) => match s1.pump(mc, lc) {
+            AndThen::First(s1, f) => match s1.step(mc, lc) {
                 Some(Ok(res)) => {
                     *self = AndThen::Second(f.take().unwrap().0(mc, lc, res).into_sequence());
                     None
@@ -52,12 +52,12 @@ where
                 Some(Err(err)) => Some(Err(err)),
                 None => None,
             },
-            AndThen::Second(s2) => s2.pump(mc, lc),
+            AndThen::Second(s2) => s2.step(mc, lc),
         }
     }
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub enum AndThenWith<'gc, S, C, F, R>
@@ -93,13 +93,13 @@ where
     type Item = R::Item;
     type Error = R::Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<R::Item, R::Error>> {
         match self {
-            AndThenWith::First(s1, f) => match s1.pump(mc, lc) {
+            AndThenWith::First(s1, f) => match s1.step(mc, lc) {
                 Some(Ok(res)) => {
                     let (c, StaticCollect(f)) = f.take().unwrap();
                     *self = AndThenWith::Second(f(mc, lc, c, res).into_sequence());
@@ -108,7 +108,7 @@ where
                 Some(Err(err)) => Some(Err(err)),
                 None => None,
             },
-            AndThenWith::Second(s2) => s2.pump(mc, lc),
+            AndThenWith::Second(s2) => s2.step(mc, lc),
         }
     }
 }

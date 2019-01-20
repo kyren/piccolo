@@ -32,8 +32,8 @@ pub trait Sequence<'gc>: Collect {
     type Item;
 
     /// Perform a single unit of work, returning `Some` on completion, whether succsessful or not.
-    /// Calling `pump` again after completion is an API violation and may panic.
-    fn pump(
+    /// Calling `step` again after completion is an API violation and may panic.
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
@@ -44,11 +44,11 @@ impl<'gc, T: ?Sized + Sequence<'gc>> Sequence<'gc> for Box<T> {
     type Error = T::Error;
     type Item = T::Item;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<Self::Item, Self::Error>> {
-        T::pump(&mut (*self), mc, lc)
+        T::step(&mut (*self), mc, lc)
     }
 }

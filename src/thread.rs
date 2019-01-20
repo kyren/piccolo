@@ -76,12 +76,12 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     type Item = Vec<Value<'gc>>;
     type Error = Error;
 
-    fn pump(
+    fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         _: LuaContext<'gc>,
     ) -> Option<Result<Vec<Value<'gc>>, Error>> {
-        let thread = self.thread.expect("cannot pump a finished ThreadSequence");
+        let thread = self.thread.expect("cannot step a finished ThreadSequence");
         let mut state = thread.0.write(mc);
         if let Some(res) = state.run(mc, thread, self.granularity) {
             self.thread = None;

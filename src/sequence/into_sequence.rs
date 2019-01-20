@@ -32,7 +32,7 @@ impl<'gc, S: Sequence<'gc>> IntoSequence<'gc> for S {
     }
 }
 
-#[must_use = "sequences do nothing unless pumped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct SequenceResult<I, E>(Option<Result<I, E>>);
@@ -41,7 +41,7 @@ impl<'gc, I: Collect, E: Collect> Sequence<'gc> for SequenceResult<I, E> {
     type Item = I;
     type Error = E;
 
-    fn pump(&mut self, _: MutationContext<'gc, '_>, _: LuaContext<'gc>) -> Option<Result<I, E>> {
-        Some(self.0.take().expect("cannot pump a finished sequence"))
+    fn step(&mut self, _: MutationContext<'gc, '_>, _: LuaContext<'gc>) -> Option<Result<I, E>> {
+        Some(self.0.take().expect("cannot step a finished sequence"))
     }
 }
