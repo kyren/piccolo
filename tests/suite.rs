@@ -3,9 +3,9 @@ use std::io::{stdout, Write};
 
 use luster::compiler::compile;
 use luster::function::Closure;
-use luster::gen_sequence;
 use luster::io::buffered_read;
 use luster::lua::Lua;
+use luster::lua_sequence;
 use luster::parser::parse_chunk;
 use luster::sequence::{sequence_fn, SequenceExt};
 use luster::value::Value;
@@ -24,26 +24,28 @@ fn test_dir(dir: &str, run_code: bool) {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
                 if run_code {
                     let mut lua = Lua::new();
-                    let r = lua.sequence(gen_sequence!(sequence_fn(move |mc, lc| Ok(
-                        Closure::new(
+                    let r = lua_sequence!(
+                        lua,
+                        sequence_fn(move |mc, lc| Ok(Closure::new(
                             mc,
                             compile(mc, lc.interned_strings, file)?,
                             Some(lc.globals),
-                        )?
-                    ))
-                    .and_then(move |mc, lc, closure| lc.main_thread.call_function(
-                        mc,
-                        closure,
-                        &[],
-                        64,
-                    ))
-                    .map(|r| match &r[..] {
-                        &[Value::Boolean(true)] => false,
-                        v => {
-                            let _ = writeln!(stdout(), "error: unexpected return values: {:?}", v);
-                            true
-                        }
-                    })));
+                        )?))
+                        .and_then(move |mc, lc, closure| lc.main_thread.call_function(
+                            mc,
+                            closure,
+                            &[],
+                            64,
+                        ))
+                        .map(|r| match &r[..] {
+                            &[Value::Boolean(true)] => false,
+                            v => {
+                                let _ =
+                                    writeln!(stdout(), "error: unexpected return values: {:?}", v);
+                                true
+                            }
+                        })
+                    );
 
                     match r {
                         Err(err) => {

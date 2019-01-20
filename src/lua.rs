@@ -33,20 +33,7 @@ impl Lua {
         Lua { arena }
     }
 
-    /// We would like to accept a type like:
-    ///
-    /// `S: for<'gc> Sequence<'gc> + 'gc`
-    ///
-    /// here, but this is problematic.  There is no way to specify such a bound in Rust, so we
-    /// instead specify a bound like:
-    ///
-    /// `F: for<'gc> Fn(PhantomData<&'gc ()>) -> Box<Sequence<'gc> + 'gc>`
-    ///
-    /// The `PhantomData` is required because it is required that the lifetime `'gc` be used in the
-    /// Fn trait type parameters (arguments).
-    ///
-    /// This is somewhat unweildy, so there is a `gen_sequence` macro to construct this type out of
-    /// an expression yielding a `Sequence`.
+    #[doc(hidden)]
     pub fn sequence<F, I, E>(&mut self, f: F) -> Result<I, E>
     where
         I: 'static,
@@ -63,20 +50,20 @@ impl Lua {
 
         loop {
             let r = self.arena.mutate(move |mc, lua_root| {
-                let r = lua_root
+                lua_root
                     .current_sequence
                     .write(mc)
                     .as_mut()
                     .unwrap()
-                    .pump(mc, lua_root.context);
-                if r.is_some() {
-                    *lua_root.current_sequence.write(mc) = None;
-                }
-                r
+                    .pump(mc, lua_root.context)
             });
             self.arena.collect_debt();
 
             if let Some(r) = r {
+                self.arena.mutate(|mc, lua_root| {
+                    *lua_root.current_sequence.write(mc) = None;
+                });
+
                 match r {
                     Ok(r) => {
                         return Ok(*Box::<Any + 'static>::downcast(r).unwrap());
@@ -102,9 +89,17 @@ struct LuaRoot<'gc> {
 
 make_arena!(LuaArena, LuaRoot);
 
+/// Runs a sequence of actions inside the given Lua context and return the result.
+///
+/// The first argument must be a `Lua` instance, and the second argument must be a function of type:
+///
+/// `S: for<'gc> Sequence<'gc> + 'gc`
+///
+/// This type is unweildy to express in Rust, so for ergonomics reasons this function must be a
+/// macro.
 #[macro_export]
-macro_rules! gen_sequence {
-    ($f:expr) => {
-        |_| Box::new($f)
+macro_rules! lua_sequence {
+    ($lua:expr, $seq:expr) => {
+        $lua.sequence(|_| Box::new($seq))
     };
 }
