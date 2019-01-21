@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
+use crate::callback::CallbackSequence;
 use crate::error::Error;
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::lua::LuaContext;
@@ -19,7 +20,7 @@ pub struct Thread<'gc>(GcCell<'gc, ThreadState<'gc>>);
 
 impl<'gc> PartialEq for Thread<'gc> {
     fn eq(&self, other: &Thread<'gc>) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
+        GcCell::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -60,15 +61,17 @@ impl<'gc> Thread<'gc> {
 
         ThreadSequence {
             thread: Some(self),
+            callback: None,
             granularity,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[derive(Collect)]
+#[collect(empty_drop)]
 pub struct ThreadSequence<'gc> {
     thread: Option<Thread<'gc>>,
+    callback: Option<CallbackSequence<'gc>>,
     granularity: u32,
 }
 
@@ -79,15 +82,60 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
-        _: LuaContext<'gc>,
+        lc: LuaContext<'gc>,
     ) -> Option<Result<Vec<Value<'gc>>, Error>> {
         let thread = self.thread.expect("cannot step a finished ThreadSequence");
         let mut state = thread.0.write(mc);
-        if let Some(res) = state.run(mc, thread, self.granularity) {
-            self.thread = None;
-            Some(Ok(res))
-        } else {
+
+        if let Some(callback) = self.callback.as_mut() {
+            match callback.step(mc, lc) {
+                None => {}
+                Some(res) => {
+                    self.callback = None;
+                    let res = res.expect("callback errors not handled yet");
+
+                    let top_frame = state.frames.last().cloned().expect("no callback frame");
+
+                    let count = res.len();
+                    let returning = top_frame
+                        .returns
+                        .to_constant()
+                        .map(|c| c as usize)
+                        .unwrap_or(res.len());
+
+                    state.stack.truncate(top_frame.bottom);
+                    state.stack.resize(top_frame.bottom + returning, Value::Nil);
+
+                    for i in 0..returning.min(count) {
+                        state.stack[top_frame.bottom + i] = res[i];
+                    }
+
+                    state.pc = top_frame.restore_pc;
+                    state.frames.pop();
+
+                    if !top_frame.returns.is_variable() {
+                        let current_frame_top = state
+                            .frames
+                            .last()
+                            .expect("top frame is not an entry frame")
+                            .top;
+                        state.stack.resize(current_frame_top, Value::Nil);
+                    }
+                }
+            }
             None
+        } else {
+            match state.run(mc, thread, self.granularity) {
+                ThreadReturn::Unfinished => None,
+                ThreadReturn::Finished(res) => {
+                    self.thread = None;
+                    Some(Ok(res))
+                }
+                ThreadReturn::Callback(callback) => {
+                    self.callback = Some(callback);
+                    None
+                }
+            }
         }
     }
 }
@@ -112,6 +160,12 @@ struct ThreadState<'gc> {
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
 }
 
+enum ThreadReturn<'gc> {
+    Unfinished,
+    Finished(Vec<Value<'gc>>),
+    Callback(CallbackSequence<'gc>),
+}
+
 impl<'gc> ThreadState<'gc> {
     fn new() -> ThreadState<'gc> {
         ThreadState {
@@ -127,7 +181,7 @@ impl<'gc> ThreadState<'gc> {
         mc: MutationContext<'gc, '_>,
         self_thread: Thread<'gc>,
         mut instructions: u32,
-    ) -> Option<Vec<Value<'gc>>> {
+    ) -> ThreadReturn<'gc> {
         'function_start: loop {
             let current_frame = *self.frames.last().expect("no current ThreadState frame");
 
@@ -297,14 +351,17 @@ impl<'gc> ThreadState<'gc> {
                         args,
                         returns,
                     } => {
-                        self.call_function(
+                        if let Some(callback) = self.call_function(
                             current_frame.base + func.0 as usize,
                             args,
                             returns,
                             self.pc,
                             false,
-                        );
-                        continue 'function_start;
+                        ) {
+                            return ThreadReturn::Callback(callback);
+                        } else {
+                            continue 'function_start;
+                        }
                     }
 
                     OpCode::TailCall { func, args } => {
@@ -324,14 +381,17 @@ impl<'gc> ThreadState<'gc> {
                         self.stack.truncate(current_frame.bottom + 1 + arg_len);
                         self.frames.pop();
 
-                        self.call_function(
+                        if let Some(callback) = self.call_function(
                             current_frame.bottom,
                             args,
                             current_frame.returns,
                             current_frame.restore_pc,
                             current_frame.call_boundary,
-                        );
-                        continue 'function_start;
+                        ) {
+                            return ThreadReturn::Callback(callback);
+                        } else {
+                            continue 'function_start;
+                        }
                     }
 
                     OpCode::Return { start, count } => {
@@ -360,7 +420,7 @@ impl<'gc> ThreadState<'gc> {
                                 self.stack.clear();
                             }
 
-                            return Some(ret_vals);
+                            return ThreadReturn::Finished(ret_vals);
                         } else {
                             for i in 0..returning.min(count) {
                                 self.stack[current_frame.bottom + i] = self.stack[start + i]
@@ -387,7 +447,7 @@ impl<'gc> ThreadState<'gc> {
                                 self.stack.truncate(current_frame.bottom + returning);
                             } else {
                                 let current_frame =
-                                    self.frames.last().expect("top frame is not call boundary");
+                                    self.frames.last().expect("top frame is not an entry frame");
                                 self.stack.resize(current_frame.top, Value::Nil);
                             }
 
@@ -520,14 +580,17 @@ impl<'gc> ThreadState<'gc> {
                         for i in 0..3 {
                             self.stack[base + 3 + i] = self.stack[base + i];
                         }
-                        self.call_function(
+                        if let Some(callback) = self.call_function(
                             base + 3,
                             VarCount::constant(2),
                             VarCount::constant(var_count),
                             self.pc,
                             false,
-                        );
-                        continue 'function_start;
+                        ) {
+                            return ThreadReturn::Callback(callback);
+                        } else {
+                            continue 'function_start;
+                        }
                     }
 
                     OpCode::GenericForLoop { base, jump } => {
@@ -744,7 +807,7 @@ impl<'gc> ThreadState<'gc> {
                 }
 
                 if instructions == 0 {
-                    return None;
+                    return ThreadReturn::Unfinished;
                 } else {
                     instructions -= 1
                 }
@@ -754,53 +817,68 @@ impl<'gc> ThreadState<'gc> {
 
     fn call_function(
         &mut self,
-        closure_index: usize,
+        function_index: usize,
         args: VarCount,
         returns: VarCount,
         restore_pc: usize,
         call_boundary: bool,
-    ) {
-        let closure = match self.stack[closure_index] {
-            Value::Closure(c) => c,
-            _ => panic!("not a closure"),
-        };
-
+    ) -> Option<CallbackSequence<'gc>> {
         let arg_count = if let Some(constant) = args.to_constant() {
             let constant = constant as usize;
-            assert!(self.stack.len() - closure_index - 1 >= constant);
-            self.stack.truncate(closure_index + constant + 1);
+            assert!(self.stack.len() - function_index - 1 >= constant);
+            self.stack.truncate(function_index + constant + 1);
             constant
         } else {
-            self.stack.len() - closure_index - 1
+            self.stack.len() - function_index - 1
         };
 
-        let fixed_params = closure.0.proto.fixed_params as usize;
+        match self.stack[function_index] {
+            Value::Closure(closure) => {
+                let fixed_params = closure.0.proto.fixed_params as usize;
 
-        let base = if arg_count <= fixed_params {
-            if arg_count < fixed_params {
-                let len = self.stack.len();
-                self.stack
-                    .resize(len + fixed_params - arg_count, Value::Nil);
+                let base = if arg_count <= fixed_params {
+                    if arg_count < fixed_params {
+                        let len = self.stack.len();
+                        self.stack
+                            .resize(len + fixed_params - arg_count, Value::Nil);
+                    }
+                    function_index + 1
+                } else {
+                    self.stack[function_index + 1..].rotate_left(fixed_params);
+                    function_index + 1 + (arg_count - fixed_params)
+                };
+
+                let top = base + closure.0.proto.stack_size as usize;
+                self.stack.resize(top, Value::Nil);
+
+                self.frames.push(Frame {
+                    bottom: function_index,
+                    base,
+                    top,
+                    returns,
+                    restore_pc,
+                    call_boundary,
+                });
+
+                self.pc = 0;
+                None
             }
-            closure_index + 1
-        } else {
-            self.stack[closure_index + 1..].rotate_left(fixed_params);
-            closure_index + 1 + (arg_count - fixed_params)
-        };
-
-        let top = base + closure.0.proto.stack_size as usize;
-        self.stack.resize(top, Value::Nil);
-
-        self.frames.push(Frame {
-            bottom: closure_index,
-            base,
-            top,
-            returns,
-            restore_pc,
-            call_boundary,
-        });
-
-        self.pc = 0;
+            Value::Callback(callback) => {
+                self.frames.push(Frame {
+                    bottom: function_index,
+                    base: function_index,
+                    top: function_index,
+                    returns,
+                    restore_pc,
+                    call_boundary,
+                });
+                let cb =
+                    callback.call(&self.stack[function_index + 1..function_index + 1 + arg_count]);
+                self.stack.resize(function_index + 1, Value::Nil);
+                Some(cb)
+            }
+            _ => panic!("not a closure or callback"),
+        }
     }
 
     fn get_upvalue(&self, self_thread: Thread<'gc>, upvalue: UpValue<'gc>) -> Value<'gc> {

@@ -30,7 +30,7 @@ impl fmt::Display for InvalidTableKey {
 
 impl<'gc> PartialEq for Table<'gc> {
     fn eq(&self, other: &Table<'gc>) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
+        GcCell::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -284,6 +284,10 @@ impl<'gc> Hash for TableKey<'gc> {
             }
             Value::Closure(c) => {
                 Hash::hash(&6, state);
+                c.hash(state);
+            }
+            Value::Callback(c) => {
+                Hash::hash(&7, state);
                 c.hash(state);
             }
         }

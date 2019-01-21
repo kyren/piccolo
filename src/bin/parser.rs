@@ -1,6 +1,3 @@
-extern crate gc_arena;
-extern crate luster;
-
 use std::env;
 use std::error::Error;
 use std::fs::File;

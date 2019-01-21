@@ -44,6 +44,10 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         ))
     }
 
+    pub fn ptr_eq(this: &GcCell<'gc, T>, other: &GcCell<'gc, T>) -> bool {
+        this.as_ptr() == other.as_ptr()
+    }
+
     pub fn as_ptr(self) -> *mut T {
         self.0.cell.as_ptr()
     }

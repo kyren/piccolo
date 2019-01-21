@@ -65,4 +65,8 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
             mc.write_barrier(gc.ptr);
         }
     }
+
+    pub fn ptr_eq(this: &Gc<'gc, T>, other: &Gc<'gc, T>) -> bool {
+        unsafe { this.ptr.as_ref().value.get() == other.ptr.as_ref().value.get() }
+    }
 }

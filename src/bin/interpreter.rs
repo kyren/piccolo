@@ -1,5 +1,3 @@
-extern crate luster;
-
 use std::env;
 use std::error::Error;
 use std::fs::File;

@@ -67,6 +67,11 @@ impl<'gc> String<'gc> {
                         bad_type: "closure",
                     });
                 }
+                Value::Callback(_) => {
+                    return Err(StringError::Concat {
+                        bad_type: "callback",
+                    });
+                }
             }
         }
         Ok(String::Long(Gc::allocate(mc, bytes.into_boxed_slice())))

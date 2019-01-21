@@ -2,6 +2,7 @@ use std::i64;
 
 use gc_arena::Collect;
 
+use crate::callback::Callback;
 use crate::function::Closure;
 use crate::string::String;
 use crate::table::Table;
@@ -16,6 +17,7 @@ pub enum Value<'gc> {
     String(String<'gc>),
     Table(Table<'gc>),
     Closure(Closure<'gc>),
+    Callback(Callback<'gc>),
 }
 
 impl<'gc> PartialEq for Value<'gc> {
@@ -43,6 +45,9 @@ impl<'gc> PartialEq for Value<'gc> {
 
             (Value::Closure(a), Value::Closure(b)) => a == b,
             (Value::Closure(_), _) => false,
+
+            (Value::Callback(a), Value::Callback(b)) => a == b,
+            (Value::Callback(_), _) => false,
         }
     }
 }
