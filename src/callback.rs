@@ -60,9 +60,17 @@ impl<'gc> Hash for Callback<'gc> {
     }
 }
 
+/// Constructs a `CallbackFn` object.
+///
+/// Expects as a parameter a function of the type:
+///
+/// `F: for<'gc> Fn(&[Value<'gc>]) -> impl IntoContinuation<'gc, Vec<Value<'gc>>, Error> + 'gc
+///
+/// This type is difficult to express in Rust, so for ergonomics reasons this fucntion must be a
+/// macro.
 #[macro_export]
 macro_rules! lua_callback {
-    ($mc:expr, $f:expr) => {
+    ($f:expr) => {
         $crate::callback::CallbackFn::new(|args| {
             Box::new($crate::sequence::IntoContinuation::into_continuation($f(
                 args,

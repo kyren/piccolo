@@ -13,7 +13,7 @@ fn callback() -> Result<(), Box<Error>> {
     lua_sequence!(
         lua,
         sequence_fn(|mc, lc| -> Result<(), Error> {
-            let callback = lua_callback!(mc, |args: &[_]| {
+            let callback = lua_callback!(|args: &[_]| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(42));
                 Ok(ContinuationResult::Finish(ret))
