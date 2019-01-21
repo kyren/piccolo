@@ -6,6 +6,9 @@ use crate::{LuaContext, Sequence};
 pub type Continuation<'gc, I, E> =
     Box<Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc>;
 
+// Empty drop prevents pattern matching, safe as it does not implement Drop at all.
+#[derive(Collect)]
+#[collect(unsafe_drop)]
 pub enum ContinuationResult<'gc, I, E> {
     Finish(I),
     Continue(Continuation<'gc, I, E>),
@@ -51,66 +54,5 @@ impl<'gc, I, E> Sequence<'gc> for RunContinuation<'gc, I, E> {
                 None
             }
         }
-    }
-}
-
-/// Similar to `IntoSequence`, but specifically produces `Continuation`.  This avoids an extra
-/// required `Sequence::step` call, and removes the requirement that `ContinuationResult` implement
-/// `Collect` (which is somewhat annoying to do).
-pub trait IntoContinuation<'gc> {
-    type Item;
-    type Error;
-
-    fn into_continuation(self) -> Continuation<'gc, Self::Item, Self::Error>;
-}
-
-impl<'gc, I: 'gc + Collect, E: 'gc + Collect> IntoContinuation<'gc>
-    for Result<ContinuationResult<'gc, I, E>, E>
-{
-    type Item = I;
-    type Error = E;
-
-    fn into_continuation(self) -> Continuation<'gc, Self::Item, Self::Error> {
-        match self {
-            Ok(ContinuationResult::Continue(cont)) => cont,
-            Ok(ContinuationResult::Finish(res)) => {
-                Box::new(ContinuationImmediateResult(Some(Ok(res))))
-            }
-            Err(err) => Box::new(ContinuationImmediateResult(Some(Err(err)))),
-        }
-    }
-}
-
-impl<'gc, I, E, S> IntoContinuation<'gc> for S
-where
-    S: Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc,
-{
-    type Item = I;
-    type Error = E;
-
-    fn into_continuation(self) -> Continuation<'gc, I, E> {
-        Box::new(self)
-    }
-}
-
-#[derive(Debug, Collect)]
-#[collect(empty_drop)]
-pub struct ContinuationImmediateResult<I, E>(Option<Result<I, E>>);
-
-impl<'gc, I: Collect, E: Collect> Sequence<'gc> for ContinuationImmediateResult<I, E> {
-    type Item = ContinuationResult<'gc, I, E>;
-    type Error = E;
-
-    fn step(
-        &mut self,
-        _: MutationContext<'gc, '_>,
-        _: LuaContext<'gc>,
-    ) -> Option<Result<ContinuationResult<'gc, I, E>, E>> {
-        Some(
-            match self.0.take().expect("cannot step a finished sequence") {
-                Ok(res) => Ok(ContinuationResult::Finish(res)),
-                Err(err) => Err(err),
-            },
-        )
     }
 }

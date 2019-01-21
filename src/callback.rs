@@ -69,8 +69,6 @@ impl<'gc> Hash for Callback<'gc> {
 #[macro_export]
 macro_rules! lua_callback {
     ($f:expr) => {
-        $crate::CallbackFn::new(|args| {
-            Box::new($crate::IntoContinuation::into_continuation($f(args)))
-        })
+        $crate::CallbackFn::new(|args| Box::new($crate::IntoSequence::into_sequence($f(args))))
     };
 }
