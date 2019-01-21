@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::callback::CallbackSequence;
+use crate::callback::CallbackContinuation;
 use crate::error::Error;
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::lua::LuaContext;
 use crate::opcode::OpCode;
-use crate::sequence::Sequence;
+use crate::sequence::{ContinuationSequence, Sequence};
 use crate::string::String;
 use crate::table::Table;
 use crate::types::VarCount;
@@ -71,7 +71,7 @@ impl<'gc> Thread<'gc> {
 #[collect(empty_drop)]
 pub struct ThreadSequence<'gc> {
     thread: Option<Thread<'gc>>,
-    callback: Option<CallbackSequence<'gc>>,
+    callback: Option<ContinuationSequence<'gc, Vec<Value<'gc>>, Error>>,
     granularity: u32,
 }
 
@@ -132,7 +132,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                     Some(Ok(res))
                 }
                 ThreadReturn::Callback(callback) => {
-                    self.callback = Some(callback);
+                    self.callback = Some(ContinuationSequence::new(callback));
                     None
                 }
             }
@@ -163,7 +163,7 @@ struct ThreadState<'gc> {
 enum ThreadReturn<'gc> {
     Unfinished,
     Finished(Vec<Value<'gc>>),
-    Callback(CallbackSequence<'gc>),
+    Callback(CallbackContinuation<'gc>),
 }
 
 impl<'gc> ThreadState<'gc> {
@@ -822,7 +822,7 @@ impl<'gc> ThreadState<'gc> {
         returns: VarCount,
         restore_pc: usize,
         call_boundary: bool,
-    ) -> Option<CallbackSequence<'gc>> {
+    ) -> Option<CallbackContinuation<'gc>> {
         let arg_count = if let Some(constant) = args.to_constant() {
             let constant = constant as usize;
             assert!(self.stack.len() - function_index - 1 >= constant);

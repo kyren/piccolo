@@ -4,19 +4,20 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{Collect, Gc, MutationContext};
 
 use crate::error::Error;
-use crate::sequence::Sequence;
+use crate::sequence::Continuation;
 use crate::value::Value;
 
-pub type CallbackSequence<'gc> = Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error> + 'gc>;
+pub type CallbackContinuation<'gc> = Continuation<'gc, Vec<Value<'gc>>, Error>;
 
 #[derive(Collect)]
 #[collect(require_static)]
-pub struct CallbackFn(pub Box<for<'gc> Fn(&[Value<'gc>]) -> CallbackSequence<'gc> + 'static>);
+pub struct CallbackFn(pub Box<for<'gc> Fn(&[Value<'gc>]) -> CallbackContinuation<'gc> + 'static>);
 
 impl CallbackFn {
-    pub fn new<F: 'static + for<'gc> Fn(&[Value<'gc>]) -> CallbackSequence<'gc>>(
-        f: F,
-    ) -> CallbackFn {
+    pub fn new<F>(f: F) -> CallbackFn
+    where
+        F: 'static + for<'gc> Fn(&[Value<'gc>]) -> CallbackContinuation<'gc> + 'static,
+    {
         CallbackFn(Box::new(f))
     }
 }
@@ -38,7 +39,7 @@ impl<'gc> Callback<'gc> {
         Callback(Gc::allocate(mc, callback_fn))
     }
 
-    pub fn call(&self, args: &[Value<'gc>]) -> CallbackSequence<'gc> {
+    pub fn call(&self, args: &[Value<'gc>]) -> CallbackContinuation<'gc> {
         (*(self.0).0)(args)
     }
 }
@@ -61,7 +62,9 @@ impl<'gc> Hash for Callback<'gc> {
 macro_rules! lua_callback {
     ($mc:expr, $f:expr) => {
         $crate::callback::CallbackFn::new(|args| {
-            Box::new($crate::sequence::IntoSequence::into_sequence($f(args)))
+            Box::new($crate::sequence::IntoContinuation::into_continuation($f(
+                args,
+            )))
         })
     };
 }
