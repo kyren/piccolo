@@ -2,11 +2,11 @@ use gc_arena::{Collect, MutationContext};
 
 use crate::{LuaContext, Sequence};
 
-/// A `Sequence` that can optionally result in another `Sequence` to execute.
+/// A `Sequence` that can optionally result in another compatible `Sequence` to execute.
 pub type Continuation<'gc, I, E> =
     Box<Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc>;
 
-// Empty drop prevents pattern matching, safe as it does not implement Drop at all.
+// Empty drop prevents moves during pattern matching, safe as it does not implement Drop at all.
 #[derive(Collect)]
 #[collect(unsafe_drop)]
 pub enum ContinuationResult<'gc, I, E> {
@@ -14,9 +14,9 @@ pub enum ContinuationResult<'gc, I, E> {
     Continue(Continuation<'gc, I, E>),
 }
 
-/// Wraps a `Continuation` so that it continues executing when resulting in a
+/// Wraps a `Continuation` so that it continues executing when it results in a
 /// `ContinuationResult::Continue`.  Further continuations are executed until one produces a
-/// `ContinuationResult::Finish` value instead.
+/// `ContinuationResult::Finish` value.
 #[derive(Collect)]
 #[collect(empty_drop)]
 pub struct RunContinuation<'gc, I, E>(Option<Continuation<'gc, I, E>>);

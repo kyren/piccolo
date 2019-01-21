@@ -62,7 +62,12 @@ impl<'gc> Hash for Callback<'gc> {
 ///
 /// Expects as a parameter a function of the type:
 ///
-/// `F: for<'gc> Fn(&[Value<'gc>]) -> impl IntoContinuation<'gc, Vec<Value<'gc>>, Error> + 'gc
+/// `F: for<'gc> Fn(&[Value<'gc>]) ->
+///     impl IntoSequence<
+///         'gc,
+///         Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>,
+///         Error = Error,
+///     > + 'gc
 ///
 /// This type is difficult to express in Rust, so for ergonomics reasons this fucntion must be a
 /// macro.
