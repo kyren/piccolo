@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    Closure, ClosureState, Continuation, ContinuationResult, ContinuationSequence, Error,
-    LuaContext, OpCode, Sequence, String, Table, UpValue, UpValueDescriptor, UpValueState, Value,
+    Closure, ClosureState, Continuation, ContinuationResult, Error, LuaContext, OpCode,
+    RunContinuation, Sequence, String, Table, UpValue, UpValueDescriptor, UpValueState, Value,
     VarCount,
 };
 
@@ -38,7 +38,7 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         args: &[Value<'gc>],
         granularity: u32,
-    ) -> ContinuationSequence<'gc, Vec<Value<'gc>>, Error> {
+    ) -> RunContinuation<'gc, Vec<Value<'gc>>, Error> {
         assert_ne!(granularity, 0, "granularity cannot be zero");
 
         let mut state = self.0.write(mc);
@@ -54,7 +54,7 @@ impl<'gc> Thread<'gc> {
             true,
         );
 
-        ContinuationSequence::from_sequence(ThreadSequence {
+        RunContinuation::from_sequence(ThreadSequence {
             thread: Some(self),
             callback: None,
             granularity,
@@ -67,7 +67,7 @@ impl<'gc> Thread<'gc> {
 pub struct ThreadSequence<'gc> {
     thread: Option<Thread<'gc>>,
     // If this is set, then this thread is currently waiting on the results of this callback.
-    callback: Option<ContinuationSequence<'gc, Vec<Value<'gc>>, Error>>,
+    callback: Option<RunContinuation<'gc, Vec<Value<'gc>>, Error>>,
     granularity: u32,
 }
 
@@ -128,7 +128,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                     Some(Ok(ContinuationResult::Finish(res)))
                 }
                 ThreadReturn::Callback(callback) => {
-                    self.callback = Some(ContinuationSequence::new(callback));
+                    self.callback = Some(RunContinuation::new(callback));
                     None
                 }
                 ThreadReturn::TailCallback(callback) => {
