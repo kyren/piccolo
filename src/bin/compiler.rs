@@ -5,17 +5,12 @@ use std::env;
 use std::error::Error as StdError;
 use std::fs::File;
 
-use luster::compiler::compile;
-use luster::error::Error;
-use luster::io::buffered_read;
-use luster::lua::Lua;
-use luster::lua_sequence;
-use luster::sequence::sequence_fn;
+use luster::{compile, io, lua_sequence, sequence_fn, Error, Lua};
 
 fn main() -> Result<(), Box<StdError>> {
     let mut args = env::args();
     args.next();
-    let file = buffered_read(File::open(
+    let file = io::buffered_read(File::open(
         args.next().ok_or_else(|| "no file argument given")?,
     )?)?;
 

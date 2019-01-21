@@ -1,9 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::lua::LuaContext;
-use crate::sequence::Sequence;
-
-use super::into_sequence::IntoSequence;
+use crate::{IntoSequence, LuaContext, Sequence};
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]

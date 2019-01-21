@@ -1,8 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::lua::LuaContext;
-
-use super::sequence::Sequence;
+use crate::{LuaContext, Sequence};
 
 pub type Continuation<'gc, I, E> =
     Box<Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc>;

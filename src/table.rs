@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 use gc_arena::{Collect, GcCell, MutationContext};
 
-use crate::value::Value;
+use crate::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

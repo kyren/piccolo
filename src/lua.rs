@@ -3,10 +3,7 @@ use std::marker::PhantomData;
 
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
-use crate::sequence::{Sequence, SequenceExt};
-use crate::string::InternedStringSet;
-use crate::table::Table;
-use crate::thread::Thread;
+use crate::{InternedStringSet, Sequence, SequenceExt, Table, Thread};
 
 #[derive(Collect, Clone, Copy)]
 #[collect(require_copy)]

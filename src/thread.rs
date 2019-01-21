@@ -3,15 +3,11 @@ use std::collections::BTreeMap;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::error::Error;
-use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
-use crate::lua::LuaContext;
-use crate::opcode::OpCode;
-use crate::sequence::{Continuation, ContinuationResult, ContinuationSequence, Sequence};
-use crate::string::String;
-use crate::table::Table;
-use crate::types::VarCount;
-use crate::value::Value;
+use crate::{
+    Closure, ClosureState, Continuation, ContinuationResult, ContinuationSequence, Error,
+    LuaContext, OpCode, Sequence, String, Table, UpValue, UpValueDescriptor, UpValueState, Value,
+    VarCount,
+};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

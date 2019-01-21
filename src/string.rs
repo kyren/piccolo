@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::value::Value;
+use crate::Value;
 
 #[derive(Debug, Collect)]
 #[collect(require_static)]

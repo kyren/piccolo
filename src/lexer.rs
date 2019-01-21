@@ -748,12 +748,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Numeral {
-    Integer(i64),
-    Float(f64),
-}
-
 pub fn read_integer(s: &[u8]) -> Option<i64> {
     let (is_neg, s) = read_neg(s);
 

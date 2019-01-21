@@ -5,9 +5,6 @@ use num_traits::cast;
 
 use gc_arena::{Collect, Gc, MutationContext};
 
-use crate::constant::Constant;
-use crate::function::{FunctionProto, UpValueDescriptor};
-use crate::opcode::OpCode;
 use crate::parser::{
     AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
     ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
@@ -16,10 +13,9 @@ use crate::parser::{
     SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
     WhileStatement,
 };
-use crate::string::InternedStringSet;
-use crate::string::String;
-use crate::types::{
-    ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
+use crate::{
+    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, InternedStringSet, OpCode, Opt254,
+    PrototypeIndex, RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
 };
 
 use super::operators::{

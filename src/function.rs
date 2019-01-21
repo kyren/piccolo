@@ -3,12 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::constant::Constant;
-use crate::opcode::OpCode;
-use crate::table::Table;
-use crate::thread::Thread;
-use crate::types::{RegisterIndex, UpValueIndex};
-use crate::value::Value;
+use crate::{Constant, OpCode, RegisterIndex, Table, Thread, UpValueIndex, Value};
 
 #[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
 #[collect(require_static)]

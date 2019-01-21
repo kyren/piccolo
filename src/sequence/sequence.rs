@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::lua::LuaContext;
+use crate::LuaContext;
 
 /// A trait that describes a sequence of VM actions to perform with an eventual result.
 ///

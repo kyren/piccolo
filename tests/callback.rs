@@ -1,11 +1,7 @@
-use luster::callback::Callback;
-use luster::compiler::compile;
-use luster::error::Error;
-use luster::function::Closure;
-use luster::lua::Lua;
-use luster::sequence::{sequence_fn, ContinuationResult, SequenceExt};
-use luster::value::Value;
-use luster::{lua_callback, lua_sequence};
+use luster::{
+    compile, lua_callback, lua_sequence, sequence_fn, Callback, Closure, ContinuationResult, Error,
+    Lua, SequenceExt, Value,
+};
 
 #[test]
 fn callback() -> Result<(), Box<Error>> {

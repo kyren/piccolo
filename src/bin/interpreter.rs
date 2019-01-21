@@ -2,17 +2,12 @@ use std::env;
 use std::error::Error;
 use std::fs::File;
 
-use luster::compiler::compile;
-use luster::function::Closure;
-use luster::io::buffered_read;
-use luster::lua::Lua;
-use luster::lua_sequence;
-use luster::sequence::{sequence_fn, SequenceExt};
+use luster::{compile, io, lua_sequence, sequence_fn, Closure, Lua, SequenceExt};
 
 fn main() -> Result<(), Box<Error>> {
     let mut args = env::args();
     args.next();
-    let file = buffered_read(File::open(
+    let file = io::buffered_read(File::open(
         args.next().ok_or_else(|| "no file argument given")?,
     )?)?;
 

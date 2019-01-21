@@ -3,8 +3,7 @@ use std::mem;
 
 use gc_arena::Collect;
 
-use crate::string::String;
-use crate::value::Value;
+use crate::{String, Value};
 
 /// Immutable value which implements Hash and Eq, where values are equal only when they are bit for
 /// bit identical.

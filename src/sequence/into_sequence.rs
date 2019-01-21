@@ -1,8 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::lua::LuaContext;
-
-use super::Sequence;
+use crate::{LuaContext, Sequence};
 
 pub trait IntoSequence<'gc> {
     type Item;

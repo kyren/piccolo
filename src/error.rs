@@ -3,11 +3,7 @@ use std::fmt;
 
 use gc_arena::Collect;
 
-use crate::compiler::CompilerError;
-use crate::function::ClosureError;
-use crate::parser::ParserError;
-use crate::string::StringError;
-use crate::table::InvalidTableKey;
+use crate::{ClosureError, CompilerError, InvalidTableKey, ParserError, StringError};
 
 #[derive(Debug, Collect)]
 #[collect(require_static)]

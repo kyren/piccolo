@@ -1,6 +1,6 @@
 use std::f64;
 
-use luster::lexer::{Lexer, Token};
+use luster::{Lexer, Token};
 
 fn test_tokens(source: &str, tokens: &[Token<Box<[u8]>>]) {
     let mut lexer = Lexer::new(source.as_bytes(), |s| s.to_vec().into_boxed_slice());

@@ -2,10 +2,7 @@ use std::i64;
 
 use gc_arena::Collect;
 
-use crate::callback::Callback;
-use crate::function::Closure;
-use crate::string::String;
-use crate::table::Table;
+use crate::{Callback, Closure, String, Table};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]

@@ -1,8 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::lua::LuaContext;
-use crate::sequence::IntoSequence;
-use crate::sequence::Sequence;
+use crate::{IntoSequence, LuaContext, Sequence};
 
 pub fn sequence_fn<'gc, F, R>(f: F) -> SequenceFn<'gc, F, R>
 where

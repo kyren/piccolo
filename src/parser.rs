@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gc_arena::Collect;
 
-use crate::lexer::{Lexer, LexerError, Token};
+use crate::{Lexer, LexerError, Token};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk<S> {

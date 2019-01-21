@@ -1,10 +1,8 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::lua::LuaContext;
-use crate::sequence::Sequence;
+use crate::{IntoSequence, LuaContext, Sequence};
 
 use super::and_then::{AndThen, AndThenWith};
-use super::into_sequence::IntoSequence;
 use super::map::{Map, MapError};
 use super::then::{Then, ThenWith};
 

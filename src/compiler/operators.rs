@@ -1,7 +1,5 @@
-use crate::constant::Constant;
-use crate::opcode::OpCode;
 use crate::parser::{BinaryOperator, UnaryOperator};
-use crate::types::{ConstantIndex8, RegisterIndex};
+use crate::{Constant, ConstantIndex8, OpCode, RegisterIndex};
 
 // Binary operators which map directly to a single opcode
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]

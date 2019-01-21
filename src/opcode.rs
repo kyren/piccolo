@@ -1,6 +1,6 @@
 use gc_arena::Collect;
 
-use crate::types::{
+use crate::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 

@@ -1,14 +1,9 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 
-use luster::compiler::compile;
-use luster::function::Closure;
-use luster::io::buffered_read;
-use luster::lua::Lua;
-use luster::lua_sequence;
-use luster::parser::parse_chunk;
-use luster::sequence::{sequence_fn, SequenceExt};
-use luster::value::Value;
+use luster::{
+    compile, io, lua_sequence, parse_chunk, sequence_fn, Closure, Lua, SequenceExt, Value,
+};
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -18,7 +13,7 @@ fn test_dir(dir: &str, run_code: bool) {
 
     for dir in read_dir(dir).expect("could not list dir contents") {
         let path = dir.expect("could not read dir entry").path();
-        let file = buffered_read(File::open(&path).unwrap()).unwrap();
+        let file = io::buffered_read(File::open(&path).unwrap()).unwrap();
         if let Some(ext) = path.extension() {
             if ext == "lua" {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);

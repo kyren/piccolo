@@ -3,9 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext};
 
-use crate::error::Error;
-use crate::sequence::Continuation;
-use crate::value::Value;
+use crate::{Continuation, Error, Value};
 
 #[derive(Collect)]
 #[collect(require_static)]
@@ -71,10 +69,8 @@ impl<'gc> Hash for Callback<'gc> {
 #[macro_export]
 macro_rules! lua_callback {
     ($f:expr) => {
-        $crate::callback::CallbackFn::new(|args| {
-            Box::new($crate::sequence::IntoContinuation::into_continuation($f(
-                args,
-            )))
+        $crate::CallbackFn::new(|args| {
+            Box::new($crate::IntoContinuation::into_continuation($f(args)))
         })
     };
 }
