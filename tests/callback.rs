@@ -3,7 +3,7 @@ use luster::compiler::compile;
 use luster::error::Error;
 use luster::function::Closure;
 use luster::lua::Lua;
-use luster::sequence::{sequence_fn, SequenceExt};
+use luster::sequence::{sequence_fn, ContinuationResult, SequenceExt};
 use luster::value::Value;
 use luster::{lua_callback, lua_sequence};
 
@@ -16,7 +16,7 @@ fn callback() -> Result<(), Box<Error>> {
             let callback = lua_callback!(mc, |args: &[_]| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(42));
-                Ok(ret)
+                Ok(ContinuationResult::Finish(ret))
             });
             lc.globals.set(
                 mc,

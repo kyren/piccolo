@@ -7,16 +7,18 @@ use crate::error::Error;
 use crate::sequence::Continuation;
 use crate::value::Value;
 
-pub type CallbackContinuation<'gc> = Continuation<'gc, Vec<Value<'gc>>, Error>;
-
 #[derive(Collect)]
 #[collect(require_static)]
-pub struct CallbackFn(pub Box<for<'gc> Fn(&[Value<'gc>]) -> CallbackContinuation<'gc> + 'static>);
+pub struct CallbackFn(
+    pub Box<for<'gc> Fn(&[Value<'gc>]) -> Continuation<'gc, Vec<Value<'gc>>, Error> + 'static>,
+);
 
 impl CallbackFn {
     pub fn new<F>(f: F) -> CallbackFn
     where
-        F: 'static + for<'gc> Fn(&[Value<'gc>]) -> CallbackContinuation<'gc> + 'static,
+        F: 'static
+            + for<'gc> Fn(&[Value<'gc>]) -> Continuation<'gc, Vec<Value<'gc>>, Error>
+            + 'static,
     {
         CallbackFn(Box::new(f))
     }
@@ -39,7 +41,7 @@ impl<'gc> Callback<'gc> {
         Callback(Gc::allocate(mc, callback_fn))
     }
 
-    pub fn call(&self, args: &[Value<'gc>]) -> CallbackContinuation<'gc> {
+    pub fn call(&self, args: &[Value<'gc>]) -> Continuation<'gc, Vec<Value<'gc>>, Error> {
         (*(self.0).0)(args)
     }
 }

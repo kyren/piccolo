@@ -18,11 +18,15 @@ pub enum ContinuationResult<'gc, I, E> {
 pub struct ContinuationSequence<'gc, I, E>(Option<Continuation<'gc, I, E>>);
 
 impl<'gc, I, E> ContinuationSequence<'gc, I, E> {
-    pub fn new<B>(seq: B) -> ContinuationSequence<'gc, I, E>
+    pub fn new(cont: Continuation<'gc, I, E>) -> ContinuationSequence<'gc, I, E> {
+        ContinuationSequence(Some(cont))
+    }
+
+    pub fn from_sequence<S>(seq: S) -> ContinuationSequence<'gc, I, E>
     where
-        B: Into<Continuation<'gc, I, E>>,
+        S: Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc,
     {
-        ContinuationSequence(Some(seq.into()))
+        ContinuationSequence(Some(Box::new(seq)))
     }
 }
 
@@ -56,13 +60,18 @@ pub trait IntoContinuation<'gc> {
     fn into_continuation(self) -> Continuation<'gc, Self::Item, Self::Error>;
 }
 
-impl<'gc, I: 'gc + Collect, E: 'gc + Collect> IntoContinuation<'gc> for Result<I, E> {
+impl<'gc, I: 'gc + Collect, E: 'gc + Collect> IntoContinuation<'gc>
+    for Result<ContinuationResult<'gc, I, E>, E>
+{
     type Item = I;
     type Error = E;
 
     fn into_continuation(self) -> Continuation<'gc, Self::Item, Self::Error> {
         match self {
-            Ok(res) => Box::new(ContinuationImmediateResult(Some(Ok(res)))),
+            Ok(ContinuationResult::Continue(cont)) => cont,
+            Ok(ContinuationResult::Finish(res)) => {
+                Box::new(ContinuationImmediateResult(Some(Ok(res))))
+            }
             Err(err) => Box::new(ContinuationImmediateResult(Some(Err(err)))),
         }
     }

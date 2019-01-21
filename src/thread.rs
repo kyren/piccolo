@@ -3,12 +3,11 @@ use std::collections::BTreeMap;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
-use crate::callback::CallbackContinuation;
 use crate::error::Error;
 use crate::function::{Closure, ClosureState, UpValue, UpValueDescriptor, UpValueState};
 use crate::lua::LuaContext;
 use crate::opcode::OpCode;
-use crate::sequence::{ContinuationSequence, Sequence};
+use crate::sequence::{Continuation, ContinuationResult, ContinuationSequence, Sequence};
 use crate::string::String;
 use crate::table::Table;
 use crate::types::VarCount;
@@ -43,7 +42,7 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         args: &[Value<'gc>],
         granularity: u32,
-    ) -> ThreadSequence<'gc> {
+    ) -> ContinuationSequence<'gc, Vec<Value<'gc>>, Error> {
         assert_ne!(granularity, 0, "granularity cannot be zero");
 
         let mut state = self.0.write(mc);
@@ -59,11 +58,11 @@ impl<'gc> Thread<'gc> {
             true,
         );
 
-        ThreadSequence {
+        ContinuationSequence::from_sequence(ThreadSequence {
             thread: Some(self),
             callback: None,
             granularity,
-        }
+        })
     }
 }
 
@@ -71,19 +70,20 @@ impl<'gc> Thread<'gc> {
 #[collect(empty_drop)]
 pub struct ThreadSequence<'gc> {
     thread: Option<Thread<'gc>>,
+    // If this is set, then this thread is currently waiting on the results of this callback.
     callback: Option<ContinuationSequence<'gc, Vec<Value<'gc>>, Error>>,
     granularity: u32,
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
-    type Item = Vec<Value<'gc>>;
+    type Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>;
     type Error = Error;
 
     fn step(
         &mut self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<Vec<Value<'gc>>, Error>> {
+    ) -> Option<Result<Self::Item, Self::Error>> {
         let thread = self.thread.expect("cannot step a finished ThreadSequence");
         let mut state = thread.0.write(mc);
 
@@ -117,7 +117,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                         let current_frame_top = state
                             .frames
                             .last()
-                            .expect("top frame is not an entry frame")
+                            .expect("top frame is not a call boundary")
                             .top;
                         state.stack.resize(current_frame_top, Value::Nil);
                     }
@@ -129,11 +129,17 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 ThreadReturn::Unfinished => None,
                 ThreadReturn::Finished(res) => {
                     self.thread = None;
-                    Some(Ok(res))
+                    Some(Ok(ContinuationResult::Finish(res)))
                 }
                 ThreadReturn::Callback(callback) => {
                     self.callback = Some(ContinuationSequence::new(callback));
                     None
+                }
+                ThreadReturn::TailCallback(callback) => {
+                    // A tail callback is one that we do not need to wait for the results of, so we
+                    // simply continue by with it instead of this thread.
+                    self.thread = None;
+                    Some(Ok(ContinuationResult::Continue(callback)))
                 }
             }
         }
@@ -163,7 +169,8 @@ struct ThreadState<'gc> {
 enum ThreadReturn<'gc> {
     Unfinished,
     Finished(Vec<Value<'gc>>),
-    Callback(CallbackContinuation<'gc>),
+    Callback(Continuation<'gc, Vec<Value<'gc>>, Error>),
+    TailCallback(Continuation<'gc, Vec<Value<'gc>>, Error>),
 }
 
 impl<'gc> ThreadState<'gc> {
@@ -388,7 +395,13 @@ impl<'gc> ThreadState<'gc> {
                             current_frame.restore_pc,
                             current_frame.call_boundary,
                         ) {
-                            return ThreadReturn::Callback(callback);
+                            let callback_frame = self.frames.last().unwrap();
+                            if callback_frame.call_boundary {
+                                self.frames.pop();
+                                return ThreadReturn::TailCallback(callback);
+                            } else {
+                                return ThreadReturn::Callback(callback);
+                            }
                         } else {
                             continue 'function_start;
                         }
@@ -446,8 +459,10 @@ impl<'gc> ThreadState<'gc> {
                                 // to reset the stack to the correct normal top.
                                 self.stack.truncate(current_frame.bottom + returning);
                             } else {
-                                let current_frame =
-                                    self.frames.last().expect("top frame is not an entry frame");
+                                let current_frame = self
+                                    .frames
+                                    .last()
+                                    .expect("top frame is not a call boundary");
                                 self.stack.resize(current_frame.top, Value::Nil);
                             }
 
@@ -822,7 +837,7 @@ impl<'gc> ThreadState<'gc> {
         returns: VarCount,
         restore_pc: usize,
         call_boundary: bool,
-    ) -> Option<CallbackContinuation<'gc>> {
+    ) -> Option<Continuation<'gc, Vec<Value<'gc>>, Error>> {
         let arg_count = if let Some(constant) = args.to_constant() {
             let constant = constant as usize;
             assert!(self.stack.len() - function_index - 1 >= constant);
