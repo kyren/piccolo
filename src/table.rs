@@ -47,17 +47,17 @@ impl<'gc> Table<'gc> {
         Table(GcCell::allocate(mc, TableState::default()))
     }
 
-    pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
-        self.0.read().get(key)
+    pub fn get<K: Into<Value<'gc>>>(&self, key: K) -> Value<'gc> {
+        self.0.read().get(key.into())
     }
 
-    pub fn set(
+    pub fn set<K: Into<Value<'gc>>, V: Into<Value<'gc>>>(
         &self,
         mc: MutationContext<'gc, '_>,
-        key: Value<'gc>,
-        value: Value<'gc>,
+        key: K,
+        value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0.write(mc).set(key, value)
+        self.0.write(mc).set(key.into(), value.into())
     }
 
     pub fn length(&self) -> i64 {

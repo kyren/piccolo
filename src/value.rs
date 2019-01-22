@@ -1,6 +1,6 @@
-use std::i64;
+use std::{i64, io};
 
-use gc_arena::Collect;
+use gc_arena::{Collect, Gc};
 
 use crate::{Callback, Closure, String, Table};
 
@@ -101,5 +101,60 @@ impl<'gc> Value<'gc> {
             (Value::Number(a), Value::Integer(b)) => Some(a < (b as f64)),
             _ => None,
         }
+    }
+
+    pub fn display<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
+        match self {
+            Value::Nil => write!(w, "nil"),
+            Value::Boolean(b) => write!(w, "{}", b),
+            Value::Integer(i) => write!(w, "{}", i),
+            Value::Number(f) => write!(w, "{}", f),
+            Value::String(s) => w.write_all(s.as_bytes()),
+            Value::Table(t) => write!(w, "<table {:?}>", t.0.as_ptr()),
+            Value::Closure(c) => write!(w, "{:?}", Gc::as_ptr(&c.0)),
+            Value::Callback(c) => write!(w, "{:?}", Gc::as_ptr(&c.0)),
+        }
+    }
+}
+
+impl<'gc> From<bool> for Value<'gc> {
+    fn from(v: bool) -> Value<'gc> {
+        Value::Boolean(v)
+    }
+}
+
+impl<'gc> From<i64> for Value<'gc> {
+    fn from(v: i64) -> Value<'gc> {
+        Value::Integer(v)
+    }
+}
+
+impl<'gc> From<f64> for Value<'gc> {
+    fn from(v: f64) -> Value<'gc> {
+        Value::Number(v)
+    }
+}
+
+impl<'gc> From<String<'gc>> for Value<'gc> {
+    fn from(v: String<'gc>) -> Value<'gc> {
+        Value::String(v)
+    }
+}
+
+impl<'gc> From<Table<'gc>> for Value<'gc> {
+    fn from(v: Table<'gc>) -> Value<'gc> {
+        Value::Table(v)
+    }
+}
+
+impl<'gc> From<Closure<'gc>> for Value<'gc> {
+    fn from(v: Closure<'gc>) -> Value<'gc> {
+        Value::Closure(v)
+    }
+}
+
+impl<'gc> From<Callback<'gc>> for Value<'gc> {
+    fn from(v: Callback<'gc>) -> Value<'gc> {
+        Value::Callback(v)
     }
 }

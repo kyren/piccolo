@@ -1,3 +1,4 @@
+#[macro_use]
 mod callback;
 mod compiler;
 mod constant;
@@ -5,6 +6,7 @@ mod error;
 mod function;
 pub mod io;
 mod lexer;
+#[macro_use]
 mod lua;
 mod opcode;
 pub mod parser;
@@ -14,6 +16,8 @@ mod table;
 mod thread;
 mod types;
 mod value;
+
+mod stdlib;
 
 pub use callback::{Callback, CallbackFn};
 pub use compiler::{compile, compile_chunk, CompilerError};

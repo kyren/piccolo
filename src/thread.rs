@@ -110,12 +110,9 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                     state.frames.pop();
 
                     if !top_frame.returns.is_variable() {
-                        let current_frame_top = state
-                            .frames
-                            .last()
-                            .expect("top frame is not a call boundary")
-                            .top;
-                        state.stack.resize(current_frame_top, Value::Nil);
+                        if let Some(current_frame_top) = state.frames.last().map(|f| f.top) {
+                            state.stack.resize(current_frame_top, Value::Nil);
+                        }
                     }
                 }
             }
@@ -875,18 +872,47 @@ impl<'gc> ThreadState<'gc> {
                 None
             }
             Value::Callback(callback) => {
-                self.frames.push(Frame {
-                    bottom: function_index,
-                    base: function_index,
-                    top: function_index,
-                    returns,
-                    restore_pc,
-                    call_boundary,
-                });
-                let cb =
-                    callback.call(&self.stack[function_index + 1..function_index + 1 + arg_count]);
-                self.stack.resize(function_index + 1, Value::Nil);
-                Some(cb)
+                match callback
+                    .call(&self.stack[function_index + 1..function_index + 1 + arg_count])
+                    .expect("callback errors not handled yet")
+                {
+                    ContinuationResult::Finish(res) => {
+                        let count = res.len();
+                        if let Some(returning) = returns.to_constant() {
+                            if let Some(current_frame) = self.frames.last() {
+                                self.stack.resize(current_frame.top, Value::Nil);
+                            }
+
+                            let returning = returning as usize;
+                            for i in 0..returning.min(count) {
+                                self.stack[function_index + i] = res[i];
+                            }
+                            for i in count..returning {
+                                self.stack[function_index + i] = Value::Nil;
+                            }
+                        } else {
+                            self.stack.resize(function_index + count, Value::Nil);
+                            for i in 0..count {
+                                self.stack[function_index + i] = res[i];
+                            }
+                        }
+
+                        self.pc = restore_pc;
+                        None
+                    }
+                    ContinuationResult::Continue(cont) => {
+                        self.frames.push(Frame {
+                            bottom: function_index,
+                            base: function_index,
+                            top: function_index,
+                            returns,
+                            restore_pc,
+                            call_boundary,
+                        });
+                        self.stack.resize(function_index + 1, Value::Nil);
+                        Some(cont)
+                    }
+                }
             }
             _ => panic!("not a closure or callback"),
         }

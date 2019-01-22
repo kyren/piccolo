@@ -1,9 +1,7 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 
-use luster::{
-    compile, io, lua_sequence, parse_chunk, sequence_fn, Closure, Lua, SequenceExt, Value,
-};
+use luster::{compile, io, parse_chunk, sequence_fn, Closure, Lua, SequenceExt, Value};
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -19,28 +17,31 @@ fn test_dir(dir: &str, run_code: bool) {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
                 if run_code {
                     let mut lua = Lua::new();
-                    let r = lua_sequence!(
-                        lua,
-                        sequence_fn(move |mc, lc| Ok(Closure::new(
-                            mc,
-                            compile(mc, lc.interned_strings, file)?,
-                            Some(lc.globals),
-                        )?))
-                        .and_then(move |mc, lc, closure| lc.main_thread.call_function(
-                            mc,
-                            closure,
-                            &[],
-                            64,
-                        ))
-                        .map(|r| match &r[..] {
-                            &[Value::Boolean(true)] => false,
-                            v => {
-                                let _ =
-                                    writeln!(stdout(), "error: unexpected return values: {:?}", v);
-                                true
-                            }
-                        })
-                    );
+                    let r = lua.sequence(|_| {
+                        Box::new(
+                            sequence_fn(move |mc, lc| {
+                                Ok(Closure::new(
+                                    mc,
+                                    compile(mc, lc.interned_strings, file)?,
+                                    Some(lc.globals),
+                                )?)
+                            })
+                            .and_then(move |mc, lc, closure| {
+                                lc.main_thread.call_function(mc, closure, &[], 64)
+                            })
+                            .map(|r| match &r[..] {
+                                &[Value::Boolean(true)] => false,
+                                v => {
+                                    let _ = writeln!(
+                                        stdout(),
+                                        "error: unexpected return values: {:?}",
+                                        v
+                                    );
+                                    true
+                                }
+                            }),
+                        )
+                    });
 
                     match r {
                         Err(err) => {

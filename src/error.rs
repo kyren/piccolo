@@ -1,5 +1,5 @@
 use std::error::Error as StdError;
-use std::fmt;
+use std::{fmt, io};
 
 use gc_arena::Collect;
 
@@ -13,6 +13,7 @@ pub enum Error {
     ClosureError(ClosureError),
     InvalidTableKey(InvalidTableKey),
     StringError(StringError),
+    IoError(io::Error),
 }
 
 impl StdError for Error {}
@@ -25,6 +26,7 @@ impl fmt::Display for Error {
             Error::ClosureError(error) => write!(fmt, "closure error: {}", error),
             Error::InvalidTableKey(error) => write!(fmt, "invalid table key: {}", error),
             Error::StringError(error) => write!(fmt, "string error: {}", error),
+            Error::IoError(error) => write!(fmt, "i/o error: {}", error),
         }
     }
 }
@@ -56,5 +58,11 @@ impl From<InvalidTableKey> for Error {
 impl From<StringError> for Error {
     fn from(error: StringError) -> Error {
         Error::StringError(error)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Error {
+        Error::IoError(error)
     }
 }

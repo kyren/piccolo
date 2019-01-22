@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
+use crate::stdlib::load_base;
 use crate::{InternedStringSet, Sequence, SequenceExt, Table, Thread};
 
 #[derive(Collect, Clone, Copy)]
@@ -19,18 +20,53 @@ pub struct Lua {
 
 impl Lua {
     pub fn new() -> Lua {
-        let arena = LuaArena::new(ArenaParameters::default(), |mc| LuaRoot {
-            context: LuaContext {
-                main_thread: Thread::new(mc),
-                globals: Table::new(mc),
-                interned_strings: InternedStringSet::new(mc),
-            },
-            current_sequence: GcCell::allocate(mc, None),
+        let arena = LuaArena::new(ArenaParameters::default(), |mc| {
+            let root = LuaRoot {
+                context: LuaContext {
+                    main_thread: Thread::new(mc),
+                    globals: Table::new(mc),
+                    interned_strings: InternedStringSet::new(mc),
+                },
+                current_sequence: GcCell::allocate(mc, None),
+            };
+
+            load_base(mc, root.context, root.context.globals);
+
+            root
         });
         Lua { arena }
     }
 
-    #[doc(hidden)]
+    /// Runs a sequence of actions inside the given Lua context and return the result.
+    ///
+    /// The function signature accepted here is somewhat unweildy, what we want to accept is a type
+    /// roughly like the following:
+    ///
+    /// `S: for<'gc> Sequence<'gc> + 'gc`
+    ///
+    /// But this is very difficult to express in Rust.  Instead, the `Lua::sequence` function must
+    /// be called as:
+    ///
+    /// ```
+    /// # use luster::{Lua, Closure, compile, Error, sequence_fn, SequenceExt};
+    /// # fn main() -> Result<(), Error> {
+    ///
+    /// let source = b"print('hello')";
+    ///
+    /// let mut lua = Lua::new();
+    /// lua.sequence(|_| Box::new(
+    ///     sequence_fn(move |mc, lc| Ok(Closure::new(
+    ///         mc,
+    ///         compile(mc, lc.interned_strings, &source[..])?,
+    ///         Some(lc.globals),
+    ///     )?))
+    ///     .and_then(|mc, lc, closure| lc.main_thread.call_function(mc, closure, &[], 64))
+    ///     .map(|_| ())
+    /// ))?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn sequence<F, I, E>(&mut self, f: F) -> Result<I, E>
     where
         I: 'static,
@@ -85,19 +121,3 @@ struct LuaRoot<'gc> {
 }
 
 make_arena!(LuaArena, LuaRoot);
-
-/// Runs a sequence of actions inside the given Lua context and return the result.
-///
-/// The first argument must be a `Lua` instance, and the second argument must be an expression of
-/// type:
-///
-/// `S: for<'gc> Sequence<'gc> + 'gc`
-///
-/// This type is unweildy to express in Rust, so for ergonomics reasons this function must be a
-/// macro.
-#[macro_export]
-macro_rules! lua_sequence {
-    ($lua:expr, $seq:expr) => {
-        $lua.sequence(|_| Box::new($seq))
-    };
-}
