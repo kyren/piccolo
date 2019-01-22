@@ -1,9 +1,9 @@
 #[macro_use]
 mod callback;
+mod closure;
 mod compiler;
 mod constant;
 mod error;
-mod function;
 pub mod io;
 mod lexer;
 #[macro_use]
@@ -20,12 +20,12 @@ mod value;
 mod stdlib;
 
 pub use callback::{Callback, CallbackFn};
+pub use closure::{
+    Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor, UpValueState,
+};
 pub use compiler::{compile, compile_chunk, CompilerError};
 pub use constant::Constant;
 pub use error::Error;
-pub use function::{
-    Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor, UpValueState,
-};
 pub use lexer::{Lexer, LexerError, Token};
 pub use lua::{Lua, LuaContext};
 pub use opcode::OpCode;

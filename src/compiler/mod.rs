@@ -2,10 +2,7 @@ use std::io::Read;
 
 use gc_arena::MutationContext;
 
-use crate::error::Error;
-use crate::function::FunctionProto;
-use crate::parser::parse_chunk;
-use crate::string::InternedStringSet;
+use crate::{parse_chunk, Error, FunctionProto, InternedStringSet};
 
 mod compiler;
 mod operators;

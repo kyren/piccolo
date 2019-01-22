@@ -35,8 +35,8 @@ impl<'gc> Thread<'gc> {
     ///
     /// The return value of `ThreadSequence` follows the "continuation" sequence pattern, in order
     /// to get a finaly result it must ultimately be wrapped in a `RunContinuation`.  You can call
-    /// `run_function` instead to do this automatically.
-    pub fn call_function(
+    /// `run_closure` instead to do this automatically.
+    pub fn call_closure(
         self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
@@ -65,16 +65,16 @@ impl<'gc> Thread<'gc> {
         }
     }
 
-    /// Wraps the return value of `call_function` in a `RunContinuation` so it will be run to
+    /// Wraps the return value of `call_closure` in a `RunContinuation` so it will be run to
     /// completion.
-    pub fn run_function(
+    pub fn run_closure(
         self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
         granularity: u32,
     ) -> RunContinuation<'gc, Vec<Value<'gc>>, Error> {
-        RunContinuation::from_sequence(Thread::call_function(self, mc, closure, args, granularity))
+        RunContinuation::from_sequence(Thread::call_closure(self, mc, closure, args, granularity))
     }
 }
 
