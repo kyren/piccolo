@@ -32,13 +32,17 @@ impl<'gc> Thread<'gc> {
     /// `ThreadSequence` is constructed, it operates on whatever the top of the stack is at that
     /// time, so any later constructed `ThreadSequence`s must be run to completion before earlier
     /// ones can be completed.
+    ///
+    /// The return value of `ThreadSequence` follows the "continuation" sequence pattern, in order
+    /// to get a finaly result it must ultimately be wrapped in a `RunContinuation`.  You can call
+    /// `run_function` instead to do this automatically.
     pub fn call_function(
         self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
         granularity: u32,
-    ) -> RunContinuation<'gc, Vec<Value<'gc>>, Error> {
+    ) -> ThreadSequence<'gc> {
         assert_ne!(granularity, 0, "granularity cannot be zero");
 
         let mut state = self.0.write(mc);
@@ -54,11 +58,23 @@ impl<'gc> Thread<'gc> {
             true,
         );
 
-        RunContinuation::from_sequence(ThreadSequence {
+        ThreadSequence {
             thread: Some(self),
             callback: None,
             granularity,
-        })
+        }
+    }
+
+    /// Wraps the return value of `call_function` in a `RunContinuation` so it will be run to
+    /// completion.
+    pub fn run_function(
+        self,
+        mc: MutationContext<'gc, '_>,
+        closure: Closure<'gc>,
+        args: &[Value<'gc>],
+        granularity: u32,
+    ) -> RunContinuation<'gc, Vec<Value<'gc>>, Error> {
+        RunContinuation::from_sequence(Thread::call_function(self, mc, closure, args, granularity))
     }
 }
 

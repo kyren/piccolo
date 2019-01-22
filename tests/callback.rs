@@ -34,7 +34,7 @@ fn callback() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_function(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.run_function(mc, closure, &[], 64))
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)])),
         )
     })?;
