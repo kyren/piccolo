@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use gc_arena::MutationContext;
 
-use crate::{Callback, ContinuationResult, LuaContext, Table};
+use crate::{Callback, ContinuationResult, Error, LuaContext, Table};
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, lc: LuaContext<'gc>, env: Table<'gc>) {
     let print = Callback::new(mc, |args| {
@@ -18,6 +18,20 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, lc: LuaContext<'gc>, env: Ta
         Ok(ContinuationResult::Finish(vec![]))
     });
 
+    let error = Callback::new(mc, |args| {
+        if args.len() > 0 {
+            let mut buf = Vec::new();
+            args[0].display(&mut buf)?;
+            Err(Error::RuntimeError(Some(
+                String::from_utf8_lossy(&buf).into_owned(),
+            )))
+        } else {
+            Err(Error::RuntimeError(None))
+        }
+    });
+
     env.set(mc, lc.interned_strings.new_string(mc, b"print"), print)
+        .unwrap();
+    env.set(mc, lc.interned_strings.new_string(mc, b"error"), error)
         .unwrap();
 }

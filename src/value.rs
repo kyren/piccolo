@@ -111,8 +111,8 @@ impl<'gc> Value<'gc> {
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
             Value::Table(t) => write!(w, "<table {:?}>", t.0.as_ptr()),
-            Value::Closure(c) => write!(w, "{:?}", Gc::as_ptr(&c.0)),
-            Value::Callback(c) => write!(w, "{:?}", Gc::as_ptr(&c.0)),
+            Value::Closure(c) => write!(w, "<closure {:?}>", Gc::as_ptr(&c.0)),
+            Value::Callback(c) => write!(w, "<callback {:?}>", Gc::as_ptr(&c.0)),
         }
     }
 }

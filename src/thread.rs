@@ -100,10 +100,13 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
 
         if let Some(callback) = self.callback.as_mut() {
             match callback.step(mc, lc) {
-                None => {}
-                Some(res) => {
+                None => None,
+                Some(Err(err)) => {
+                    state.unwind(mc, thread);
+                    Some(Err(err))
+                }
+                Some(Ok(res)) => {
                     self.callback = None;
-                    let res = res.expect("callback errors not handled yet");
 
                     let top_frame = state.frames.pop().expect("no callback frame");
                     state.pc = top_frame.restore_pc;
@@ -136,32 +139,39 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                             .top;
                         state.stack.resize(current_frame_top, Value::Nil);
                     }
-                }
-            }
-            None
-        } else {
-            match state.run(mc, thread, self.granularity) {
-                ThreadReturn::Unfinished => None,
-                ThreadReturn::Finished(res) => {
-                    self.thread = None;
-                    Some(Ok(ContinuationResult::Finish(res)))
-                }
-                ThreadReturn::Callback(callback) => {
-                    self.callback = Some(RunContinuation::new(callback));
                     None
                 }
-                ThreadReturn::TailCallback(callback) => {
-                    // A tail callback is one that we do not need to wait for the results of, so we
-                    // simply continue by with it instead of this thread.
+            }
+        } else {
+            match state.run(mc, thread, self.granularity) {
+                Err(err) => {
+                    state.unwind(mc, thread);
                     self.thread = None;
-                    Some(Ok(ContinuationResult::Continue(callback)))
+                    return Some(Err(err));
                 }
+                Ok(res) => match res {
+                    ThreadReturn::Unfinished => None,
+                    ThreadReturn::Finished(res) => {
+                        self.thread = None;
+                        Some(Ok(ContinuationResult::Finish(res)))
+                    }
+                    ThreadReturn::Callback(callback) => {
+                        self.callback = Some(RunContinuation::new(callback));
+                        None
+                    }
+                    ThreadReturn::TailCallback(callback) => {
+                        // A tail callback is one that we do not need to wait for the results of, so we
+                        // simply continue by with it instead of this thread.
+                        self.thread = None;
+                        Some(Ok(ContinuationResult::Continue(callback)))
+                    }
+                },
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Collect)]
+#[derive(Debug, Clone, Copy, Collect, PartialEq, Eq)]
 #[collect(require_copy)]
 enum FrameReturn {
     // Frame is a Thread entry-point, and returning should return all results to the caller
@@ -212,7 +222,7 @@ impl<'gc> ThreadState<'gc> {
         mc: MutationContext<'gc, '_>,
         self_thread: Thread<'gc>,
         mut instructions: u32,
-    ) -> ThreadReturn<'gc> {
+    ) -> Result<ThreadReturn<'gc>, Error> {
         'function_start: loop {
             let current_frame = *self.frames.last().expect("no current ThreadState frame");
             let current_function = get_closure(self.stack[current_frame.bottom]);
@@ -386,9 +396,9 @@ impl<'gc> ThreadState<'gc> {
                             args,
                             FrameReturn::Upper(returns),
                             self.pc,
-                        ) {
+                        )? {
                             ThreadReturn::Unfinished => continue 'function_start,
-                            ret => return ret,
+                            ret => return Ok(ret),
                         }
                     }
 
@@ -414,9 +424,9 @@ impl<'gc> ThreadState<'gc> {
                             args,
                             current_frame.frame_return,
                             current_frame.restore_pc,
-                        ) {
+                        )? {
                             ThreadReturn::Unfinished => continue 'function_start,
-                            ret => return ret,
+                            ret => return Ok(ret),
                         }
                     }
 
@@ -441,7 +451,7 @@ impl<'gc> ThreadState<'gc> {
                                     self.stack.clear();
                                 }
 
-                                return ThreadReturn::Finished(ret_vals);
+                                return Ok(ThreadReturn::Finished(ret_vals));
                             }
                             FrameReturn::Upper(returns) => {
                                 let returning =
@@ -600,9 +610,9 @@ impl<'gc> ThreadState<'gc> {
                             VarCount::constant(2),
                             FrameReturn::Upper(VarCount::constant(var_count)),
                             self.pc,
-                        ) {
+                        )? {
                             ThreadReturn::Unfinished => continue 'function_start,
-                            ret => return ret,
+                            ret => return Ok(ret),
                         }
                     }
 
@@ -820,11 +830,29 @@ impl<'gc> ThreadState<'gc> {
                 }
 
                 if instructions == 0 {
-                    return ThreadReturn::Unfinished;
+                    return Ok(ThreadReturn::Unfinished);
                 } else {
                     instructions -= 1
                 }
             }
+        }
+    }
+
+    // Unwind frames up to and including the most recent call boundary
+    fn unwind(&mut self, mc: MutationContext<'gc, '_>, self_thread: Thread<'gc>) {
+        loop {
+            let frame = self
+                .frames
+                .pop()
+                .expect("no call boundary found during unwind");
+            if frame.frame_return == FrameReturn::CallBoundary {
+                self.close_upvalues(mc, self_thread, frame.bottom);
+                break;
+            }
+        }
+
+        if let Some(top) = self.frames.last().map(|f| f.top) {
+            self.stack.resize(top, Value::Nil);
         }
     }
 
@@ -834,11 +862,11 @@ impl<'gc> ThreadState<'gc> {
         args: VarCount,
         frame_return: FrameReturn,
         restore_pc: usize,
-    ) -> ThreadReturn<'gc> {
+    ) -> Result<ThreadReturn<'gc>, Error> {
         match self.stack[function_index] {
             Value::Closure(_) => {
                 self.call_closure(function_index, args, frame_return, restore_pc);
-                ThreadReturn::Unfinished
+                Ok(ThreadReturn::Unfinished)
             }
             Value::Callback(_) => {
                 self.call_callback(function_index, args, frame_return, restore_pc)
@@ -890,18 +918,15 @@ impl<'gc> ThreadState<'gc> {
         args: VarCount,
         frame_return: FrameReturn,
         restore_pc: usize,
-    ) -> ThreadReturn<'gc> {
+    ) -> Result<ThreadReturn<'gc>, Error> {
         let callback = get_callback(self.stack[function_index]);
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
             .unwrap_or(self.stack.len() - function_index - 1);
 
-        match callback
-            .call(&self.stack[function_index + 1..function_index + 1 + arg_count])
-            .expect("callback errors not handled yet")
-        {
-            ContinuationResult::Finish(res) => match frame_return {
+        match callback.call(&self.stack[function_index + 1..function_index + 1 + arg_count])? {
+            ContinuationResult::Finish(res) => Ok(match frame_return {
                 FrameReturn::CallBoundary => ThreadReturn::Finished(res),
                 FrameReturn::Upper(returns) => {
                     let count = res.len();
@@ -927,8 +952,8 @@ impl<'gc> ThreadState<'gc> {
                     self.pc = restore_pc;
                     ThreadReturn::Unfinished
                 }
-            },
-            ContinuationResult::Continue(cont) => match frame_return {
+            }),
+            ContinuationResult::Continue(cont) => Ok(match frame_return {
                 FrameReturn::CallBoundary => ThreadReturn::TailCallback(cont),
                 FrameReturn::Upper(returns) => {
                     self.frames.push(Frame {
@@ -941,7 +966,7 @@ impl<'gc> ThreadState<'gc> {
                     self.stack.resize(function_index + 1, Value::Nil);
                     ThreadReturn::Callback(cont)
                 }
-            },
+            }),
         }
     }
 

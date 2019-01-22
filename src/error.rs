@@ -14,6 +14,7 @@ pub enum Error {
     InvalidTableKey(InvalidTableKey),
     StringError(StringError),
     IoError(io::Error),
+    RuntimeError(Option<String>),
 }
 
 impl StdError for Error {}
@@ -27,6 +28,13 @@ impl fmt::Display for Error {
             Error::InvalidTableKey(error) => write!(fmt, "invalid table key: {}", error),
             Error::StringError(error) => write!(fmt, "string error: {}", error),
             Error::IoError(error) => write!(fmt, "i/o error: {}", error),
+            Error::RuntimeError(msg) => {
+                write!(fmt, "runtime error")?;
+                if let Some(msg) = msg {
+                    write!(fmt, ": {}", msg)?;
+                }
+                Ok(())
+            }
         }
     }
 }
