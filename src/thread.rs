@@ -53,9 +53,8 @@ impl<'gc> Thread<'gc> {
         state.call_closure(
             closure_index,
             VarCount::variable(),
-            VarCount::variable(),
+            FrameReturn::CallBoundary,
             res_pc,
-            true,
         );
 
         ThreadSequence {
@@ -109,21 +108,27 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                     let top_frame = state.frames.pop().expect("no callback frame");
                     state.pc = top_frame.restore_pc;
 
-                    let count = res.len();
-                    let returning = top_frame
-                        .returns
+                    let returns = match top_frame.frame_return {
+                        FrameReturn::Upper(returns) => returns,
+                        FrameReturn::CallBoundary => panic!("no frame to return to from callback"),
+                    };
+                    let return_len = returns
                         .to_constant()
                         .map(|c| c as usize)
                         .unwrap_or(res.len());
 
                     state.stack.truncate(top_frame.bottom);
-                    state.stack.resize(top_frame.bottom + returning, Value::Nil);
+                    state
+                        .stack
+                        .resize(top_frame.bottom + return_len, Value::Nil);
 
-                    for i in 0..returning.min(count) {
+                    for i in 0..return_len.min(res.len()) {
                         state.stack[top_frame.bottom + i] = res[i];
                     }
 
-                    if !top_frame.returns.is_variable() {
+                    // Stack size is already correct for variable returns, but if we are returning a
+                    // constant number, we need to restore the previous stack top.
+                    if !returns.is_variable() {
                         let current_frame_top = state
                             .frames
                             .last()
@@ -157,14 +162,23 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
 }
 
 #[derive(Debug, Clone, Copy, Collect)]
-#[collect(require_static)]
+#[collect(require_copy)]
+enum FrameReturn {
+    // Frame is a Thread entry-point, and returning should return all results to the caller
+    CallBoundary,
+    // Frame is a normal call frame within a thread, returning should return the given number of
+    // results to the frame above
+    Upper(VarCount),
+}
+
+#[derive(Debug, Clone, Copy, Collect)]
+#[collect(require_copy)]
 struct Frame {
     bottom: usize,
     base: usize,
     top: usize,
-    returns: VarCount,
+    frame_return: FrameReturn,
     restore_pc: usize,
-    call_boundary: bool,
 }
 
 #[derive(Debug, Collect)]
@@ -370,9 +384,8 @@ impl<'gc> ThreadState<'gc> {
                         match self.call_function(
                             current_frame.base + func.0 as usize,
                             args,
-                            returns,
+                            FrameReturn::Upper(returns),
                             self.pc,
-                            false,
                         ) {
                             ThreadReturn::Unfinished => continue 'function_start,
                             ret => return ret,
@@ -399,9 +412,8 @@ impl<'gc> ThreadState<'gc> {
                         match self.call_function(
                             current_frame.bottom,
                             args,
-                            current_frame.returns,
+                            current_frame.frame_return,
                             current_frame.restore_pc,
-                            current_frame.call_boundary,
                         ) {
                             ThreadReturn::Unfinished => continue 'function_start,
                             ret => return ret,
@@ -419,44 +431,42 @@ impl<'gc> ThreadState<'gc> {
                             .map(|c| c as usize)
                             .unwrap_or(self.stack.len() - start);
 
-                        let returning = current_frame
-                            .returns
-                            .to_constant()
-                            .map(|c| c as usize)
-                            .unwrap_or(count);
+                        match current_frame.frame_return {
+                            FrameReturn::CallBoundary => {
+                                let ret_vals = self.stack[start..start + count].to_vec();
 
-                        if current_frame.call_boundary {
-                            let ret_vals = self.stack[start..start + returning].to_vec();
+                                if let Some(frame) = self.frames.last() {
+                                    self.stack.resize(frame.top, Value::Nil);
+                                } else {
+                                    self.stack.clear();
+                                }
 
-                            if let Some(frame) = self.frames.last() {
-                                self.stack.resize(frame.top, Value::Nil);
-                            } else {
-                                self.stack.clear();
+                                return ThreadReturn::Finished(ret_vals);
                             }
+                            FrameReturn::Upper(returns) => {
+                                let returning =
+                                    returns.to_constant().map(|c| c as usize).unwrap_or(count);
 
-                            return ThreadReturn::Finished(ret_vals);
-                        } else {
-                            for i in 0..returning.min(count) {
-                                self.stack[current_frame.bottom + i] = self.stack[start + i]
+                                for i in 0..returning.min(count) {
+                                    self.stack[current_frame.bottom + i] = self.stack[start + i]
+                                }
+
+                                for i in count..returning {
+                                    self.stack[current_frame.bottom + i] = Value::Nil;
+                                }
+
+                                // Set the correct stack size for variable returns, otherwise restore
+                                // the previous stack top.
+                                if returns.is_variable() {
+                                    self.stack.truncate(current_frame.bottom + returning);
+                                } else {
+                                    let current_frame =
+                                        self.frames.last().expect("no upper frame to return to");
+                                    self.stack.resize(current_frame.top, Value::Nil);
+                                }
+
+                                continue 'function_start;
                             }
-
-                            for i in count..returning {
-                                self.stack[current_frame.bottom + i] = Value::Nil;
-                            }
-
-                            // Set the correct stack size for variable returns, otherwise restore
-                            // the previous stack top.
-                            if current_frame.returns.is_variable() {
-                                self.stack.truncate(current_frame.bottom + returning);
-                            } else {
-                                let current_frame = self
-                                    .frames
-                                    .last()
-                                    .expect("top frame was not a call boundary");
-                                self.stack.resize(current_frame.top, Value::Nil);
-                            }
-
-                            continue 'function_start;
                         }
                     }
 
@@ -588,9 +598,8 @@ impl<'gc> ThreadState<'gc> {
                         match self.call_function(
                             base + 3,
                             VarCount::constant(2),
-                            VarCount::constant(var_count),
+                            FrameReturn::Upper(VarCount::constant(var_count)),
                             self.pc,
-                            false,
                         ) {
                             ThreadReturn::Unfinished => continue 'function_start,
                             ret => return ret,
@@ -823,17 +832,16 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         function_index: usize,
         args: VarCount,
-        returns: VarCount,
+        frame_return: FrameReturn,
         restore_pc: usize,
-        call_boundary: bool,
     ) -> ThreadReturn<'gc> {
         match self.stack[function_index] {
             Value::Closure(_) => {
-                self.call_closure(function_index, args, returns, restore_pc, call_boundary);
+                self.call_closure(function_index, args, frame_return, restore_pc);
                 ThreadReturn::Unfinished
             }
             Value::Callback(_) => {
-                self.call_callback(function_index, args, returns, restore_pc, call_boundary)
+                self.call_callback(function_index, args, frame_return, restore_pc)
             }
             _ => panic!("not a closure or callback"),
         }
@@ -843,9 +851,8 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         function_index: usize,
         args: VarCount,
-        returns: VarCount,
+        frame_return: FrameReturn,
         restore_pc: usize,
-        call_boundary: bool,
     ) {
         let closure = get_closure(self.stack[function_index]);
         let arg_count = args
@@ -870,9 +877,8 @@ impl<'gc> ThreadState<'gc> {
             bottom: function_index,
             base,
             top,
-            returns,
+            frame_return,
             restore_pc,
-            call_boundary,
         });
 
         self.pc = 0;
@@ -882,9 +888,8 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         function_index: usize,
         args: VarCount,
-        returns: VarCount,
+        frame_return: FrameReturn,
         restore_pc: usize,
-        call_boundary: bool,
     ) -> ThreadReturn<'gc> {
         let callback = get_callback(self.stack[function_index]);
         let arg_count = args
@@ -896,10 +901,9 @@ impl<'gc> ThreadState<'gc> {
             .call(&self.stack[function_index + 1..function_index + 1 + arg_count])
             .expect("callback errors not handled yet")
         {
-            ContinuationResult::Finish(res) => {
-                if call_boundary {
-                    ThreadReturn::Finished(res)
-                } else {
+            ContinuationResult::Finish(res) => match frame_return {
+                FrameReturn::CallBoundary => ThreadReturn::Finished(res),
+                FrameReturn::Upper(returns) => {
                     let count = res.len();
                     if let Some(returning) = returns.to_constant() {
                         if let Some(current_frame) = self.frames.last() {
@@ -923,23 +927,21 @@ impl<'gc> ThreadState<'gc> {
                     self.pc = restore_pc;
                     ThreadReturn::Unfinished
                 }
-            }
-            ContinuationResult::Continue(cont) => {
-                if call_boundary {
-                    ThreadReturn::TailCallback(cont)
-                } else {
+            },
+            ContinuationResult::Continue(cont) => match frame_return {
+                FrameReturn::CallBoundary => ThreadReturn::TailCallback(cont),
+                FrameReturn::Upper(returns) => {
                     self.frames.push(Frame {
                         bottom: function_index,
                         base: function_index + 1,
                         top: function_index + 1,
-                        returns,
+                        frame_return: FrameReturn::Upper(returns),
                         restore_pc,
-                        call_boundary,
                     });
                     self.stack.resize(function_index + 1, Value::Nil);
                     ThreadReturn::Callback(cont)
                 }
-            }
+            },
         }
     }
 
