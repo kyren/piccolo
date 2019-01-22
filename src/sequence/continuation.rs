@@ -6,9 +6,6 @@ use crate::{LuaContext, Sequence};
 pub type Continuation<'gc, I, E> =
     Box<Sequence<'gc, Item = ContinuationResult<'gc, I, E>, Error = E> + 'gc>;
 
-// Empty drop prevents moves during pattern matching, safe as it does not implement Drop at all.
-#[derive(Collect)]
-#[collect(unsafe_drop)]
 pub enum ContinuationResult<'gc, I, E> {
     Finish(I),
     Continue(Continuation<'gc, I, E>),
