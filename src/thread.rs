@@ -367,16 +367,15 @@ impl<'gc> ThreadState<'gc> {
                         args,
                         returns,
                     } => {
-                        if let Some(callback) = self.call_function(
+                        match self.call_function(
                             current_frame.base + func.0 as usize,
                             args,
                             returns,
                             self.pc,
                             false,
                         ) {
-                            return ThreadReturn::Callback(callback);
-                        } else {
-                            continue 'function_start;
+                            ThreadReturn::Unfinished => continue 'function_start,
+                            ret => return ret,
                         }
                     }
 
@@ -397,27 +396,22 @@ impl<'gc> ThreadState<'gc> {
                         self.stack.truncate(current_frame.bottom + 1 + arg_len);
                         self.frames.pop();
 
-                        if let Some(callback) = self.call_function(
+                        match self.call_function(
                             current_frame.bottom,
                             args,
                             current_frame.returns,
                             current_frame.restore_pc,
                             current_frame.call_boundary,
                         ) {
-                            let callback_frame = self.frames.last().unwrap();
-                            if callback_frame.call_boundary {
-                                self.frames.pop();
-                                return ThreadReturn::TailCallback(callback);
-                            } else {
-                                return ThreadReturn::Callback(callback);
-                            }
-                        } else {
-                            continue 'function_start;
+                            ThreadReturn::Unfinished => continue 'function_start,
+                            ret => return ret,
                         }
                     }
 
                     OpCode::Return { start, count } => {
                         self.close_upvalues(mc, self_thread, current_frame.bottom);
+                        self.pc = current_frame.restore_pc;
+                        self.frames.pop();
 
                         let start = current_frame.base + start.0 as usize;
                         let count = count
@@ -434,8 +428,6 @@ impl<'gc> ThreadState<'gc> {
                         if current_frame.call_boundary {
                             let ret_vals = self.stack[start..start + returning].to_vec();
 
-                            self.pc = current_frame.restore_pc;
-                            self.frames.pop();
                             if let Some(frame) = self.frames.last() {
                                 self.stack.resize(frame.top, Value::Nil);
                             } else {
@@ -451,9 +443,6 @@ impl<'gc> ThreadState<'gc> {
                             for i in count..returning {
                                 self.stack[current_frame.bottom + i] = Value::Nil;
                             }
-
-                            self.pc = current_frame.restore_pc;
-                            self.frames.pop();
 
                             if current_frame.returns.is_variable() {
                                 // If variable returns were expected, then we set the stack top to
@@ -604,16 +593,15 @@ impl<'gc> ThreadState<'gc> {
                         for i in 0..3 {
                             self.stack[base + 3 + i] = self.stack[base + i];
                         }
-                        if let Some(callback) = self.call_function(
+                        match self.call_function(
                             base + 3,
                             VarCount::constant(2),
                             VarCount::constant(var_count),
                             self.pc,
                             false,
                         ) {
-                            return ThreadReturn::Callback(callback);
-                        } else {
-                            continue 'function_start;
+                            ThreadReturn::Unfinished => continue 'function_start,
+                            ret => return ret,
                         }
                     }
 
@@ -846,7 +834,7 @@ impl<'gc> ThreadState<'gc> {
         returns: VarCount,
         restore_pc: usize,
         call_boundary: bool,
-    ) -> Option<Continuation<'gc, Vec<Value<'gc>>, Error>> {
+    ) -> ThreadReturn<'gc> {
         let arg_count = if let Some(constant) = args.to_constant() {
             let constant = constant as usize;
             assert!(self.stack.len() - function_index - 1 >= constant);
@@ -885,7 +873,7 @@ impl<'gc> ThreadState<'gc> {
                 });
 
                 self.pc = 0;
-                None
+                ThreadReturn::Unfinished
             }
             Value::Callback(callback) => {
                 match callback
@@ -893,40 +881,48 @@ impl<'gc> ThreadState<'gc> {
                     .expect("callback errors not handled yet")
                 {
                     ContinuationResult::Finish(res) => {
-                        let count = res.len();
-                        if let Some(returning) = returns.to_constant() {
-                            if let Some(current_frame) = self.frames.last() {
-                                self.stack.resize(current_frame.top, Value::Nil);
-                            }
-
-                            let returning = returning as usize;
-                            for i in 0..returning.min(count) {
-                                self.stack[function_index + i] = res[i];
-                            }
-                            for i in count..returning {
-                                self.stack[function_index + i] = Value::Nil;
-                            }
+                        if call_boundary {
+                            ThreadReturn::Finished(res)
                         } else {
-                            self.stack.resize(function_index + count, Value::Nil);
-                            for i in 0..count {
-                                self.stack[function_index + i] = res[i];
-                            }
-                        }
+                            let count = res.len();
+                            if let Some(returning) = returns.to_constant() {
+                                if let Some(current_frame) = self.frames.last() {
+                                    self.stack.resize(current_frame.top, Value::Nil);
+                                }
 
-                        self.pc = restore_pc;
-                        None
+                                let returning = returning as usize;
+                                for i in 0..returning.min(count) {
+                                    self.stack[function_index + i] = res[i];
+                                }
+                                for i in count..returning {
+                                    self.stack[function_index + i] = Value::Nil;
+                                }
+                            } else {
+                                self.stack.resize(function_index + count, Value::Nil);
+                                for i in 0..count {
+                                    self.stack[function_index + i] = res[i];
+                                }
+                            }
+
+                            self.pc = restore_pc;
+                            ThreadReturn::Unfinished
+                        }
                     }
                     ContinuationResult::Continue(cont) => {
-                        self.frames.push(Frame {
-                            bottom: function_index,
-                            base: function_index,
-                            top: function_index,
-                            returns,
-                            restore_pc,
-                            call_boundary,
-                        });
-                        self.stack.resize(function_index + 1, Value::Nil);
-                        Some(cont)
+                        if call_boundary {
+                            ThreadReturn::TailCallback(cont)
+                        } else {
+                            self.frames.push(Frame {
+                                bottom: function_index,
+                                base: function_index + 1,
+                                top: function_index + 1,
+                                returns,
+                                restore_pc,
+                                call_boundary,
+                            });
+                            self.stack.resize(function_index + 1, Value::Nil);
+                            ThreadReturn::Callback(cont)
+                        }
                     }
                 }
             }
