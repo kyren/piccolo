@@ -3,13 +3,19 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext};
 
-use crate::{ContinuationResult, Error, Value};
+use crate::{Error, Sequence, Value};
 
-pub type CallbackResult<'gc> = Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>;
+pub enum CallbackResult<'gc> {
+    Return(Vec<Value<'gc>>),
+    Yield(Vec<Value<'gc>>),
+    Continue(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>),
+}
 
 #[derive(Collect)]
 #[collect(require_static)]
-pub struct CallbackFn(pub Box<for<'gc> Fn(&[Value<'gc>]) -> CallbackResult<'gc> + 'static>);
+pub struct CallbackFn(
+    pub Box<for<'gc> Fn(&[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> + 'static>,
+);
 
 impl Debug for CallbackFn {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -26,15 +32,12 @@ pub struct Callback<'gc>(pub Gc<'gc, CallbackFn>);
 impl<'gc> Callback<'gc> {
     pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static + for<'fgc> Fn(&[Value<'fgc>]) -> CallbackResult<'fgc>,
+        F: 'static + for<'fgc> Fn(&[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error>,
     {
         Callback(Gc::allocate(mc, CallbackFn(Box::new(f))))
     }
 
-    pub fn call(
-        &self,
-        args: &[Value<'gc>],
-    ) -> Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error> {
+    pub fn call(&self, args: &[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> {
         (*(self.0).0)(args)
     }
 }

@@ -1,5 +1,5 @@
 use luster::{
-    compile, sequence_fn, Callback, Closure, ContinuationResult, Error, Lua, SequenceExt, Value,
+    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, Value,
 };
 
 #[test]
@@ -11,7 +11,7 @@ fn callback() -> Result<(), Box<Error>> {
                 let callback = Callback::new(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(42));
-                    Ok(ContinuationResult::Finish(ret))
+                    Ok(CallbackResult::Return(ret))
                 });
                 lc.globals.set(
                     mc,
@@ -34,7 +34,7 @@ fn callback() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.run_closure(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[], 64))
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)])),
         )
     })?;
@@ -51,7 +51,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
                 let callback = Callback::new(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(3));
-                    Ok(ContinuationResult::Finish(ret))
+                    Ok(CallbackResult::Return(ret))
                 });
                 lc.globals.set(
                     mc,
@@ -73,7 +73,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.run_closure(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[], 64))
             .map(|b| {
                 assert_eq!(
                     b,
