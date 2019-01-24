@@ -36,7 +36,7 @@ pub use sequence::{
 };
 pub use string::{InternedStringSet, String, StringError};
 pub use table::{InvalidTableKey, Table, TableState};
-pub use thread::{Thread, ThreadSequence};
+pub use thread::Thread;
 pub use types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };

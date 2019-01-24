@@ -65,3 +65,34 @@ where
         }
     }
 }
+
+#[must_use = "sequences do nothing unless stepped"]
+#[derive(Debug, Collect)]
+#[collect(empty_drop)]
+pub struct MapResult<S, F>(S, Option<StaticCollect<F>>);
+
+impl<S, F> MapResult<S, F> {
+    pub fn new(s: S, f: F) -> MapResult<S, F> {
+        MapResult(s, Some(StaticCollect(f)))
+    }
+}
+
+impl<'gc, S, F, RI, RE> Sequence<'gc> for MapResult<S, F>
+where
+    S: Sequence<'gc>,
+    F: 'static + FnOnce(Result<S::Item, S::Error>) -> Result<RI, RE>,
+{
+    type Item = RI;
+    type Error = RE;
+
+    fn step(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<RI, RE>> {
+        match self.0.step(mc, lc) {
+            Some(res) => Some(self.1.take().unwrap().0(res)),
+            None => None,
+        }
+    }
+}

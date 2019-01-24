@@ -115,7 +115,7 @@ impl<'gc> Thread<'gc> {
 
 #[derive(Collect)]
 #[collect(empty_drop)]
-pub struct ThreadSequence<'gc> {
+struct ThreadSequence<'gc> {
     thread: Thread<'gc>,
     frame_top: usize,
     granularity: u32,
@@ -1032,9 +1032,26 @@ impl<'gc> ThreadState<'gc> {
                     Some(Ok(ContinuationResult::Finish(res)))
                 }
                 CallbackResult::Continue(cont) => match frame_return {
-                    FrameReturn::CallBoundary => Some(Ok(ContinuationResult::Continue(Box::new(
-                        TailCallback(cont),
-                    )))),
+                    FrameReturn::CallBoundary => {
+                        fn callback_to_continuation_result<'gc>(
+                            cont: Result<CallbackResult<'gc>, Error>,
+                        ) -> Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>
+                        {
+                            cont.and_then(|cont| match cont {
+                                CallbackResult::Return(res) => Ok(ContinuationResult::Finish(res)),
+                                CallbackResult::Yield(_) => Err(Error::RuntimeError(Some(
+                                    "yield from unyieldable function".into(),
+                                ))),
+                                CallbackResult::Continue(cont) => Ok(ContinuationResult::Continue(
+                                    Box::new(cont.map_result(callback_to_continuation_result)),
+                                )),
+                            })
+                        }
+
+                        Some(Ok(ContinuationResult::Continue(Box::new(
+                            cont.map_result(callback_to_continuation_result),
+                        ))))
+                    }
                     FrameReturn::Upper(returns) => {
                         self.frames.push(Frame {
                             bottom: function_index,
@@ -1079,40 +1096,6 @@ impl<'gc> ThreadState<'gc> {
                     thread.0.read().stack[ind]
                 });
             }
-        }
-    }
-}
-
-// If a callback is tail-called in an un-yieldable context, and returns a continuation, then we do
-// not need a callback frame on the thread, we can simply return the provided continuation.  This
-// turns a sequence yielding `CallbackResult` into one yielding `ContinuationResult`, and errors if
-// the callback results in a yield.
-#[derive(Collect)]
-#[collect(empty_drop)]
-struct TailCallback<'gc>(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>);
-
-impl<'gc> Sequence<'gc> for TailCallback<'gc> {
-    type Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>;
-    type Error = Error;
-
-    fn step(
-        &mut self,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-    ) -> Option<Result<Self::Item, Self::Error>> {
-        match self.0.step(mc, lc) {
-            None => None,
-            Some(Err(err)) => Some(Err(err)),
-            Some(Ok(cbr)) => match cbr {
-                CallbackResult::Return(res) => Some(Ok(ContinuationResult::Finish(res))),
-                CallbackResult::Yield(_) => Some(Err(Error::RuntimeError(Some(
-                    "yield from unyieldable function".into(),
-                )))),
-                CallbackResult::Continue(cont) => {
-                    self.0 = cont;
-                    None
-                }
-            },
         }
     }
 }

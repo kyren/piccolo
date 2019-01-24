@@ -3,7 +3,7 @@ use gc_arena::{Collect, MutationContext};
 use crate::{IntoSequence, LuaContext, Sequence};
 
 use super::and_then::{AndThen, AndThenWith};
-use super::map::{Map, MapError};
+use super::map::{Map, MapError, MapResult};
 use super::then::{Then, ThenWith};
 
 /// Extension trait for `Sequence` that provides useful combinator methods, similarly to
@@ -30,6 +30,15 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
         F: 'static + FnOnce(Self::Error) -> R,
     {
         MapError::new(self, f)
+    }
+
+    /// Similar to `map`, but maps the given function over the Result of this sequence, regardless
+    /// if it is an Ok or an Err.
+    fn map_result<F, R>(self, f: F) -> MapResult<Self, F>
+    where
+        F: 'static + FnOnce(Result<Self::Item, Self::Error>) -> R,
+    {
+        MapResult::new(self, f)
     }
 
     /// Execute another sequence step after this sequence completes, regardless of the success or
