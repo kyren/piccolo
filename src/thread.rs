@@ -284,7 +284,7 @@ impl<'gc> ThreadState<'gc> {
         self_thread: Thread<'gc>,
         mut instructions: u32,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
-        'function_start: loop {
+        'start: loop {
             let current_frame = self.frames.last().expect("no current ThreadState frame");
             let stack_bottom = current_frame.bottom;
             let frame_return = current_frame.frame_return;
@@ -294,6 +294,7 @@ impl<'gc> ThreadState<'gc> {
                 _ => panic!("step_lua called when top frame is not a callback"),
             };
             let current_function = get_closure(self.stack[stack_bottom]);
+            let (upper_stack, stack_frame) = self.stack.split_at_mut(stack_base);
 
             loop {
                 let op = current_function.0.proto.opcodes[self.pc];
@@ -301,12 +302,11 @@ impl<'gc> ThreadState<'gc> {
 
                 match op {
                     OpCode::Move { dest, source } => {
-                        self.stack[stack_base + dest.0 as usize] =
-                            self.stack[stack_base + source.0 as usize];
+                        stack_frame[dest.0 as usize] = stack_frame[source.0 as usize];
                     }
 
                     OpCode::LoadConstant { dest, constant } => {
-                        self.stack[stack_base + dest.0 as usize] =
+                        stack_frame[dest.0 as usize] =
                             current_function.0.proto.constants[constant.0 as usize].to_value();
                     }
 
@@ -315,7 +315,7 @@ impl<'gc> ThreadState<'gc> {
                         value,
                         skip_next,
                     } => {
-                        self.stack[stack_base + dest.0 as usize] = Value::Boolean(value);
+                        stack_frame[dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
                             self.pc += 1;
                         }
@@ -323,58 +323,56 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::LoadNil { dest, count } => {
                         for i in dest.0..dest.0 + count {
-                            self.stack[stack_base + i as usize] = Value::Nil;
+                            stack_frame[i as usize] = Value::Nil;
                         }
                     }
 
                     OpCode::NewTable { dest } => {
-                        self.stack[stack_base + dest.0 as usize] = Value::Table(Table::new(mc));
+                        stack_frame[dest.0 as usize] = Value::Table(Table::new(mc));
                     }
 
                     OpCode::GetTableR { dest, table, key } => {
-                        self.stack[stack_base + dest.0 as usize] =
-                            get_table(self.stack[stack_base + table.0 as usize])
-                                .get(self.stack[stack_base + key.0 as usize]);
+                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])
+                            .get(stack_frame[key.0 as usize]);
                     }
 
                     OpCode::GetTableC { dest, table, key } => {
-                        self.stack[stack_base + dest.0 as usize] =
-                            get_table(self.stack[stack_base + table.0 as usize])
-                                .get(current_function.0.proto.constants[key.0 as usize].to_value())
+                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])
+                            .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
                     OpCode::SetTableRR { table, key, value } => {
-                        get_table(self.stack[stack_base + table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])
                             .set(
                                 mc,
-                                self.stack[stack_base + key.0 as usize],
-                                self.stack[stack_base + value.0 as usize],
+                                stack_frame[key.0 as usize],
+                                stack_frame[value.0 as usize],
                             )
                             .expect("could not set table value");
                     }
 
                     OpCode::SetTableRC { table, key, value } => {
-                        get_table(self.stack[stack_base + table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])
                             .set(
                                 mc,
-                                self.stack[stack_base + key.0 as usize],
+                                stack_frame[key.0 as usize],
                                 current_function.0.proto.constants[value.0 as usize].to_value(),
                             )
                             .expect("could not set table value");
                     }
 
                     OpCode::SetTableCR { table, key, value } => {
-                        get_table(self.stack[stack_base + table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])
                             .set(
                                 mc,
                                 current_function.0.proto.constants[key.0 as usize].to_value(),
-                                self.stack[stack_base + value.0 as usize],
+                                stack_frame[value.0 as usize],
                             )
                             .expect("could not set table value");
                     }
 
                     OpCode::SetTableCC { table, key, value } => {
-                        get_table(self.stack[stack_base + table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])
                             .set(
                                 mc,
                                 current_function.0.proto.constants[key.0 as usize].to_value(),
@@ -384,63 +382,69 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::GetUpTableR { dest, table, key } => {
-                        self.stack[stack_base + dest.0 as usize] = get_table(self.get_upvalue(
+                        stack_frame[dest.0 as usize] = get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
-                        .get(self.stack[stack_base + key.0 as usize]);
+                        .get(stack_frame[key.0 as usize]);
                     }
 
                     OpCode::GetUpTableC { dest, table, key } => {
-                        self.stack[stack_base + dest.0 as usize] = get_table(self.get_upvalue(
+                        stack_frame[dest.0 as usize] = get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
                         .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
                     OpCode::SetUpTableRR { table, key, value } => {
-                        get_table(self.get_upvalue(
+                        get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
                         .set(
                             mc,
-                            self.stack[stack_base + key.0 as usize],
-                            self.stack[stack_base + value.0 as usize],
+                            stack_frame[key.0 as usize],
+                            stack_frame[value.0 as usize],
                         )
                         .expect("could not set table value");
                     }
 
                     OpCode::SetUpTableRC { table, key, value } => {
-                        get_table(self.get_upvalue(
+                        get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
                         .set(
                             mc,
-                            self.stack[stack_base + key.0 as usize],
+                            stack_frame[key.0 as usize],
                             current_function.0.proto.constants[value.0 as usize].to_value(),
                         )
                         .expect("could not set table value");
                     }
 
                     OpCode::SetUpTableCR { table, key, value } => {
-                        get_table(self.get_upvalue(
+                        get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
                         .set(
                             mc,
                             current_function.0.proto.constants[key.0 as usize].to_value(),
-                            self.stack[stack_base + value.0 as usize],
+                            stack_frame[value.0 as usize],
                         )
                         .expect("could not set table value");
                     }
 
                     OpCode::SetUpTableCC { table, key, value } => {
-                        get_table(self.get_upvalue(
+                        get_table(get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
                         .set(
@@ -464,7 +468,7 @@ impl<'gc> ThreadState<'gc> {
                         ) {
                             return Some(ret);
                         }
-                        continue 'function_start;
+                        continue 'start;
                     }
 
                     OpCode::TailCall { func, args } => {
@@ -489,7 +493,7 @@ impl<'gc> ThreadState<'gc> {
                         {
                             return Some(ret);
                         }
-                        continue 'function_start;
+                        continue 'start;
                     }
 
                     OpCode::Return { start, count } => {
@@ -540,7 +544,7 @@ impl<'gc> ThreadState<'gc> {
                                     self.stack.resize(current_frame_top, Value::Nil);
                                 }
 
-                                continue 'function_start;
+                                continue 'start;
                             }
                         }
                     }
@@ -566,6 +570,9 @@ impl<'gc> ThreadState<'gc> {
                                 self.stack[dest + i] = self.stack[varargs_start + i];
                             }
                         }
+
+                        // The `stack_frame` slice is invalidated, so start over from the very top.
+                        continue 'start;
                     }
 
                     OpCode::Jump {
@@ -574,12 +581,23 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         self.pc = add_offset(self.pc, offset);
                         if let Some(r) = close_upvalues.to_u8() {
-                            self.close_upvalues(mc, self_thread, stack_base + r as usize);
+                            for (_, upval) in
+                                self.open_upvalues.split_off(&(stack_base + r as usize))
+                            {
+                                let mut upval = upval.0.write(mc);
+                                if let UpValueState::Open(thread, ind) = *upval {
+                                    *upval = UpValueState::Closed(if thread == self_thread {
+                                        stack_frame[ind - stack_base]
+                                    } else {
+                                        thread.0.read().stack[ind]
+                                    });
+                                }
+                            }
                         }
                     }
 
                     OpCode::Test { value, is_true } => {
-                        let value = self.stack[stack_base + value.0 as usize];
+                        let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
                             self.pc += 1;
                         }
@@ -590,11 +608,11 @@ impl<'gc> ThreadState<'gc> {
                         value,
                         is_true,
                     } => {
-                        let value = self.stack[stack_base + value.0 as usize];
+                        let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
                             self.pc += 1;
                         } else {
-                            self.stack[stack_base + dest.0 as usize] = value;
+                            stack_frame[dest.0 as usize] = value;
                         }
                     }
 
@@ -629,13 +647,12 @@ impl<'gc> ThreadState<'gc> {
                         }
 
                         let closure = Closure(Gc::allocate(mc, ClosureState { proto, upvalues }));
-                        self.stack[stack_base + dest.0 as usize] = Value::Closure(closure);
+                        stack_frame[dest.0 as usize] = Value::Closure(closure);
                     }
 
                     OpCode::NumericForPrep { base, jump } => {
-                        let base = stack_base + base.0 as usize;
-                        self.stack[base] = self.stack[base]
-                            .subtract(self.stack[base + 2])
+                        stack_frame[base.0 as usize] = stack_frame[base.0 as usize]
+                            .subtract(stack_frame[base.0 as usize + 2])
                             .expect("non numeric for loop parameters");
                         self.pc = add_offset(self.pc, jump);
                     }
@@ -643,24 +660,24 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::NumericForLoop { base, jump } => {
                         const ERR_MSG: &str = "non numeric for loop parameter";
 
-                        let base = stack_base + base.0 as usize;
-                        self.stack[base] =
-                            self.stack[base].add(self.stack[base + 2]).expect(ERR_MSG);
-                        let past_end = if self.stack[base + 2]
+                        stack_frame[base.0 as usize] = stack_frame[base.0 as usize]
+                            .add(stack_frame[base.0 as usize + 2])
+                            .expect(ERR_MSG);
+                        let past_end = if stack_frame[base.0 as usize + 2]
                             .less_than(Value::Integer(0))
                             .expect(ERR_MSG)
                         {
-                            self.stack[base]
-                                .less_than(self.stack[base + 1])
+                            stack_frame[base.0 as usize]
+                                .less_than(stack_frame[base.0 as usize + 1])
                                 .expect(ERR_MSG)
                         } else {
-                            self.stack[base + 1]
-                                .less_than(self.stack[base])
+                            stack_frame[base.0 as usize + 1]
+                                .less_than(stack_frame[base.0 as usize])
                                 .expect(ERR_MSG)
                         };
                         if !past_end {
                             self.pc = add_offset(self.pc, jump);
-                            self.stack[base + 3] = self.stack[base];
+                            stack_frame[base.0 as usize + 3] = stack_frame[base.0 as usize];
                         }
                     }
 
@@ -678,31 +695,28 @@ impl<'gc> ThreadState<'gc> {
                         ) {
                             return Some(ret);
                         }
-                        continue 'function_start;
+                        continue 'start;
                     }
 
                     OpCode::GenericForLoop { base, jump } => {
-                        let base = stack_base + base.0 as usize;
-                        if self.stack[base + 1].to_bool() {
-                            self.stack[base] = self.stack[base + 1];
+                        if stack_frame[base.0 as usize + 1].to_bool() {
+                            stack_frame[base.0 as usize] = stack_frame[base.0 as usize + 1];
                             self.pc = add_offset(self.pc, jump);
                         }
                     }
 
                     OpCode::SelfR { base, table, key } => {
-                        let base = stack_base + base.0 as usize;
-                        let table = self.stack[stack_base + table.0 as usize];
+                        let table = stack_frame[table.0 as usize];
                         let key = current_function.0.proto.constants[key.0 as usize].to_value();
-                        self.stack[base + 1] = table;
-                        self.stack[base] = get_table(table).get(key);
+                        stack_frame[base.0 as usize + 1] = table;
+                        stack_frame[base.0 as usize] = get_table(table).get(key);
                     }
 
                     OpCode::SelfC { base, table, key } => {
-                        let base = stack_base + base.0 as usize;
-                        let table = self.stack[stack_base + table.0 as usize];
+                        let table = stack_frame[table.0 as usize];
                         let key = current_function.0.proto.constants[key.0 as usize].to_value();
-                        self.stack[base + 1] = table;
-                        self.stack[base] = get_table(table).get(key);
+                        stack_frame[base.0 as usize + 1] = table;
+                        stack_frame[base.0 as usize] = get_table(table).get(key);
                     }
 
                     OpCode::Concat {
@@ -710,30 +724,30 @@ impl<'gc> ThreadState<'gc> {
                         source,
                         count,
                     } => {
-                        self.stack[stack_base + dest.0 as usize] = Value::String(
+                        stack_frame[dest.0 as usize] = Value::String(
                             String::concat(
                                 mc,
-                                &self.stack[stack_base + source.0 as usize
-                                    ..stack_base + source.0 as usize + count as usize],
+                                &stack_frame[source.0 as usize..source.0 as usize + count as usize],
                             )
                             .unwrap(),
                         );
                     }
 
                     OpCode::GetUpValue { source, dest } => {
-                        self.stack[stack_base + dest.0 as usize] = self.get_upvalue(
+                        stack_frame[dest.0 as usize] = get_upvalue(
                             self_thread,
+                            upper_stack,
                             current_function.0.upvalues[source.0 as usize],
                         );
                     }
 
                     OpCode::SetUpValue { source, dest } => {
-                        let val = self.stack[stack_base + source.0 as usize];
+                        let val = stack_frame[source.0 as usize];
                         let mut uv = current_function.0.upvalues[dest.0 as usize].0.write(mc);
                         match &mut *uv {
                             UpValueState::Open(thread, ind) => {
                                 if *thread == self_thread {
-                                    self.stack[*ind] = val
+                                    upper_stack[*ind] = val
                                 } else {
                                     thread.0.write(mc).stack[*ind] = val;
                                 }
@@ -743,9 +757,8 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::Length { dest, source } => {
-                        self.stack[stack_base + dest.0 as usize] = Value::Integer(
-                            get_table(self.stack[stack_base + source.0 as usize]).length(),
-                        );
+                        stack_frame[dest.0 as usize] =
+                            Value::Integer(get_table(stack_frame[source.0 as usize]).length());
                     }
 
                     OpCode::EqRR {
@@ -753,8 +766,8 @@ impl<'gc> ThreadState<'gc> {
                         left,
                         right,
                     } => {
-                        let left = self.stack[stack_base + left.0 as usize];
-                        let right = self.stack[stack_base + right.0 as usize];
+                        let left = stack_frame[left.0 as usize];
+                        let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
                             self.pc += 1;
                         }
@@ -765,7 +778,7 @@ impl<'gc> ThreadState<'gc> {
                         left,
                         right,
                     } => {
-                        let left = self.stack[stack_base + left.0 as usize];
+                        let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         if (left == right) == skip_if {
                             self.pc += 1;
@@ -778,7 +791,7 @@ impl<'gc> ThreadState<'gc> {
                         right,
                     } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
-                        let right = self.stack[stack_base + right.0 as usize];
+                        let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
                             self.pc += 1;
                         }
@@ -797,58 +810,58 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::Not { dest, source } => {
-                        let source = self.stack[stack_base + source.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] = source.not();
+                        let source = stack_frame[source.0 as usize];
+                        stack_frame[dest.0 as usize] = source.not();
                     }
 
                     OpCode::AddRR { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] =
+                        let left = stack_frame[left.0 as usize];
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::AddRC { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
+                        let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] =
+                        stack_frame[dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::AddCR { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] =
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::AddCC { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] =
+                        stack_frame[dest.0 as usize] =
                             left.add(right).expect("could not apply binary operator");
                     }
 
                     OpCode::SubRR { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] = left
+                        let left = stack_frame[left.0 as usize];
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::SubRC { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
+                        let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] = left
+                        stack_frame[dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::SubCR { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] = left
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
                     }
@@ -856,31 +869,31 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::SubCC { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] = left
+                        stack_frame[dest.0 as usize] = left
                             .subtract(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::MulRR { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] = left
+                        let left = stack_frame[left.0 as usize];
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::MulRC { dest, left, right } => {
-                        let left = self.stack[stack_base + left.0 as usize];
+                        let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] = left
+                        stack_frame[dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
                     }
 
                     OpCode::MulCR { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
-                        let right = self.stack[stack_base + right.0 as usize];
-                        self.stack[stack_base + dest.0 as usize] = left
+                        let right = stack_frame[right.0 as usize];
+                        stack_frame[dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
                     }
@@ -888,7 +901,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::MulCC { dest, left, right } => {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                        self.stack[stack_base + dest.0 as usize] = left
+                        stack_frame[dest.0 as usize] = left
                             .multiply(right)
                             .expect("could not apply binary operator");
                     }
@@ -1068,19 +1081,6 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    fn get_upvalue(&self, self_thread: Thread<'gc>, upvalue: UpValue<'gc>) -> Value<'gc> {
-        match *upvalue.0.read() {
-            UpValueState::Open(thread, ind) => {
-                if thread == self_thread {
-                    self.stack[ind]
-                } else {
-                    thread.0.read().stack[ind]
-                }
-            }
-            UpValueState::Closed(v) => v,
-        }
-    }
-
     fn close_upvalues(
         &mut self,
         mc: MutationContext<'gc, '_>,
@@ -1097,6 +1097,23 @@ impl<'gc> ThreadState<'gc> {
                 });
             }
         }
+    }
+}
+
+fn get_upvalue<'gc>(
+    self_thread: Thread<'gc>,
+    self_stack: &[Value<'gc>],
+    upvalue: UpValue<'gc>,
+) -> Value<'gc> {
+    match *upvalue.0.read() {
+        UpValueState::Open(thread, ind) => {
+            if thread == self_thread {
+                self_stack[ind]
+            } else {
+                thread.0.read().stack[ind]
+            }
+        }
+        UpValueState::Closed(v) => v,
     }
 }
 
