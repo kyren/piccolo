@@ -30,7 +30,15 @@ impl<'gc> PartialEq for Thread<'gc> {
 
 impl<'gc> Thread<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Thread<'gc> {
-        Thread(GcCell::allocate(mc, ThreadState::new()))
+        Thread(GcCell::allocate(
+            mc,
+            ThreadState {
+                stack: Vec::new(),
+                frames: Vec::new(),
+                pc: 0,
+                open_upvalues: BTreeMap::new(),
+            },
+        ))
     }
 
     /// Call a closure on this thread, producing a `Sequence`.  No more than `granularity` VM
@@ -97,7 +105,8 @@ impl<'gc> Thread<'gc> {
         state.stack.push(Value::Closure(closure));
         state.stack.extend(args);
         let res_pc = state.pc;
-        state.call_closure(
+        self.closure_call(
+            &mut state,
             closure_index,
             VarCount::variable(),
             FrameReturn::CallBoundary,
@@ -111,112 +120,33 @@ impl<'gc> Thread<'gc> {
             granularity,
         }
     }
-}
-
-#[derive(Collect)]
-#[collect(empty_drop)]
-struct ThreadSequence<'gc> {
-    thread: Thread<'gc>,
-    frame_top: usize,
-    granularity: u32,
-}
-
-impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
-    type Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>;
-    type Error = Error;
 
     fn step(
-        &mut self,
+        self,
+        state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<Self::Item, Self::Error>> {
-        let mut state = self.thread.0.write(mc);
-        if self.frame_top != state.frames.len() {
-            panic!("frame mismatch in ThreadSequence, Sequences evaluated out of order");
-        }
-        let res = state.step(mc, lc, self.thread, self.granularity);
-        self.frame_top = state.frames.len();
-        res
-    }
-}
-
-#[derive(Collect)]
-#[collect(empty_drop)]
-enum FrameType<'gc> {
-    Lua {
-        base: usize,
-    },
-    Callback {
-        callback: Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>,
-    },
-    Yield,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Collect)]
-#[collect(require_copy)]
-enum FrameReturn {
-    // Frame is a Thread entry-point, and returning should return all results to the caller
-    CallBoundary,
-    // Frame is a normal call frame within a thread, returning should return the given number of
-    // results to the frame above
-    Upper(VarCount),
-}
-
-#[derive(Collect)]
-#[collect(empty_drop)]
-struct Frame<'gc> {
-    bottom: usize,
-    top: usize,
-    frame_type: FrameType<'gc>,
-    frame_return: FrameReturn,
-    restore_pc: usize,
-}
-
-#[derive(Collect)]
-#[collect(empty_drop)]
-struct ThreadState<'gc> {
-    stack: Vec<Value<'gc>>,
-    frames: Vec<Frame<'gc>>,
-    pc: usize,
-    open_upvalues: BTreeMap<usize, UpValue<'gc>>,
-}
-
-impl<'gc> ThreadState<'gc> {
-    fn new() -> ThreadState<'gc> {
-        ThreadState {
-            stack: Vec::new(),
-            frames: Vec::new(),
-            pc: 0,
-            open_upvalues: BTreeMap::new(),
-        }
-    }
-
-    fn step(
-        &mut self,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-        self_thread: Thread<'gc>,
         granularity: u32,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
-        match self
+        match state
             .frames
             .last()
             .expect("cannot step a finished thread")
             .frame_type
         {
-            FrameType::Lua { .. } => self.step_lua(mc, self_thread, granularity),
-            FrameType::Callback { .. } => self.step_callback(mc, lc, self_thread),
+            FrameType::Lua { .. } => self.step_lua(state, mc, granularity),
+            FrameType::Callback { .. } => self.step_callback(state, mc, lc),
             FrameType::Yield => panic!("cannot step a suspended thread"),
         }
     }
 
     fn step_callback(
-        &mut self,
+        self,
+        state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-        self_thread: Thread<'gc>,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
-        let callback = match &mut self
+        let callback = match &mut state
             .frames
             .last_mut()
             .expect("no current ThreadState frame")
@@ -229,7 +159,7 @@ impl<'gc> ThreadState<'gc> {
         match callback.step(mc, lc) {
             None => None,
             Some(Err(err)) => {
-                self.unwind(mc, self_thread);
+                self.unwind(state, mc);
                 Some(Err(err))
             }
             Some(Ok(CallbackResult::Continue(cont))) => {
@@ -237,15 +167,16 @@ impl<'gc> ThreadState<'gc> {
                 None
             }
             Some(Ok(CallbackResult::Yield(res))) => {
-                self.frames
+                state
+                    .frames
                     .last_mut()
                     .expect("no callback frame")
                     .frame_type = FrameType::Yield;
                 Some(Ok(ContinuationResult::Finish(res)))
             }
             Some(Ok(CallbackResult::Return(res))) => {
-                let top_frame = self.frames.pop().expect("no callback frame");
-                self.pc = top_frame.restore_pc;
+                let top_frame = state.frames.pop().expect("no callback frame");
+                state.pc = top_frame.restore_pc;
 
                 let returns = match top_frame.frame_return {
                     FrameReturn::Upper(returns) => returns,
@@ -256,22 +187,24 @@ impl<'gc> ThreadState<'gc> {
                     .map(|c| c as usize)
                     .unwrap_or(res.len());
 
-                self.stack.truncate(top_frame.bottom);
-                self.stack.resize(top_frame.bottom + return_len, Value::Nil);
+                state.stack.truncate(top_frame.bottom);
+                state
+                    .stack
+                    .resize(top_frame.bottom + return_len, Value::Nil);
 
                 for i in 0..return_len.min(res.len()) {
-                    self.stack[top_frame.bottom + i] = res[i];
+                    state.stack[top_frame.bottom + i] = res[i];
                 }
 
                 // Stack size is already correct for variable returns, but if we are returning a
                 // constant number, we need to restore the previous stack top.
                 if !returns.is_variable() {
-                    let current_frame_top = self
+                    let current_frame_top = state
                         .frames
                         .last()
                         .expect("no frame to return to from callback")
                         .top;
-                    self.stack.resize(current_frame_top, Value::Nil);
+                    state.stack.resize(current_frame_top, Value::Nil);
                 }
                 None
             }
@@ -279,13 +212,13 @@ impl<'gc> ThreadState<'gc> {
     }
 
     fn step_lua(
-        &mut self,
+        self,
+        state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
-        self_thread: Thread<'gc>,
         mut instructions: u32,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
         'start: loop {
-            let current_frame = self.frames.last().expect("no current ThreadState frame");
+            let current_frame = state.frames.last().expect("no current ThreadState frame");
             let stack_bottom = current_frame.bottom;
             let frame_return = current_frame.frame_return;
             let restore_pc = current_frame.restore_pc;
@@ -293,12 +226,12 @@ impl<'gc> ThreadState<'gc> {
                 FrameType::Lua { base } => base,
                 _ => panic!("step_lua called when top frame is not a callback"),
             };
-            let current_function = get_closure(self.stack[stack_bottom]);
-            let (upper_stack, stack_frame) = self.stack.split_at_mut(stack_base);
+            let current_function = get_closure(state.stack[stack_bottom]);
+            let (upper_stack, stack_frame) = state.stack.split_at_mut(stack_base);
 
             loop {
-                let op = current_function.0.proto.opcodes[self.pc];
-                self.pc += 1;
+                let op = current_function.0.proto.opcodes[state.pc];
+                state.pc += 1;
 
                 match op {
                     OpCode::Move { dest, source } => {
@@ -317,7 +250,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         stack_frame[dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -383,7 +316,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::GetUpTableR { dest, table, key } => {
                         stack_frame[dest.0 as usize] = get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -392,7 +325,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::GetUpTableC { dest, table, key } => {
                         stack_frame[dest.0 as usize] = get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -401,7 +334,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::SetUpTableRR { table, key, value } => {
                         get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -415,7 +348,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::SetUpTableRC { table, key, value } => {
                         get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -429,7 +362,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::SetUpTableCR { table, key, value } => {
                         get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -443,7 +376,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::SetUpTableCC { table, key, value } => {
                         get_table(get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
                         ))
@@ -460,11 +393,12 @@ impl<'gc> ThreadState<'gc> {
                         args,
                         returns,
                     } => {
-                        if let Some(ret) = self.call_function(
+                        if let Some(ret) = self.function_call(
+                            state,
                             stack_base + func.0 as usize,
                             args,
                             FrameReturn::Upper(returns),
-                            self.pc,
+                            state.pc,
                         ) {
                             return Some(ret);
                         }
@@ -472,24 +406,24 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::TailCall { func, args } => {
-                        self.close_upvalues(mc, self_thread, stack_bottom);
+                        self.close_upvalues(state, mc, stack_bottom);
 
                         let func = stack_base + func.0 as usize;
                         let arg_len = if let Some(args) = args.to_constant() {
                             args as usize
                         } else {
-                            self.stack.len() - func - 1
+                            state.stack.len() - func - 1
                         };
 
-                        self.stack[stack_bottom] = self.stack[func];
+                        state.stack[stack_bottom] = state.stack[func];
                         for i in 0..arg_len {
-                            self.stack[stack_bottom + 1 + i] = self.stack[func + 1 + i];
+                            state.stack[stack_bottom + 1 + i] = state.stack[func + 1 + i];
                         }
-                        self.stack.truncate(stack_bottom + 1 + arg_len);
-                        self.frames.pop();
+                        state.stack.truncate(stack_bottom + 1 + arg_len);
+                        state.frames.pop();
 
                         if let Some(ret) =
-                            self.call_function(stack_bottom, args, frame_return, restore_pc)
+                            self.function_call(state, stack_bottom, args, frame_return, restore_pc)
                         {
                             return Some(ret);
                         }
@@ -497,24 +431,24 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     OpCode::Return { start, count } => {
-                        self.close_upvalues(mc, self_thread, stack_bottom);
-                        self.pc = restore_pc;
-                        self.frames.pop();
+                        self.close_upvalues(state, mc, stack_bottom);
+                        state.pc = restore_pc;
+                        state.frames.pop();
 
                         let start = stack_base + start.0 as usize;
                         let count = count
                             .to_constant()
                             .map(|c| c as usize)
-                            .unwrap_or(self.stack.len() - start);
+                            .unwrap_or(state.stack.len() - start);
 
                         match frame_return {
                             FrameReturn::CallBoundary => {
-                                let ret_vals = self.stack[start..start + count].to_vec();
+                                let ret_vals = state.stack[start..start + count].to_vec();
 
-                                if let Some(frame) = self.frames.last() {
-                                    self.stack.resize(frame.top, Value::Nil);
+                                if let Some(frame) = state.frames.last() {
+                                    state.stack.resize(frame.top, Value::Nil);
                                 } else {
-                                    self.stack.clear();
+                                    state.stack.clear();
                                 }
 
                                 return Some(Ok(ContinuationResult::Finish(ret_vals)));
@@ -524,24 +458,24 @@ impl<'gc> ThreadState<'gc> {
                                     returns.to_constant().map(|c| c as usize).unwrap_or(count);
 
                                 for i in 0..returning.min(count) {
-                                    self.stack[stack_bottom + i] = self.stack[start + i]
+                                    state.stack[stack_bottom + i] = state.stack[start + i]
                                 }
 
                                 for i in count..returning {
-                                    self.stack[stack_bottom + i] = Value::Nil;
+                                    state.stack[stack_bottom + i] = Value::Nil;
                                 }
 
                                 // Set the correct stack size for variable returns, otherwise restore
                                 // the previous stack top.
                                 if returns.is_variable() {
-                                    self.stack.truncate(stack_bottom + returning);
+                                    state.stack.truncate(stack_bottom + returning);
                                 } else {
-                                    let current_frame_top = self
+                                    let current_frame_top = state
                                         .frames
                                         .last()
                                         .expect("no upper frame to return to")
                                         .top;
-                                    self.stack.resize(current_frame_top, Value::Nil);
+                                    state.stack.resize(current_frame_top, Value::Nil);
                                 }
 
                                 continue 'start;
@@ -555,8 +489,8 @@ impl<'gc> ThreadState<'gc> {
                         let dest = stack_base + dest.0 as usize;
                         if let Some(count) = count.to_constant() {
                             for i in 0..count as usize {
-                                self.stack[dest + i] = if i < varargs_len {
-                                    self.stack[varargs_start + i]
+                                state.stack[dest + i] = if i < varargs_len {
+                                    state.stack[varargs_start + i]
                                 } else {
                                     Value::Nil
                                 };
@@ -565,9 +499,9 @@ impl<'gc> ThreadState<'gc> {
                             // Similarly to `OpCode::Return`, we set the stack top to indicate the
                             // number of variable arguments.  The next instruction must consume the
                             // variable results, which will reset the stack to the correct size.
-                            self.stack.resize(dest + varargs_len, Value::Nil);
+                            state.stack.resize(dest + varargs_len, Value::Nil);
                             for i in 0..varargs_len {
-                                self.stack[dest + i] = self.stack[varargs_start + i];
+                                state.stack[dest + i] = state.stack[varargs_start + i];
                             }
                         }
 
@@ -579,14 +513,14 @@ impl<'gc> ThreadState<'gc> {
                         offset,
                         close_upvalues,
                     } => {
-                        self.pc = add_offset(self.pc, offset);
+                        state.pc = add_offset(state.pc, offset);
                         if let Some(r) = close_upvalues.to_u8() {
                             for (_, upval) in
-                                self.open_upvalues.split_off(&(stack_base + r as usize))
+                                state.open_upvalues.split_off(&(stack_base + r as usize))
                             {
                                 let mut upval = upval.0.write(mc);
                                 if let UpValueState::Open(thread, ind) = *upval {
-                                    *upval = UpValueState::Closed(if thread == self_thread {
+                                    *upval = UpValueState::Closed(if thread == self {
                                         stack_frame[ind - stack_base]
                                     } else {
                                         thread.0.read().stack[ind]
@@ -599,7 +533,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::Test { value, is_true } => {
                         let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -610,7 +544,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
-                            self.pc += 1;
+                            state.pc += 1;
                         } else {
                             stack_frame[dest.0 as usize] = value;
                         }
@@ -626,14 +560,14 @@ impl<'gc> ThreadState<'gc> {
                                 }
                                 UpValueDescriptor::ParentLocal(reg) => {
                                     let ind = stack_base + reg.0 as usize;
-                                    match self.open_upvalues.entry(ind) {
+                                    match state.open_upvalues.entry(ind) {
                                         BTreeEntry::Occupied(occupied) => {
                                             upvalues.push(*occupied.get());
                                         }
                                         BTreeEntry::Vacant(vacant) => {
                                             let uv = UpValue(GcCell::allocate(
                                                 mc,
-                                                UpValueState::Open(self_thread, ind),
+                                                UpValueState::Open(self, ind),
                                             ));
                                             vacant.insert(uv);
                                             upvalues.push(uv);
@@ -654,7 +588,7 @@ impl<'gc> ThreadState<'gc> {
                         stack_frame[base.0 as usize] = stack_frame[base.0 as usize]
                             .subtract(stack_frame[base.0 as usize + 2])
                             .expect("non numeric for loop parameters");
-                        self.pc = add_offset(self.pc, jump);
+                        state.pc = add_offset(state.pc, jump);
                     }
 
                     OpCode::NumericForLoop { base, jump } => {
@@ -676,22 +610,23 @@ impl<'gc> ThreadState<'gc> {
                                 .expect(ERR_MSG)
                         };
                         if !past_end {
-                            self.pc = add_offset(self.pc, jump);
+                            state.pc = add_offset(state.pc, jump);
                             stack_frame[base.0 as usize + 3] = stack_frame[base.0 as usize];
                         }
                     }
 
                     OpCode::GenericForCall { base, var_count } => {
                         let base = stack_base + base.0 as usize;
-                        self.stack.resize(base + 6, Value::Nil);
+                        state.stack.resize(base + 6, Value::Nil);
                         for i in 0..3 {
-                            self.stack[base + 3 + i] = self.stack[base + i];
+                            state.stack[base + 3 + i] = state.stack[base + i];
                         }
-                        if let Some(ret) = self.call_function(
+                        if let Some(ret) = self.function_call(
+                            state,
                             base + 3,
                             VarCount::constant(2),
                             FrameReturn::Upper(VarCount::constant(var_count)),
-                            self.pc,
+                            state.pc,
                         ) {
                             return Some(ret);
                         }
@@ -701,7 +636,7 @@ impl<'gc> ThreadState<'gc> {
                     OpCode::GenericForLoop { base, jump } => {
                         if stack_frame[base.0 as usize + 1].to_bool() {
                             stack_frame[base.0 as usize] = stack_frame[base.0 as usize + 1];
-                            self.pc = add_offset(self.pc, jump);
+                            state.pc = add_offset(state.pc, jump);
                         }
                     }
 
@@ -735,7 +670,7 @@ impl<'gc> ThreadState<'gc> {
 
                     OpCode::GetUpValue { source, dest } => {
                         stack_frame[dest.0 as usize] = get_upvalue(
-                            self_thread,
+                            self,
                             upper_stack,
                             current_function.0.upvalues[source.0 as usize],
                         );
@@ -746,7 +681,7 @@ impl<'gc> ThreadState<'gc> {
                         let mut uv = current_function.0.upvalues[dest.0 as usize].0.write(mc);
                         match &mut *uv {
                             UpValueState::Open(thread, ind) => {
-                                if *thread == self_thread {
+                                if *thread == self {
                                     upper_stack[*ind] = val
                                 } else {
                                     thread.0.write(mc).stack[*ind] = val;
@@ -769,7 +704,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = stack_frame[left.0 as usize];
                         let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -781,7 +716,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         if (left == right) == skip_if {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -793,7 +728,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -805,7 +740,7 @@ impl<'gc> ThreadState<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize];
                         if (left == right) == skip_if {
-                            self.pc += 1;
+                            state.pc += 1;
                         }
                     }
 
@@ -916,70 +851,54 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    // Unwind frames up to and including the most recent call boundary
-    fn unwind(&mut self, mc: MutationContext<'gc, '_>, self_thread: Thread<'gc>) {
-        loop {
-            let frame = self
-                .frames
-                .pop()
-                .expect("no call boundary found during unwind");
-            if frame.frame_return == FrameReturn::CallBoundary {
-                self.close_upvalues(mc, self_thread, frame.bottom);
-                break;
-            }
-        }
-
-        if let Some(top) = self.frames.last().map(|f| f.top) {
-            self.stack.resize(top, Value::Nil);
-        }
-    }
-
-    fn call_function(
-        &mut self,
+    fn function_call(
+        self,
+        state: &mut ThreadState<'gc>,
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
         restore_pc: usize,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
-        match self.stack[function_index] {
+        match state.stack[function_index] {
             Value::Closure(_) => {
-                self.call_closure(function_index, args, frame_return, restore_pc);
+                self.closure_call(state, function_index, args, frame_return, restore_pc);
                 None
             }
             Value::Callback(_) => {
-                self.call_callback(function_index, args, frame_return, restore_pc)
+                self.callback_call(state, function_index, args, frame_return, restore_pc)
             }
             _ => panic!("not a closure or callback"),
         }
     }
 
-    fn call_closure(
-        &mut self,
+    fn closure_call(
+        self,
+        state: &mut ThreadState<'gc>,
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
         restore_pc: usize,
     ) {
-        let closure = get_closure(self.stack[function_index]);
+        let closure = get_closure(state.stack[function_index]);
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
-            .unwrap_or(self.stack.len() - function_index - 1);
+            .unwrap_or(state.stack.len() - function_index - 1);
 
         let fixed_params = closure.0.proto.fixed_params as usize;
 
         let base = if arg_count > fixed_params {
-            self.stack.truncate(function_index + 1 + arg_count);
-            self.stack[function_index + 1..].rotate_left(fixed_params);
+            state.stack.truncate(function_index + 1 + arg_count);
+            state.stack[function_index + 1..].rotate_left(fixed_params);
             function_index + 1 + (arg_count - fixed_params)
         } else {
             function_index + 1
         };
 
         let top = base + closure.0.proto.stack_size as usize;
-        self.stack.resize(top, Value::Nil);
+        state.stack.resize(top, Value::Nil);
 
-        self.frames.push(Frame {
+        state.frames.push(Frame {
             bottom: function_index,
             top,
             frame_type: FrameType::Lua { base },
@@ -987,23 +906,24 @@ impl<'gc> ThreadState<'gc> {
             restore_pc,
         });
 
-        self.pc = 0;
+        state.pc = 0;
     }
 
-    fn call_callback(
-        &mut self,
+    fn callback_call(
+        self,
+        state: &mut ThreadState<'gc>,
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
         restore_pc: usize,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
-        let callback = get_callback(self.stack[function_index]);
+        let callback = get_callback(state.stack[function_index]);
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
-            .unwrap_or(self.stack.len() - function_index - 1);
+            .unwrap_or(state.stack.len() - function_index - 1);
 
-        match callback.call(&self.stack[function_index + 1..function_index + 1 + arg_count]) {
+        match callback.call(&state.stack[function_index + 1..function_index + 1 + arg_count]) {
             Err(err) => Some(Err(err)),
             Ok(res) => match res {
                 CallbackResult::Return(res) => match frame_return {
@@ -1011,37 +931,37 @@ impl<'gc> ThreadState<'gc> {
                     FrameReturn::Upper(returns) => {
                         let count = res.len();
                         if let Some(returning) = returns.to_constant() {
-                            if let Some(current_frame) = self.frames.last() {
-                                self.stack.resize(current_frame.top, Value::Nil);
+                            if let Some(current_frame) = state.frames.last() {
+                                state.stack.resize(current_frame.top, Value::Nil);
                             }
 
                             let returning = returning as usize;
                             for i in 0..returning.min(count) {
-                                self.stack[function_index + i] = res[i];
+                                state.stack[function_index + i] = res[i];
                             }
                             for i in count..returning {
-                                self.stack[function_index + i] = Value::Nil;
+                                state.stack[function_index + i] = Value::Nil;
                             }
                         } else {
-                            self.stack.resize(function_index + count, Value::Nil);
+                            state.stack.resize(function_index + count, Value::Nil);
                             for i in 0..count {
-                                self.stack[function_index + i] = res[i];
+                                state.stack[function_index + i] = res[i];
                             }
                         }
 
-                        self.pc = restore_pc;
+                        state.pc = restore_pc;
                         None
                     }
                 },
                 CallbackResult::Yield(res) => {
-                    self.frames.push(Frame {
+                    state.frames.push(Frame {
                         bottom: function_index,
                         top: function_index,
                         frame_type: FrameType::Yield,
                         frame_return,
                         restore_pc,
                     });
-                    self.stack.resize(function_index, Value::Nil);
+                    state.stack.resize(function_index, Value::Nil);
                     Some(Ok(ContinuationResult::Finish(res)))
                 }
                 CallbackResult::Continue(cont) => match frame_return {
@@ -1066,14 +986,14 @@ impl<'gc> ThreadState<'gc> {
                         ))))
                     }
                     FrameReturn::Upper(returns) => {
-                        self.frames.push(Frame {
+                        state.frames.push(Frame {
                             bottom: function_index,
                             top: function_index,
                             frame_type: FrameType::Callback { callback: cont },
                             frame_return: FrameReturn::Upper(returns),
                             restore_pc,
                         });
-                        self.stack.resize(function_index, Value::Nil);
+                        state.stack.resize(function_index, Value::Nil);
                         None
                     }
                 },
@@ -1081,23 +1001,109 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
+    // Unwind frames up to and including the most recent call boundary
+    fn unwind(self, state: &mut ThreadState<'gc>, mc: MutationContext<'gc, '_>) {
+        loop {
+            let frame = state
+                .frames
+                .pop()
+                .expect("no call boundary found during unwind");
+            if frame.frame_return == FrameReturn::CallBoundary {
+                self.close_upvalues(state, mc, frame.bottom);
+                break;
+            }
+        }
+
+        if let Some(top) = state.frames.last().map(|f| f.top) {
+            state.stack.resize(top, Value::Nil);
+        }
+    }
+
     fn close_upvalues(
-        &mut self,
+        self,
+        state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
-        self_thread: Thread<'gc>,
         bottom: usize,
     ) {
-        for (_, upval) in self.open_upvalues.split_off(&bottom) {
+        for (_, upval) in state.open_upvalues.split_off(&bottom) {
             let mut upval = upval.0.write(mc);
             if let UpValueState::Open(thread, ind) = *upval {
-                *upval = UpValueState::Closed(if thread == self_thread {
-                    self.stack[ind]
+                *upval = UpValueState::Closed(if thread == self {
+                    state.stack[ind]
                 } else {
                     thread.0.read().stack[ind]
                 });
             }
         }
     }
+}
+
+#[derive(Collect)]
+#[collect(empty_drop)]
+struct ThreadSequence<'gc> {
+    thread: Thread<'gc>,
+    frame_top: usize,
+    granularity: u32,
+}
+
+impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
+    type Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>;
+    type Error = Error;
+
+    fn step(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<Self::Item, Self::Error>> {
+        let mut state = self.thread.0.write(mc);
+        if self.frame_top != state.frames.len() {
+            panic!("frame mismatch in ThreadSequence, Sequences evaluated out of order");
+        }
+        let res = self.thread.step(&mut state, mc, lc, self.granularity);
+        self.frame_top = state.frames.len();
+        res
+    }
+}
+
+#[derive(Collect)]
+#[collect(empty_drop)]
+enum FrameType<'gc> {
+    Lua {
+        base: usize,
+    },
+    Callback {
+        callback: Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>,
+    },
+    Yield,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Collect)]
+#[collect(require_copy)]
+enum FrameReturn {
+    // Frame is a Thread entry-point, and returning should return all results to the caller
+    CallBoundary,
+    // Frame is a normal call frame within a thread, returning should return the given number of
+    // results to the frame above
+    Upper(VarCount),
+}
+
+#[derive(Collect)]
+#[collect(empty_drop)]
+struct Frame<'gc> {
+    bottom: usize,
+    top: usize,
+    frame_type: FrameType<'gc>,
+    frame_return: FrameReturn,
+    restore_pc: usize,
+}
+
+#[derive(Collect)]
+#[collect(empty_drop)]
+struct ThreadState<'gc> {
+    stack: Vec<Value<'gc>>,
+    frames: Vec<Frame<'gc>>,
+    pc: usize,
+    open_upvalues: BTreeMap<usize, UpValue<'gc>>,
 }
 
 fn get_upvalue<'gc>(
