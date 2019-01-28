@@ -923,7 +923,10 @@ impl<'gc> Thread<'gc> {
             .map(|c| c as usize)
             .unwrap_or(state.stack.len() - function_index - 1);
 
-        match callback.call(&state.stack[function_index + 1..function_index + 1 + arg_count]) {
+        match callback.call(
+            self,
+            &state.stack[function_index + 1..function_index + 1 + arg_count],
+        ) {
             Err(err) => Some(Err(err)),
             Ok(res) => match res {
                 CallbackResult::Return(res) => match frame_return {

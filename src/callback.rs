@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext};
 
-use crate::{Error, Sequence, Value};
+use crate::{Error, Sequence, Thread, Value};
 
 pub enum CallbackResult<'gc> {
     Return(Vec<Value<'gc>>),
@@ -14,7 +14,9 @@ pub enum CallbackResult<'gc> {
 #[derive(Collect)]
 #[collect(require_static)]
 pub struct CallbackFn(
-    pub Box<for<'gc> Fn(&[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> + 'static>,
+    pub  Box<
+        for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> + 'static,
+    >,
 );
 
 impl Debug for CallbackFn {
@@ -32,13 +34,18 @@ pub struct Callback<'gc>(pub Gc<'gc, CallbackFn>);
 impl<'gc> Callback<'gc> {
     pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static + for<'fgc> Fn(&[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error>,
+        F: 'static
+            + for<'fgc> Fn(Thread<'fgc>, &[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error>,
     {
         Callback(Gc::allocate(mc, CallbackFn(Box::new(f))))
     }
 
-    pub fn call(&self, args: &[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> {
-        (*(self.0).0)(args)
+    pub fn call(
+        &self,
+        thread: Thread<'gc>,
+        args: &[Value<'gc>],
+    ) -> Result<CallbackResult<'gc>, Error> {
+        (*(self.0).0)(thread, args)
     }
 }
 

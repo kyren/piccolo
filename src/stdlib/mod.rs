@@ -5,7 +5,7 @@ use gc_arena::MutationContext;
 use crate::{Callback, CallbackResult, Error, LuaContext, Table};
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, lc: LuaContext<'gc>, env: Table<'gc>) {
-    let print = Callback::new(mc, |args| {
+    let print = Callback::new(mc, |_, args| {
         let mut stdout = io::stdout();
         for i in 0..args.len() {
             args[i].display(&mut stdout)?;
@@ -18,7 +18,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, lc: LuaContext<'gc>, env: Ta
         Ok(CallbackResult::Return(vec![]))
     });
 
-    let error = Callback::new(mc, |args| {
+    let error = Callback::new(mc, |_, args| {
         if args.len() > 0 {
             let mut buf = Vec::new();
             args[0].display(&mut buf)?;
