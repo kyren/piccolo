@@ -35,7 +35,6 @@ impl<'gc> Thread<'gc> {
             ThreadState {
                 stack: Vec::new(),
                 frames: Vec::new(),
-                pc: 0,
                 open_upvalues: BTreeMap::new(),
             },
         ))
@@ -1090,7 +1089,6 @@ struct Frame<'gc> {
 struct ThreadState<'gc> {
     stack: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
-    pc: usize,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
 }
 
