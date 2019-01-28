@@ -104,13 +104,11 @@ impl<'gc> Thread<'gc> {
         let closure_index = state.stack.len();
         state.stack.push(Value::Closure(closure));
         state.stack.extend(args);
-        let res_pc = state.pc;
         self.closure_call(
             &mut state,
             closure_index,
             VarCount::variable(),
             FrameReturn::CallBoundary,
-            res_pc,
         );
         let frame_top = state.frames.len();
 
@@ -176,7 +174,6 @@ impl<'gc> Thread<'gc> {
             }
             Some(Ok(CallbackResult::Return(res))) => {
                 let top_frame = state.frames.pop().expect("no callback frame");
-                state.pc = top_frame.restore_pc;
 
                 let returns = match top_frame.frame_return {
                     FrameReturn::Upper(returns) => returns,
@@ -218,20 +215,22 @@ impl<'gc> Thread<'gc> {
         mut instructions: u32,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
         'start: loop {
-            let current_frame = state.frames.last().expect("no current ThreadState frame");
+            let current_frame = state
+                .frames
+                .last_mut()
+                .expect("no current ThreadState frame");
             let stack_bottom = current_frame.bottom;
             let frame_return = current_frame.frame_return;
-            let restore_pc = current_frame.restore_pc;
-            let stack_base = match current_frame.frame_type {
-                FrameType::Lua { base } => base,
+            let (stack_base, pc) = match &mut current_frame.frame_type {
+                FrameType::Lua { base, pc } => (*base, pc),
                 _ => panic!("step_lua called when top frame is not a callback"),
             };
             let current_function = get_closure(state.stack[stack_bottom]);
             let (upper_stack, stack_frame) = state.stack.split_at_mut(stack_base);
 
             loop {
-                let op = current_function.0.proto.opcodes[state.pc];
-                state.pc += 1;
+                let op = current_function.0.proto.opcodes[*pc];
+                *pc += 1;
 
                 match op {
                     OpCode::Move { dest, source } => {
@@ -250,7 +249,7 @@ impl<'gc> Thread<'gc> {
                     } => {
                         stack_frame[dest.0 as usize] = Value::Boolean(value);
                         if skip_next {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -398,7 +397,6 @@ impl<'gc> Thread<'gc> {
                             stack_base + func.0 as usize,
                             args,
                             FrameReturn::Upper(returns),
-                            state.pc,
                         ) {
                             return Some(ret);
                         }
@@ -423,7 +421,7 @@ impl<'gc> Thread<'gc> {
                         state.frames.pop();
 
                         if let Some(ret) =
-                            self.function_call(state, stack_bottom, args, frame_return, restore_pc)
+                            self.function_call(state, stack_bottom, args, frame_return)
                         {
                             return Some(ret);
                         }
@@ -432,7 +430,6 @@ impl<'gc> Thread<'gc> {
 
                     OpCode::Return { start, count } => {
                         self.close_upvalues(state, mc, stack_bottom);
-                        state.pc = restore_pc;
                         state.frames.pop();
 
                         let start = stack_base + start.0 as usize;
@@ -513,7 +510,7 @@ impl<'gc> Thread<'gc> {
                         offset,
                         close_upvalues,
                     } => {
-                        state.pc = add_offset(state.pc, offset);
+                        *pc = add_offset(*pc, offset);
                         if let Some(r) = close_upvalues.to_u8() {
                             for (_, upval) in
                                 state.open_upvalues.split_off(&(stack_base + r as usize))
@@ -533,7 +530,7 @@ impl<'gc> Thread<'gc> {
                     OpCode::Test { value, is_true } => {
                         let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -544,7 +541,7 @@ impl<'gc> Thread<'gc> {
                     } => {
                         let value = stack_frame[value.0 as usize];
                         if value.to_bool() == is_true {
-                            state.pc += 1;
+                            *pc += 1;
                         } else {
                             stack_frame[dest.0 as usize] = value;
                         }
@@ -588,7 +585,7 @@ impl<'gc> Thread<'gc> {
                         stack_frame[base.0 as usize] = stack_frame[base.0 as usize]
                             .subtract(stack_frame[base.0 as usize + 2])
                             .expect("non numeric for loop parameters");
-                        state.pc = add_offset(state.pc, jump);
+                        *pc = add_offset(*pc, jump);
                     }
 
                     OpCode::NumericForLoop { base, jump } => {
@@ -610,7 +607,7 @@ impl<'gc> Thread<'gc> {
                                 .expect(ERR_MSG)
                         };
                         if !past_end {
-                            state.pc = add_offset(state.pc, jump);
+                            *pc = add_offset(*pc, jump);
                             stack_frame[base.0 as usize + 3] = stack_frame[base.0 as usize];
                         }
                     }
@@ -626,7 +623,6 @@ impl<'gc> Thread<'gc> {
                             base + 3,
                             VarCount::constant(2),
                             FrameReturn::Upper(VarCount::constant(var_count)),
-                            state.pc,
                         ) {
                             return Some(ret);
                         }
@@ -636,7 +632,7 @@ impl<'gc> Thread<'gc> {
                     OpCode::GenericForLoop { base, jump } => {
                         if stack_frame[base.0 as usize + 1].to_bool() {
                             stack_frame[base.0 as usize] = stack_frame[base.0 as usize + 1];
-                            state.pc = add_offset(state.pc, jump);
+                            *pc = add_offset(*pc, jump);
                         }
                     }
 
@@ -704,7 +700,7 @@ impl<'gc> Thread<'gc> {
                         let left = stack_frame[left.0 as usize];
                         let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -716,7 +712,7 @@ impl<'gc> Thread<'gc> {
                         let left = stack_frame[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize].to_value();
                         if (left == right) == skip_if {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -728,7 +724,7 @@ impl<'gc> Thread<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize].to_value();
                         let right = stack_frame[right.0 as usize];
                         if (left == right) == skip_if {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -740,7 +736,7 @@ impl<'gc> Thread<'gc> {
                         let left = current_function.0.proto.constants[left.0 as usize];
                         let right = current_function.0.proto.constants[right.0 as usize];
                         if (left == right) == skip_if {
-                            state.pc += 1;
+                            *pc += 1;
                         }
                     }
 
@@ -857,16 +853,13 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-        restore_pc: usize,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
         match state.stack[function_index] {
             Value::Closure(_) => {
-                self.closure_call(state, function_index, args, frame_return, restore_pc);
+                self.closure_call(state, function_index, args, frame_return);
                 None
             }
-            Value::Callback(_) => {
-                self.callback_call(state, function_index, args, frame_return, restore_pc)
-            }
+            Value::Callback(_) => self.callback_call(state, function_index, args, frame_return),
             _ => panic!("not a closure or callback"),
         }
     }
@@ -877,7 +870,6 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-        restore_pc: usize,
     ) {
         let closure = get_closure(state.stack[function_index]);
         let arg_count = args
@@ -901,12 +893,9 @@ impl<'gc> Thread<'gc> {
         state.frames.push(Frame {
             bottom: function_index,
             top,
-            frame_type: FrameType::Lua { base },
+            frame_type: FrameType::Lua { base, pc: 0 },
             frame_return,
-            restore_pc,
         });
-
-        state.pc = 0;
     }
 
     fn callback_call(
@@ -915,7 +904,6 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-        restore_pc: usize,
     ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
         let callback = get_callback(state.stack[function_index]);
         let arg_count = args
@@ -952,7 +940,6 @@ impl<'gc> Thread<'gc> {
                             }
                         }
 
-                        state.pc = restore_pc;
                         None
                     }
                 },
@@ -962,7 +949,6 @@ impl<'gc> Thread<'gc> {
                         top: function_index,
                         frame_type: FrameType::Yield,
                         frame_return,
-                        restore_pc,
                     });
                     state.stack.resize(function_index, Value::Nil);
                     Some(Ok(ContinuationResult::Finish(res)))
@@ -994,7 +980,6 @@ impl<'gc> Thread<'gc> {
                             top: function_index,
                             frame_type: FrameType::Callback { callback: cont },
                             frame_return: FrameReturn::Upper(returns),
-                            restore_pc,
                         });
                         state.stack.resize(function_index, Value::Nil);
                         None
@@ -1073,6 +1058,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
 enum FrameType<'gc> {
     Lua {
         base: usize,
+        pc: usize,
     },
     Callback {
         callback: Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>,
@@ -1097,7 +1083,6 @@ struct Frame<'gc> {
     top: usize,
     frame_type: FrameType<'gc>,
     frame_return: FrameReturn,
-    restore_pc: usize,
 }
 
 #[derive(Collect)]
