@@ -970,12 +970,13 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 .frames
                 .get_mut(current_frame)
                 .expect("no callback frame");
-            assert_eq!(callback_frame.frame_type, FrameType::Yield);
+            assert_eq!(callback_frame.frame_type, FrameType::Callback);
 
             match callback.step(mc, lc) {
                 None => None,
                 Some(Err(err)) => {
                     self.thread.unwind(&mut state, mc);
+                    self.pending_callback = None;
                     self.current_frame = None;
                     Some(Err(err))
                 }
@@ -985,6 +986,12 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 }
                 Some(Ok(CallbackResult::Yield(res))) => {
                     callback_frame.frame_type = FrameType::Yield;
+                    assert_eq!(
+                        current_frame + 1,
+                        state.frames.len(),
+                        "cannot yield across callbacks yet"
+                    );
+                    self.pending_callback = None;
                     self.current_frame = None;
                     Some(Ok(CallbackResult::Yield(res)))
                 }
@@ -1024,6 +1031,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                             .top;
                         state.stack.resize(current_frame_top, Value::Nil);
                     }
+                    self.pending_callback = None;
                     self.current_frame = Some(state.frames.len() - 1);
                     None
                 }
