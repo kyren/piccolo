@@ -17,10 +17,8 @@ use crate::LuaContext;
 ///    not just VM code, in such a way that garbage collection can occur with as fine of a
 ///    granularity as necessary.
 ///
-/// 2. Full interoperability with Lua coroutines is difficult in a language without guaranteed TCO,
-///    but there still needs to be a way to continue to another Lua or Rust function without
-///    arbitrarily growing the Rust stack.  Even disregarding coroutines, this mechanism also allows
-///    there not to be arbitrary limits on the Rust callback depth.
+/// 2. This mechanism allows Rust to tail-call into Lua without growing the Rust stack, arbitrarily
+///    limiting the callback depth.
 ///
 /// 3. It allows for an asynchronous API.  Using this, Rust code can be treated similarly to Lua VM
 ///    code in that it can be paused, resumed, and incrementally executed.  With a normal chain of
