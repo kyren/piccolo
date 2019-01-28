@@ -5,9 +5,8 @@ use std::fmt::{self, Debug};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    Callback, CallbackResult, Closure, ClosureState, ContinuationResult, Error, LuaContext, OpCode,
-    RunContinuation, Sequence, SequenceExt, String, Table, UpValue, UpValueDescriptor,
-    UpValueState, Value, VarCount,
+    Callback, CallbackResult, Closure, ClosureState, Error, LuaContext, OpCode, Sequence,
+    SequenceExt, String, Table, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -54,14 +53,47 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         args: &[Value<'gc>],
         granularity: u32,
-    ) -> RunContinuation<'gc, Vec<Value<'gc>>, Error> {
-        RunContinuation::from_sequence(Thread::sequence_closure(
+    ) -> impl Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error> {
+        #[derive(Collect)]
+        #[collect(empty_drop)]
+        struct ThreadFinish<'gc>(
+            Option<Box<Sequence<'gc, Item = ThreadResult<'gc>, Error = Error> + 'gc>>,
+        );
+
+        impl<'gc> Sequence<'gc> for ThreadFinish<'gc> {
+            type Item = Vec<Value<'gc>>;
+            type Error = Error;
+
+            fn step(
+                &mut self,
+                mc: MutationContext<'gc, '_>,
+                lc: LuaContext<'gc>,
+            ) -> Option<Result<Self::Item, Self::Error>> {
+                let mut cont = self.0.take().expect("cannot step a finished sequence");
+                match cont.step(mc, lc) {
+                    Some(Ok(res)) => match res {
+                        ThreadResult::Finish(res) => Some(Ok(res)),
+                        ThreadResult::Continue(cont) => {
+                            self.0 = Some(cont);
+                            None
+                        }
+                    },
+                    Some(Err(err)) => Some(Err(err)),
+                    None => {
+                        self.0 = Some(cont);
+                        None
+                    }
+                }
+            }
+        }
+
+        ThreadFinish(Some(Box::new(Thread::sequence_closure(
             self,
             mc,
             closure,
             args,
             granularity,
-        ))
+        ))))
     }
 
     /// Call a closure on this thread in the context of a callback, produces a continuation that can
@@ -73,14 +105,12 @@ impl<'gc> Thread<'gc> {
         args: &[Value<'gc>],
         granularity: u32,
     ) -> Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc> {
-        fn continuation_to_callback_result<'gc>(
-            cont: ContinuationResult<'gc, Vec<Value<'gc>>, Error>,
-        ) -> CallbackResult<'gc> {
+        fn continuation_to_callback_result<'gc>(cont: ThreadResult<'gc>) -> CallbackResult<'gc> {
             match cont {
-                ContinuationResult::Continue(cont) => {
+                ThreadResult::Continue(cont) => {
                     CallbackResult::Continue(Box::new(cont.map(continuation_to_callback_result)))
                 }
-                ContinuationResult::Finish(res) => CallbackResult::Return(res),
+                ThreadResult::Finish(res) => CallbackResult::Return(res),
             }
         }
 
@@ -124,7 +154,7 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
         granularity: u32,
-    ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
+    ) -> Option<Result<ThreadResult<'gc>, Error>> {
         match state
             .frames
             .last()
@@ -142,7 +172,7 @@ impl<'gc> Thread<'gc> {
         state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
-    ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
+    ) -> Option<Result<ThreadResult<'gc>, Error>> {
         let callback = match &mut state
             .frames
             .last_mut()
@@ -169,7 +199,7 @@ impl<'gc> Thread<'gc> {
                     .last_mut()
                     .expect("no callback frame")
                     .frame_type = FrameType::Yield;
-                Some(Ok(ContinuationResult::Finish(res)))
+                Some(Ok(ThreadResult::Finish(res)))
             }
             Some(Ok(CallbackResult::Return(res))) => {
                 let top_frame = state.frames.pop().expect("no callback frame");
@@ -212,7 +242,7 @@ impl<'gc> Thread<'gc> {
         state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
         mut instructions: u32,
-    ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
+    ) -> Option<Result<ThreadResult<'gc>, Error>> {
         'start: loop {
             let current_frame = state
                 .frames
@@ -447,7 +477,7 @@ impl<'gc> Thread<'gc> {
                                     state.stack.clear();
                                 }
 
-                                return Some(Ok(ContinuationResult::Finish(ret_vals)));
+                                return Some(Ok(ThreadResult::Finish(ret_vals)));
                             }
                             FrameReturn::Upper(returns) => {
                                 let returning =
@@ -852,7 +882,7 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-    ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
+    ) -> Option<Result<ThreadResult<'gc>, Error>> {
         match state.stack[function_index] {
             Value::Closure(_) => {
                 self.closure_call(state, function_index, args, frame_return);
@@ -903,7 +933,7 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-    ) -> Option<Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>> {
+    ) -> Option<Result<ThreadResult<'gc>, Error>> {
         let callback = get_callback(state.stack[function_index]);
         let arg_count = args
             .to_constant()
@@ -917,7 +947,7 @@ impl<'gc> Thread<'gc> {
             Err(err) => Some(Err(err)),
             Ok(res) => match res {
                 CallbackResult::Return(res) => match frame_return {
-                    FrameReturn::CallBoundary => Some(Ok(ContinuationResult::Finish(res))),
+                    FrameReturn::CallBoundary => Some(Ok(ThreadResult::Finish(res))),
                     FrameReturn::Upper(returns) => {
                         let count = res.len();
                         if let Some(returning) = returns.to_constant() {
@@ -950,26 +980,25 @@ impl<'gc> Thread<'gc> {
                         frame_return,
                     });
                     state.stack.resize(function_index, Value::Nil);
-                    Some(Ok(ContinuationResult::Finish(res)))
+                    Some(Ok(ThreadResult::Finish(res)))
                 }
                 CallbackResult::Continue(cont) => match frame_return {
                     FrameReturn::CallBoundary => {
                         fn callback_to_continuation_result<'gc>(
                             cont: Result<CallbackResult<'gc>, Error>,
-                        ) -> Result<ContinuationResult<'gc, Vec<Value<'gc>>, Error>, Error>
-                        {
+                        ) -> Result<ThreadResult<'gc>, Error> {
                             cont.and_then(|cont| match cont {
-                                CallbackResult::Return(res) => Ok(ContinuationResult::Finish(res)),
+                                CallbackResult::Return(res) => Ok(ThreadResult::Finish(res)),
                                 CallbackResult::Yield(_) => Err(Error::RuntimeError(Some(
                                     "yield from unyieldable function".into(),
                                 ))),
-                                CallbackResult::Continue(cont) => Ok(ContinuationResult::Continue(
+                                CallbackResult::Continue(cont) => Ok(ThreadResult::Continue(
                                     Box::new(cont.map_result(callback_to_continuation_result)),
                                 )),
                             })
                         }
 
-                        Some(Ok(ContinuationResult::Continue(Box::new(
+                        Some(Ok(ThreadResult::Continue(Box::new(
                             cont.map_result(callback_to_continuation_result),
                         ))))
                     }
@@ -1025,6 +1054,11 @@ impl<'gc> Thread<'gc> {
     }
 }
 
+enum ThreadResult<'gc> {
+    Finish(Vec<Value<'gc>>),
+    Continue(Box<Sequence<'gc, Item = ThreadResult<'gc>, Error = Error> + 'gc>),
+}
+
 #[derive(Collect)]
 #[collect(empty_drop)]
 struct ThreadSequence<'gc> {
@@ -1034,7 +1068,7 @@ struct ThreadSequence<'gc> {
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
-    type Item = ContinuationResult<'gc, Vec<Value<'gc>>, Error>;
+    type Item = ThreadResult<'gc>;
     type Error = Error;
 
     fn step(

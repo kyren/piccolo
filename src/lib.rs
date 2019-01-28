@@ -31,8 +31,7 @@ pub use lua::{Lua, LuaContext};
 pub use opcode::OpCode;
 pub use parser::{parse_chunk, ParserError};
 pub use sequence::{
-    sequence_fn, sequence_fn_with, Continuation, ContinuationResult, IntoSequence, RunContinuation,
-    Sequence, SequenceExt, SequenceFn, SequenceFnWith,
+    sequence_fn, sequence_fn_with, IntoSequence, Sequence, SequenceExt, SequenceFn, SequenceFnWith,
 };
 pub use string::{InternedStringSet, String, StringError};
 pub use table::{InvalidTableKey, Table, TableState};
