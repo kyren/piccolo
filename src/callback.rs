@@ -15,7 +15,7 @@ pub enum CallbackResult<'gc> {
 #[collect(require_static)]
 pub struct CallbackFn(
     pub  Box<
-        for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackResult<'gc>, Error> + 'static,
+        'static + for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackResult<'gc>, Error>,
     >,
 );
 

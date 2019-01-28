@@ -5,8 +5,8 @@ use std::fmt::{self, Debug};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    Callback, CallbackResult, Closure, ClosureState, Error, LuaContext, OpCode, Sequence,
-    SequenceExt, String, Table, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
+    Callback, CallbackResult, Closure, ClosureState, Error, LuaContext, OpCode, Sequence, String,
+    Table, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -57,7 +57,7 @@ impl<'gc> Thread<'gc> {
         #[derive(Collect)]
         #[collect(empty_drop)]
         struct ThreadFinish<'gc>(
-            Option<Box<Sequence<'gc, Item = ThreadResult<'gc>, Error = Error> + 'gc>>,
+            Option<Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>>,
         );
 
         impl<'gc> Sequence<'gc> for ThreadFinish<'gc> {
@@ -72,8 +72,9 @@ impl<'gc> Thread<'gc> {
                 let mut cont = self.0.take().expect("cannot step a finished sequence");
                 match cont.step(mc, lc) {
                     Some(Ok(res)) => match res {
-                        ThreadResult::Finish(res) => Some(Ok(res)),
-                        ThreadResult::Continue(cont) => {
+                        CallbackResult::Return(res) => Some(Ok(res)),
+                        CallbackResult::Yield(_) => panic!("yield in unyieldable function"),
+                        CallbackResult::Continue(cont) => {
                             self.0 = Some(cont);
                             None
                         }
@@ -105,19 +106,7 @@ impl<'gc> Thread<'gc> {
         args: &[Value<'gc>],
         granularity: u32,
     ) -> Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc> {
-        fn continuation_to_callback_result<'gc>(cont: ThreadResult<'gc>) -> CallbackResult<'gc> {
-            match cont {
-                ThreadResult::Continue(cont) => {
-                    CallbackResult::Continue(Box::new(cont.map(continuation_to_callback_result)))
-                }
-                ThreadResult::Finish(res) => CallbackResult::Return(res),
-            }
-        }
-
-        Box::new(
-            self.sequence_closure(mc, closure, args, granularity)
-                .map(continuation_to_callback_result),
-        )
+        Box::new(self.sequence_closure(mc, closure, args, granularity))
     }
 
     fn sequence_closure(
@@ -139,101 +128,12 @@ impl<'gc> Thread<'gc> {
             VarCount::variable(),
             FrameReturn::CallBoundary,
         );
-        let frame_top = state.frames.len();
 
         ThreadSequence {
             thread: self,
-            frame_top,
+            pending_callback: None,
+            current_frame: Some(state.frames.len() - 1),
             granularity,
-        }
-    }
-
-    fn step(
-        self,
-        state: &mut ThreadState<'gc>,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-        granularity: u32,
-    ) -> Option<Result<ThreadResult<'gc>, Error>> {
-        match state
-            .frames
-            .last()
-            .expect("cannot step a finished thread")
-            .frame_type
-        {
-            FrameType::Lua { .. } => self.step_lua(state, mc, granularity),
-            FrameType::Callback { .. } => self.step_callback(state, mc, lc),
-            FrameType::Yield => panic!("cannot step a suspended thread"),
-        }
-    }
-
-    fn step_callback(
-        self,
-        state: &mut ThreadState<'gc>,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-    ) -> Option<Result<ThreadResult<'gc>, Error>> {
-        let callback = match &mut state
-            .frames
-            .last_mut()
-            .expect("no current ThreadState frame")
-            .frame_type
-        {
-            FrameType::Callback { callback } => callback,
-            _ => panic!("step_callback called when top frame is not a callback"),
-        };
-
-        match callback.step(mc, lc) {
-            None => None,
-            Some(Err(err)) => {
-                self.unwind(state, mc);
-                Some(Err(err))
-            }
-            Some(Ok(CallbackResult::Continue(cont))) => {
-                *callback = cont;
-                None
-            }
-            Some(Ok(CallbackResult::Yield(res))) => {
-                state
-                    .frames
-                    .last_mut()
-                    .expect("no callback frame")
-                    .frame_type = FrameType::Yield;
-                Some(Ok(ThreadResult::Finish(res)))
-            }
-            Some(Ok(CallbackResult::Return(res))) => {
-                let top_frame = state.frames.pop().expect("no callback frame");
-
-                let returns = match top_frame.frame_return {
-                    FrameReturn::Upper(returns) => returns,
-                    FrameReturn::CallBoundary => panic!("no frame to return to from callback"),
-                };
-                let return_len = returns
-                    .to_constant()
-                    .map(|c| c as usize)
-                    .unwrap_or(res.len());
-
-                state.stack.truncate(top_frame.bottom);
-                state
-                    .stack
-                    .resize(top_frame.bottom + return_len, Value::Nil);
-
-                for i in 0..return_len.min(res.len()) {
-                    state.stack[top_frame.bottom + i] = res[i];
-                }
-
-                // Stack size is already correct for variable returns, but if we are returning a
-                // constant number, we need to restore the previous stack top.
-                if !returns.is_variable() {
-                    let current_frame_top = state
-                        .frames
-                        .last()
-                        .expect("no frame to return to from callback")
-                        .top;
-                    state.stack.resize(current_frame_top, Value::Nil);
-                }
-                None
-            }
         }
     }
 
@@ -242,7 +142,7 @@ impl<'gc> Thread<'gc> {
         state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
         mut instructions: u32,
-    ) -> Option<Result<ThreadResult<'gc>, Error>> {
+    ) -> Result<ThreadResult<'gc>, Error> {
         'start: loop {
             let current_frame = state
                 .frames
@@ -421,15 +321,15 @@ impl<'gc> Thread<'gc> {
                         args,
                         returns,
                     } => {
-                        if let Some(ret) = self.function_call(
+                        match self.function_call(
                             state,
                             stack_base + func.0 as usize,
                             args,
                             FrameReturn::Upper(returns),
-                        ) {
-                            return Some(ret);
+                        )? {
+                            ThreadResult::None => continue 'start,
+                            ret => return Ok(ret),
                         }
-                        continue 'start;
                     }
 
                     OpCode::TailCall { func, args } => {
@@ -449,12 +349,10 @@ impl<'gc> Thread<'gc> {
                         state.stack.truncate(stack_bottom + 1 + arg_len);
                         state.frames.pop();
 
-                        if let Some(ret) =
-                            self.function_call(state, stack_bottom, args, frame_return)
-                        {
-                            return Some(ret);
+                        match self.function_call(state, stack_bottom, args, frame_return)? {
+                            ThreadResult::None => continue 'start,
+                            ret => return Ok(ret),
                         }
-                        continue 'start;
                     }
 
                     OpCode::Return { start, count } => {
@@ -477,7 +375,7 @@ impl<'gc> Thread<'gc> {
                                     state.stack.clear();
                                 }
 
-                                return Some(Ok(ThreadResult::Finish(ret_vals)));
+                                return Ok(ThreadResult::Finished(CallbackResult::Return(ret_vals)));
                             }
                             FrameReturn::Upper(returns) => {
                                 let returning =
@@ -647,15 +545,15 @@ impl<'gc> Thread<'gc> {
                         for i in 0..3 {
                             state.stack[base + 3 + i] = state.stack[base + i];
                         }
-                        if let Some(ret) = self.function_call(
+                        match self.function_call(
                             state,
                             base + 3,
                             VarCount::constant(2),
                             FrameReturn::Upper(VarCount::constant(var_count)),
-                        ) {
-                            return Some(ret);
+                        )? {
+                            ThreadResult::None => continue 'start,
+                            ret => return Ok(ret),
                         }
-                        continue 'start;
                     }
 
                     OpCode::GenericForLoop { base, jump } => {
@@ -868,7 +766,7 @@ impl<'gc> Thread<'gc> {
                 }
 
                 if instructions == 0 {
-                    return None;
+                    return Ok(ThreadResult::None);
                 } else {
                     instructions -= 1
                 }
@@ -882,11 +780,11 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-    ) -> Option<Result<ThreadResult<'gc>, Error>> {
+    ) -> Result<ThreadResult<'gc>, Error> {
         match state.stack[function_index] {
             Value::Closure(_) => {
                 self.closure_call(state, function_index, args, frame_return);
-                None
+                Ok(ThreadResult::None)
             }
             Value::Callback(_) => self.callback_call(state, function_index, args, frame_return),
             _ => panic!("not a closure or callback"),
@@ -933,7 +831,7 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         frame_return: FrameReturn,
-    ) -> Option<Result<ThreadResult<'gc>, Error>> {
+    ) -> Result<ThreadResult<'gc>, Error> {
         let callback = get_callback(state.stack[function_index]);
         let arg_count = args
             .to_constant()
@@ -944,10 +842,12 @@ impl<'gc> Thread<'gc> {
             self,
             &state.stack[function_index + 1..function_index + 1 + arg_count],
         ) {
-            Err(err) => Some(Err(err)),
+            Err(err) => Err(err),
             Ok(res) => match res {
                 CallbackResult::Return(res) => match frame_return {
-                    FrameReturn::CallBoundary => Some(Ok(ThreadResult::Finish(res))),
+                    FrameReturn::CallBoundary => {
+                        Ok(ThreadResult::Finished(CallbackResult::Return(res)))
+                    }
                     FrameReturn::Upper(returns) => {
                         let count = res.len();
                         if let Some(returning) = returns.to_constant() {
@@ -969,7 +869,7 @@ impl<'gc> Thread<'gc> {
                             }
                         }
 
-                        None
+                        Ok(ThreadResult::None)
                     }
                 },
                 CallbackResult::Yield(res) => {
@@ -980,37 +880,21 @@ impl<'gc> Thread<'gc> {
                         frame_return,
                     });
                     state.stack.resize(function_index, Value::Nil);
-                    Some(Ok(ThreadResult::Finish(res)))
+                    Ok(ThreadResult::Finished(CallbackResult::Yield(res)))
                 }
                 CallbackResult::Continue(cont) => match frame_return {
                     FrameReturn::CallBoundary => {
-                        fn callback_to_continuation_result<'gc>(
-                            cont: Result<CallbackResult<'gc>, Error>,
-                        ) -> Result<ThreadResult<'gc>, Error> {
-                            cont.and_then(|cont| match cont {
-                                CallbackResult::Return(res) => Ok(ThreadResult::Finish(res)),
-                                CallbackResult::Yield(_) => Err(Error::RuntimeError(Some(
-                                    "yield from unyieldable function".into(),
-                                ))),
-                                CallbackResult::Continue(cont) => Ok(ThreadResult::Continue(
-                                    Box::new(cont.map_result(callback_to_continuation_result)),
-                                )),
-                            })
-                        }
-
-                        Some(Ok(ThreadResult::Continue(Box::new(
-                            cont.map_result(callback_to_continuation_result),
-                        ))))
+                        Ok(ThreadResult::Finished(CallbackResult::Continue(cont)))
                     }
                     FrameReturn::Upper(returns) => {
                         state.frames.push(Frame {
                             bottom: function_index,
                             top: function_index,
-                            frame_type: FrameType::Callback { callback: cont },
+                            frame_type: FrameType::Callback,
                             frame_return: FrameReturn::Upper(returns),
                         });
                         state.stack.resize(function_index, Value::Nil);
-                        None
+                        Ok(ThreadResult::PendingCallback(cont))
                     }
                 },
             },
@@ -1055,20 +939,22 @@ impl<'gc> Thread<'gc> {
 }
 
 enum ThreadResult<'gc> {
-    Finish(Vec<Value<'gc>>),
-    Continue(Box<Sequence<'gc, Item = ThreadResult<'gc>, Error = Error> + 'gc>),
+    None,
+    Finished(CallbackResult<'gc>),
+    PendingCallback(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>),
 }
 
 #[derive(Collect)]
 #[collect(empty_drop)]
 struct ThreadSequence<'gc> {
     thread: Thread<'gc>,
-    frame_top: usize,
+    pending_callback: Option<Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>>,
+    current_frame: Option<usize>,
     granularity: u32,
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
-    type Item = ThreadResult<'gc>;
+    type Item = CallbackResult<'gc>;
     type Error = Error;
 
     fn step(
@@ -1076,30 +962,107 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<Self::Item, Self::Error>> {
+        let current_frame = self.current_frame.expect("cannot step finished sequence");
         let mut state = self.thread.0.write(mc);
-        if self.frame_top != state.frames.len() {
-            panic!("frame mismatch in ThreadSequence, Sequences evaluated out of order");
+
+        if let Some(callback) = self.pending_callback.as_mut() {
+            let callback_frame = state
+                .frames
+                .get_mut(current_frame)
+                .expect("no callback frame");
+            assert_eq!(callback_frame.frame_type, FrameType::Yield);
+
+            match callback.step(mc, lc) {
+                None => None,
+                Some(Err(err)) => {
+                    self.thread.unwind(&mut state, mc);
+                    self.current_frame = None;
+                    Some(Err(err))
+                }
+                Some(Ok(CallbackResult::Continue(cont))) => {
+                    *callback = cont;
+                    None
+                }
+                Some(Ok(CallbackResult::Yield(res))) => {
+                    callback_frame.frame_type = FrameType::Yield;
+                    self.current_frame = None;
+                    Some(Ok(CallbackResult::Yield(res)))
+                }
+                Some(Ok(CallbackResult::Return(res))) => {
+                    assert_eq!(
+                        current_frame + 1,
+                        state.frames.len(),
+                        "cannot return from lower frame"
+                    );
+                    let top_frame = state.frames.pop().unwrap();
+
+                    let returns = match top_frame.frame_return {
+                        FrameReturn::Upper(returns) => returns,
+                        FrameReturn::CallBoundary => panic!("no frame to return to from callback"),
+                    };
+                    let return_len = returns
+                        .to_constant()
+                        .map(|c| c as usize)
+                        .unwrap_or(res.len());
+
+                    state.stack.truncate(top_frame.bottom);
+                    state
+                        .stack
+                        .resize(top_frame.bottom + return_len, Value::Nil);
+
+                    for i in 0..return_len.min(res.len()) {
+                        state.stack[top_frame.bottom + i] = res[i];
+                    }
+
+                    // Stack size is already correct for variable returns, but if we are returning a
+                    // constant number, we need to restore the previous stack top.
+                    if !returns.is_variable() {
+                        let current_frame_top = state
+                            .frames
+                            .last()
+                            .expect("no frame to return to from callback")
+                            .top;
+                        state.stack.resize(current_frame_top, Value::Nil);
+                    }
+                    self.current_frame = Some(state.frames.len() - 1);
+                    None
+                }
+            }
+        } else {
+            assert_eq!(current_frame + 1, state.frames.len());
+            match self.thread.step_lua(&mut state, mc, self.granularity) {
+                Err(err) => {
+                    self.thread.unwind(&mut state, mc);
+                    self.current_frame = None;
+                    Some(Err(err))
+                }
+                Ok(ThreadResult::None) => {
+                    self.current_frame = Some(state.frames.len() - 1);
+                    None
+                }
+                Ok(ThreadResult::Finished(res)) => {
+                    self.current_frame = None;
+                    Some(Ok(res))
+                }
+                Ok(ThreadResult::PendingCallback(callback)) => {
+                    self.pending_callback = Some(callback);
+                    self.current_frame = Some(state.frames.len() - 1);
+                    None
+                }
+            }
         }
-        let res = self.thread.step(&mut state, mc, lc, self.granularity);
-        self.frame_top = state.frames.len();
-        res
     }
 }
 
-#[derive(Collect)]
-#[collect(empty_drop)]
-enum FrameType<'gc> {
-    Lua {
-        base: usize,
-        pc: usize,
-    },
-    Callback {
-        callback: Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Collect)]
+#[collect(require_copy)]
+enum FrameType {
+    Lua { base: usize, pc: usize },
+    Callback,
     Yield,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Collect)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Collect)]
 #[collect(require_copy)]
 enum FrameReturn {
     // Frame is a Thread entry-point, and returning should return all results to the caller
@@ -1109,12 +1072,12 @@ enum FrameReturn {
     Upper(VarCount),
 }
 
-#[derive(Collect)]
-#[collect(empty_drop)]
-struct Frame<'gc> {
+#[derive(Debug, Clone, Copy, Collect)]
+#[collect(require_copy)]
+struct Frame {
     bottom: usize,
     top: usize,
-    frame_type: FrameType<'gc>,
+    frame_type: FrameType,
     frame_return: FrameReturn,
 }
 
@@ -1122,7 +1085,7 @@ struct Frame<'gc> {
 #[collect(empty_drop)]
 struct ThreadState<'gc> {
     stack: Vec<Value<'gc>>,
-    frames: Vec<Frame<'gc>>,
+    frames: Vec<Frame>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
 }
 
