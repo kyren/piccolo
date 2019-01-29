@@ -24,13 +24,13 @@ fn error_unwind() -> Result<(), Box<Error>> {
             })
             .and_then(|mc, lc, closure| {
                 lc.main_thread
-                    .call_closure(mc, closure, &[], 64)
+                    .call_closure(mc, closure, &[])
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),
                         _ => panic!(),
                     })
                     .and_then_with(closure, |mc, lc, closure, _| {
-                        lc.main_thread.call_closure(mc, closure, &[], 64)
+                        lc.main_thread.call_closure(mc, closure, &[])
                     })
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),

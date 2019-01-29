@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
             .map(|_| ()),
         )
     })?;

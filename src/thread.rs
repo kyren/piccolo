@@ -39,23 +39,19 @@ impl<'gc> Thread<'gc> {
         ))
     }
 
-    /// Call a closure on this thread, producing a `Sequence`.  No more than `granularity` VM
-    /// instructions will be executed at a time during each `Sequence` step.
+    /// Call a closure on this thread, producing a `Sequence`.
     ///
     /// The same `Thread` can be used for multiple function calls, but only the most recently
-    /// created unfinished `ThreadSequence` for a `Thread` can be run at any given time.  When a
-    /// `ThreadSequence` is constructed, it operates on whatever the top of the stack is at that
-    /// time, so any later constructed `ThreadSequence`s must be run to completion before earlier
-    /// ones can be completed.
+    /// created unfinished `Sequence` for a `Thread` can be run at any given time.  When such a
+    /// sequence is constructed, it operates on whatever the top of the stack is at that time, so
+    /// any later constructed sequences must be run to completion before earlier ones can be
+    /// completed.
     pub fn call_closure(
         self,
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
-        granularity: u32,
     ) -> impl Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error> {
-        assert_ne!(granularity, 0, "granularity cannot be zero");
-
         let mut state = self.0.write(mc);
         let closure_index = state.stack.len();
         state.stack.push(Value::Closure(closure));
@@ -71,7 +67,6 @@ impl<'gc> Thread<'gc> {
             thread: self,
             pending_callback: None,
             current_frame: Some(state.frames.len() - 1),
-            granularity,
         }
     }
 
@@ -79,8 +74,10 @@ impl<'gc> Thread<'gc> {
         self,
         state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
-        mut instructions: u32,
     ) -> Result<ThreadResult<'gc>, Error> {
+        const THREAD_GRANULARITY: u32 = 64;
+        let mut instructions = THREAD_GRANULARITY;
+
         'start: loop {
             let current_frame = state
                 .frames
@@ -881,7 +878,6 @@ struct ThreadSequence<'gc> {
     thread: Thread<'gc>,
     pending_callback: Option<Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>>,
     current_frame: Option<usize>,
-    granularity: u32,
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
@@ -965,7 +961,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
             }
         } else {
             assert_eq!(current_frame + 1, state.frames.len());
-            match self.thread.step_lua(&mut state, mc, self.granularity) {
+            match self.thread.step_lua(&mut state, mc) {
                 Err(err) => {
                     self.thread.unwind(&mut state, mc);
                     self.current_frame = None;

@@ -34,7 +34,7 @@ fn callback() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)])),
         )
     })?;
@@ -73,7 +73,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[], 64))
+            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
             .map(|b| {
                 assert_eq!(
                     b,
