@@ -66,11 +66,11 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
         }
     }
 
-    pub fn ptr_eq(this: &Gc<'gc, T>, other: &Gc<'gc, T>) -> bool {
+    pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
         Gc::as_ptr(this) == Gc::as_ptr(other)
     }
 
-    pub fn as_ptr(gc: &Gc<'gc, T>) -> *const T {
+    pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
         unsafe { gc.ptr.as_ref().value.get() }
     }
 }

@@ -14,8 +14,8 @@ use crate::parser::{
     WhileStatement,
 };
 use crate::{
-    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, InternedStringSet, OpCode, Opt254,
-    PrototypeIndex, RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
+    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254, PrototypeIndex,
+    RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
 };
 
 use super::operators::{
@@ -59,12 +59,10 @@ impl fmt::Display for CompilerError {
 
 pub fn compile_chunk<'gc>(
     mc: MutationContext<'gc, '_>,
-    interned_strings: InternedStringSet<'gc>,
     chunk: &Chunk<String<'gc>>,
 ) -> Result<FunctionProto<'gc>, CompilerError> {
     let mut compiler = Compiler {
         mutation_context: mc,
-        interned_strings,
         current_function: CompilerFunction::start(&[], true)?,
         upper_functions: Vec::new(),
     };
@@ -74,7 +72,6 @@ pub fn compile_chunk<'gc>(
 
 struct Compiler<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
-    interned_strings: InternedStringSet<'gc>,
     current_function: CompilerFunction<'gc>,
     upper_functions: Vec<CompilerFunction<'gc>>,
 }
@@ -628,9 +625,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         };
 
         let proto = if function_statement.method.is_some() {
-            let mut parameters = vec![self
-                .interned_strings
-                .new_string(self.mutation_context, b"self")];
+            let mut parameters = vec![String::new_static(b"self")];
             parameters.extend(&function_statement.definition.parameters);
 
             self.new_prototype(
@@ -1148,10 +1143,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // _ENV.
     fn get_environment(&mut self) -> Result<ExprDescriptor<'gc>, CompilerError> {
         Ok(ExprDescriptor::Variable(
-            self.find_variable(
-                self.interned_strings
-                    .new_string(self.mutation_context, b"_ENV"),
-            )?,
+            self.find_variable(String::new_static(b"_ENV"))?,
         ))
     }
 

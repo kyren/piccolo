@@ -5,6 +5,9 @@ use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
 use crate::{Error, Sequence, Thread, Value};
 
+// Safe, does not implement the drop trait
+#[derive(Collect)]
+#[collect(unsafe_drop)]
 pub enum CallbackResult<'gc> {
     Return(Vec<Value<'gc>>),
     Yield(Vec<Value<'gc>>),
@@ -42,13 +45,15 @@ impl<'gc> Callback<'gc> {
             + for<'fgc> Fn(
                 Thread<'fgc>,
                 &[Value<'fgc>],
-            )
-                -> Box<Sequence<'fgc, Item = CallbackResult<'fgc>, Error = Error> + 'fgc>,
+            ) -> Result<
+                Box<Sequence<'fgc, Item = CallbackResult<'fgc>, Error = Error> + 'fgc>,
+                Error,
+            >,
     {
         Callback(Gc::allocate(
             mc,
             StaticCollect(Box::new(move |thread, args| {
-                Ok(CallbackReturn::Sequence(f(thread, args)))
+                Ok(CallbackReturn::Sequence(f(thread, args)?))
             })),
         ))
     }
@@ -65,14 +70,14 @@ impl<'gc> Callback<'gc> {
 impl<'gc> Debug for Callback<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("Callback")
-            .field(&Gc::as_ptr(&self.0))
+            .field(&Gc::as_ptr(self.0))
             .finish()
     }
 }
 
 impl<'gc> PartialEq for Callback<'gc> {
     fn eq(&self, other: &Callback<'gc>) -> bool {
-        Gc::ptr_eq(&self.0, &other.0)
+        Gc::ptr_eq(self.0, other.0)
     }
 }
 
@@ -80,6 +85,6 @@ impl<'gc> Eq for Callback<'gc> {}
 
 impl<'gc> Hash for Callback<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Gc::as_ptr(&self.0).hash(state)
+        Gc::as_ptr(self.0).hash(state)
     }
 }

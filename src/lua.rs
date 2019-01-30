@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use gc_arena::{make_arena, ArenaParameters, Collect, GcCell};
 
-use crate::stdlib::load_base;
+use crate::stdlib::{load_base, load_coroutine};
 use crate::{InternedStringSet, Sequence, SequenceExt, Table, Thread};
 
 #[derive(Collect, Clone, Copy)]
@@ -31,6 +31,7 @@ impl Lua {
             };
 
             load_base(mc, root.context, root.context.globals);
+            load_coroutine(mc, root.context, root.context.globals);
 
             root
         });

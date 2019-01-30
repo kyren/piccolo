@@ -25,7 +25,7 @@ pub use closure::{
 };
 pub use compiler::{compile, compile_chunk, CompilerError};
 pub use constant::Constant;
-pub use error::Error;
+pub use error::{Error, RuntimeError, TypeError};
 pub use lexer::{Lexer, LexerError, Token};
 pub use lua::{Lua, LuaContext};
 pub use opcode::OpCode;
@@ -35,7 +35,7 @@ pub use sequence::{
 };
 pub use string::{InternedStringSet, String, StringError};
 pub use table::{InvalidTableKey, Table, TableState};
-pub use thread::Thread;
+pub use thread::{Thread, ThreadError};
 pub use types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };

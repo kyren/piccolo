@@ -49,6 +49,10 @@ impl<'gc> String<'gc> {
         }
     }
 
+    pub fn new_static(s: &'static [u8]) -> String<'gc> {
+        String::Static(s)
+    }
+
     pub fn concat(
         mc: MutationContext<'gc, '_>,
         values: &[Value<'gc>],
@@ -72,13 +76,12 @@ impl<'gc> String<'gc> {
                         bad_type: "callback",
                     });
                 }
+                Value::Thread(_) => {
+                    return Err(StringError::Concat { bad_type: "thread" });
+                }
             }
         }
         Ok(String::Long(Gc::allocate(mc, bytes.into_boxed_slice())))
-    }
-
-    pub fn new_static(&self, s: &'static [u8]) -> String<'gc> {
-        String::Static(s)
     }
 
     pub fn as_bytes(&self) -> &[u8] {

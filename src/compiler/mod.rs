@@ -17,7 +17,6 @@ pub fn compile<'gc, R: Read>(
 ) -> Result<FunctionProto<'gc>, Error> {
     Ok(compile_chunk(
         mc,
-        interned_strings,
         &parse_chunk(source, |s| interned_strings.new_string(mc, s))?,
     )?)
 }

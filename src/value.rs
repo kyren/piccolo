@@ -1,8 +1,8 @@
 use std::{i64, io};
 
-use gc_arena::{Collect, Gc};
+use gc_arena::{Collect, Gc, GcCell};
 
-use crate::{Callback, Closure, String, Table};
+use crate::{Callback, Closure, String, Table, Thread};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]
@@ -15,6 +15,7 @@ pub enum Value<'gc> {
     Table(Table<'gc>),
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
+    Thread(Thread<'gc>),
 }
 
 impl<'gc> PartialEq for Value<'gc> {
@@ -45,11 +46,28 @@ impl<'gc> PartialEq for Value<'gc> {
 
             (Value::Callback(a), Value::Callback(b)) => a == b,
             (Value::Callback(_), _) => false,
+
+            (Value::Thread(a), Value::Thread(b)) => a == b,
+            (Value::Thread(_), _) => false,
         }
     }
 }
 
 impl<'gc> Value<'gc> {
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Value::Nil => "nil",
+            Value::Boolean(_) => "boolean",
+            Value::Integer(_) => "integer",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Table(_) => "table",
+            Value::Closure(_) => "closure",
+            Value::Callback(_) => "callback",
+            Value::Thread(_) => "thread",
+        }
+    }
+
     /// Lua `nil` and `false` are false, anything else is true.
     pub fn to_bool(self) -> bool {
         match self {
@@ -111,8 +129,9 @@ impl<'gc> Value<'gc> {
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
             Value::Table(t) => write!(w, "<table {:?}>", t.0.as_ptr()),
-            Value::Closure(c) => write!(w, "<closure {:?}>", Gc::as_ptr(&c.0)),
-            Value::Callback(c) => write!(w, "<callback {:?}>", Gc::as_ptr(&c.0)),
+            Value::Closure(c) => write!(w, "<closure {:?}>", Gc::as_ptr(c.0)),
+            Value::Callback(c) => write!(w, "<callback {:?}>", Gc::as_ptr(c.0)),
+            Value::Thread(t) => write!(w, "<thread {:?}>", GcCell::as_ptr(t.0)),
         }
     }
 }

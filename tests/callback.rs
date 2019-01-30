@@ -1,5 +1,5 @@
 use luster::{
-    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, Value,
+    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, String, Value,
 };
 
 #[test]
@@ -13,11 +13,8 @@ fn callback() -> Result<(), Box<Error>> {
                     ret.push(Value::Integer(42));
                     Ok(CallbackResult::Return(ret))
                 });
-                lc.globals.set(
-                    mc,
-                    lc.interned_strings.new_string(mc, b"callback"),
-                    callback,
-                )?;
+                lc.globals
+                    .set(mc, String::new_static(b"callback"), callback)?;
                 Ok(())
             })
             .and_then(|mc, lc, _| {
@@ -53,11 +50,8 @@ fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
                     ret.push(Value::Integer(3));
                     Ok(CallbackResult::Return(ret))
                 });
-                lc.globals.set(
-                    mc,
-                    lc.interned_strings.new_string(mc, b"callback"),
-                    callback,
-                )?;
+                lc.globals
+                    .set(mc, String::new_static(b"callback"), callback)?;
                 Ok(())
             })
             .and_then(|mc, lc, _| {

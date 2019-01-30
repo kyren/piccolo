@@ -49,7 +49,7 @@ pub struct Closure<'gc>(pub Gc<'gc, ClosureState<'gc>>);
 
 impl<'gc> PartialEq for Closure<'gc> {
     fn eq(&self, other: &Closure<'gc>) -> bool {
-        Gc::ptr_eq(&self.0, &other.0)
+        Gc::ptr_eq(self.0, other.0)
     }
 }
 
