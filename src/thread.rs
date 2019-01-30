@@ -87,7 +87,7 @@ impl<'gc> Thread<'gc> {
             let frame_return = current_frame.frame_return;
             let (stack_base, pc) = match &mut current_frame.frame_type {
                 FrameType::Lua { base, pc } => (*base, pc),
-                _ => panic!("step_lua called when top frame is not a callback"),
+                _ => panic!("step_lua called when top frame is not a Lua frame"),
             };
             let current_function = get_closure(state.stack[stack_bottom]);
             let (upper_stack, stack_frame) = state.stack.split_at_mut(stack_base);
@@ -262,7 +262,7 @@ impl<'gc> Thread<'gc> {
                             args,
                             FrameReturn::Upper(returns),
                         )? {
-                            ThreadResult::None => continue 'start,
+                            ThreadResult::Unfinished => continue 'start,
                             ret => return Ok(ret),
                         }
                     }
@@ -285,7 +285,7 @@ impl<'gc> Thread<'gc> {
                         state.frames.pop();
 
                         match self.function_call(state, stack_bottom, args, frame_return)? {
-                            ThreadResult::None => continue 'start,
+                            ThreadResult::Unfinished => continue 'start,
                             ret => return Ok(ret),
                         }
                     }
@@ -486,7 +486,7 @@ impl<'gc> Thread<'gc> {
                             VarCount::constant(2),
                             FrameReturn::Upper(VarCount::constant(var_count)),
                         )? {
-                            ThreadResult::None => continue 'start,
+                            ThreadResult::Unfinished => continue 'start,
                             ret => return Ok(ret),
                         }
                     }
@@ -701,7 +701,7 @@ impl<'gc> Thread<'gc> {
                 }
 
                 if instructions == 0 {
-                    return Ok(ThreadResult::None);
+                    return Ok(ThreadResult::Unfinished);
                 } else {
                     instructions -= 1
                 }
@@ -719,7 +719,7 @@ impl<'gc> Thread<'gc> {
         match state.stack[function_index] {
             Value::Closure(_) => {
                 self.closure_call(state, function_index, args, frame_return);
-                Ok(ThreadResult::None)
+                Ok(ThreadResult::Unfinished)
             }
             Value::Callback(_) => self.callback_call(state, function_index, args, frame_return),
             _ => panic!("not a closure or callback"),
@@ -802,7 +802,7 @@ impl<'gc> Thread<'gc> {
                             }
                         }
 
-                        Ok(ThreadResult::None)
+                        Ok(ThreadResult::Unfinished)
                     }
                 },
                 CallbackReturn::Immediate(CallbackResult::Yield(res)) => {
@@ -867,7 +867,7 @@ impl<'gc> Thread<'gc> {
 }
 
 enum ThreadResult<'gc> {
-    None,
+    Unfinished,
     Finished(Vec<Value<'gc>>),
     PendingCallback(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>),
 }
@@ -923,58 +923,51 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                         }
                         Ok(CallbackResult::Return(res)) => {
                             let top_frame = state.frames.pop().unwrap();
+                            match top_frame.frame_return {
+                                FrameReturn::Upper(returns) => {
+                                    let return_len = returns
+                                        .to_constant()
+                                        .map(|c| c as usize)
+                                        .unwrap_or(res.len());
 
-                            let returns = match top_frame.frame_return {
-                                FrameReturn::Upper(returns) => returns,
-                                FrameReturn::CallBoundary => {
-                                    panic!("no frame to return to from callback")
+                                    state.stack.truncate(top_frame.bottom);
+                                    state
+                                        .stack
+                                        .resize(top_frame.bottom + return_len, Value::Nil);
+
+                                    for i in 0..return_len.min(res.len()) {
+                                        state.stack[top_frame.bottom + i] = res[i];
+                                    }
+
+                                    // Stack size is already correct for variable returns, but if we are returning a
+                                    // constant number, we need to restore the previous stack top.
+                                    if !returns.is_variable() {
+                                        let current_frame_top = state
+                                            .frames
+                                            .last()
+                                            .expect("no frame to return to from callback")
+                                            .top;
+                                        state.stack.resize(current_frame_top, Value::Nil);
+                                    }
+                                    self.pending_callback = None;
+                                    self.current_frame = Some(state.frames.len() - 1);
+                                    None
                                 }
-                            };
-                            let return_len = returns
-                                .to_constant()
-                                .map(|c| c as usize)
-                                .unwrap_or(res.len());
-
-                            state.stack.truncate(top_frame.bottom);
-                            state
-                                .stack
-                                .resize(top_frame.bottom + return_len, Value::Nil);
-
-                            for i in 0..return_len.min(res.len()) {
-                                state.stack[top_frame.bottom + i] = res[i];
+                                FrameReturn::CallBoundary => Some(Ok(res)),
                             }
-
-                            // Stack size is already correct for variable returns, but if we are returning a
-                            // constant number, we need to restore the previous stack top.
-                            if !returns.is_variable() {
-                                let current_frame_top = state
-                                    .frames
-                                    .last()
-                                    .expect("no frame to return to from callback")
-                                    .top;
-                                state.stack.resize(current_frame_top, Value::Nil);
-                            }
-                            self.pending_callback = None;
-                            self.current_frame = Some(state.frames.len() - 1);
-                            None
                         }
                     }
                 }
             }
         } else {
             assert_eq!(current_frame + 1, state.frames.len());
-            match state.frames.get(current_frame).unwrap().frame_type {
-                FrameType::Lua { .. } => {}
-                _ => panic!("not a Lua frame in ThreadSequence"),
-            }
-
             match self.thread.step_lua(&mut state, mc) {
                 Err(err) => {
                     self.thread.unwind(&mut state, mc);
                     self.current_frame = None;
                     Some(Err(err))
                 }
-                Ok(ThreadResult::None) => {
+                Ok(ThreadResult::Unfinished) => {
                     self.current_frame = Some(state.frames.len() - 1);
                     None
                 }
