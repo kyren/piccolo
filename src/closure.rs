@@ -62,7 +62,7 @@ impl<'gc> Hash for Closure<'gc> {
     }
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub enum ClosureError {
     HasUpValues,

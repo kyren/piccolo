@@ -11,7 +11,7 @@ use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::Value;
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub enum StringError {
     Concat { bad_type: &'static str },

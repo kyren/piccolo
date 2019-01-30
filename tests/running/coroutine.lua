@@ -1,5 +1,5 @@
 function test1()
-    function test_coroutine()
+    local function test_coroutine()
         coroutine.yield(1)
         coroutine.yield(2)
         coroutine.yield(3)
@@ -23,4 +23,24 @@ function test1()
         e4 == true and r4 == nil and s4 == "dead"
 end
 
-return test1()
+function test2()
+    local function test_coroutine()
+        coroutine.yield(1)
+        error('test error')
+    end
+
+    co = coroutine.create(test_coroutine)
+
+    local e1, r1 = coroutine.resume(co)
+    local s1 = coroutine.status(co)
+    local e2, r2 = coroutine.resume(co)
+    local s2 = coroutine.status(co)
+
+    return
+        e1 == true and r1 == 1 and s1 == "suspended" and
+        e2 == false and r2 == 'test error' and s2 == "dead"
+end
+
+return
+    test1() and
+    test2()

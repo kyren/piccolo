@@ -11,7 +11,7 @@ use crate::{
     Sequence, String, Table, TypeError, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub enum ThreadError {
     BadYield,
@@ -1068,16 +1068,18 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
         lc: LuaContext<'gc>,
     ) -> Option<Result<Self::Item, Self::Error>> {
         let current_frame = self.current_frame.expect("cannot step finished sequence");
-        let mut state = self.thread.0.write(mc);
 
         if let Some(callback) = self.pending_callback.as_mut() {
+            let res = callback.step(mc, lc);
+            let mut state = self.thread.0.write(mc);
+
             assert_eq!(
                 state.frames.get(current_frame).unwrap().frame_type,
                 FrameType::Callback,
                 "pending callback, but current frame is not a callback frame"
             );
 
-            match callback.step(mc, lc) {
+            match res {
                 None => None,
                 Some(res) => {
                     assert_eq!(
@@ -1139,6 +1141,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 }
             }
         } else {
+            let mut state = self.thread.0.write(mc);
             assert_eq!(current_frame + 1, state.frames.len());
             match self.thread.step_lua(&mut state, mc) {
                 Err(err) => {

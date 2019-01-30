@@ -13,7 +13,7 @@ use crate::Value;
 #[collect(require_copy)]
 pub struct Table<'gc>(pub GcCell<'gc, TableState<'gc>>);
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub enum InvalidTableKey {
     IsNaN,

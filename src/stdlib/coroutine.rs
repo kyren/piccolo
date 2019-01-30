@@ -1,8 +1,8 @@
-use gc_arena::{Gc, MutationContext};
+use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, RuntimeError,
-    SequenceExt, String, Table, Thread, TypeError, Value,
+    sequence_fn_with, Callback, CallbackResult, LuaContext, RuntimeError, SequenceExt, String,
+    Table, Thread, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -49,28 +49,31 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                     }
                 };
 
-                let args = args[1..].to_vec();
-                // TODO: Errors in coroutines are not handled yet
-                Ok(Box::new(
-                    sequence_fn_with((thread, args), |mc, _, (thread, args)| {
-                        if !thread.is_suspended() {
-                            Box::new(
-                                Err(RuntimeError(Gc::allocate(
-                                    mc,
-                                    Value::String(String::new_static(b"cannot resume thread")),
-                                ))
-                                .into())
-                                .into_sequence(),
-                            )
-                        } else {
+                if !thread.is_suspended() {
+                    Err(
+                        RuntimeError(Value::String(String::new_static(b"cannot resume thread")))
+                            .into(),
+                    )
+                } else {
+                    let args = args[1..].to_vec();
+                    Ok(Box::new(
+                        sequence_fn_with((thread, args), |mc, _, (thread, args)| {
                             thread.resume(mc, args).unwrap()
-                        }
-                    })
-                    .map(|mut res| {
-                        res.insert(0, Value::Boolean(true));
-                        CallbackResult::Return(res)
-                    }),
-                ))
+                        })
+                        .then(|mc, lc, res| {
+                            Ok(CallbackResult::Return(match res {
+                                Ok(mut res) => {
+                                    res.insert(0, Value::Boolean(true));
+                                    res
+                                }
+                                Err(err) => vec![
+                                    Value::Boolean(false),
+                                    err.to_value(mc, lc.interned_strings),
+                                ],
+                            }))
+                        }),
+                    ))
+                }
             }),
         )
         .unwrap();

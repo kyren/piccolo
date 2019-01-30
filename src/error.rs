@@ -2,13 +2,14 @@ use std::error::Error as StdError;
 use std::string::String as StdString;
 use std::{fmt, io};
 
-use gc_arena::{Collect, Gc, StaticCollect};
+use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::{
-    ClosureError, CompilerError, InvalidTableKey, ParserError, StringError, ThreadError, Value,
+    ClosureError, CompilerError, InternedStringSet, InvalidTableKey, ParserError, StringError,
+    ThreadError, Value,
 };
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub struct TypeError {
     pub expected: &'static str,
@@ -27,9 +28,9 @@ impl fmt::Display for TypeError {
     }
 }
 
-#[derive(Debug, Collect)]
-#[collect(empty_drop)]
-pub struct RuntimeError<'gc>(pub Gc<'gc, Value<'gc>>);
+#[derive(Debug, Clone, Copy, Collect)]
+#[collect(require_copy)]
+pub struct RuntimeError<'gc>(pub Value<'gc>);
 
 impl<'gc> StdError for RuntimeError<'gc> {}
 
@@ -144,6 +145,20 @@ impl<'gc> Error<'gc> {
                 let mut buf = Vec::new();
                 error.0.display(&mut buf).unwrap();
                 StaticError::RuntimeError(StdString::from_utf8_lossy(&buf).to_owned().to_string())
+            }
+        }
+    }
+
+    pub fn to_value(
+        self,
+        mc: MutationContext<'gc, '_>,
+        interned_strings: InternedStringSet<'gc>,
+    ) -> Value<'gc> {
+        match self {
+            Error::RuntimeError(error) => error.0,
+            other => {
+                let s = other.to_string();
+                Value::String(interned_strings.new_string(mc, s.as_ref()))
             }
         }
     }
