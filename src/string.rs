@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::error::Error as StdError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -15,6 +16,8 @@ use crate::Value;
 pub enum StringError {
     Concat { bad_type: &'static str },
 }
+
+impl StdError for StringError {}
 
 impl fmt::Display for StringError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {

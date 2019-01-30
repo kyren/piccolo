@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::error::Error as StdError;
 use std::{fmt, iter, mem};
 
 use num_traits::cast;
@@ -39,6 +40,8 @@ pub enum CompilerError {
     JumpLocal,
     JumpOverflow,
 }
+
+impl StdError for CompilerError {}
 
 impl fmt::Display for CompilerError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {

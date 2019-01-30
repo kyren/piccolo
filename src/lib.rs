@@ -25,7 +25,7 @@ pub use closure::{
 };
 pub use compiler::{compile, compile_chunk, CompilerError};
 pub use constant::Constant;
-pub use error::{Error, RuntimeError, TypeError};
+pub use error::{Error, RuntimeError, StaticError, TypeError};
 pub use lexer::{Lexer, LexerError, Token};
 pub use lua::{Lua, LuaContext};
 pub use opcode::OpCode;

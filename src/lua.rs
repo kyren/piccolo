@@ -49,8 +49,8 @@ impl Lua {
     /// be called as:
     ///
     /// ```
-    /// # use luster::{Lua, Closure, compile, Error, sequence_fn, SequenceExt};
-    /// # fn main() -> Result<(), Error> {
+    /// # use luster::{Lua, Closure, compile, Error, StaticError, sequence_fn, SequenceExt};
+    /// # fn main() -> Result<(), StaticError> {
     ///
     /// let source = b"print('hello')";
     ///
@@ -63,6 +63,7 @@ impl Lua {
     ///     )?))
     ///     .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
     ///     .map(|_| ())
+    ///     .map_err(Error::to_static)
     /// ))?;
     ///
     /// # Ok(())

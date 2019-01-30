@@ -1,9 +1,10 @@
 use std::io::{self, Write};
-use std::string::String as StdString;
 
-use gc_arena::MutationContext;
+use gc_arena::{Gc, MutationContext};
 
-use crate::{Callback, CallbackResult, LuaContext, RuntimeError, String, Table};
+use crate::{
+    sequence_fn_with, Callback, CallbackResult, LuaContext, RuntimeError, String, Table, Value,
+};
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
     let print = Callback::new_immediate(mc, |_, args| {
@@ -20,14 +21,11 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     });
     env.set(mc, String::new_static(b"print"), print).unwrap();
 
-    let error = Callback::new_immediate(mc, |_, args| {
-        if args.len() > 0 {
-            let mut buf = Vec::new();
-            args[0].display(&mut buf)?;
-            Err(RuntimeError(Some(StdString::from_utf8_lossy(&buf).into_owned()).into()).into())
-        } else {
-            Err(RuntimeError(None).into())
-        }
+    let error = Callback::new_sequence(mc, |_, args| {
+        let err = args.get(0).cloned().unwrap_or(Value::Nil);
+        Ok(Box::new(sequence_fn_with(err, |mc, _, err| {
+            Err(RuntimeError(Gc::allocate(mc, err)).into())
+        })))
     });
     env.set(mc, String::new_static(b"error"), error).unwrap();
 }

@@ -1,9 +1,10 @@
 use luster::{
-    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, String, Value,
+    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, StaticError,
+    String, Value,
 };
 
 #[test]
-fn callback() -> Result<(), Box<Error>> {
+fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
         Box::new(
@@ -32,7 +33,8 @@ fn callback() -> Result<(), Box<Error>> {
                 )?)
             })
             .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
-            .map(|b| assert_eq!(b, vec![Value::Boolean(true)])),
+            .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
+            .map_err(Error::to_static),
         )
     })?;
 
@@ -40,7 +42,7 @@ fn callback() -> Result<(), Box<Error>> {
 }
 
 #[test]
-fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
+fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
         Box::new(
@@ -73,7 +75,8 @@ fn tail_call_trivial_callback() -> Result<(), Box<Error>> {
                     b,
                     vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
                 )
-            }),
+            })
+            .map_err(Error::to_static),
         )
     })?;
 

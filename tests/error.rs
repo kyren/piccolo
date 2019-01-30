@@ -1,7 +1,7 @@
-use luster::{compile, sequence_fn, Closure, Error, Lua, SequenceExt};
+use luster::{compile, sequence_fn, Closure, Error, Lua, SequenceExt, StaticError};
 
 #[test]
-fn error_unwind() -> Result<(), Box<Error>> {
+fn error_unwind() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
         Box::new(
@@ -36,7 +36,8 @@ fn error_unwind() -> Result<(), Box<Error>> {
                         Err(Error::RuntimeError(_)) => Ok(()),
                         _ => panic!(),
                     })
-            }),
+            })
+            .map_err(Error::to_static),
         )
     })?;
 

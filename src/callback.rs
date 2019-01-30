@@ -15,11 +15,12 @@ pub enum CallbackResult<'gc> {
 
 pub enum CallbackReturn<'gc> {
     Immediate(CallbackResult<'gc>),
-    Sequence(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>),
+    Sequence(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>),
 }
 
-pub type CallbackBox =
-    Box<'static + for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackReturn<'gc>, Error>>;
+pub type CallbackBox = Box<
+    'static + for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+>;
 
 #[derive(Clone, Copy, Collect)]
 #[collect(require_copy)]
@@ -29,7 +30,7 @@ impl<'gc> Callback<'gc> {
     pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
         F: 'static
-            + for<'fgc> Fn(Thread<'fgc>, &[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error>,
+            + for<'fgc> Fn(Thread<'fgc>, &[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
     {
         Callback(Gc::allocate(
             mc,
@@ -46,8 +47,8 @@ impl<'gc> Callback<'gc> {
                 Thread<'fgc>,
                 &[Value<'fgc>],
             ) -> Result<
-                Box<Sequence<'fgc, Item = CallbackResult<'fgc>, Error = Error> + 'fgc>,
-                Error,
+                Box<Sequence<'fgc, Item = CallbackResult<'fgc>, Error = Error<'fgc>> + 'fgc>,
+                Error<'fgc>,
             >,
     {
         Callback(Gc::allocate(
@@ -62,7 +63,7 @@ impl<'gc> Callback<'gc> {
         &self,
         thread: Thread<'gc>,
         args: &[Value<'gc>],
-    ) -> Result<CallbackReturn<'gc>, Error> {
+    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
         (*(self.0).0)(thread, args)
     }
 }

@@ -1,7 +1,7 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 
-use luster::{compile, io, parse_chunk, sequence_fn, Closure, Lua, SequenceExt, Value};
+use luster::{compile, io, parse_chunk, sequence_fn, Closure, Error, Lua, SequenceExt, Value};
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -39,7 +39,8 @@ fn test_dir(dir: &str, run_code: bool) {
                                     );
                                     true
                                 }
-                            }),
+                            })
+                            .map_err(Error::to_static),
                         )
                     });
 

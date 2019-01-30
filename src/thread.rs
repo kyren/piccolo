@@ -1,14 +1,14 @@
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    Callback, CallbackResult, CallbackReturn, Closure, ClosureState, Error, IntoSequence,
-    LuaContext, OpCode, Sequence, String, Table, UpValue, UpValueDescriptor, UpValueState, Value,
-    VarCount,
+    CallbackResult, CallbackReturn, Closure, ClosureState, Error, IntoSequence, LuaContext, OpCode,
+    Sequence, String, Table, TypeError, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
 #[derive(Debug, Collect)]
@@ -16,6 +16,8 @@ use crate::{
 pub enum ThreadError {
     BadYield,
 }
+
+impl StdError for ThreadError {}
 
 impl fmt::Display for ThreadError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -100,7 +102,7 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         closure: Closure<'gc>,
         args: &[Value<'gc>],
-    ) -> impl Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error> {
+    ) -> impl Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> {
         let mut state = self.0.write(mc);
         let closure_index = state.stack.len();
         state.stack.push(Value::Closure(closure));
@@ -139,7 +141,7 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         args: Vec<Value<'gc>>,
-    ) -> Option<Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error> + 'gc>> {
+    ) -> Option<Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc>> {
         let mut state = self.0.write(mc);
         let last_frame = state.frames.pop()?;
         let frame_return = last_frame.frame_return;
@@ -221,7 +223,7 @@ impl<'gc> Thread<'gc> {
         self,
         state: &mut ThreadState<'gc>,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<ThreadResult<'gc>, Error> {
+    ) -> Result<ThreadResult<'gc>, Error<'gc>> {
         const THREAD_GRANULARITY: u32 = 64;
         let mut instructions = THREAD_GRANULARITY;
 
@@ -276,17 +278,17 @@ impl<'gc> Thread<'gc> {
                     }
 
                     OpCode::GetTableR { dest, table, key } => {
-                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])
+                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])?
                             .get(stack_frame[key.0 as usize]);
                     }
 
                     OpCode::GetTableC { dest, table, key } => {
-                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])
+                        stack_frame[dest.0 as usize] = get_table(stack_frame[table.0 as usize])?
                             .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
                     OpCode::SetTableRR { table, key, value } => {
-                        get_table(stack_frame[table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])?
                             .set(
                                 mc,
                                 stack_frame[key.0 as usize],
@@ -296,7 +298,7 @@ impl<'gc> Thread<'gc> {
                     }
 
                     OpCode::SetTableRC { table, key, value } => {
-                        get_table(stack_frame[table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])?
                             .set(
                                 mc,
                                 stack_frame[key.0 as usize],
@@ -306,7 +308,7 @@ impl<'gc> Thread<'gc> {
                     }
 
                     OpCode::SetTableCR { table, key, value } => {
-                        get_table(stack_frame[table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])?
                             .set(
                                 mc,
                                 current_function.0.proto.constants[key.0 as usize].to_value(),
@@ -316,7 +318,7 @@ impl<'gc> Thread<'gc> {
                     }
 
                     OpCode::SetTableCC { table, key, value } => {
-                        get_table(stack_frame[table.0 as usize])
+                        get_table(stack_frame[table.0 as usize])?
                             .set(
                                 mc,
                                 current_function.0.proto.constants[key.0 as usize].to_value(),
@@ -330,7 +332,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .get(stack_frame[key.0 as usize]);
                     }
 
@@ -339,7 +341,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .get(current_function.0.proto.constants[key.0 as usize].to_value())
                     }
 
@@ -348,7 +350,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .set(
                             mc,
                             stack_frame[key.0 as usize],
@@ -362,7 +364,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .set(
                             mc,
                             stack_frame[key.0 as usize],
@@ -376,7 +378,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .set(
                             mc,
                             current_function.0.proto.constants[key.0 as usize].to_value(),
@@ -390,7 +392,7 @@ impl<'gc> Thread<'gc> {
                             self,
                             upper_stack,
                             current_function.0.upvalues[table.0 as usize],
-                        ))
+                        ))?
                         .set(
                             mc,
                             current_function.0.proto.constants[key.0 as usize].to_value(),
@@ -658,14 +660,14 @@ impl<'gc> Thread<'gc> {
                         let table = stack_frame[table.0 as usize];
                         let key = current_function.0.proto.constants[key.0 as usize].to_value();
                         stack_frame[base.0 as usize + 1] = table;
-                        stack_frame[base.0 as usize] = get_table(table).get(key);
+                        stack_frame[base.0 as usize] = get_table(table)?.get(key);
                     }
 
                     OpCode::SelfC { base, table, key } => {
                         let table = stack_frame[table.0 as usize];
                         let key = current_function.0.proto.constants[key.0 as usize].to_value();
                         stack_frame[base.0 as usize + 1] = table;
-                        stack_frame[base.0 as usize] = get_table(table).get(key);
+                        stack_frame[base.0 as usize] = get_table(table)?.get(key);
                     }
 
                     OpCode::Concat {
@@ -707,7 +709,7 @@ impl<'gc> Thread<'gc> {
 
                     OpCode::Length { dest, source } => {
                         stack_frame[dest.0 as usize] =
-                            Value::Integer(get_table(stack_frame[source.0 as usize]).length());
+                            Value::Integer(get_table(stack_frame[source.0 as usize])?.length());
                     }
 
                     OpCode::EqRR {
@@ -872,7 +874,7 @@ impl<'gc> Thread<'gc> {
         args: VarCount,
         frame_return: FrameReturn,
         yieldable: bool,
-    ) -> Result<ThreadResult<'gc>, Error> {
+    ) -> Result<ThreadResult<'gc>, Error<'gc>> {
         match state.stack[function_index] {
             Value::Closure(_) => {
                 self.closure_call(state, function_index, args, frame_return, yieldable);
@@ -881,7 +883,11 @@ impl<'gc> Thread<'gc> {
             Value::Callback(_) => {
                 self.callback_call(state, function_index, args, frame_return, yieldable)
             }
-            _ => panic!("not a closure or callback"),
+            val => Err(TypeError {
+                expected: "function",
+                found: val.type_name(),
+            }
+            .into()),
         }
     }
 
@@ -928,8 +934,11 @@ impl<'gc> Thread<'gc> {
         args: VarCount,
         frame_return: FrameReturn,
         yieldable: bool,
-    ) -> Result<ThreadResult<'gc>, Error> {
-        let callback = get_callback(state.stack[function_index]);
+    ) -> Result<ThreadResult<'gc>, Error<'gc>> {
+        let callback = match state.stack[function_index] {
+            Value::Callback(c) => c,
+            _ => panic!("value is not a callback"),
+        };
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
@@ -1037,20 +1046,21 @@ impl<'gc> Thread<'gc> {
 enum ThreadResult<'gc> {
     Unfinished,
     Finished(Vec<Value<'gc>>),
-    PendingCallback(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>),
+    PendingCallback(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>),
 }
 
 #[derive(Collect)]
 #[collect(empty_drop)]
 struct ThreadSequence<'gc> {
     thread: Thread<'gc>,
-    pending_callback: Option<Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error> + 'gc>>,
+    pending_callback:
+        Option<Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>>,
     current_frame: Option<usize>,
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     type Item = Vec<Value<'gc>>;
-    type Error = Error;
+    type Error = Error<'gc>;
 
     fn step(
         &mut self,
@@ -1207,17 +1217,13 @@ fn get_closure<'gc>(value: Value<'gc>) -> Closure<'gc> {
     }
 }
 
-fn get_callback<'gc>(value: Value<'gc>) -> Callback<'gc> {
+fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
     match value {
-        Value::Callback(c) => c,
-        _ => panic!("value is not a callback"),
-    }
-}
-
-fn get_table<'gc>(value: Value<'gc>) -> Table<'gc> {
-    match value {
-        Value::Table(t) => t,
-        _ => panic!("value is not a table"),
+        Value::Table(t) => Ok(t),
+        val => Err(TypeError {
+            expected: "table",
+            found: val.type_name(),
+        }),
     }
 }
 

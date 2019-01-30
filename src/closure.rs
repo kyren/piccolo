@@ -1,3 +1,4 @@
+use std::error::Error as StdError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -67,6 +68,8 @@ pub enum ClosureError {
     HasUpValues,
     RequiresEnv,
 }
+
+impl StdError for ClosureError {}
 
 impl fmt::Display for ClosureError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {

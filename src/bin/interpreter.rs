@@ -22,7 +22,8 @@ fn main() -> Result<(), Box<Error>> {
                 )?)
             })
             .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
-            .map(|_| ()),
+            .map(|_| ())
+            .map_err(|e| e.to_static()),
         )
     })?;
 

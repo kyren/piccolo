@@ -1,3 +1,4 @@
+use std::error::Error as StdError;
 use std::hash::{Hash, Hasher};
 use std::{fmt, i64, mem};
 
@@ -18,6 +19,8 @@ pub enum InvalidTableKey {
     IsNaN,
     IsNil,
 }
+
+impl StdError for InvalidTableKey {}
 
 impl fmt::Display for InvalidTableKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
