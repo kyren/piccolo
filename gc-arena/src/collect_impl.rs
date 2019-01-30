@@ -1,5 +1,8 @@
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
+use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::collect::Collect;
 use crate::context::CollectionContext;
@@ -200,6 +203,46 @@ where
         for v in self {
             v.trace(cc);
         }
+    }
+}
+
+unsafe impl<T> Collect for Rc<T>
+where
+    T: ?Sized + Collect,
+{
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        (**self).trace(cc);
+    }
+}
+
+unsafe impl<T> Collect for Arc<T>
+where
+    T: ?Sized + Collect,
+{
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        (**self).trace(cc);
+    }
+}
+
+unsafe impl<T> Collect for Cell<T>
+where
+    T: 'static,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        false
+    }
+}
+
+unsafe impl<T> Collect for RefCell<T>
+where
+    T: 'static,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        false
     }
 }
 
