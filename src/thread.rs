@@ -893,74 +893,81 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
         let mut state = self.thread.0.write(mc);
 
         if let Some(callback) = self.pending_callback.as_mut() {
-            let callback_frame = state
-                .frames
-                .get_mut(current_frame)
-                .expect("no callback frame");
-            assert_eq!(callback_frame.frame_type, FrameType::Callback);
+            assert_eq!(
+                state.frames.get(current_frame).unwrap().frame_type,
+                FrameType::Callback
+            );
 
             match callback.step(mc, lc) {
                 None => None,
-                Some(Err(err)) => {
-                    self.thread.unwind(&mut state, mc);
-                    self.pending_callback = None;
-                    self.current_frame = None;
-                    Some(Err(err))
-                }
-                Some(Ok(CallbackResult::Yield(res))) => {
-                    callback_frame.frame_type = FrameType::Yield;
-                    assert_eq!(
-                        current_frame + 1,
-                        state.frames.len(),
-                        "cannot yield across callbacks"
-                    );
-                    self.pending_callback = None;
-                    self.current_frame = None;
-                    Some(Ok(res))
-                }
-                Some(Ok(CallbackResult::Return(res))) => {
+                Some(res) => {
                     assert_eq!(
                         current_frame + 1,
                         state.frames.len(),
                         "cannot return from lower frame"
                     );
-                    let top_frame = state.frames.pop().unwrap();
 
-                    let returns = match top_frame.frame_return {
-                        FrameReturn::Upper(returns) => returns,
-                        FrameReturn::CallBoundary => panic!("no frame to return to from callback"),
-                    };
-                    let return_len = returns
-                        .to_constant()
-                        .map(|c| c as usize)
-                        .unwrap_or(res.len());
+                    match res {
+                        Err(err) => {
+                            self.thread.unwind(&mut state, mc);
+                            self.pending_callback = None;
+                            self.current_frame = None;
+                            Some(Err(err))
+                        }
+                        Ok(CallbackResult::Yield(res)) => {
+                            state.frames.get_mut(current_frame).unwrap().frame_type =
+                                FrameType::Yield;
+                            self.pending_callback = None;
+                            self.current_frame = None;
+                            Some(Ok(res))
+                        }
+                        Ok(CallbackResult::Return(res)) => {
+                            let top_frame = state.frames.pop().unwrap();
 
-                    state.stack.truncate(top_frame.bottom);
-                    state
-                        .stack
-                        .resize(top_frame.bottom + return_len, Value::Nil);
+                            let returns = match top_frame.frame_return {
+                                FrameReturn::Upper(returns) => returns,
+                                FrameReturn::CallBoundary => {
+                                    panic!("no frame to return to from callback")
+                                }
+                            };
+                            let return_len = returns
+                                .to_constant()
+                                .map(|c| c as usize)
+                                .unwrap_or(res.len());
 
-                    for i in 0..return_len.min(res.len()) {
-                        state.stack[top_frame.bottom + i] = res[i];
+                            state.stack.truncate(top_frame.bottom);
+                            state
+                                .stack
+                                .resize(top_frame.bottom + return_len, Value::Nil);
+
+                            for i in 0..return_len.min(res.len()) {
+                                state.stack[top_frame.bottom + i] = res[i];
+                            }
+
+                            // Stack size is already correct for variable returns, but if we are returning a
+                            // constant number, we need to restore the previous stack top.
+                            if !returns.is_variable() {
+                                let current_frame_top = state
+                                    .frames
+                                    .last()
+                                    .expect("no frame to return to from callback")
+                                    .top;
+                                state.stack.resize(current_frame_top, Value::Nil);
+                            }
+                            self.pending_callback = None;
+                            self.current_frame = Some(state.frames.len() - 1);
+                            None
+                        }
                     }
-
-                    // Stack size is already correct for variable returns, but if we are returning a
-                    // constant number, we need to restore the previous stack top.
-                    if !returns.is_variable() {
-                        let current_frame_top = state
-                            .frames
-                            .last()
-                            .expect("no frame to return to from callback")
-                            .top;
-                        state.stack.resize(current_frame_top, Value::Nil);
-                    }
-                    self.pending_callback = None;
-                    self.current_frame = Some(state.frames.len() - 1);
-                    None
                 }
             }
         } else {
             assert_eq!(current_frame + 1, state.frames.len());
+            match state.frames.get(current_frame).unwrap().frame_type {
+                FrameType::Lua { .. } => {}
+                _ => panic!("not a Lua frame in ThreadSequence"),
+            }
+
             match self.thread.step_lua(&mut state, mc) {
                 Err(err) => {
                     self.thread.unwind(&mut state, mc);
