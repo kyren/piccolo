@@ -1,8 +1,8 @@
 use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, Callback, CallbackResult, LuaContext, SequenceExt, String, Table, Thread,
-    TypeError, Value,
+    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, SequenceExt, String,
+    Table, Thread, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -12,23 +12,26 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"create"),
-            Callback::new_sequence(mc, |_, args| {
+            Callback::new(mc, |_, args| {
                 let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
                     value => {
-                        return Err(TypeError {
-                            expected: "function",
-                            found: value.type_name(),
-                        }
-                        .into());
+                        return Box::new(
+                            Err(TypeError {
+                                expected: "function",
+                                found: value.type_name(),
+                            }
+                            .into())
+                            .into_sequence(),
+                        );
                     }
                 };
 
-                Ok(Box::new(sequence_fn_with(function, |mc, _, function| {
+                Box::new(sequence_fn_with(function, |mc, _, function| {
                     Ok(CallbackResult::Return(vec![Value::Thread(
                         Thread::new_coroutine(mc, function),
                     )]))
-                })))
+                }))
             }),
         )
         .unwrap();
@@ -37,20 +40,23 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"resume"),
-            Callback::new_sequence(mc, |_, args| {
+            Callback::new(mc, |_, mut args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
-                        return Err(TypeError {
-                            expected: "thread",
-                            found: value.type_name(),
-                        }
-                        .into());
+                        return Box::new(
+                            Err(TypeError {
+                                expected: "thread",
+                                found: value.type_name(),
+                            }
+                            .into())
+                            .into_sequence(),
+                        );
                     }
                 };
 
-                let args = args[1..].to_vec();
-                Ok(Box::new(
+                args.remove(0);
+                Box::new(
                     sequence_fn_with((thread, args), |mc, _, (thread, args)| {
                         thread.resume(mc, args)
                     })
@@ -65,7 +71,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                             }
                         }))
                     }),
-                ))
+                )
             }),
         )
         .unwrap();
@@ -105,7 +111,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"yield"),
-            Callback::new_immediate(mc, |_, args| Ok(CallbackResult::Yield(args.to_vec()))),
+            Callback::new_immediate(mc, |_, args| Ok(CallbackResult::Yield(args))),
         )
         .unwrap();
 

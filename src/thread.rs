@@ -7,9 +7,9 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    CallbackResult, CallbackReturn, Closure, ClosureState, Error, Function, IntoSequence,
-    LuaContext, OpCode, Sequence, String, Table, TypeError, UpValue, UpValueDescriptor,
-    UpValueState, Value, VarCount,
+    callback::CallbackSequenceBox, CallbackResult, Closure, ClosureState, Error, Function,
+    IntoSequence, LuaContext, OpCode, Sequence, String, Table, TypeError, UpValue,
+    UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]
@@ -888,9 +888,9 @@ impl<'gc> Thread<'gc> {
                 self.call_closure(state, function_index, args, frame_return, yieldable);
                 Ok(ThreadResult::Unfinished)
             }
-            Value::Function(Function::Callback(_)) => {
-                self.call_callback(state, function_index, args, frame_return, yieldable)
-            }
+            Value::Function(Function::Callback(_)) => Ok(ThreadResult::PendingCallback(
+                self.call_callback(state, function_index, args, frame_return, yieldable),
+            )),
             val => Err(TypeError {
                 expected: "function",
                 found: val.type_name(),
@@ -942,7 +942,7 @@ impl<'gc> Thread<'gc> {
         args: VarCount,
         frame_return: FrameReturn,
         yieldable: bool,
-    ) -> Result<ThreadResult<'gc>, Error<'gc>> {
+    ) -> CallbackSequenceBox<'gc> {
         let callback = match state.stack[function_index] {
             Value::Function(Function::Callback(c)) => c,
             _ => panic!("value is not a callback"),
@@ -952,66 +952,19 @@ impl<'gc> Thread<'gc> {
             .map(|c| c as usize)
             .unwrap_or(state.stack.len() - function_index - 1);
 
-        match callback.call(
+        let seq = callback.call(
             self,
-            &state.stack[function_index + 1..function_index + 1 + arg_count],
-        ) {
-            Err(err) => Err(err),
-            Ok(res) => match res {
-                CallbackReturn::Immediate(CallbackResult::Return(res)) => match frame_return {
-                    FrameReturn::CallBoundary => Ok(ThreadResult::Finished(res)),
-                    FrameReturn::Upper(returns) => {
-                        let count = res.len();
-                        if let Some(returning) = returns.to_constant() {
-                            if let Some(current_frame) = state.frames.last() {
-                                state.stack.resize(current_frame.top, Value::Nil);
-                            }
-
-                            let returning = returning as usize;
-                            for i in 0..returning.min(count) {
-                                state.stack[function_index + i] = res[i];
-                            }
-                            for i in count..returning {
-                                state.stack[function_index + i] = Value::Nil;
-                            }
-                        } else {
-                            state.stack.resize(function_index + count, Value::Nil);
-                            for i in 0..count {
-                                state.stack[function_index + i] = res[i];
-                            }
-                        }
-
-                        Ok(ThreadResult::Unfinished)
-                    }
-                },
-                CallbackReturn::Immediate(CallbackResult::Yield(res)) => {
-                    if !yieldable {
-                        Err(ThreadError::BadYield.into())
-                    } else {
-                        state.frames.push(Frame {
-                            bottom: function_index,
-                            top: function_index,
-                            frame_type: FrameType::Yield,
-                            frame_return,
-                            yieldable,
-                        });
-                        state.stack.resize(function_index, Value::Nil);
-                        Ok(ThreadResult::Finished(res))
-                    }
-                }
-                CallbackReturn::Sequence(seq) => {
-                    state.frames.push(Frame {
-                        bottom: function_index,
-                        top: function_index,
-                        frame_type: FrameType::Callback,
-                        frame_return,
-                        yieldable,
-                    });
-                    state.stack.resize(function_index, Value::Nil);
-                    Ok(ThreadResult::PendingCallback(seq))
-                }
-            },
-        }
+            state.stack[function_index + 1..function_index + 1 + arg_count].to_vec(),
+        );
+        state.frames.push(Frame {
+            bottom: function_index,
+            top: function_index,
+            frame_type: FrameType::Callback,
+            frame_return,
+            yieldable,
+        });
+        state.stack.resize(function_index, Value::Nil);
+        seq
     }
 
     // Unwind frames up to and including the most recent call boundary

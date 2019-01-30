@@ -3,8 +3,8 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, Callback, CallbackResult, LuaContext, RuntimeError, SequenceExt, String,
-    Table, TypeError, Value,
+    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, RuntimeError,
+    SequenceExt, String, Table, TypeError, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -29,7 +29,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"error"),
-        Callback::new_sequence(mc, |_, args| {
+        Callback::new_immediate(mc, |_, args| {
             let err = args.get(0).cloned().unwrap_or(Value::Nil);
             Err(RuntimeError(err).into())
         }),
@@ -39,22 +39,25 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"pcall"),
-        Callback::new_sequence(mc, |thread, args| {
+        Callback::new(mc, |thread, mut args| {
             let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Function(function) => function,
                 value => {
-                    return Err(TypeError {
-                        expected: "function",
-                        found: value.type_name(),
-                    }
-                    .into());
+                    return Box::new(
+                        Err(TypeError {
+                            expected: "function",
+                            found: value.type_name(),
+                        }
+                        .into())
+                        .into_sequence(),
+                    );
                 }
             };
 
             // TODO: should be able to yield through pcall, requires tail-calling functions
 
-            let args = args[1..].to_vec();
-            Ok(Box::new(sequence_fn_with(
+            args.remove(0);
+            Box::new(sequence_fn_with(
                 (thread, function, args),
                 |mc, _, (thread, function, args)| {
                     thread.call(mc, function, &args).then(|mc, lc, res| {
@@ -69,7 +72,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
                         }))
                     })
                 },
-            )))
+            ))
         }),
     )
     .unwrap();

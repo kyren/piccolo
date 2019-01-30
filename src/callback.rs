@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
-use crate::{Error, Sequence, Thread, Value};
+use crate::{Error, IntoSequence, Sequence, Thread, Value};
 
 // Safe, does not implement drop
 #[derive(Collect)]
@@ -13,57 +13,41 @@ pub enum CallbackResult<'gc> {
     Yield(Vec<Value<'gc>>),
 }
 
-pub enum CallbackReturn<'gc> {
-    Immediate(CallbackResult<'gc>),
-    Sequence(Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>),
-}
+pub type CallbackSequenceBox<'gc> =
+    Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>;
 
-pub type CallbackBox = Box<
-    'static + for<'gc> Fn(Thread<'gc>, &[Value<'gc>]) -> Result<CallbackReturn<'gc>, Error<'gc>>,
->;
+pub type CallbackBox =
+    Box<'static + for<'gc> Fn(Thread<'gc>, Vec<Value<'gc>>) -> CallbackSequenceBox<'gc>>;
 
 #[derive(Clone, Copy, Collect)]
 #[collect(require_copy)]
 pub struct Callback<'gc>(pub Gc<'gc, StaticCollect<CallbackBox>>);
 
 impl<'gc> Callback<'gc> {
-    pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
+    pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static
-            + for<'fgc> Fn(Thread<'fgc>, &[Value<'fgc>]) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
+        F: 'static + for<'fgc> Fn(Thread<'fgc>, Vec<Value<'fgc>>) -> CallbackSequenceBox<'fgc>,
     {
-        Callback(Gc::allocate(
-            mc,
-            StaticCollect(Box::new(move |thread, args| {
-                Ok(CallbackReturn::Immediate(f(thread, args)?))
-            })),
-        ))
+        Callback(Gc::allocate(mc, StaticCollect(Box::new(f))))
     }
 
-    pub fn new_sequence<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
+    pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
         F: 'static
             + for<'fgc> Fn(
                 Thread<'fgc>,
-                &[Value<'fgc>],
-            ) -> Result<
-                Box<Sequence<'fgc, Item = CallbackResult<'fgc>, Error = Error<'fgc>> + 'fgc>,
-                Error<'fgc>,
-            >,
+                Vec<Value<'fgc>>,
+            ) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
     {
         Callback(Gc::allocate(
             mc,
             StaticCollect(Box::new(move |thread, args| {
-                Ok(CallbackReturn::Sequence(f(thread, args)?))
+                Box::new(f(thread, args).into_sequence())
             })),
         ))
     }
 
-    pub fn call(
-        &self,
-        thread: Thread<'gc>,
-        args: &[Value<'gc>],
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+    pub fn call(&self, thread: Thread<'gc>, args: Vec<Value<'gc>>) -> CallbackSequenceBox<'gc> {
         (*(self.0).0)(thread, args)
     }
 }
