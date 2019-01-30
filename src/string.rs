@@ -69,14 +69,9 @@ impl<'gc> String<'gc> {
                 Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
                 Value::String(s) => bytes.extend(s.as_bytes()),
                 Value::Table(_) => return Err(StringError::Concat { bad_type: "table" }),
-                Value::Closure(_) => {
+                Value::Function(_) => {
                     return Err(StringError::Concat {
-                        bad_type: "closure",
-                    });
-                }
-                Value::Callback(_) => {
-                    return Err(StringError::Concat {
-                        bad_type: "callback",
+                        bad_type: "function",
                     });
                 }
                 Value::Thread(_) => {

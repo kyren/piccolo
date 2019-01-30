@@ -2,7 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fs::File;
 
-use luster::{compile, io, sequence_fn, Closure, Lua, SequenceExt};
+use luster::{compile, io, sequence_fn, Closure, Function, Lua, SequenceExt};
 
 fn main() -> Result<(), Box<Error>> {
     let mut args = env::args();
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<Error>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
+            .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
             .map(|_| ())
             .map_err(|e| e.to_static()),
         )

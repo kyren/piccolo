@@ -285,16 +285,12 @@ impl<'gc> Hash for TableKey<'gc> {
                 Hash::hash(&5, state);
                 t.hash(state);
             }
-            Value::Closure(c) => {
+            Value::Function(c) => {
                 Hash::hash(&6, state);
                 c.hash(state);
             }
-            Value::Callback(c) => {
-                Hash::hash(&7, state);
-                c.hash(state);
-            }
             Value::Thread(t) => {
-                Hash::hash(&8, state);
+                Hash::hash(&7, state);
                 t.hash(state);
             }
         }

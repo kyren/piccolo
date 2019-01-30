@@ -7,14 +7,16 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    CallbackResult, CallbackReturn, Closure, ClosureState, Error, IntoSequence, LuaContext, OpCode,
-    Sequence, String, Table, TypeError, UpValue, UpValueDescriptor, UpValueState, Value, VarCount,
+    CallbackResult, CallbackReturn, Closure, ClosureState, Error, Function, IntoSequence,
+    LuaContext, OpCode, Sequence, String, Table, TypeError, UpValue, UpValueDescriptor,
+    UpValueState, Value, VarCount,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub enum ThreadError {
     BadYield,
+    BadResume,
 }
 
 impl StdError for ThreadError {}
@@ -23,6 +25,7 @@ impl fmt::Display for ThreadError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ThreadError::BadYield => write!(fmt, "yield from unyieldable function"),
+            ThreadError::BadResume => write!(fmt, "thread cannot be resumed"),
         }
     }
 }
@@ -71,9 +74,8 @@ impl<'gc> Thread<'gc> {
         ))
     }
 
-    /// Create a new thread with a resumable closure at the top of the stack, making this thread a
-    /// new suspended coroutine.
-    pub fn new_coroutine(mc: MutationContext<'gc, '_>, closure: Closure<'gc>) -> Thread<'gc> {
+    /// Create a suspended thread that, once resumed, executes the given function.
+    pub fn new_coroutine(mc: MutationContext<'gc, '_>, function: Function<'gc>) -> Thread<'gc> {
         Thread(GcCell::allocate(
             mc,
             ThreadState {
@@ -81,7 +83,7 @@ impl<'gc> Thread<'gc> {
                 frames: vec![Frame {
                     bottom: 0,
                     top: 0,
-                    frame_type: FrameType::CoroutineStart(closure),
+                    frame_type: FrameType::CoroutineStart(function),
                     frame_return: FrameReturn::CallBoundary,
                     yieldable: true,
                 }],
@@ -90,36 +92,21 @@ impl<'gc> Thread<'gc> {
         ))
     }
 
-    /// Call a closure on this thread, producing a `Sequence`.
+    /// Call a function on this thread, producing a `Sequence`.
     ///
     /// The same `Thread` can be used for multiple function calls, but only the most recently
     /// created unfinished `Sequence` for a `Thread` can be run at any given time.  When such a
     /// sequence is constructed, it operates on whatever the top of the stack is at that time, so
     /// any later constructed sequences must be run to completion before earlier ones can be
     /// completed.
-    pub fn call_closure(
+    pub fn call(
         self,
         mc: MutationContext<'gc, '_>,
-        closure: Closure<'gc>,
+        function: Function<'gc>,
         args: &[Value<'gc>],
-    ) -> impl Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> {
+    ) -> Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc> {
         let mut state = self.0.write(mc);
-        let closure_index = state.stack.len();
-        state.stack.push(Value::Closure(closure));
-        state.stack.extend(args);
-        self.closure_call(
-            &mut state,
-            closure_index,
-            VarCount::variable(),
-            FrameReturn::CallBoundary,
-            false,
-        );
-
-        ThreadSequence {
-            thread: self,
-            pending_callback: None,
-            current_frame: Some(state.frames.len() - 1),
-        }
+        self.sequence_function(&mut state, function, args, false)
     }
 
     /// Returns true if the given thread is suspended in a call to yield, and is waiting on being
@@ -141,29 +128,18 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         args: Vec<Value<'gc>>,
-    ) -> Option<Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc>> {
+    ) -> Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc> {
         let mut state = self.0.write(mc);
-        let last_frame = state.frames.pop()?;
-        let frame_return = last_frame.frame_return;
-        let frame_top = last_frame.top;
-        match last_frame.frame_type {
-            FrameType::CoroutineStart(closure) => {
-                state.stack.truncate(frame_top);
-                state.stack.push(Value::Closure(closure));
-                state.stack.extend(args);
-                self.closure_call(
-                    &mut state,
-                    frame_top,
-                    VarCount::variable(),
-                    frame_return,
-                    true,
-                );
+        let last_frame = if let Some(last_frame) = state.frames.pop() {
+            last_frame
+        } else {
+            return Box::new(Err(ThreadError::BadResume.into()).into_sequence());
+        };
 
-                Some(Box::new(ThreadSequence {
-                    thread: self,
-                    pending_callback: None,
-                    current_frame: Some(state.frames.len() - 1),
-                }))
+        let frame_return = last_frame.frame_return;
+        match last_frame.frame_type {
+            FrameType::CoroutineStart(function) => {
+                self.sequence_function(&mut state, function, &args, true)
             }
             FrameType::Yield => {
                 match frame_return {
@@ -193,16 +169,16 @@ impl<'gc> Thread<'gc> {
                             state.stack.resize(current_frame_top, Value::Nil);
                         }
 
-                        Some(Box::new(ThreadSequence {
+                        Box::new(ThreadSequence {
                             thread: self,
                             pending_callback: None,
                             current_frame: Some(state.frames.len() - 1),
-                        }))
+                        })
                     }
-                    FrameReturn::CallBoundary => Some(Box::new(Ok(args).into_sequence())),
+                    FrameReturn::CallBoundary => Box::new(Ok(args).into_sequence()),
                 }
             }
-            _ => None,
+            _ => Box::new(Err(ThreadError::BadResume.into()).into_sequence()),
         }
     }
 
@@ -217,6 +193,38 @@ impl<'gc> Thread<'gc> {
     /// Returns true if the thread has finished its main function
     pub fn is_finished(self) -> bool {
         self.0.read().frames.is_empty()
+    }
+
+    fn sequence_function(
+        self,
+        state: &mut ThreadState<'gc>,
+        function: Function<'gc>,
+        args: &[Value<'gc>],
+        yieldable: bool,
+    ) -> Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc> {
+        let closure_index = state.stack.len();
+        state.stack.push(Value::Function(function));
+        state.stack.extend(args);
+        match self.call_function(
+            state,
+            closure_index,
+            VarCount::variable(),
+            FrameReturn::CallBoundary,
+            yieldable,
+        ) {
+            Err(err) => Box::new(Err(err).into_sequence()),
+            Ok(ThreadResult::Unfinished) => Box::new(ThreadSequence {
+                thread: self,
+                pending_callback: None,
+                current_frame: Some(state.frames.len() - 1),
+            }),
+            Ok(ThreadResult::Finished(res)) => Box::new(Ok(res).into_sequence()),
+            Ok(ThreadResult::PendingCallback(callback)) => Box::new(ThreadSequence {
+                thread: self,
+                pending_callback: Some(callback),
+                current_frame: Some(state.frames.len() - 1),
+            }),
+        }
     }
 
     fn step_lua(
@@ -406,7 +414,7 @@ impl<'gc> Thread<'gc> {
                         args,
                         returns,
                     } => {
-                        match self.function_call(
+                        match self.call_function(
                             state,
                             stack_base + func.0 as usize,
                             args,
@@ -435,7 +443,7 @@ impl<'gc> Thread<'gc> {
                         state.stack.truncate(stack_bottom + 1 + arg_len);
                         state.frames.pop();
 
-                        match self.function_call(
+                        match self.call_function(
                             state,
                             stack_bottom,
                             args,
@@ -597,7 +605,7 @@ impl<'gc> Thread<'gc> {
                         }
 
                         let closure = Closure(Gc::allocate(mc, ClosureState { proto, upvalues }));
-                        stack_frame[dest.0 as usize] = Value::Closure(closure);
+                        stack_frame[dest.0 as usize] = Value::Function(Function::Closure(closure));
                     }
 
                     OpCode::NumericForPrep { base, jump } => {
@@ -637,7 +645,7 @@ impl<'gc> Thread<'gc> {
                         for i in 0..3 {
                             state.stack[base + 3 + i] = state.stack[base + i];
                         }
-                        match self.function_call(
+                        match self.call_function(
                             state,
                             base + 3,
                             VarCount::constant(2),
@@ -867,7 +875,7 @@ impl<'gc> Thread<'gc> {
         }
     }
 
-    fn function_call(
+    fn call_function(
         self,
         state: &mut ThreadState<'gc>,
         function_index: usize,
@@ -876,12 +884,12 @@ impl<'gc> Thread<'gc> {
         yieldable: bool,
     ) -> Result<ThreadResult<'gc>, Error<'gc>> {
         match state.stack[function_index] {
-            Value::Closure(_) => {
-                self.closure_call(state, function_index, args, frame_return, yieldable);
+            Value::Function(Function::Closure(_)) => {
+                self.call_closure(state, function_index, args, frame_return, yieldable);
                 Ok(ThreadResult::Unfinished)
             }
-            Value::Callback(_) => {
-                self.callback_call(state, function_index, args, frame_return, yieldable)
+            Value::Function(Function::Callback(_)) => {
+                self.call_callback(state, function_index, args, frame_return, yieldable)
             }
             val => Err(TypeError {
                 expected: "function",
@@ -891,7 +899,7 @@ impl<'gc> Thread<'gc> {
         }
     }
 
-    fn closure_call(
+    fn call_closure(
         self,
         state: &mut ThreadState<'gc>,
         function_index: usize,
@@ -927,7 +935,7 @@ impl<'gc> Thread<'gc> {
         });
     }
 
-    fn callback_call(
+    fn call_callback(
         self,
         state: &mut ThreadState<'gc>,
         function_index: usize,
@@ -936,7 +944,7 @@ impl<'gc> Thread<'gc> {
         yieldable: bool,
     ) -> Result<ThreadResult<'gc>, Error<'gc>> {
         let callback = match state.stack[function_index] {
-            Value::Callback(c) => c,
+            Value::Function(Function::Callback(c)) => c,
             _ => panic!("value is not a callback"),
         };
         let arg_count = args
@@ -1173,7 +1181,7 @@ enum FrameType<'gc> {
     Lua { base: usize, pc: usize },
     Callback,
     Yield,
-    CoroutineStart(Closure<'gc>),
+    CoroutineStart(Function<'gc>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Collect)]
@@ -1215,7 +1223,7 @@ fn get_upvalue<'gc>(
 
 fn get_closure<'gc>(value: Value<'gc>) -> Closure<'gc> {
     match value {
-        Value::Closure(c) => c,
+        Value::Function(Function::Closure(c)) => c,
         _ => panic!("value is not a closure"),
     }
 }

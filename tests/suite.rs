@@ -1,7 +1,9 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 
-use luster::{compile, io, parse_chunk, sequence_fn, Closure, Error, Lua, SequenceExt, Value};
+use luster::{
+    compile, io, parse_chunk, sequence_fn, Closure, Error, Function, Lua, SequenceExt, Value,
+};
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -27,7 +29,7 @@ fn test_dir(dir: &str, run_code: bool) {
                                 )?)
                             })
                             .and_then(move |mc, lc, closure| {
-                                lc.main_thread.call_closure(mc, closure, &[])
+                                lc.main_thread.call(mc, Function::Closure(closure), &[])
                             })
                             .map(|r| match &r[..] {
                                 &[Value::Boolean(true)] => false,

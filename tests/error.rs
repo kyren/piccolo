@@ -1,4 +1,4 @@
-use luster::{compile, sequence_fn, Closure, Error, Lua, SequenceExt, StaticError};
+use luster::{compile, sequence_fn, Closure, Error, Function, Lua, SequenceExt, StaticError};
 
 #[test]
 fn error_unwind() -> Result<(), Box<StaticError>> {
@@ -24,13 +24,13 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
             })
             .and_then(|mc, lc, closure| {
                 lc.main_thread
-                    .call_closure(mc, closure, &[])
+                    .call(mc, Function::Closure(closure), &[])
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),
                         _ => panic!(),
                     })
                     .and_then_with(closure, |mc, lc, closure, _| {
-                        lc.main_thread.call_closure(mc, closure, &[])
+                        lc.main_thread.call(mc, Function::Closure(closure), &[])
                     })
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),

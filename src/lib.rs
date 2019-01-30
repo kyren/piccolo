@@ -39,4 +39,4 @@ pub use thread::{Thread, ThreadError};
 pub use types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
-pub use value::Value;
+pub use value::{Function, Value};

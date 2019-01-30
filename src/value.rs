@@ -4,6 +4,13 @@ use gc_arena::{Collect, Gc, GcCell};
 
 use crate::{Callback, Closure, String, Table, Thread};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
+#[collect(require_copy)]
+pub enum Function<'gc> {
+    Closure(Closure<'gc>),
+    Callback(Callback<'gc>),
+}
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_copy)]
 pub enum Value<'gc> {
@@ -13,8 +20,7 @@ pub enum Value<'gc> {
     Number(f64),
     String(String<'gc>),
     Table(Table<'gc>),
-    Closure(Closure<'gc>),
-    Callback(Callback<'gc>),
+    Function(Function<'gc>),
     Thread(Thread<'gc>),
 }
 
@@ -41,11 +47,8 @@ impl<'gc> PartialEq for Value<'gc> {
             (Value::Table(a), Value::Table(b)) => a == b,
             (Value::Table(_), _) => false,
 
-            (Value::Closure(a), Value::Closure(b)) => a == b,
-            (Value::Closure(_), _) => false,
-
-            (Value::Callback(a), Value::Callback(b)) => a == b,
-            (Value::Callback(_), _) => false,
+            (Value::Function(a), Value::Function(b)) => a == b,
+            (Value::Function(_), _) => false,
 
             (Value::Thread(a), Value::Thread(b)) => a == b,
             (Value::Thread(_), _) => false,
@@ -62,8 +65,7 @@ impl<'gc> Value<'gc> {
             Value::Number(_) => "number",
             Value::String(_) => "string",
             Value::Table(_) => "table",
-            Value::Closure(_) => "closure",
-            Value::Callback(_) => "callback",
+            Value::Function(_) => "function",
             Value::Thread(_) => "thread",
         }
     }
@@ -129,8 +131,8 @@ impl<'gc> Value<'gc> {
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
             Value::Table(t) => write!(w, "<table {:?}>", t.0.as_ptr()),
-            Value::Closure(c) => write!(w, "<closure {:?}>", Gc::as_ptr(c.0)),
-            Value::Callback(c) => write!(w, "<callback {:?}>", Gc::as_ptr(c.0)),
+            Value::Function(Function::Closure(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
+            Value::Function(Function::Callback(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
             Value::Thread(t) => write!(w, "<thread {:?}>", GcCell::as_ptr(t.0)),
         }
     }
@@ -166,14 +168,20 @@ impl<'gc> From<Table<'gc>> for Value<'gc> {
     }
 }
 
+impl<'gc> From<Function<'gc>> for Value<'gc> {
+    fn from(v: Function<'gc>) -> Value<'gc> {
+        Value::Function(v)
+    }
+}
+
 impl<'gc> From<Closure<'gc>> for Value<'gc> {
     fn from(v: Closure<'gc>) -> Value<'gc> {
-        Value::Closure(v)
+        Value::Function(Function::Closure(v))
     }
 }
 
 impl<'gc> From<Callback<'gc>> for Value<'gc> {
     fn from(v: Callback<'gc>) -> Value<'gc> {
-        Value::Callback(v)
+        Value::Function(Function::Callback(v))
     }
 }

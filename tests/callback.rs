@@ -1,6 +1,6 @@
 use luster::{
-    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Lua, SequenceExt, StaticError,
-    String, Value,
+    compile, sequence_fn, Callback, CallbackResult, Closure, Error, Function, Lua, SequenceExt,
+    StaticError, String, Value,
 };
 
 #[test]
@@ -32,7 +32,7 @@ fn callback() -> Result<(), Box<StaticError>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
+            .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
             .map_err(Error::to_static),
         )
@@ -69,7 +69,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call_closure(mc, closure, &[]))
+            .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
             .map(|b| {
                 assert_eq!(
                     b,

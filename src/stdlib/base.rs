@@ -40,11 +40,11 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
         mc,
         String::new_static(b"pcall"),
         Callback::new_sequence(mc, |thread, args| {
-            let closure = match args.get(0).cloned().unwrap_or(Value::Nil) {
-                Value::Closure(closure) => closure,
+            let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
+                Value::Function(function) => function,
                 value => {
                     return Err(TypeError {
-                        expected: "closure",
+                        expected: "function",
                         found: value.type_name(),
                     }
                     .into());
@@ -55,9 +55,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
 
             let args = args[1..].to_vec();
             Ok(Box::new(sequence_fn_with(
-                (thread, closure, args),
-                |mc, _, (thread, closure, args)| {
-                    thread.call_closure(mc, closure, &args).then(|mc, lc, res| {
+                (thread, function, args),
+                |mc, _, (thread, function, args)| {
+                    thread.call(mc, function, &args).then(|mc, lc, res| {
                         Ok(CallbackResult::Return(match res {
                             Ok(mut res) => {
                                 res.insert(0, Value::Boolean(true));

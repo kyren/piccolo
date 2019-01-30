@@ -43,7 +43,7 @@ impl<'gc> fmt::Display for RuntimeError<'gc> {
     }
 }
 
-// Safe, no drop impl
+// Safe, does not implement drop
 #[derive(Debug, Collect)]
 #[collect(unsafe_drop)]
 pub enum Error<'gc> {

@@ -5,7 +5,7 @@ use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
 use crate::{Error, Sequence, Thread, Value};
 
-// Safe, does not implement the drop trait
+// Safe, does not implement drop
 #[derive(Collect)]
 #[collect(unsafe_drop)]
 pub enum CallbackResult<'gc> {
