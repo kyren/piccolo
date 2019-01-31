@@ -29,7 +29,9 @@ fn test_dir(dir: &str, run_code: bool) {
                                 )?)
                             })
                             .and_then(move |mc, lc, closure| {
-                                lc.main_thread.call(mc, Function::Closure(closure), &[])
+                                lc.main_thread
+                                    .call(mc, Function::Closure(closure), &[])
+                                    .unwrap()
                             })
                             .map(|r| match &r[..] {
                                 &[Value::Boolean(true)] => false,

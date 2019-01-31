@@ -4,7 +4,7 @@ use gc_arena::MutationContext;
 
 use crate::{
     sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, RuntimeError,
-    SequenceExt, String, Table, TypeError, Value,
+    SequenceExt, String, Table, Thread, TypeError, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -59,18 +59,22 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
             args.remove(0);
             Box::new(sequence_fn_with(
                 (thread, function, args),
-                |mc, _, (thread, function, args)| {
-                    thread.call(mc, function, &args).then(|mc, lc, res| {
-                        Ok(CallbackResult::Return(match res {
-                            Ok(mut res) => {
-                                res.insert(0, Value::Boolean(true));
-                                res
-                            }
-                            Err(err) => {
-                                vec![Value::Boolean(false), err.to_value(mc, lc.interned_strings)]
-                            }
-                        }))
-                    })
+                |mc, _, (_, function, args)| {
+                    Thread::new(mc)
+                        .call(mc, function, &args)
+                        .unwrap()
+                        .then(|mc, lc, res| {
+                            Ok(CallbackResult::Return(match res {
+                                Ok(mut res) => {
+                                    res.insert(0, Value::Boolean(true));
+                                    res
+                                }
+                                Err(err) => vec![
+                                    Value::Boolean(false),
+                                    err.to_value(mc, lc.interned_strings),
+                                ],
+                            }))
+                        })
                 },
             ))
         }),

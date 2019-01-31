@@ -61,7 +61,11 @@ impl Lua {
     ///         compile(mc, lc.interned_strings, &source[..])?,
     ///         Some(lc.globals),
     ///     )?))
-    ///     .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
+    ///     .and_then(|mc, lc, closure| {
+    ///         lc.main_thread
+    ///             .call(mc, Function::Closure(closure), &[])
+    ///             .unwrap()
+    ///     })
     ///     .map(|_| ())
     ///     .map_err(Error::to_static)
     /// ))?;

@@ -1,8 +1,8 @@
 use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, SequenceExt, String,
-    Table, Thread, TypeError, Value,
+    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, RuntimeError,
+    SequenceExt, String, Table, Thread, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -58,7 +58,17 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                 args.remove(0);
                 Box::new(
                     sequence_fn_with((thread, args), |mc, _, (thread, args)| {
-                        thread.resume(mc, args)
+                        if let Some(seq) = thread.resume(mc, args) {
+                            seq
+                        } else {
+                            Box::new(
+                                Err(RuntimeError(Value::String(String::new_static(
+                                    b"cannot resume thread",
+                                )))
+                                .into())
+                                .into_sequence(),
+                            )
+                        }
                     })
                     .then(|mc, lc, res| {
                         Ok(CallbackResult::Return(match res {

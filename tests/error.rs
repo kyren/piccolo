@@ -25,12 +25,15 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
             .and_then(|mc, lc, closure| {
                 lc.main_thread
                     .call(mc, Function::Closure(closure), &[])
+                    .unwrap()
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),
                         _ => panic!(),
                     })
                     .and_then_with(closure, |mc, lc, closure, _| {
-                        lc.main_thread.call(mc, Function::Closure(closure), &[])
+                        lc.main_thread
+                            .call(mc, Function::Closure(closure), &[])
+                            .unwrap()
                     })
                     .then(|_, _, res| match res {
                         Err(Error::RuntimeError(_)) => Ok(()),

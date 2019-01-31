@@ -32,7 +32,11 @@ fn callback() -> Result<(), Box<StaticError>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
+            .and_then(|mc, lc, closure| {
+                lc.main_thread
+                    .call(mc, Function::Closure(closure), &[])
+                    .unwrap()
+            })
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
             .map_err(Error::to_static),
         )
@@ -69,7 +73,11 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                     Some(lc.globals),
                 )?)
             })
-            .and_then(|mc, lc, closure| lc.main_thread.call(mc, Function::Closure(closure), &[]))
+            .and_then(|mc, lc, closure| {
+                lc.main_thread
+                    .call(mc, Function::Closure(closure), &[])
+                    .unwrap()
+            })
             .map(|b| {
                 assert_eq!(
                     b,
