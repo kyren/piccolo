@@ -150,29 +150,7 @@ impl<'gc> Thread<'gc> {
                 if state.stack.is_empty() {
                     Some(Box::new(Ok(args).into_sequence()))
                 } else {
-                    let return_len = returns
-                        .to_constant()
-                        .map(|c| c as usize)
-                        .unwrap_or(args.len());
-
-                    let bottom = state.stack.len();
-                    state.stack.resize(bottom + return_len, Value::Nil);
-
-                    for i in 0..return_len.min(args.len()) {
-                        state.stack[bottom + i] = args[i];
-                    }
-
-                    // Stack size is already correct for variable returns, but if we are returning a
-                    // constant number, we need to restore the previous stack top.
-                    if !returns.is_variable() {
-                        let current_frame_top = state
-                            .frames
-                            .last()
-                            .expect("no upper frame to return to")
-                            .top;
-                        state.stack.resize(current_frame_top, Value::Nil);
-                    }
-
+                    self.return_to_lua(&mut state, &args, returns);
                     Some(Box::new(ThreadSequence(self)))
                 }
             }
@@ -198,52 +176,28 @@ impl<'gc> Thread<'gc> {
                     state.pending_callback = Some(pending_callback);
                     None
                 }
-                Some(res) => {
-                    match res {
-                        Err(err) => {
-                            if let Some(err) = self.unwind(&mut state, err) {
-                                Some(Err(err))
-                            } else {
-                                None
-                            }
-                        }
-                        Ok(CallbackResult::Yield(res)) => {
-                            state.pending_resume =
-                                Some(PendingResume::Resume(pending_callback.returns));
-                            Some(Ok(res))
-                        }
-                        Ok(CallbackResult::Return(res)) => {
-                            if state.frames.is_empty() {
-                                Some(Ok(res))
-                            } else {
-                                let return_len = pending_callback
-                                    .returns
-                                    .to_constant()
-                                    .map(|c| c as usize)
-                                    .unwrap_or(res.len());
-
-                                let bottom = state.stack.len();
-                                state.stack.resize(bottom + return_len, Value::Nil);
-
-                                for i in 0..return_len.min(res.len()) {
-                                    state.stack[bottom + i] = res[i];
-                                }
-
-                                // Stack size is already correct for variable returns, but if we are returning a
-                                // constant number, we need to restore the previous stack top.
-                                if !pending_callback.returns.is_variable() {
-                                    let current_frame_top = state
-                                        .frames
-                                        .last()
-                                        .expect("no frame to return to from callback")
-                                        .top;
-                                    state.stack.resize(current_frame_top, Value::Nil);
-                                }
-                                None
-                            }
+                Some(res) => match res {
+                    Err(err) => {
+                        if let Some(err) = self.unwind(&mut state, err) {
+                            Some(Err(err))
+                        } else {
+                            None
                         }
                     }
-                }
+                    Ok(CallbackResult::Yield(res)) => {
+                        state.pending_resume =
+                            Some(PendingResume::Resume(pending_callback.returns));
+                        Some(Ok(res))
+                    }
+                    Ok(CallbackResult::Return(res)) => {
+                        if state.frames.is_empty() {
+                            Some(Ok(res))
+                        } else {
+                            self.return_to_lua(&mut state, &res, pending_callback.returns);
+                            None
+                        }
+                    }
+                },
             }
         } else {
             let mut state = self.0.write(mc);
@@ -983,6 +937,29 @@ impl<'gc> Thread<'gc> {
                     thread.0.read().stack[ind]
                 });
             }
+        }
+    }
+
+    // Return to the top Lua frame from an external call
+    fn return_to_lua(self, state: &mut ThreadState<'gc>, rets: &[Value<'gc>], ret_count: VarCount) {
+        assert!(!state.frames.is_empty(), "no Lua frame to return to");
+        let return_len = ret_count
+            .to_constant()
+            .map(|c| c as usize)
+            .unwrap_or(rets.len());
+
+        let bottom = state.stack.len();
+        state.stack.resize(bottom + return_len, Value::Nil);
+
+        for i in 0..return_len.min(rets.len()) {
+            state.stack[bottom + i] = rets[i];
+        }
+
+        // Stack size is already correct for variable returns, but if we are returning a
+        // constant number, we need to restore the previous stack top.
+        if !ret_count.is_variable() {
+            let current_frame_top = state.frames.last().unwrap().top;
+            state.stack.resize(current_frame_top, Value::Nil);
         }
     }
 }
