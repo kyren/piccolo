@@ -180,7 +180,7 @@ impl<'gc> Thread<'gc> {
                     Some(Box::new(ThreadSequence(self)))
                 } else {
                     let mut state = self.0.write(mc);
-                    if state.stack.is_empty() {
+                    if state.frames.is_empty() {
                         Some(Box::new(Ok(args).into_sequence()))
                     } else {
                         self.return_to_lua(&mut state, &args, returns);
