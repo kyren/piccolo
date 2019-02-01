@@ -7,8 +7,8 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
-    callback::CallbackSequenceBox, CallbackResult, Closure, ClosureState, Error, Function,
-    IntoSequence, LuaContext, OpCode, Sequence, String, Table, TypeError, UpValue,
+    callback::CallbackSequenceBox, CallbackResult, Closure, ClosureState, Continuation, Error,
+    Function, IntoSequence, LuaContext, OpCode, Sequence, String, Table, TypeError, UpValue,
     UpValueDescriptor, UpValueState, Value, VarCount,
 };
 
@@ -108,8 +108,14 @@ impl<'gc> Thread<'gc> {
         if state.frames.is_empty() {
             state.stack.push(Value::Function(function));
             state.stack.extend(args);
-            self.call_function(&mut state, 0, VarCount::variable(), VarCount::variable())
-                .unwrap();
+            self.call_function(
+                &mut state,
+                0,
+                VarCount::variable(),
+                VarCount::variable(),
+                Vec::new(),
+            )
+            .unwrap();
             Some(ThreadSequence(self))
         } else {
             None
@@ -134,24 +140,47 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         args: Vec<Value<'gc>>,
     ) -> Option<Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc>> {
-        let mut state = self.0.write(mc);
+        let pending_resume = {
+            let mut state = self.0.write(mc);
+            assert!(state.pending_callback.is_none());
+            state.pending_resume.take()
+        };
 
-        match state.pending_resume.take() {
+        match pending_resume {
             None => None,
             Some(PendingResume::Start(function)) => {
+                let mut state = self.0.write(mc);
                 assert!(state.frames.is_empty() && state.stack.is_empty());
                 state.stack.push(Value::Function(function));
                 state.stack.extend(args);
-                self.call_function(&mut state, 0, VarCount::variable(), VarCount::variable())
-                    .unwrap();
+                self.call_function(
+                    &mut state,
+                    0,
+                    VarCount::variable(),
+                    VarCount::variable(),
+                    Vec::new(),
+                )
+                .unwrap();
                 Some(Box::new(ThreadSequence(self)))
             }
-            Some(PendingResume::Resume(returns)) => {
-                if state.stack.is_empty() {
-                    Some(Box::new(Ok(args).into_sequence()))
-                } else {
-                    self.return_to_lua(&mut state, &args, returns);
+            Some(PendingResume::Resume(returns, mut continuations)) => {
+                if let Some(cont) = continuations.pop() {
+                    let callback = cont.call(self, Ok(args));
+                    let mut state = self.0.write(mc);
+                    state.pending_callback = Some(PendingCallback {
+                        callback,
+                        returns,
+                        continuations,
+                    });
                     Some(Box::new(ThreadSequence(self)))
+                } else {
+                    let mut state = self.0.write(mc);
+                    if state.stack.is_empty() {
+                        Some(Box::new(Ok(args).into_sequence()))
+                    } else {
+                        self.return_to_lua(&mut state, &args, returns);
+                        Some(Box::new(ThreadSequence(self)))
+                    }
                 }
             }
         }
@@ -162,48 +191,86 @@ impl<'gc> Thread<'gc> {
     }
 
     fn step(
-        &mut self,
+        self,
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<Vec<Value<'gc>>, Error<'gc>>> {
         let pending_callback = self.0.write(mc).pending_callback.take();
         if let Some(mut pending_callback) = pending_callback {
             let res = pending_callback.callback.step(mc, lc);
-            let mut state = self.0.write(mc);
 
             match res {
                 None => {
+                    let mut state = self.0.write(mc);
                     state.pending_callback = Some(pending_callback);
                     None
                 }
                 Some(res) => match res {
                     Err(err) => {
-                        if let Some(err) = self.unwind(&mut state, err) {
-                            Some(Err(err))
-                        } else {
+                        if let Some(cont) = pending_callback.continuations.pop() {
+                            pending_callback.callback = cont.call(self, Err(err));
+                            let mut state = self.0.write(mc);
+                            state.pending_callback = Some(pending_callback);
                             None
+                        } else {
+                            if let Some(err) = self.unwind(mc, err) {
+                                Some(Err(err))
+                            } else {
+                                None
+                            }
                         }
                     }
                     Ok(CallbackResult::Yield(res)) => {
-                        state.pending_resume =
-                            Some(PendingResume::Resume(pending_callback.returns));
+                        let mut state = self.0.write(mc);
+                        state.pending_resume = Some(PendingResume::Resume(
+                            pending_callback.returns,
+                            pending_callback.continuations,
+                        ));
                         Some(Ok(res))
                     }
                     Ok(CallbackResult::Return(res)) => {
-                        if state.frames.is_empty() {
-                            Some(Ok(res))
-                        } else {
-                            self.return_to_lua(&mut state, &res, pending_callback.returns);
+                        if let Some(cont) = pending_callback.continuations.pop() {
+                            pending_callback.callback = cont.call(self, Ok(res));
+                            let mut state = self.0.write(mc);
+                            state.pending_callback = Some(pending_callback);
                             None
+                        } else {
+                            let mut state = self.0.write(mc);
+                            if state.frames.is_empty() {
+                                Some(Ok(res))
+                            } else {
+                                self.return_to_lua(&mut state, &res, pending_callback.returns);
+                                None
+                            }
                         }
+                    }
+                    Ok(CallbackResult::TailCall {
+                        function,
+                        args,
+                        continuation,
+                    }) => {
+                        let mut state = self.0.write(mc);
+                        let function_index = state.stack.len();
+                        state.stack.push(Value::Function(function));
+                        state.stack.extend(args);
+                        let mut continuations = pending_callback.continuations;
+                        continuations.push(continuation);
+                        self.call_function(
+                            &mut state,
+                            function_index,
+                            VarCount::variable(),
+                            pending_callback.returns,
+                            continuations,
+                        )
+                        .unwrap();
+                        None
                     }
                 },
             }
         } else {
-            let mut state = self.0.write(mc);
-            match self.step_lua(&mut state, mc) {
+            match self.step_lua(mc) {
                 Err(err) => {
-                    if let Some(err) = self.unwind(&mut state, err) {
+                    if let Some(err) = self.unwind(mc, err) {
                         Some(Err(err))
                     } else {
                         None
@@ -215,11 +282,10 @@ impl<'gc> Thread<'gc> {
         }
     }
 
-    fn step_lua(
-        self,
-        state: &mut ThreadState<'gc>,
-        mc: MutationContext<'gc, '_>,
-    ) -> Result<Option<Vec<Value<'gc>>>, Error<'gc>> {
+    fn step_lua(self, mc: MutationContext<'gc, '_>) -> Result<Option<Vec<Value<'gc>>>, Error<'gc>> {
+        let mut state_lock = self.0.write(mc);
+        let state: &mut ThreadState<'gc> = &mut state_lock;
+
         const THREAD_GRANULARITY: u32 = 64;
         let mut instructions = THREAD_GRANULARITY;
 
@@ -403,7 +469,13 @@ impl<'gc> Thread<'gc> {
                         args,
                         returns,
                     } => {
-                        if self.call_function(state, stack_base + func.0 as usize, args, returns)? {
+                        if self.call_function(
+                            state,
+                            stack_base + func.0 as usize,
+                            args,
+                            returns,
+                            Vec::new(),
+                        )? {
                             return Ok(None);
                         } else {
                             continue 'start;
@@ -425,9 +497,9 @@ impl<'gc> Thread<'gc> {
                             state.stack[stack_bottom + 1 + i] = state.stack[func + 1 + i];
                         }
                         state.stack.truncate(stack_bottom + 1 + arg_len);
-                        state.frames.pop();
+                        let continuations = state.frames.pop().unwrap().continuations;
 
-                        if self.call_function(state, stack_bottom, args, returns)? {
+                        if self.call_function(state, stack_bottom, args, returns, continuations)? {
                             return Ok(None);
                         } else {
                             continue 'start;
@@ -436,7 +508,7 @@ impl<'gc> Thread<'gc> {
 
                     OpCode::Return { start, count } => {
                         self.close_upvalues(state, mc, stack_bottom);
-                        state.frames.pop();
+                        let mut continuations = state.frames.pop().unwrap().continuations;
 
                         let start = stack_base + start.0 as usize;
                         let count = count
@@ -444,14 +516,21 @@ impl<'gc> Thread<'gc> {
                             .map(|c| c as usize)
                             .unwrap_or(state.stack.len() - start);
 
-                        if state.frames.is_empty() {
+                        if let Some(continuation) = continuations.pop() {
                             let ret_vals = state.stack[start..start + count].to_vec();
-
-                            if let Some(frame) = state.frames.last() {
-                                state.stack.resize(frame.top, Value::Nil);
-                            } else {
-                                state.stack.clear();
-                            }
+                            state.stack.truncate(stack_bottom);
+                            drop(state_lock);
+                            let seq = continuation.call(self, Ok(ret_vals));
+                            let mut state = self.0.write(mc);
+                            state.pending_callback = Some(PendingCallback {
+                                callback: seq,
+                                returns: returns,
+                                continuations,
+                            });
+                            return Ok(None);
+                        } else if state.frames.is_empty() {
+                            let ret_vals = state.stack[start..start + count].to_vec();
+                            state.stack.clear();
 
                             return Ok(Some(ret_vals));
                         } else {
@@ -626,6 +705,7 @@ impl<'gc> Thread<'gc> {
                             base + 3,
                             VarCount::constant(2),
                             VarCount::constant(var_count),
+                            Vec::new(),
                         )? {
                             return Ok(None);
                         } else {
@@ -858,6 +938,7 @@ impl<'gc> Thread<'gc> {
         function_index: usize,
         args: VarCount,
         returns: VarCount,
+        continuations: Vec<Continuation>,
     ) -> Result<bool, TypeError> {
         match state.stack[function_index] {
             Value::Function(Function::Closure(closure)) => {
@@ -885,6 +966,7 @@ impl<'gc> Thread<'gc> {
                     top,
                     pc: 0,
                     returns,
+                    continuations,
                 });
                 Ok(false)
             }
@@ -901,6 +983,7 @@ impl<'gc> Thread<'gc> {
                 state.pending_callback = Some(PendingCallback {
                     callback: Box::new(seq),
                     returns,
+                    continuations,
                 });
                 state.stack.resize(function_index, Value::Nil);
                 Ok(true)
@@ -914,9 +997,25 @@ impl<'gc> Thread<'gc> {
 
     // Unwind frames until a continuation is encountered.  If the error is handled returns None,
     // otherwise returns the original error.
-    fn unwind(self, state: &mut ThreadState<'gc>, error: Error<'gc>) -> Option<Error<'gc>> {
-        while let Some(_top_frame) = state.frames.pop() {
-            // No continuations yet
+    fn unwind(self, mc: MutationContext<'gc, '_>, error: Error<'gc>) -> Option<Error<'gc>> {
+        let mut state = self.0.write(mc);
+        assert!(
+            state.pending_callback.is_none(),
+            "cannot unwind with pending callback"
+        );
+        while let Some(mut top_frame) = state.frames.pop() {
+            if let Some(continuation) = top_frame.continuations.pop() {
+                state.stack.truncate(top_frame.bottom);
+                drop(state);
+                let seq = continuation.call(self, Err(error));
+                let mut state = self.0.write(mc);
+                state.pending_callback = Some(PendingCallback {
+                    callback: seq,
+                    returns: top_frame.returns,
+                    continuations: top_frame.continuations,
+                });
+                return None;
+            }
         }
         state.stack.clear();
         Some(error)
@@ -981,28 +1080,32 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Collect)]
-#[collect(require_copy)]
+#[derive(Collect)]
+#[collect(require_static)]
 struct Frame {
     bottom: usize,
     base: usize,
     top: usize,
     pc: usize,
     returns: VarCount,
+    continuations: Vec<Continuation>,
 }
 
+// Safe, no drop impl
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(unsafe_drop)]
 enum PendingResume<'gc> {
     Start(Function<'gc>),
-    Resume(VarCount),
+    Resume(VarCount, Vec<Continuation>),
 }
 
+// Safe, no drop impl
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(unsafe_drop)]
 struct PendingCallback<'gc> {
     callback: CallbackSequenceBox<'gc>,
     returns: VarCount,
+    continuations: Vec<Continuation>,
 }
 
 fn get_upvalue<'gc>(

@@ -3,8 +3,8 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, Callback, CallbackResult, IntoSequence, LuaContext, RuntimeError,
-    SequenceExt, String, Table, Thread, TypeError, Value,
+    sequence_fn_with, Callback, CallbackResult, Continuation, LuaContext, RuntimeError, String,
+    Table, TypeError, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
@@ -39,44 +39,36 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"pcall"),
-        Callback::new(mc, |thread, mut args| {
+        Callback::new_immediate(mc, |_, mut args| {
             let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Function(function) => function,
                 value => {
-                    return Box::new(
-                        Err(TypeError {
-                            expected: "function",
-                            found: value.type_name(),
-                        }
-                        .into())
-                        .into_sequence(),
-                    );
+                    return Err(TypeError {
+                        expected: "function",
+                        found: value.type_name(),
+                    }
+                    .into());
                 }
             };
 
-            // TODO: should be able to yield through pcall, requires tail-calling functions
-
             args.remove(0);
-            Box::new(sequence_fn_with(
-                (thread, function, args),
-                |mc, _, (_, function, args)| {
-                    Thread::new(mc)
-                        .call(mc, function, &args)
-                        .unwrap()
-                        .then(|mc, lc, res| {
-                            Ok(CallbackResult::Return(match res {
-                                Ok(mut res) => {
-                                    res.insert(0, Value::Boolean(true));
-                                    res
-                                }
-                                Err(err) => vec![
-                                    Value::Boolean(false),
-                                    err.to_value(mc, lc.interned_strings),
-                                ],
-                            }))
-                        })
-                },
-            ))
+            Ok(CallbackResult::TailCall {
+                function,
+                args,
+                continuation: Continuation::new(|_, res| {
+                    Box::new(sequence_fn_with(res, |mc, lc, res| {
+                        Ok(CallbackResult::Return(match res {
+                            Ok(mut res) => {
+                                res.insert(0, Value::Boolean(true));
+                                res
+                            }
+                            Err(err) => {
+                                vec![Value::Boolean(false), err.to_value(mc, lc.interned_strings)]
+                            }
+                        }))
+                    }))
+                }),
+            })
         }),
     )
     .unwrap();

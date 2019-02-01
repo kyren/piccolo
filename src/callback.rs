@@ -3,7 +3,50 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
-use crate::{Error, IntoSequence, Sequence, Thread, Value};
+use crate::{Error, Function, IntoSequence, Sequence, Thread, Value};
+
+#[derive(Collect)]
+#[collect(require_static)]
+pub struct Continuation(
+    Box<
+        'static
+            + for<'gc> Fn(Thread<'gc>, Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackSequenceBox<'gc>,
+    >,
+);
+
+impl Continuation {
+    pub fn new<C>(cont: C) -> Continuation
+    where
+        C: 'static
+            + for<'fgc> Fn(
+                Thread<'fgc>,
+                Result<Vec<Value<'fgc>>, Error<'fgc>>,
+            ) -> CallbackSequenceBox<'fgc>,
+    {
+        Continuation(Box::new(cont))
+    }
+
+    pub fn new_immediate<C>(cont: C) -> Continuation
+    where
+        C: 'static
+            + for<'fgc> Fn(
+                Thread<'fgc>,
+                Result<Vec<Value<'fgc>>, Error<'fgc>>,
+            ) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
+    {
+        Continuation(Box::new(move |thread, res| {
+            Box::new(cont(thread, res).into_sequence())
+        }))
+    }
+
+    pub fn call<'gc>(
+        &self,
+        thread: Thread<'gc>,
+        res: Result<Vec<Value<'gc>>, Error<'gc>>,
+    ) -> CallbackSequenceBox<'gc> {
+        (*self.0)(thread, res)
+    }
+}
 
 // Safe, does not implement drop
 #[derive(Collect)]
@@ -11,6 +54,11 @@ use crate::{Error, IntoSequence, Sequence, Thread, Value};
 pub enum CallbackResult<'gc> {
     Return(Vec<Value<'gc>>),
     Yield(Vec<Value<'gc>>),
+    TailCall {
+        function: Function<'gc>,
+        args: Vec<Value<'gc>>,
+        continuation: Continuation,
+    },
 }
 
 pub type CallbackSequenceBox<'gc> =
