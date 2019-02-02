@@ -9,7 +9,7 @@ fn callback() -> Result<(), Box<StaticError>> {
     lua.sequence(|_| {
         Box::new(
             sequence_fn(|mc, lc| -> Result<(), Error> {
-                let callback = Callback::new_immediate(mc, |_, args| {
+                let callback = Callback::new_immediate(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(42));
                     Ok(CallbackResult::Return(ret))
@@ -51,7 +51,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     lua.sequence(|_| {
         Box::new(
             sequence_fn(|mc, lc| -> Result<(), Error> {
-                let callback = Callback::new_immediate(mc, |_, args| {
+                let callback = Callback::new_immediate(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(3));
                     Ok(CallbackResult::Return(ret))

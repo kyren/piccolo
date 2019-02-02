@@ -11,7 +11,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"print"),
-        Callback::new_immediate(mc, |_, args| {
+        Callback::new_immediate(mc, |args| {
             let mut stdout = io::stdout();
             for i in 0..args.len() {
                 args[i].display(&mut stdout)?;
@@ -29,7 +29,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"error"),
-        Callback::new_immediate(mc, |_, args| {
+        Callback::new_immediate(mc, |args| {
             let err = args.get(0).cloned().unwrap_or(Value::Nil);
             Err(RuntimeError(err).into())
         }),
@@ -39,7 +39,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
     env.set(
         mc,
         String::new_static(b"pcall"),
-        Callback::new_immediate(mc, |_, mut args| {
+        Callback::new_immediate(mc, |mut args| {
             let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Function(function) => function,
                 value => {
@@ -55,7 +55,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Tab
             Ok(CallbackResult::TailCall {
                 function,
                 args,
-                continuation: Continuation::new(|_, res| {
+                continuation: Continuation::new(|res| {
                     Box::new(sequence_fn_with(res, |mc, lc, res| {
                         Ok(CallbackResult::Return(match res {
                             Ok(mut res) => {

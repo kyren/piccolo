@@ -12,7 +12,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"create"),
-            Callback::new(mc, |_, args| {
+            Callback::new(mc, |args| {
                 let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
                     value => {
@@ -40,7 +40,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"resume"),
-            Callback::new(mc, |_, mut args| {
+            Callback::new(mc, |mut args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
@@ -90,7 +90,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"status"),
-            Callback::new_immediate(mc, |self_thread, args| {
+            Callback::new_immediate(mc, |args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
@@ -105,12 +105,12 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                 Ok(CallbackResult::Return(vec![Value::String(
                     String::new_static(if thread.is_suspended() {
                         b"suspended"
-                    } else if thread == self_thread {
+                    } else if thread.is_running() {
                         b"running"
                     } else if thread.is_finished() {
                         b"dead"
                     } else {
-                        b"running"
+                        b"normal"
                     }),
                 )]))
             }),
@@ -121,7 +121,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"yield"),
-            Callback::new_immediate(mc, |_, args| Ok(CallbackResult::Yield(args))),
+            Callback::new_immediate(mc, |args| Ok(CallbackResult::Yield(args))),
         )
         .unwrap();
 

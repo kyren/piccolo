@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
+use std::mem;
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
@@ -39,7 +40,7 @@ pub struct ThreadState<'gc> {
     frames: Vec<Frame>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
     yieldable: bool,
-    pending: Option<Pending<'gc>>,
+    pending: Pending<'gc>,
 }
 
 impl<'gc> Debug for Thread<'gc> {
@@ -71,7 +72,7 @@ impl<'gc> Thread<'gc> {
                 frames: Vec::new(),
                 open_upvalues: BTreeMap::new(),
                 yieldable: false,
-                pending: None,
+                pending: Pending::None,
             },
         ))
     }
@@ -85,7 +86,7 @@ impl<'gc> Thread<'gc> {
                 frames: vec![],
                 open_upvalues: BTreeMap::new(),
                 yieldable: true,
-                pending: Some(Pending::StartCoroutine(function)),
+                pending: Pending::StartCoroutine(function),
             },
         ))
     }
@@ -128,10 +129,19 @@ impl<'gc> Thread<'gc> {
     /// resumed.
     pub fn is_suspended(self) -> bool {
         match &self.0.read().pending {
-            None => false,
-            Some(Pending::Callback { .. }) => false,
-            Some(Pending::StartCoroutine(_)) => true,
-            Some(Pending::ResumeCoroutine { .. }) => true,
+            Pending::None => false,
+            Pending::Working => false,
+            Pending::Callback { .. } => false,
+            Pending::StartCoroutine(_) => true,
+            Pending::ResumeCoroutine { .. } => true,
+        }
+    }
+
+    /// Returns true if this thread is currently executing a callback
+    pub fn is_running(self) -> bool {
+        match &self.0.read().pending {
+            Pending::Working => true,
+            _ => false,
         }
     }
 
@@ -142,18 +152,20 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         args: Vec<Value<'gc>>,
     ) -> Option<Box<Sequence<'gc, Item = Vec<Value<'gc>>, Error = Error<'gc>> + 'gc>> {
-        let pending = self.0.write(mc).pending.take();
-        match pending {
-            None => None,
-            Some(pending @ Pending::Callback { .. }) => {
+        let mut pending = mem::replace(&mut self.0.write(mc).pending, Pending::Working);
+        match &mut pending {
+            Pending::None => None,
+            Pending::Working => None,
+            Pending::Callback { .. } => {
                 let mut state = self.0.write(mc);
-                state.pending = Some(pending);
+                mem::replace(&mut state.pending, pending);
                 None
             }
-            Some(Pending::StartCoroutine(function)) => {
+            Pending::StartCoroutine(function) => {
                 let mut state = self.0.write(mc);
+                state.pending = Pending::None;
                 assert!(state.frames.is_empty() && state.stack.is_empty());
-                state.stack.push(Value::Function(function));
+                state.stack.push(Value::Function(*function));
                 state.stack.extend(args);
                 self.call_function(
                     &mut state,
@@ -165,25 +177,26 @@ impl<'gc> Thread<'gc> {
                 .unwrap();
                 Some(Box::new(ThreadSequence(self)))
             }
-            Some(Pending::ResumeCoroutine {
+            Pending::ResumeCoroutine {
                 returns,
-                mut continuations,
-            }) => {
+                continuations,
+            } => {
                 if let Some(cont) = continuations.pop() {
-                    let callback = cont.call(self, Ok(args));
+                    let callback = cont.call(Ok(args));
                     let mut state = self.0.write(mc);
-                    state.pending = Some(Pending::Callback {
-                        callback,
-                        returns,
-                        continuations,
-                    });
+                    state.pending = Pending::Callback {
+                        callback: callback,
+                        returns: *returns,
+                        continuations: mem::replace(continuations, Vec::new()),
+                    };
                     Some(Box::new(ThreadSequence(self)))
                 } else {
                     let mut state = self.0.write(mc);
+                    state.pending = Pending::None;
                     if state.frames.is_empty() {
                         Some(Box::new(Ok(args).into_sequence()))
                     } else {
-                        self.return_to_lua(&mut state, &args, returns);
+                        self.return_to_lua(&mut state, &args, *returns);
                         Some(Box::new(ThreadSequence(self)))
                     }
                 }
@@ -200,40 +213,47 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         lc: LuaContext<'gc>,
     ) -> Option<Result<Vec<Value<'gc>>, Error<'gc>>> {
-        let pending = self.0.write(mc).pending.take();
-        match pending {
-            Some(Pending::StartCoroutine(_)) | Some(Pending::ResumeCoroutine { .. }) => {
+        let mut pending = mem::replace(&mut self.0.write(mc).pending, Pending::Working);
+        match &mut pending {
+            Pending::None => {
+                self.0.write(mc).pending = Pending::None;
+
+                match self.step_lua(mc) {
+                    Err(err) => {
+                        if let Some(err) = self.unwind(mc, err) {
+                            Some(Err(err))
+                        } else {
+                            None
+                        }
+                    }
+                    Ok(Some(res)) => Some(Ok(res)),
+                    Ok(None) => None,
+                }
+            }
+            Pending::Working => panic!("recursive thread step"),
+            Pending::StartCoroutine(_) | Pending::ResumeCoroutine { .. } => {
                 panic!("cannot step suspended thread")
             }
-            Some(Pending::Callback {
-                mut callback,
+            Pending::Callback {
+                callback,
                 returns,
-                mut continuations,
-            }) => {
+                continuations,
+            } => {
                 let res = callback.step(mc, lc);
 
                 match res {
                     None => {
                         let mut state = self.0.write(mc);
-                        state.pending = Some(Pending::Callback {
-                            callback,
-                            returns,
-                            continuations,
-                        });
+                        mem::replace(&mut state.pending, pending);
                         None
                     }
                     Some(res) => match res {
                         Err(err) => {
                             if let Some(cont) = continuations.pop() {
-                                callback = cont.call(self, Err(err));
-                                let mut state = self.0.write(mc);
-                                state.pending = Some(Pending::Callback {
-                                    callback,
-                                    returns,
-                                    continuations,
-                                });
+                                *callback = cont.call(Err(err));
                                 None
                             } else {
+                                self.0.write(mc).pending = Pending::None;
                                 if let Some(err) = self.unwind(mc, err) {
                                     Some(Err(err))
                                 } else {
@@ -243,28 +263,23 @@ impl<'gc> Thread<'gc> {
                         }
                         Ok(CallbackResult::Yield(res)) => {
                             let mut state = self.0.write(mc);
-                            state.pending = Some(Pending::ResumeCoroutine {
-                                returns: returns,
-                                continuations: continuations,
-                            });
+                            state.pending = Pending::ResumeCoroutine {
+                                returns: *returns,
+                                continuations: mem::replace(continuations, Vec::new()),
+                            };
                             Some(Ok(res))
                         }
                         Ok(CallbackResult::Return(res)) => {
                             if let Some(cont) = continuations.pop() {
-                                callback = cont.call(self, Ok(res));
-                                let mut state = self.0.write(mc);
-                                state.pending = Some(Pending::Callback {
-                                    callback,
-                                    returns,
-                                    continuations,
-                                });
+                                *callback = cont.call(Ok(res));
                                 None
                             } else {
                                 let mut state = self.0.write(mc);
+                                state.pending = Pending::None;
                                 if state.frames.is_empty() {
                                     Some(Ok(res))
                                 } else {
-                                    self.return_to_lua(&mut state, &res, returns);
+                                    self.return_to_lua(&mut state, &res, *returns);
                                     None
                                 }
                             }
@@ -275,6 +290,7 @@ impl<'gc> Thread<'gc> {
                             continuation,
                         }) => {
                             let mut state = self.0.write(mc);
+                            state.pending = Pending::None;
                             let function_index = state.stack.len();
                             state.stack.push(Value::Function(function));
                             state.stack.extend(args);
@@ -284,8 +300,8 @@ impl<'gc> Thread<'gc> {
                                 &mut state,
                                 function_index,
                                 VarCount::variable(),
-                                returns,
-                                continuations,
+                                *returns,
+                                mem::replace(continuations, Vec::new()),
                             )
                             .unwrap();
                             None
@@ -293,17 +309,6 @@ impl<'gc> Thread<'gc> {
                     },
                 }
             }
-            None => match self.step_lua(mc) {
-                Err(err) => {
-                    if let Some(err) = self.unwind(mc, err) {
-                        Some(Err(err))
-                    } else {
-                        None
-                    }
-                }
-                Ok(Some(res)) => Some(Ok(res)),
-                Ok(None) => None,
-            },
         }
     }
 
@@ -545,13 +550,13 @@ impl<'gc> Thread<'gc> {
                             let ret_vals = state.stack[start..start + count].to_vec();
                             state.stack.truncate(stack_bottom);
                             drop(state_lock);
-                            let seq = continuation.call(self, Ok(ret_vals));
+                            let seq = continuation.call(Ok(ret_vals));
                             let mut state = self.0.write(mc);
-                            state.pending = Some(Pending::Callback {
+                            state.pending = Pending::Callback {
                                 callback: seq,
                                 returns: returns,
                                 continuations,
-                            });
+                            };
                             return Ok(None);
                         } else if state.frames.is_empty() {
                             let ret_vals = state.stack[start..start + count].to_vec();
@@ -1001,15 +1006,13 @@ impl<'gc> Thread<'gc> {
                     .map(|c| c as usize)
                     .unwrap_or(state.stack.len() - function_index - 1);
 
-                let seq = callback.call(
-                    self,
-                    state.stack[function_index + 1..function_index + 1 + arg_count].to_vec(),
-                );
-                state.pending = Some(Pending::Callback {
+                let seq = callback
+                    .call(state.stack[function_index + 1..function_index + 1 + arg_count].to_vec());
+                state.pending = Pending::Callback {
                     callback: Box::new(seq),
                     returns,
                     continuations,
-                });
+                };
                 state.stack.resize(function_index, Value::Nil);
                 Ok(true)
             }
@@ -1024,21 +1027,21 @@ impl<'gc> Thread<'gc> {
     // otherwise returns the original error.
     fn unwind(self, mc: MutationContext<'gc, '_>, error: Error<'gc>) -> Option<Error<'gc>> {
         let mut state = self.0.write(mc);
-        assert!(
-            state.pending.is_none(),
-            "cannot unwind with pending callback operation"
-        );
+        match state.pending {
+            Pending::None => {}
+            _ => panic!("cannot unwind with a pending status"),
+        }
         while let Some(mut top_frame) = state.frames.pop() {
             if let Some(continuation) = top_frame.continuations.pop() {
                 state.stack.truncate(top_frame.bottom);
                 drop(state);
-                let seq = continuation.call(self, Err(error));
+                let seq = continuation.call(Err(error));
                 let mut state = self.0.write(mc);
-                state.pending = Some(Pending::Callback {
+                state.pending = Pending::Callback {
                     callback: seq,
                     returns: top_frame.returns,
                     continuations: top_frame.continuations,
-                });
+                };
                 return None;
             }
         }
@@ -1116,10 +1119,11 @@ struct Frame {
     continuations: Vec<Continuation>,
 }
 
-// Safe, no drop impl
 #[derive(Collect)]
-#[collect(unsafe_drop)]
+#[collect(empty_drop)]
 enum Pending<'gc> {
+    None,
+    Working,
     StartCoroutine(Function<'gc>),
     ResumeCoroutine {
         returns: VarCount,

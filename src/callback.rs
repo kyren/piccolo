@@ -3,25 +3,20 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
-use crate::{Error, Function, IntoSequence, Sequence, Thread, Value};
+use crate::{Error, Function, IntoSequence, Sequence, Value};
 
+// TODO: Needs to be FnOnce
 #[derive(Collect)]
 #[collect(require_static)]
 pub struct Continuation(
-    Box<
-        'static
-            + for<'gc> Fn(Thread<'gc>, Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackSequenceBox<'gc>,
-    >,
+    Box<'static + for<'gc> Fn(Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackSequenceBox<'gc>>,
 );
 
 impl Continuation {
     pub fn new<C>(cont: C) -> Continuation
     where
         C: 'static
-            + for<'fgc> Fn(
-                Thread<'fgc>,
-                Result<Vec<Value<'fgc>>, Error<'fgc>>,
-            ) -> CallbackSequenceBox<'fgc>,
+            + for<'fgc> Fn(Result<Vec<Value<'fgc>>, Error<'fgc>>) -> CallbackSequenceBox<'fgc>,
     {
         Continuation(Box::new(cont))
     }
@@ -30,21 +25,14 @@ impl Continuation {
     where
         C: 'static
             + for<'fgc> Fn(
-                Thread<'fgc>,
                 Result<Vec<Value<'fgc>>, Error<'fgc>>,
             ) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
     {
-        Continuation(Box::new(move |thread, res| {
-            Box::new(cont(thread, res).into_sequence())
-        }))
+        Continuation(Box::new(move |res| Box::new(cont(res).into_sequence())))
     }
 
-    pub fn call<'gc>(
-        &self,
-        thread: Thread<'gc>,
-        res: Result<Vec<Value<'gc>>, Error<'gc>>,
-    ) -> CallbackSequenceBox<'gc> {
-        (*self.0)(thread, res)
+    pub fn call<'gc>(&self, res: Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackSequenceBox<'gc> {
+        (*self.0)(res)
     }
 }
 
@@ -64,8 +52,7 @@ pub enum CallbackResult<'gc> {
 pub type CallbackSequenceBox<'gc> =
     Box<Sequence<'gc, Item = CallbackResult<'gc>, Error = Error<'gc>> + 'gc>;
 
-pub type CallbackBox =
-    Box<'static + for<'gc> Fn(Thread<'gc>, Vec<Value<'gc>>) -> CallbackSequenceBox<'gc>>;
+pub type CallbackBox = Box<'static + for<'gc> Fn(Vec<Value<'gc>>) -> CallbackSequenceBox<'gc>>;
 
 #[derive(Clone, Copy, Collect)]
 #[collect(require_copy)]
@@ -74,29 +61,23 @@ pub struct Callback<'gc>(pub Gc<'gc, StaticCollect<CallbackBox>>);
 impl<'gc> Callback<'gc> {
     pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static + for<'fgc> Fn(Thread<'fgc>, Vec<Value<'fgc>>) -> CallbackSequenceBox<'fgc>,
+        F: 'static + for<'fgc> Fn(Vec<Value<'fgc>>) -> CallbackSequenceBox<'fgc>,
     {
         Callback(Gc::allocate(mc, StaticCollect(Box::new(f))))
     }
 
     pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static
-            + for<'fgc> Fn(
-                Thread<'fgc>,
-                Vec<Value<'fgc>>,
-            ) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
+        F: 'static + for<'fgc> Fn(Vec<Value<'fgc>>) -> Result<CallbackResult<'fgc>, Error<'fgc>>,
     {
         Callback(Gc::allocate(
             mc,
-            StaticCollect(Box::new(move |thread, args| {
-                Box::new(f(thread, args).into_sequence())
-            })),
+            StaticCollect(Box::new(move |args| Box::new(f(args).into_sequence()))),
         ))
     }
 
-    pub fn call(&self, thread: Thread<'gc>, args: Vec<Value<'gc>>) -> CallbackSequenceBox<'gc> {
-        (*(self.0).0)(thread, args)
+    pub fn call(&self, args: Vec<Value<'gc>>) -> CallbackSequenceBox<'gc> {
+        (*(self.0).0)(args)
     }
 }
 
