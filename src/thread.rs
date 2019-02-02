@@ -1033,7 +1033,7 @@ impl<'gc> Thread<'gc> {
                 let seq = callback
                     .call(state.stack[function_index + 1..function_index + 1 + arg_count].to_vec());
                 state.pending = Pending::Callback {
-                    callback: Box::new(seq),
+                    callback: seq,
                     returns,
                     continuations,
                 };
