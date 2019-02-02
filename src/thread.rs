@@ -294,7 +294,6 @@ impl<'gc> Thread<'gc> {
                             let function_index = state.stack.len();
                             state.stack.push(Value::Function(function));
                             state.stack.extend(args);
-                            let mut continuations = continuations;
                             continuations.push(continuation);
                             self.call_function(
                                 &mut state,
