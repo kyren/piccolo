@@ -1032,6 +1032,7 @@ impl<'gc> Thread<'gc> {
         }
         while let Some(mut top_frame) = state.frames.pop() {
             if let Some(continuation) = top_frame.continuations.pop() {
+                self.close_upvalues(&mut state, mc, top_frame.bottom);
                 state.stack.truncate(top_frame.bottom);
                 drop(state);
                 let seq = continuation.call(Err(error));
@@ -1044,6 +1045,7 @@ impl<'gc> Thread<'gc> {
                 return None;
             }
         }
+        self.close_upvalues(&mut state, mc, 0);
         state.stack.clear();
         Some(error)
     }
