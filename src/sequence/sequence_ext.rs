@@ -3,6 +3,7 @@ use gc_arena::{Collect, MutationContext};
 use crate::{IntoSequence, LuaContext, Sequence};
 
 use super::and_then::{AndThen, AndThenWith};
+use super::flatten::Flatten;
 use super::map::{Map, MapError, MapResult};
 use super::then::{Then, ThenWith};
 
@@ -89,6 +90,13 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
         R: IntoSequence<'gc>,
     {
         AndThenWith::new(self, c, f)
+    }
+
+    fn flatten(self) -> Flatten<'gc, Self>
+    where
+        Self::Item: IntoSequence<'gc, Error = Self::Error>,
+    {
+        Flatten::new(self)
     }
 }
 

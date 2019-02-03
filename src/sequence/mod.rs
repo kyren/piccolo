@@ -1,4 +1,5 @@
 pub mod and_then;
+pub mod flatten;
 pub mod into_sequence;
 pub mod map;
 mod sequence;

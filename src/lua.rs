@@ -23,7 +23,7 @@ impl Lua {
         let arena = LuaArena::new(ArenaParameters::default(), |mc| {
             let root = LuaRoot {
                 context: LuaContext {
-                    main_thread: Thread::new(mc),
+                    main_thread: Thread::new(mc, false),
                     globals: Table::new(mc),
                     interned_strings: InternedStringSet::new(mc),
                 },
@@ -49,7 +49,10 @@ impl Lua {
     /// be called as:
     ///
     /// ```
-    /// # use luster::{Lua, Closure, compile, Error, Function, StaticError, sequence_fn, SequenceExt};
+    /// # use luster::{
+    /// #     Lua, Closure, compile, Error, Function, StaticError, sequence_fn,
+    /// #     SequenceExt, ThreadSequence
+    /// # };
     /// # fn main() -> Result<(), StaticError> {
     ///
     /// let source = b"print('hello')";
@@ -62,10 +65,14 @@ impl Lua {
     ///         Some(lc.globals),
     ///     )?))
     ///     .and_then(|mc, lc, closure| {
-    ///         lc.main_thread
-    ///             .call(mc, Function::Closure(closure), &[])
-    ///             .unwrap()
+    ///         Ok(ThreadSequence::call_function(
+    ///             mc,
+    ///             lc.main_thread,
+    ///             Function::Closure(closure),
+    ///             &[],
+    ///         )?)
     ///     })
+    ///     .flatten()
     ///     .map(|_| ())
     ///     .map_err(Error::to_static)
     /// ))?;

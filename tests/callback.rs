@@ -1,6 +1,6 @@
 use luster::{
     compile, sequence_fn, Callback, CallbackResult, Closure, Error, Function, Lua, SequenceExt,
-    StaticError, String, Value,
+    StaticError, String, ThreadSequence, Value,
 };
 
 #[test]
@@ -8,7 +8,7 @@ fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
         Box::new(
-            sequence_fn(|mc, lc| -> Result<(), Error> {
+            sequence_fn(|mc, lc| {
                 let callback = Callback::new_immediate(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(42));
@@ -33,10 +33,14 @@ fn callback() -> Result<(), Box<StaticError>> {
                 )?)
             })
             .and_then(|mc, lc, closure| {
-                lc.main_thread
-                    .call(mc, Function::Closure(closure), &[])
-                    .unwrap()
+                Ok(ThreadSequence::call_function(
+                    mc,
+                    lc.main_thread,
+                    Function::Closure(closure),
+                    &[],
+                )?)
             })
+            .flatten()
             .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
             .map_err(Error::to_static),
         )
@@ -50,7 +54,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
         Box::new(
-            sequence_fn(|mc, lc| -> Result<(), Error> {
+            sequence_fn(|mc, lc| {
                 let callback = Callback::new_immediate(mc, |args| {
                     let mut ret = args.to_vec();
                     ret.push(Value::Integer(3));
@@ -74,10 +78,14 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                 )?)
             })
             .and_then(|mc, lc, closure| {
-                lc.main_thread
-                    .call(mc, Function::Closure(closure), &[])
-                    .unwrap()
+                Ok(ThreadSequence::call_function(
+                    mc,
+                    lc.main_thread,
+                    Function::Closure(closure),
+                    &[],
+                )?)
             })
+            .flatten()
             .map(|b| {
                 assert_eq!(
                     b,

@@ -1,10 +1,10 @@
 use std::env;
-use std::error::Error;
+use std::error::Error as StdError;
 use std::fs::File;
 
-use luster::{compile, io, sequence_fn, Closure, Function, Lua, SequenceExt};
+use luster::{compile, io, sequence_fn, Closure, Function, Lua, SequenceExt, ThreadSequence};
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<StdError>> {
     let mut args = env::args();
     args.next();
     let file = io::buffered_read(File::open(
@@ -22,10 +22,14 @@ fn main() -> Result<(), Box<Error>> {
                 )?)
             })
             .and_then(|mc, lc, closure| {
-                lc.main_thread
-                    .call(mc, Function::Closure(closure), &[])
-                    .unwrap()
+                Ok(ThreadSequence::call_function(
+                    mc,
+                    lc.main_thread,
+                    Function::Closure(closure),
+                    &[],
+                )?)
             })
+            .flatten()
             .map(|_| ())
             .map_err(|e| e.to_static()),
         )

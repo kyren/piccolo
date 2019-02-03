@@ -16,6 +16,7 @@ mod table;
 mod thread;
 mod types;
 mod value;
+mod vm;
 
 mod stdlib;
 
@@ -40,3 +41,4 @@ pub use types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 pub use value::{Function, Value};
+pub use vm::ThreadSequence;
