@@ -26,9 +26,7 @@ fn main() {
                         let result = compile(mc, lc.interned_strings, line_clone.as_bytes());
                         let result = match result {
                             Ok(res) => Ok(res),
-                            Err(Error::ParserError(ParserError::EndOfStream { expected: e })) => {
-                                Err(Error::ParserError(ParserError::EndOfStream { expected: e }))
-                            }
+                            err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => err,
                             Err(_) => compile(
                                 mc,
                                 lc.interned_strings,
@@ -59,17 +57,12 @@ fn main() {
                     }),
                 )
             }) {
-                Err(StaticError::ParserError(ParserError::EndOfStream { expected: e })) => {
+                err @ Err(StaticError::ParserError(ParserError::EndOfStream { expected: _ })) => {
                     match line.chars().last() {
                         Some(c) => {
                             if c == '\n' {
                                 editor.add_history_entry(line);
-                                eprintln!(
-                                    "{}",
-                                    StaticError::ParserError(ParserError::EndOfStream {
-                                        expected: e
-                                    })
-                                );
+                                eprintln!("error: {}", err.err().unwrap());
                                 break;
                             }
                             prompt = ">> ";
