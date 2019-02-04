@@ -1,5 +1,6 @@
 use luster::{
-    compile, sequence_fn, Closure, Error, Function, Lua, ParserError, SequenceExt, ThreadSequence,
+    compile, sequence_fn, Closure, Error, Function, Lua, ParserError, SequenceExt, StaticError,
+    ThreadSequence,
 };
 use rustyline::Editor;
 
@@ -25,6 +26,9 @@ fn main() {
                         let result = compile(mc, lc.interned_strings, line_clone.as_bytes());
                         let result = match result {
                             Ok(res) => Ok(res),
+                            Err(Error::ParserError(ParserError::EndOfStream { expected: e })) => {
+                                Err(Error::ParserError(ParserError::EndOfStream { expected: e }))
+                            }
                             Err(_) => compile(
                                 mc,
                                 lc.interned_strings,
@@ -42,38 +46,30 @@ fn main() {
                         )?)
                     })
                     .flatten()
-                    .map_result(|values| {
-                        match values {
-                            Ok(values) => {
-                                let output = values
-                                    .iter()
-                                    .map(|value| format!("{:?}", value))
-                                    .collect::<Vec<_>>()
-                                    .join("\t");
-                                Ok(Ok(output))
-                            }
-                            Err(Error::ParserError(ParserError::EndOfStream { expected: e })) => {
-                                // continue reading input and append it to `line`
-                                Ok(Err(Error::ParserError(ParserError::EndOfStream {
-                                    expected: e,
-                                })))
-                            }
-                            Err(e) => Err(format!("error: {}", e)),
+                    .map_result(|values| match values {
+                        Ok(values) => {
+                            let output = values
+                                .iter()
+                                .map(|value| format!("{:?}", value))
+                                .collect::<Vec<_>>()
+                                .join("\t");
+                            Ok(output)
                         }
+                        Err(e) => Err(e.to_static()),
                     }),
                 )
             }) {
-                Ok(Ok(out_string)) | Err(out_string) => {
-                    editor.add_history_entry(line);
-                    println!("{}", out_string);
-                    break;
-                }
-                Ok(Err(out_string)) => {
+                Err(StaticError::ParserError(ParserError::EndOfStream { expected: e })) => {
                     match line.chars().last() {
                         Some(c) => {
                             if c == '\n' {
                                 editor.add_history_entry(line);
-                                println!("{}", out_string);
+                                eprintln!(
+                                    "{}",
+                                    StaticError::ParserError(ParserError::EndOfStream {
+                                        expected: e
+                                    })
+                                );
                                 break;
                             }
                             prompt = ">> ";
@@ -81,6 +77,16 @@ fn main() {
                         }
                         _ => {}
                     }
+                }
+                Ok(out_string) => {
+                    editor.add_history_entry(line);
+                    println!("{}", out_string);
+                    break;
+                }
+                Err(e) => {
+                    editor.add_history_entry(line);
+                    eprintln!("error: {}", e);
+                    break;
                 }
             }
         }
