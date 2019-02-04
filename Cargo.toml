@@ -12,5 +12,7 @@ members = [
 [dependencies]
 rustc-hash = "1.0"
 num-traits = "0.2"
-
 gc-arena = { path = "./gc-arena" }
+
+[dev-dependencies]
+rustyline = "3.0.0"
