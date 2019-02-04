@@ -10,9 +10,8 @@ fn main() {
     loop {
         let mut prompt = "> ";
         let mut line = String::new();
-        let mut collecting = true;
 
-        while collecting {
+        loop {
             match editor.readline(prompt) {
                 Ok(input) => line.push_str(&input),
                 Err(_) => return,
@@ -58,10 +57,9 @@ fn main() {
                 )
             }) {
                 Ok(Some(out_string)) | Err(out_string) => {
-                    let line_clone = line.clone();
-                    editor.add_history_entry(line_clone);
+                    editor.add_history_entry(line);
                     println!("{}", out_string);
-                    collecting = false;
+                    break;
                 }
                 Ok(None) => {
                     prompt = ">> ";
