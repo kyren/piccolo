@@ -22,11 +22,16 @@ fn main() {
             match lua.sequence(move |_| {
                 Box::new(
                     sequence_fn(move |mc, lc| {
-                        Ok(Closure::new(
-                            mc,
-                            compile(mc, lc.interned_strings, line_clone.as_bytes())?,
-                            Some(lc.globals),
-                        )?)
+                        let result = compile(mc, lc.interned_strings, line_clone.as_bytes());
+                        let result = match result {
+                            Ok(res) => Ok(res),
+                            Err(_) => compile(
+                                mc,
+                                lc.interned_strings,
+                                (String::new() + "return " + &line_clone).as_bytes(),
+                            ),
+                        };
+                        Ok(Closure::new(mc, result?, Some(lc.globals))?)
                     })
                     .and_then(|mc, lc, closure| {
                         Ok(ThreadSequence::call_function(
@@ -45,25 +50,37 @@ fn main() {
                                     .map(|value| format!("{:?}", value))
                                     .collect::<Vec<_>>()
                                     .join("\t");
-                                Ok(Some(output))
+                                Ok(Ok(output))
                             }
-                            Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => {
+                            Err(Error::ParserError(ParserError::EndOfStream { expected: e })) => {
                                 // continue reading input and append it to `line`
-                                Ok(None)
+                                Ok(Err(Error::ParserError(ParserError::EndOfStream {
+                                    expected: e,
+                                })))
                             }
                             Err(e) => Err(format!("error: {}", e)),
                         }
                     }),
                 )
             }) {
-                Ok(Some(out_string)) | Err(out_string) => {
+                Ok(Ok(out_string)) | Err(out_string) => {
                     editor.add_history_entry(line);
                     println!("{}", out_string);
                     break;
                 }
-                Ok(None) => {
-                    prompt = ">> ";
-                    line.push_str("\n"); // separate input lines
+                Ok(Err(out_string)) => {
+                    match line.chars().last() {
+                        Some(c) => {
+                            if c == '\n' {
+                                editor.add_history_entry(line);
+                                println!("{}", out_string);
+                                break;
+                            }
+                            prompt = ">> ";
+                            line.push_str("\n"); // separate input lines
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
