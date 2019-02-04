@@ -1,3 +1,6 @@
+use std::error::Error as StdError;
+use std::fmt;
+
 use gc_arena::{Collect, Gc, MutationContext};
 
 use crate::{
@@ -46,6 +49,28 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 found: mode,
             }
             .into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Collect)]
+#[collect(require_static)]
+pub enum BinaryOperatorError {
+    Add,
+    Subtract,
+    Multiply,
+    LessThan,
+}
+
+impl StdError for BinaryOperatorError {}
+
+impl fmt::Display for BinaryOperatorError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BinaryOperatorError::Add => write!(fmt, "cannot add values"),
+            BinaryOperatorError::Subtract => write!(fmt, "cannot subtract values"),
+            BinaryOperatorError::Multiply => write!(fmt, "cannot multiply values"),
+            BinaryOperatorError::LessThan => write!(fmt, "cannot compare values with <"),
         }
     }
 }
@@ -108,43 +133,35 @@ pub fn step_vm<'gc>(
                 }
 
                 OpCode::SetTableRR { table, key, value } => {
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .set(
-                            mc,
-                            registers.stack_frame[key.0 as usize],
-                            registers.stack_frame[value.0 as usize],
-                        )
-                        .expect("could not set table value");
+                    get_table(registers.stack_frame[table.0 as usize])?.set(
+                        mc,
+                        registers.stack_frame[key.0 as usize],
+                        registers.stack_frame[value.0 as usize],
+                    )?;
                 }
 
                 OpCode::SetTableRC { table, key, value } => {
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .set(
-                            mc,
-                            registers.stack_frame[key.0 as usize],
-                            current_function.0.proto.constants[value.0 as usize].to_value(),
-                        )
-                        .expect("could not set table value");
+                    get_table(registers.stack_frame[table.0 as usize])?.set(
+                        mc,
+                        registers.stack_frame[key.0 as usize],
+                        current_function.0.proto.constants[value.0 as usize].to_value(),
+                    )?;
                 }
 
                 OpCode::SetTableCR { table, key, value } => {
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .set(
-                            mc,
-                            current_function.0.proto.constants[key.0 as usize].to_value(),
-                            registers.stack_frame[value.0 as usize],
-                        )
-                        .expect("could not set table value");
+                    get_table(registers.stack_frame[table.0 as usize])?.set(
+                        mc,
+                        current_function.0.proto.constants[key.0 as usize].to_value(),
+                        registers.stack_frame[value.0 as usize],
+                    )?;
                 }
 
                 OpCode::SetTableCC { table, key, value } => {
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .set(
-                            mc,
-                            current_function.0.proto.constants[key.0 as usize].to_value(),
-                            current_function.0.proto.constants[value.0 as usize].to_value(),
-                        )
-                        .expect("could not set table value");
+                    get_table(registers.stack_frame[table.0 as usize])?.set(
+                        mc,
+                        current_function.0.proto.constants[key.0 as usize].to_value(),
+                        current_function.0.proto.constants[value.0 as usize].to_value(),
+                    )?;
                 }
 
                 OpCode::GetUpTableR { dest, table, key } => {
@@ -169,8 +186,7 @@ pub fn step_vm<'gc>(
                         mc,
                         registers.stack_frame[key.0 as usize],
                         registers.stack_frame[value.0 as usize],
-                    )
-                    .expect("could not set table value");
+                    )?;
                 }
 
                 OpCode::SetUpTableRC { table, key, value } => {
@@ -181,8 +197,7 @@ pub fn step_vm<'gc>(
                         mc,
                         registers.stack_frame[key.0 as usize],
                         current_function.0.proto.constants[value.0 as usize].to_value(),
-                    )
-                    .expect("could not set table value");
+                    )?;
                 }
 
                 OpCode::SetUpTableCR { table, key, value } => {
@@ -193,8 +208,7 @@ pub fn step_vm<'gc>(
                         mc,
                         current_function.0.proto.constants[key.0 as usize].to_value(),
                         registers.stack_frame[value.0 as usize],
-                    )
-                    .expect("could not set table value");
+                    )?;
                 }
 
                 OpCode::SetUpTableCC { table, key, value } => {
@@ -205,8 +219,7 @@ pub fn step_vm<'gc>(
                         mc,
                         current_function.0.proto.constants[key.0 as usize].to_value(),
                         current_function.0.proto.constants[value.0 as usize].to_value(),
-                    )
-                    .expect("could not set table value");
+                    )?;
                 }
 
                 OpCode::Call {
@@ -288,27 +301,25 @@ pub fn step_vm<'gc>(
                 OpCode::NumericForPrep { base, jump } => {
                     registers.stack_frame[base.0 as usize] = registers.stack_frame[base.0 as usize]
                         .subtract(registers.stack_frame[base.0 as usize + 2])
-                        .expect("non numeric for loop parameters");
+                        .ok_or(BinaryOperatorError::Subtract)?;
                     *registers.pc = add_offset(*registers.pc, jump);
                 }
 
                 OpCode::NumericForLoop { base, jump } => {
-                    const ERR_MSG: &str = "non numeric for loop parameter";
-
                     registers.stack_frame[base.0 as usize] = registers.stack_frame[base.0 as usize]
                         .add(registers.stack_frame[base.0 as usize + 2])
-                        .expect(ERR_MSG);
+                        .ok_or(BinaryOperatorError::Add)?;
                     let past_end = if registers.stack_frame[base.0 as usize + 2]
                         .less_than(Value::Integer(0))
-                        .expect(ERR_MSG)
+                        .ok_or(BinaryOperatorError::LessThan)?
                     {
                         registers.stack_frame[base.0 as usize]
                             .less_than(registers.stack_frame[base.0 as usize + 1])
-                            .expect(ERR_MSG)
+                            .ok_or(BinaryOperatorError::LessThan)?
                     } else {
                         registers.stack_frame[base.0 as usize + 1]
                             .less_than(registers.stack_frame[base.0 as usize])
-                            .expect(ERR_MSG)
+                            .ok_or(BinaryOperatorError::LessThan)?
                     };
                     if !past_end {
                         *registers.pc = add_offset(*registers.pc, jump);
@@ -438,92 +449,84 @@ pub fn step_vm<'gc>(
                     let left = registers.stack_frame[left.0 as usize];
                     let right = registers.stack_frame[right.0 as usize];
                     registers.stack_frame[dest.0 as usize] =
-                        left.add(right).expect("could not apply binary operator");
+                        left.add(right).ok_or(BinaryOperatorError::Add)?;
                 }
 
                 OpCode::AddRC { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
                     registers.stack_frame[dest.0 as usize] =
-                        left.add(right).expect("could not apply binary operator");
+                        left.add(right).ok_or(BinaryOperatorError::Add)?;
                 }
 
                 OpCode::AddCR { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = registers.stack_frame[right.0 as usize];
                     registers.stack_frame[dest.0 as usize] =
-                        left.add(right).expect("could not apply binary operator");
+                        left.add(right).ok_or(BinaryOperatorError::Add)?;
                 }
 
                 OpCode::AddCC { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
                     registers.stack_frame[dest.0 as usize] =
-                        left.add(right).expect("could not apply binary operator");
+                        left.add(right).ok_or(BinaryOperatorError::Add)?;
                 }
 
                 OpCode::SubRR { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = registers.stack_frame[right.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = left
-                        .subtract(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.subtract(right).ok_or(BinaryOperatorError::Add)?;
                 }
 
                 OpCode::SubRC { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    registers.stack_frame[dest.0 as usize] = left
-                        .subtract(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.subtract(right).ok_or(BinaryOperatorError::Subtract)?;
                 }
 
                 OpCode::SubCR { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = registers.stack_frame[right.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = left
-                        .subtract(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.subtract(right).ok_or(BinaryOperatorError::Subtract)?;
                 }
 
                 OpCode::SubCC { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    registers.stack_frame[dest.0 as usize] = left
-                        .subtract(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.subtract(right).ok_or(BinaryOperatorError::Subtract)?;
                 }
 
                 OpCode::MulRR { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = registers.stack_frame[right.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = left
-                        .multiply(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.multiply(right).ok_or(BinaryOperatorError::Multiply)?;
                 }
 
                 OpCode::MulRC { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    registers.stack_frame[dest.0 as usize] = left
-                        .multiply(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.multiply(right).ok_or(BinaryOperatorError::Multiply)?;
                 }
 
                 OpCode::MulCR { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = registers.stack_frame[right.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = left
-                        .multiply(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.multiply(right).ok_or(BinaryOperatorError::Multiply)?;
                 }
 
                 OpCode::MulCC { dest, left, right } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    registers.stack_frame[dest.0 as usize] = left
-                        .multiply(right)
-                        .expect("could not apply binary operator");
+                    registers.stack_frame[dest.0 as usize] =
+                        left.multiply(right).ok_or(BinaryOperatorError::Multiply)?;
                 }
             }
 

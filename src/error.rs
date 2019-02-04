@@ -5,8 +5,8 @@ use std::{fmt, io};
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::{
-    ClosureError, CompilerError, InternedStringSet, InvalidTableKey, ParserError, StringError,
-    ThreadError, Value,
+    BinaryOperatorError, ClosureError, CompilerError, InternedStringSet, InvalidTableKey,
+    ParserError, StringError, ThreadError, Value,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]
@@ -55,6 +55,7 @@ pub enum Error<'gc> {
     StringError(StringError),
     ThreadError(ThreadError),
     TypeError(TypeError),
+    BinaryOperatorError(BinaryOperatorError),
     RuntimeError(RuntimeError<'gc>),
 }
 
@@ -71,6 +72,7 @@ impl<'gc> fmt::Display for Error<'gc> {
             Error::StringError(error) => write!(fmt, "string error: {}", error),
             Error::ThreadError(error) => write!(fmt, "thread error: {}", error),
             Error::TypeError(error) => write!(fmt, "type error: {}", error),
+            Error::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
             Error::RuntimeError(error) => write!(fmt, "runtime error: {}", error),
         }
     }
@@ -124,6 +126,12 @@ impl<'gc> From<TypeError> for Error<'gc> {
     }
 }
 
+impl<'gc> From<BinaryOperatorError> for Error<'gc> {
+    fn from(error: BinaryOperatorError) -> Error<'gc> {
+        Error::BinaryOperatorError(error)
+    }
+}
+
 impl<'gc> From<RuntimeError<'gc>> for Error<'gc> {
     fn from(error: RuntimeError<'gc>) -> Error<'gc> {
         Error::RuntimeError(error)
@@ -141,6 +149,7 @@ impl<'gc> Error<'gc> {
             Error::StringError(error) => StaticError::StringError(error),
             Error::ThreadError(error) => StaticError::ThreadError(error),
             Error::TypeError(error) => StaticError::TypeError(error),
+            Error::BinaryOperatorError(error) => StaticError::BinaryOperatorError(error),
             Error::RuntimeError(error) => {
                 let mut buf = Vec::new();
                 error.0.display(&mut buf).unwrap();
@@ -175,6 +184,7 @@ pub enum StaticError {
     StringError(StringError),
     ThreadError(ThreadError),
     TypeError(TypeError),
+    BinaryOperatorError(BinaryOperatorError),
     RuntimeError(String),
 }
 
@@ -191,6 +201,7 @@ impl fmt::Display for StaticError {
             StaticError::StringError(error) => write!(fmt, "string error: {}", error),
             StaticError::ThreadError(error) => write!(fmt, "thread error: {}", error),
             StaticError::TypeError(error) => write!(fmt, "type error: {}", error),
+            StaticError::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
             StaticError::RuntimeError(error) => write!(fmt, "runtime error: {}", error),
         }
     }
