@@ -57,7 +57,7 @@ fn main() {
                     }),
                 )
             }) {
-                Ok(Some(out_string)) => {
+                Ok(Some(out_string)) | Err(out_string) => {
                     let line_clone = line.clone();
                     editor.add_history_entry(line_clone);
                     println!("{}", out_string);
@@ -66,12 +66,6 @@ fn main() {
                 Ok(None) => {
                     prompt = ">> ";
                     line.push_str("\n"); // separate input lines
-                }
-                Err(err_string) => {
-                    // let line_clone = line.clone();
-                    // editor.add_history_entry(line_clone);
-                    println!("{}", err_string);
-                    collecting = false;
                 }
             }
         }
