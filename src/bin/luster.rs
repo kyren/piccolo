@@ -1,14 +1,13 @@
-use std::env;
 use std::error::Error as StdError;
 use std::fs::File;
 use std::vec::Vec;
 
+use clap::{App, Arg};
 use luster::{
     compile, io, sequence_fn, Closure, Error, Function, Lua, ParserError, SequenceExt, StaticError,
-    ThreadSequence
+    ThreadSequence,
 };
 use rustyline::Editor;
-use getopts::Options;
 
 fn run_repl(lua: &mut Lua) {
     let mut editor = Editor::<()>::new();
@@ -31,7 +30,9 @@ fn run_repl(lua: &mut Lua) {
                         let result = compile(mc, lc.interned_strings, line_clone.as_bytes());
                         let result = match result {
                             Ok(res) => Ok(res),
-                            err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => err,
+                            err @ Err(Error::ParserError(ParserError::EndOfStream {
+                                expected: _,
+                            })) => err,
                             Err(_) => compile(
                                 mc,
                                 lc.interned_strings,
@@ -91,56 +92,27 @@ fn run_repl(lua: &mut Lua) {
     }
 }
 
-fn show_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [options] [FILE]", program);
-    print!("{}", opts.usage(&brief));
-}
-
-fn show_version() {
-    print!("luster v0.1.0");
-}
-
 fn main() -> Result<(), Box<StdError>> {
-    let args : Vec<String> = env::args().collect();
-    let program = args[0].clone();
-
-    let mut opts = Options::new();
-    opts.optopt("f", "file", "File name to interpret, (can also use free argument)", "FILE");
-    opts.optflag("r", "repl", "Load into REPL after loading file information, if any");
-    opts.optflag("h", "help", "Show help text");
-    opts.optflag("v", "version", "Show version information");
-    
-    let matches = match opts.parse(&args[1..]) {
-        Ok(m) => m,
-        Err(_) => {
-            show_usage(&program, opts); 
-            return Ok(())
-        }
-    };
-
-    if matches.opt_present("h") {
-        show_usage(&program, opts);
-        return Ok(())
-    }
-
-    if matches.opt_present("v") {
-        show_version();
-        return Ok(())
-    }
+    let matches = App::new("luster")
+        .version("0.1.0")
+        .about("A Lua interpreter")
+        .arg(
+            Arg::with_name("repl")
+                .short("r")
+                .long("repl")
+                .help("Load into REPL after loading file, if any"),
+        )
+        .arg(Arg::with_name("file").help("File to interpret").index(1))
+        .get_matches();
 
     let mut lua = Lua::new();
 
-    let filename = match matches.opt_str("f") {
-        Some(f) => f,
-        None => if !matches.free.is_empty() {
-                matches.free[0].clone()
-            } else {
-                run_repl(&mut lua);
-                return Ok(())
-            }
-    };
+    if !matches.is_present("file") {
+        run_repl(&mut lua);
+        return Ok(());
+    }
 
-    let file = io::buffered_read(File::open(filename)?)?;
+    let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
 
     lua.sequence(|_| {
         Box::new(
@@ -165,8 +137,8 @@ fn main() -> Result<(), Box<StdError>> {
         )
     })?;
 
-    if matches.opt_present("r") {
-        run_repl(&mut lua)
+    if matches.is_present("repl") {
+        run_repl(&mut lua);
     }
 
     Ok(())
