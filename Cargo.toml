@@ -14,3 +14,4 @@ rustc-hash = "1.0"
 num-traits = "0.2"
 gc-arena = { path = "./gc-arena" }
 rustyline = "3.0.0"
+getopts = "0.2.18"
