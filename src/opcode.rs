@@ -286,4 +286,92 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    DivRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    DivRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    DivCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    DivCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    IDivRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    IDivRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    IDivCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    IDivCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    ModRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    ModRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    ModCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    ModCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    PowRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    PowRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    PowCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    PowCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    UnegR {
+        dest: RegisterIndex,
+        value: RegisterIndex,
+    },
+    UnegC {
+        dest: RegisterIndex,
+        value: ConstantIndex8,
+    },
 }

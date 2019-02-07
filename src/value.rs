@@ -1,6 +1,7 @@
-use std::{i64, io};
+use std::{f64, i64, io};
 
 use gc_arena::{Collect, Gc, GcCell};
+use num_traits::{identities::Zero, ToPrimitive};
 
 use crate::{Callback, Closure, String, Table, Thread};
 
@@ -56,6 +57,12 @@ impl<'gc> PartialEq for Value<'gc> {
     }
 }
 
+// In the future will be able to use f64::copysign
+// See https://github.com/rust-lang/rust/issues/58046
+fn copysign(to: f64, from: f64) -> f64 {
+    to * if from < 0.0 { -1.0 } else { 1.0 }
+}
+
 impl<'gc> Value<'gc> {
     pub fn type_name(self) -> &'static str {
         match self {
@@ -109,6 +116,99 @@ impl<'gc> Value<'gc> {
             (Value::Number(a), Value::Number(b)) => Some(Value::Number(a * b)),
             (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 * b)),
             (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a * b as f64)),
+            _ => None,
+        }
+    }
+
+    // A small helper function to handle division-like zero handling
+    fn safe_div<T: PartialEq + ToPrimitive + Zero>(
+        lhs: T,
+        rhs: T,
+        f: &Fn(T, T) -> Value<'gc>,
+    ) -> Value<'gc> {
+        match (lhs, rhs) {
+            // Seems that all nans are negative in lua
+            (ref a, ref b) if a.is_zero() && b.is_zero() => Value::Number(-f64::NAN),
+            (ref a, ref b) if b.is_zero() => {
+                Value::Number(copysign(f64::INFINITY, a.to_f64().unwrap()))
+            }
+            (a, b) => f(a, b),
+        }
+    }
+
+    // This operation always returns a Number, even when called by int arguments
+    pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        let (a, b) = match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
+            (Value::Number(a), Value::Number(b)) => (a, b),
+            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
+            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
+            _ => return None,
+        };
+
+        Some(Value::safe_div(a, b, &|a, b| Value::Number(a / b)))
+    }
+
+    pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        let (a, b) = match (self, other) {
+            // Seems that all nans are negative in lua
+            (Value::Integer(a), Value::Integer(b)) => {
+                return Some(Value::safe_div(a, b, &|a, b| {
+                    Value::Integer(a.wrapping_div(b))
+                }));
+            }
+            (Value::Number(a), Value::Number(b)) => (a, b),
+            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
+            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
+            _ => return None,
+        };
+
+        Some(Value::safe_div(a, b, &|a, b| {
+            Value::Number((a / b).floor())
+        }))
+    }
+
+    // When given a % b, lua computes the remainder, not the modulo.
+    // However, Rust computes the modulo correctly.  (e.g. -2 % 3 = 1 according to lua, and -2
+    // according to Rust.)
+    // This is why there is the second step.  Hopefully, the compiler will optimize the extra
+    // mod out
+    pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        let (a, b) = match (self, other) {
+            // n % 0 for integers throws an error
+            (Value::Integer(_), Value::Integer(b)) if b == 0 => return None,
+            (Value::Integer(a), Value::Integer(b)) => {
+                return Some(Value::Integer(((a % b) + b) % b));
+            }
+            (Value::Number(a), Value::Number(b)) => (a, b),
+            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
+            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
+            _ => return None,
+        };
+
+        Some(Value::safe_div(a, b, &|a, b| {
+            Value::Number(((a % b) + b) % b)
+        }))
+    }
+
+    // This operation always returns a Number, even when called by int arguments
+    pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        let (a, b) = match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
+            (Value::Number(a), Value::Number(b)) => (a, b),
+            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
+            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
+            _ => return None,
+        };
+
+        // No need for special casing, 0^0 = 1 in both Rust and Lua
+        Some(Value::Number(a.powf(b)))
+    }
+
+    pub fn unary_negate(self) -> Option<Value<'gc>> {
+        match self {
+            Value::Integer(a) => Some(Value::Integer(-a)),
+            Value::Number(a) => Some(Value::Number(-a)),
             _ => None,
         }
     }

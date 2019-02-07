@@ -15,3 +15,4 @@ num-traits = "0.2"
 gc-arena = { path = "./gc-arena" }
 rustyline = "3.0.0"
 clap = "~2.32"
+num = "*"

@@ -126,6 +126,62 @@ pub fn simple_binop_opcode(
                 OpCode::MulCC { dest, left, right }
             }
         },
+        SimpleBinOp::Div => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::DivRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::DivRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::DivCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::DivCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::IDiv => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::IDivRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::IDivRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::IDivCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::IDivCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::Mod => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ModRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ModRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ModCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ModCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::Pow => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::PowRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::PowRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::PowCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::PowCC { dest, left, right }
+            }
+        },
         _ => panic!("unsupported binary operator {:?}", simple_binop),
     }
 }
