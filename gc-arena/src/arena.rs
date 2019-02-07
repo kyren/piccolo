@@ -101,8 +101,8 @@ macro_rules! make_arena {
         make_arena!(@impl $arena, $root);
     };
 
-    (pub $arena:ident, $root:ident) => {
-        pub struct $arena {
+    ($v:vis $arena:ident, $root:ident) => {
+        $v struct $arena {
             context: $crate::Context,
             root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
