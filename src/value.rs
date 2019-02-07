@@ -57,12 +57,6 @@ impl<'gc> PartialEq for Value<'gc> {
     }
 }
 
-// In the future will be able to use f64::copysign
-// See https://github.com/rust-lang/rust/issues/58046
-fn copysign(to: f64, from: f64) -> f64 {
-    to * if from < 0.0 { -1.0 } else { 1.0 }
-}
-
 impl<'gc> Value<'gc> {
     pub fn type_name(self) -> &'static str {
         match self {
@@ -120,23 +114,7 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    // A small helper function to handle division-like zero handling
-    fn safe_div<T: PartialEq + ToPrimitive + Zero>(
-        lhs: T,
-        rhs: T,
-        f: &Fn(T, T) -> Value<'gc>,
-    ) -> Value<'gc> {
-        match (lhs, rhs) {
-            // Seems that all nans are negative in lua
-            (ref a, ref b) if a.is_zero() && b.is_zero() => Value::Number(-f64::NAN),
-            (ref a, ref b) if b.is_zero() => {
-                Value::Number(copysign(f64::INFINITY, a.to_f64().unwrap()))
-            }
-            (a, b) => f(a, b),
-        }
-    }
-
-    // This operation always returns a Number, even when called by int arguments
+    /// This operation always returns a Number, even when called by int arguments
     pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         let (a, b) = match (self, other) {
             (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
@@ -146,16 +124,16 @@ impl<'gc> Value<'gc> {
             _ => return None,
         };
 
-        Some(Value::safe_div(a, b, &|a, b| Value::Number(a / b)))
+        Some(safe_div(a, b, &|a, b| Value::Number(a / b)))
     }
 
+    /// This operation returns an Integer only if both arguments are integers
+    /// Rounding is towards negative infinity
     pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         let (a, b) = match (self, other) {
             // Seems that all nans are negative in lua
             (Value::Integer(a), Value::Integer(b)) => {
-                return Some(Value::safe_div(a, b, &|a, b| {
-                    Value::Integer(a.wrapping_div(b))
-                }));
+                return Some(safe_div(a, b, &|a, b| Value::Integer(a.wrapping_div(b))));
             }
             (Value::Number(a), Value::Number(b)) => (a, b),
             (Value::Integer(a), Value::Number(b)) => (a as f64, b),
@@ -163,16 +141,14 @@ impl<'gc> Value<'gc> {
             _ => return None,
         };
 
-        Some(Value::safe_div(a, b, &|a, b| {
-            Value::Number((a / b).floor())
-        }))
+        Some(safe_div(a, b, &|a, b| Value::Number((a / b).floor())))
     }
 
-    // When given a % b, lua computes the remainder, not the modulo.
-    // However, Rust computes the modulo correctly.  (e.g. -2 % 3 = 1 according to lua, and -2
-    // according to Rust.)
-    // This is why there is the second step.  Hopefully, the compiler will optimize the extra
-    // mod out
+    /// When given a % b, lua computes the remainder, not the modulo.
+    /// However, Rust computes the modulo correctly.  (e.g. -2 % 3 = 1 according to lua, and -2
+    /// according to Rust.)
+    /// This is why there is the second step.  Hopefully, the compiler will optimize the extra
+    /// mod out
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
         let (a, b) = match (self, other) {
             // n % 0 for integers throws an error
@@ -186,12 +162,10 @@ impl<'gc> Value<'gc> {
             _ => return None,
         };
 
-        Some(Value::safe_div(a, b, &|a, b| {
-            Value::Number(((a % b) + b) % b)
-        }))
+        Some(safe_div(a, b, &|a, b| Value::Number(((a % b) + b) % b)))
     }
 
-    // This operation always returns a Number, even when called by int arguments
+    /// This operation always returns a Number, even when called by int arguments
     pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
         let (a, b) = match (self, other) {
             (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
@@ -283,5 +257,27 @@ impl<'gc> From<Closure<'gc>> for Value<'gc> {
 impl<'gc> From<Callback<'gc>> for Value<'gc> {
     fn from(v: Callback<'gc>) -> Value<'gc> {
         Value::Function(Function::Callback(v))
+    }
+}
+
+// In the future will be able to use f64::copysign
+// See https://github.com/rust-lang/rust/issues/58046
+fn copysign(to: f64, from: f64) -> f64 {
+    to * if from < 0.0 { -1.0 } else { 1.0 }
+}
+
+// A small helper function to handle division-like zero handling
+fn safe_div<'gc, T, F>(lhs: T, rhs: T, f: &F) -> Value<'gc>
+where
+    T: ToPrimitive + Zero,
+    F: Fn(T, T) -> Value<'gc>,
+{
+    match (lhs, rhs) {
+        // Seems that all nans are negative in lua
+        (ref a, ref b) if a.is_zero() && b.is_zero() => Value::Number(-f64::NAN),
+        (ref a, ref b) if b.is_zero() => {
+            Value::Number(copysign(f64::INFINITY, a.to_f64().unwrap()))
+        }
+        (a, b) => f(a, b),
     }
 }
