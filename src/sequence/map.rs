@@ -5,15 +5,15 @@ use crate::{LuaContext, Sequence};
 #[must_use = "sequences do nothing unless steped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct Map<S, F>(S, Option<StaticCollect<F>>);
+pub struct MapOk<S, F>(S, Option<StaticCollect<F>>);
 
-impl<S, F> Map<S, F> {
-    pub fn new(s: S, f: F) -> Map<S, F> {
-        Map(s, Some(StaticCollect(f)))
+impl<S, F> MapOk<S, F> {
+    pub fn new(s: S, f: F) -> MapOk<S, F> {
+        MapOk(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, F, R> Sequence<'gc> for Map<S, F>
+impl<'gc, S, F, R> Sequence<'gc> for MapOk<S, F>
 where
     S: Sequence<'gc>,
     F: 'static + FnOnce(S::Item) -> R,
@@ -69,15 +69,15 @@ where
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub struct MapResult<S, F>(S, Option<StaticCollect<F>>);
+pub struct Map<S, F>(S, Option<StaticCollect<F>>);
 
-impl<S, F> MapResult<S, F> {
-    pub fn new(s: S, f: F) -> MapResult<S, F> {
-        MapResult(s, Some(StaticCollect(f)))
+impl<S, F> Map<S, F> {
+    pub fn new(s: S, f: F) -> Map<S, F> {
+        Map(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, F, RI, RE> Sequence<'gc> for MapResult<S, F>
+impl<'gc, S, F, RI, RE> Sequence<'gc> for Map<S, F>
 where
     S: Sequence<'gc>,
     F: 'static + FnOnce(Result<S::Item, S::Error>) -> Result<RI, RE>,

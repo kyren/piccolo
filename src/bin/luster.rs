@@ -49,7 +49,7 @@ fn run_repl(lua: &mut Lua) {
                     )?)
                 })
                 .flatten()
-                .map_result(|values| match values {
+                .map(|values| match values {
                     Ok(values) => {
                         let output = values
                             .iter()
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<StdError>> {
             )?)
         })
         .flatten()
-        .map(|_| ())
+        .map_ok(|_| ())
         .map_err(|e| e.to_static())
         .boxed()
     })?;

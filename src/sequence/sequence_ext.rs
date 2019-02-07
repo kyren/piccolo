@@ -4,7 +4,7 @@ use crate::{IntoSequence, LuaContext, Sequence};
 
 use super::and_then::{AndThen, AndThenWith};
 use super::flatten::Flatten;
-use super::map::{Map, MapError, MapResult};
+use super::map::{Map, MapError, MapOk};
 use super::then::{Then, ThenWith};
 
 /// Extension trait for `Sequence` that provides useful combinator methods, similarly to
@@ -17,11 +17,11 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     /// Map a function over result of this sequence.  The given function is run as soon as the
     /// result is produced in the *same* call to `Sequence::step`, so there does not necessarily
     /// have to be a `Collect` bound on the `R` result type.
-    fn map<F, R>(self, f: F) -> Map<Self, F>
+    fn map_ok<F, R>(self, f: F) -> MapOk<Self, F>
     where
         F: 'static + FnOnce(Self::Item) -> R,
     {
-        Map::new(self, f)
+        MapOk::new(self, f)
     }
 
     /// Similar to `map`, but maps the given function over the error of this sequence, if it results
@@ -35,11 +35,11 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
 
     /// Similar to `map`, but maps the given function over the Result of this sequence, regardless
     /// if it is an Ok or an Err.
-    fn map_result<F, R>(self, f: F) -> MapResult<Self, F>
+    fn map<F, R>(self, f: F) -> Map<Self, F>
     where
         F: 'static + FnOnce(Result<Self::Item, Self::Error>) -> R,
     {
-        MapResult::new(self, f)
+        Map::new(self, f)
     }
 
     /// Execute another sequence step after this sequence completes, regardless of the success or

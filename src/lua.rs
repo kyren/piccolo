@@ -73,7 +73,7 @@ impl Lua {
     ///         )?)
     ///     })
     ///     .flatten()
-    ///     .map(|_| ())
+    ///     .map_ok(|_| ())
     ///     .map_err(Error::to_static)
     ///     .boxed()
     /// )?;
@@ -90,7 +90,7 @@ impl Lua {
         self.arena.mutate(move |mc, lua_root| {
             *lua_root.current_sequence.write(mc) = Some(
                 f(PhantomData)
-                    .map(|r| -> Box<Any> { Box::new(r) })
+                    .map_ok(|r| -> Box<Any> { Box::new(r) })
                     .map_err(|e| -> Box<Any> { Box::new(e) })
                     .boxed(),
             );

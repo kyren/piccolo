@@ -40,7 +40,7 @@ fn callback() -> Result<(), Box<StaticError>> {
             )?)
         })
         .flatten()
-        .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
+        .map_ok(|b| assert_eq!(b, vec![Value::Boolean(true)]))
         .map_err(Error::to_static)
         .boxed()
     })?;
@@ -84,7 +84,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
             )?)
         })
         .flatten()
-        .map(|b| {
+        .map_ok(|b| {
             assert_eq!(
                 b,
                 vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]

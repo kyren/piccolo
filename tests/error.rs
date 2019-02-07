@@ -46,7 +46,7 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
             )
         })
         .flatten()
-        .map(|_| ())
+        .map_ok(|_| ())
         .map_err(Error::to_static)
         .boxed()
     })?;

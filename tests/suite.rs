@@ -37,7 +37,7 @@ fn test_dir(dir: &str, run_code: bool) {
                             )?)
                         })
                         .flatten()
-                        .map(|r| match &r[..] {
+                        .map_ok(|r| match &r[..] {
                             &[Value::Boolean(true)] => false,
                             v => {
                                 let _ =
