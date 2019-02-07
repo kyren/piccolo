@@ -272,12 +272,11 @@ where
     T: ToPrimitive + Zero,
     F: Fn(T, T) -> Value<'gc>,
 {
-    match (lhs, rhs) {
-        // Seems that all nans are negative in lua
-        (ref a, ref b) if a.is_zero() && b.is_zero() => Value::Number(-f64::NAN),
-        (ref a, ref b) if b.is_zero() => {
-            Value::Number(copysign(f64::INFINITY, a.to_f64().unwrap()))
-        }
-        (a, b) => f(a, b),
+    if lhs.is_zero() && rhs.is_zero() {
+        Value::Number(-f64::NAN)
+    } else if rhs.is_zero() {
+        Value::Number(copysign(f64::INFINITY, lhs.to_f64().unwrap()))
+    } else {
+        f(lhs, rhs)
     }
 }
