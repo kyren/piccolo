@@ -58,7 +58,7 @@ impl Lua {
     /// let source = b"print('hello')";
     ///
     /// let mut lua = Lua::new();
-    /// lua.sequence(|_| Box::new(
+    /// lua.sequence(|_|
     ///     sequence_fn(move |mc, lc| Ok(Closure::new(
     ///         mc,
     ///         compile(mc, lc.interned_strings, &source[..])?,
@@ -75,7 +75,8 @@ impl Lua {
     ///     .flatten()
     ///     .map(|_| ())
     ///     .map_err(Error::to_static)
-    /// ))?;
+    ///     .boxed()
+    /// )?;
     ///
     /// # Ok(())
     /// # }
@@ -87,11 +88,12 @@ impl Lua {
         F: for<'gc> FnOnce(PhantomData<&'gc ()>) -> Box<Sequence<'gc, Item = I, Error = E> + 'gc>,
     {
         self.arena.mutate(move |mc, lua_root| {
-            *lua_root.current_sequence.write(mc) = Some(Box::new(
+            *lua_root.current_sequence.write(mc) = Some(
                 f(PhantomData)
                     .map(|r| -> Box<Any> { Box::new(r) })
-                    .map_err(|e| -> Box<Any> { Box::new(e) }),
-            ));
+                    .map_err(|e| -> Box<Any> { Box::new(e) })
+                    .boxed(),
+            );
         });
 
         loop {

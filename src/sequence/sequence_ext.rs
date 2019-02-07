@@ -98,6 +98,13 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     {
         Flatten::new(self)
     }
+
+    fn boxed(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc>
+    where
+        Self: 'gc,
+    {
+        Box::new(self)
+    }
 }
 
 impl<'gc, T> SequenceExt<'gc> for T where T: Sequence<'gc> {}

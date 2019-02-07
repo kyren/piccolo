@@ -16,14 +16,13 @@ fn main() -> Result<(), Box<StdError>> {
 
     let mut lua = Lua::new();
     lua.sequence(|_| {
-        Box::new(
-            sequence_fn(move |mc, lc| -> Result<(), Error> {
-                let function = compile(mc, lc.interned_strings, file)?;
-                println!("output: {:#?}", function);
-                Ok(())
-            })
-            .map_err(|e| e.to_static()),
-        )
+        sequence_fn(move |mc, lc| -> Result<(), Error> {
+            let function = compile(mc, lc.interned_strings, file)?;
+            println!("output: {:#?}", function);
+            Ok(())
+        })
+        .map_err(|e| e.to_static())
+        .boxed()
     })?;
 
     Ok(())

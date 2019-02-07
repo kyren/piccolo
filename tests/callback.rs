@@ -7,43 +7,42 @@ use luster::{
 fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
-        Box::new(
-            sequence_fn(|mc, lc| {
-                let callback = Callback::new_immediate(mc, |args| {
-                    let mut ret = args.to_vec();
-                    ret.push(Value::Integer(42));
-                    Ok(CallbackResult::Return(ret))
-                });
-                lc.globals
-                    .set(mc, String::new_static(b"callback"), callback)?;
-                Ok(())
-            })
-            .and_then(|mc, lc, _| {
-                Ok(Closure::new(
+        sequence_fn(|mc, lc| {
+            let callback = Callback::new_immediate(mc, |args| {
+                let mut ret = args.to_vec();
+                ret.push(Value::Integer(42));
+                Ok(CallbackResult::Return(ret))
+            });
+            lc.globals
+                .set(mc, String::new_static(b"callback"), callback)?;
+            Ok(())
+        })
+        .and_then(|mc, lc, _| {
+            Ok(Closure::new(
+                mc,
+                compile(
                     mc,
-                    compile(
-                        mc,
-                        lc.interned_strings,
-                        &br#"
+                    lc.interned_strings,
+                    &br#"
                             local a, b, c = callback(1, 2)
                             return a == 1 and b == 2 and c == 42
                         "#[..],
-                    )?,
-                    Some(lc.globals),
-                )?)
-            })
-            .and_then(|mc, lc, closure| {
-                Ok(ThreadSequence::call_function(
-                    mc,
-                    lc.main_thread,
-                    Function::Closure(closure),
-                    &[],
-                )?)
-            })
-            .flatten()
-            .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
-            .map_err(Error::to_static),
-        )
+                )?,
+                Some(lc.globals),
+            )?)
+        })
+        .and_then(|mc, lc, closure| {
+            Ok(ThreadSequence::call_function(
+                mc,
+                lc.main_thread,
+                Function::Closure(closure),
+                &[],
+            )?)
+        })
+        .flatten()
+        .map(|b| assert_eq!(b, vec![Value::Boolean(true)]))
+        .map_err(Error::to_static)
+        .boxed()
     })?;
 
     Ok(())
@@ -53,47 +52,46 @@ fn callback() -> Result<(), Box<StaticError>> {
 fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|_| {
-        Box::new(
-            sequence_fn(|mc, lc| {
-                let callback = Callback::new_immediate(mc, |args| {
-                    let mut ret = args.to_vec();
-                    ret.push(Value::Integer(3));
-                    Ok(CallbackResult::Return(ret))
-                });
-                lc.globals
-                    .set(mc, String::new_static(b"callback"), callback)?;
-                Ok(())
-            })
-            .and_then(|mc, lc, _| {
-                Ok(Closure::new(
+        sequence_fn(|mc, lc| {
+            let callback = Callback::new_immediate(mc, |args| {
+                let mut ret = args.to_vec();
+                ret.push(Value::Integer(3));
+                Ok(CallbackResult::Return(ret))
+            });
+            lc.globals
+                .set(mc, String::new_static(b"callback"), callback)?;
+            Ok(())
+        })
+        .and_then(|mc, lc, _| {
+            Ok(Closure::new(
+                mc,
+                compile(
                     mc,
-                    compile(
-                        mc,
-                        lc.interned_strings,
-                        &br#"
+                    lc.interned_strings,
+                    &br#"
                             return callback(1, 2)
                         "#[..],
-                    )?,
-                    Some(lc.globals),
-                )?)
-            })
-            .and_then(|mc, lc, closure| {
-                Ok(ThreadSequence::call_function(
-                    mc,
-                    lc.main_thread,
-                    Function::Closure(closure),
-                    &[],
-                )?)
-            })
-            .flatten()
-            .map(|b| {
-                assert_eq!(
-                    b,
-                    vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
-                )
-            })
-            .map_err(Error::to_static),
-        )
+                )?,
+                Some(lc.globals),
+            )?)
+        })
+        .and_then(|mc, lc, closure| {
+            Ok(ThreadSequence::call_function(
+                mc,
+                lc.main_thread,
+                Function::Closure(closure),
+                &[],
+            )?)
+        })
+        .flatten()
+        .map(|b| {
+            assert_eq!(
+                b,
+                vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+            )
+        })
+        .map_err(Error::to_static)
+        .boxed()
     })?;
 
     Ok(())

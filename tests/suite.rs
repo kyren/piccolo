@@ -21,36 +21,32 @@ fn test_dir(dir: &str, run_code: bool) {
                 if run_code {
                     let mut lua = Lua::new();
                     let r = lua.sequence(|_| {
-                        Box::new(
-                            sequence_fn(move |mc, lc| {
-                                Ok(Closure::new(
-                                    mc,
-                                    compile(mc, lc.interned_strings, file)?,
-                                    Some(lc.globals),
-                                )?)
-                            })
-                            .and_then(move |mc, lc, closure| {
-                                Ok(ThreadSequence::call_function(
-                                    mc,
-                                    lc.main_thread,
-                                    Function::Closure(closure),
-                                    &[],
-                                )?)
-                            })
-                            .flatten()
-                            .map(|r| match &r[..] {
-                                &[Value::Boolean(true)] => false,
-                                v => {
-                                    let _ = writeln!(
-                                        stdout(),
-                                        "error: unexpected return values: {:?}",
-                                        v
-                                    );
-                                    true
-                                }
-                            })
-                            .map_err(Error::to_static),
-                        )
+                        sequence_fn(move |mc, lc| {
+                            Ok(Closure::new(
+                                mc,
+                                compile(mc, lc.interned_strings, file)?,
+                                Some(lc.globals),
+                            )?)
+                        })
+                        .and_then(move |mc, lc, closure| {
+                            Ok(ThreadSequence::call_function(
+                                mc,
+                                lc.main_thread,
+                                Function::Closure(closure),
+                                &[],
+                            )?)
+                        })
+                        .flatten()
+                        .map(|r| match &r[..] {
+                            &[Value::Boolean(true)] => false,
+                            v => {
+                                let _ =
+                                    writeln!(stdout(), "error: unexpected return values: {:?}", v);
+                                true
+                            }
+                        })
+                        .map_err(Error::to_static)
+                        .boxed()
                     });
 
                     match r {
