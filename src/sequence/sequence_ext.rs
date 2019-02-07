@@ -99,10 +99,7 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
         Flatten::new(self)
     }
 
-    fn boxed(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc>
-    where
-        Self: 'gc,
-    {
+    fn boxed(self) -> Box<Self> {
         Box::new(self)
     }
 }

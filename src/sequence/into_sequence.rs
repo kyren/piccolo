@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::{LuaContext, Sequence, SequenceExt};
+use crate::{LuaContext, Sequence};
 
 pub trait IntoSequence<'gc> {
     type Item;
@@ -8,13 +8,6 @@ pub trait IntoSequence<'gc> {
     type Sequence: Sequence<'gc, Item = Self::Item, Error = Self::Error>;
 
     fn into_sequence(self) -> Self::Sequence;
-
-    fn into_boxed_sequence(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc>
-    where
-        Self: 'gc + Sized,
-    {
-        self.into_sequence().boxed()
-    }
 }
 
 impl<'gc, I: Collect, E: Collect> IntoSequence<'gc> for Result<I, E> {

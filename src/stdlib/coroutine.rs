@@ -21,7 +21,8 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                             found: value.type_name(),
                         }
                         .into())
-                        .into_boxed_sequence();
+                        .into_sequence()
+                        .boxed();
                     }
                 };
 
@@ -48,7 +49,8 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                             found: value.type_name(),
                         }
                         .into())
-                        .into_boxed_sequence();
+                        .into_sequence()
+                        .boxed();
                     }
                 };
 
