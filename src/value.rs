@@ -80,68 +80,65 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// Uses native Rust function "parse," which has not been evaluated yet as being correct in the
+    /// context of parsing lua numbers.
+    pub fn to_number(self) -> Option<f64> {
+        match self {
+            Value::Integer(a) => Some(a as f64),
+            Value::Number(a) => Some(a),
+            Value::String(a) => std::string::String::from_utf8(a.as_bytes().to_vec()).ok().and_then(|a| a.parse::<f64>().ok()),
+            _ => None,
+        }
+    }
+
+    /// Only Integers can become integers, unfortunately.
+    pub fn to_integer(self) -> Option<i64> {
+        match self {
+            Value::Integer(a) => Some(a),
+            _ => None,
+        }
+    }
+
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_add(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
-            _ => None,
-        }
+        bin_op(self, other,
+            &|a, b| Value::Integer(a.wrapping_add(b)),
+            &|a, b| Value::Number(a + b),
+        )
     }
 
     pub fn subtract(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_sub(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a - b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 - b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a - b as f64)),
-            _ => None,
-        }
+        bin_op(self, other,
+            &|a, b| Value::Integer(a.wrapping_sub(b)),
+            &|a, b| Value::Number(a - b),
+        )
     }
 
     pub fn multiply(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_mul(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a * b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 * b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a * b as f64)),
-            _ => None,
-        }
+        bin_op(self, other,
+            &|a, b| Value::Integer(a.wrapping_mul(b)),
+            &|a, b| Value::Number(a * b),
+        )
     }
 
     /// This operation always returns a Number, even when called by int arguments
     pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        let (a, b) = match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
-            (Value::Number(a), Value::Number(b)) => (a, b),
-            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
-            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
-            _ => return None,
-        };
-
-        Some(safe_div(a, b, &|a, b| Value::Number(a / b)))
+        bin_op(self, other,
+            &|a, b| safe_div(a, b, &|a, b| Value::Number(a as f64 / b as f64)),
+            &|a, b| safe_div(a, b, &|a, b| Value::Number(a / b)),
+        )
     }
 
     /// This operation returns an Integer only if both arguments are integers
     /// Rounding is towards negative infinity
     pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        let (a, b) = match (self, other) {
-            // Seems that all nans are negative in lua
-            (Value::Integer(a), Value::Integer(b)) => {
-                return Some(safe_div(a, b, &|a, b| Value::Integer(a.wrapping_div(b))));
-            }
-            (Value::Number(a), Value::Number(b)) => (a, b),
-            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
-            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
-            _ => return None,
-        };
-
-        Some(safe_div(a, b, &|a, b| Value::Number((a / b).floor())))
+        bin_op(self, other,
+            &|a, b| safe_div(a, b, &|a, b| Value::Integer(a.wrapping_div(b))),
+            &|a, b| safe_div(a, b, &|a, b| Value::Number((a / b).floor())),
+        )
     }
 
     /// When given a % b, lua computes the remainder, not the modulo.
@@ -150,33 +147,23 @@ impl<'gc> Value<'gc> {
     /// This is why there is the second step.  Hopefully, the compiler will optimize the extra
     /// mod out
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        let (a, b) = match (self, other) {
-            // n % 0 for integers throws an error
-            (Value::Integer(_), Value::Integer(b)) if b == 0 => return None,
-            (Value::Integer(a), Value::Integer(b)) => {
-                return Some(Value::Integer(((a % b) + b) % b));
-            }
-            (Value::Number(a), Value::Number(b)) => (a, b),
-            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
-            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
-            _ => return None,
-        };
+        if self.to_integer().is_some() && other.to_integer().unwrap_or(1) == 0 {
+            return None;
+        }
 
-        Some(safe_div(a, b, &|a, b| Value::Number(((a % b) + b) % b)))
+        bin_op(self, other,
+            &|a, b| safe_div(a, b, &|a, b| Value::Integer(((a % b) + b) % b)),
+            &|a, b| safe_div(a, b, &|a, b| Value::Number(((a % b) + b) % b)),
+        )
     }
 
     /// This operation always returns a Number, even when called by int arguments
     pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        let (a, b) = match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => (a as f64, b as f64),
-            (Value::Number(a), Value::Number(b)) => (a, b),
-            (Value::Integer(a), Value::Number(b)) => (a as f64, b),
-            (Value::Number(a), Value::Integer(b)) => (a, b as f64),
-            _ => return None,
-        };
-
         // No need for special casing, 0^0 = 1 in both Rust and Lua
-        Some(Value::Number(a.powf(b)))
+        bin_op(self, other,
+            &|a, b| Value::Number((a as f64).powf(b as f64)),
+            &|a, b| Value::Number(a.powf(b)),
+        )
     }
 
     pub fn unary_negate(self) -> Option<Value<'gc>> {
@@ -188,13 +175,10 @@ impl<'gc> Value<'gc> {
     }
 
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(a < b),
-            (Value::Number(a), Value::Number(b)) => Some(a < b),
-            (Value::Integer(a), Value::Number(b)) => Some((a as f64) < b),
-            (Value::Number(a), Value::Integer(b)) => Some(a < (b as f64)),
-            _ => None,
-        }
+        bin_op(self, other,
+            &|a, b| a < b,
+            &|a, b| a < b,
+        )
     }
 
     pub fn display<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
@@ -264,6 +248,21 @@ impl<'gc> From<Callback<'gc>> for Value<'gc> {
 // See https://github.com/rust-lang/rust/issues/58046
 fn copysign(to: f64, from: f64) -> f64 {
     to * if from < 0.0 { -1.0 } else { 1.0 }
+}
+
+fn bin_op<'gc,
+    U,
+    F: Fn(i64, i64) -> U,
+    G: Fn(f64, f64) -> U,
+>(lhs: Value<'gc>, rhs: Value<'gc>, ifun: &F, ffun: &G) -> Option<U>
+{
+    match (lhs.to_integer(), rhs.to_integer()) {
+        (Some(a), Some(b)) => Some(ifun(a, b)),
+        _ => match (lhs.to_number(), rhs.to_number()) {
+            (Some(a), Some(b)) => Some(ffun(a, b)),
+            _ => None,
+        }
+    }
 }
 
 // A small helper function to handle division-like zero handling
