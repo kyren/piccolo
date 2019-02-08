@@ -567,7 +567,7 @@ pub fn step_vm<'gc>(
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
                     registers.stack_frame[dest.0 as usize] = left
-                        .floor_divide(right)
+                        .float_divide(right)
                         .ok_or(BinaryOperatorError::FloatDivide)?;
                 }
 
@@ -599,7 +599,7 @@ pub fn step_vm<'gc>(
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
                     registers.stack_frame[dest.0 as usize] =
-                        left.modulo(right).ok_or(BinaryOperatorError::FloorDivide)?;
+                        left.floor_divide(right).ok_or(BinaryOperatorError::FloorDivide)?;
                 }
 
                 OpCode::ModRR { dest, left, right } => {
