@@ -314,6 +314,7 @@ pub fn comparison_binop_const_fold<'gc>(
 ) -> Option<Constant<'gc>> {
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
+        ComparisonBinOp::LessThan => Some(Constant::Boolean(left.to_value() < right.to_value())),
         _ => None,
     }
 }
@@ -329,6 +330,10 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
 
 pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<Constant<'gc>> {
     match unop {
+        UnaryOperator::Minus => match cons.to_value().unary_negate() {
+            Some(a) => Constant::from_value(a),
+            None => None,
+        }
         UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
         _ => None,
     }

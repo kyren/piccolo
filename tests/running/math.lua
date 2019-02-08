@@ -89,6 +89,17 @@ function test11()
            -120 %  63 ==   6
 end
 
+function test12()
+    return      1 < 2  and
+           not (2 < 1) and
+           not (1 < 1)
+end
+
+function test13()
+    return -(-1) == 1 and
+           not not true
+end
+
 return
     test1() and
     test2() and
