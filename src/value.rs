@@ -1,4 +1,4 @@
-use std::{f64, i64, io};
+use std::{cmp::Ordering, f64, i64, io};
 
 use gc_arena::{Collect, Gc, GcCell};
 use num_traits::{identities::Zero, ToPrimitive};
@@ -53,6 +53,32 @@ impl<'gc> PartialEq for Value<'gc> {
 
             (Value::Thread(a), Value::Thread(b)) => a == b,
             (Value::Thread(_), _) => false,
+        }
+    }
+}
+
+impl<'gc> PartialOrd for Value<'gc> {
+    fn partial_cmp(&self, other: &Value<'gc>) -> Option<Ordering> {
+        match (*self, *other) {
+            (Value::Nil, _) => None,
+
+            (Value::Boolean(_), _) => None,
+
+            (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(&b)),
+            (Value::Integer(a), Value::Number(b)) => (a as f64).partial_cmp(&b),
+            (Value::Integer(_), _) => None,
+
+            (Value::Number(a), Value::Number(b)) => a.partial_cmp(&b),
+            (Value::Number(a), Value::Integer(b)) => a.partial_cmp(&(b as f64)),
+            (Value::Number(_), _) => None,
+
+            (Value::String(_), _) => None,
+
+            (Value::Table(_), _) => None,
+
+            (Value::Function(_), _) => None,
+
+            (Value::Thread(_), _) => None,
         }
     }
 }
