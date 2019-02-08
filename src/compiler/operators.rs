@@ -314,7 +314,10 @@ pub fn comparison_binop_const_fold<'gc>(
 ) -> Option<Constant<'gc>> {
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
-        ComparisonBinOp::LessThan => Some(Constant::Boolean(left.to_value() < right.to_value())),
+        ComparisonBinOp::LessThan => match left.to_value().less_than(right.to_value()) {
+            Some(a) => Some(Constant::Boolean(a)),
+            None => None,
+        }
         _ => None,
     }
 }
