@@ -455,6 +455,13 @@ pub fn step_vm<'gc>(
                     registers.stack_frame[dest.0 as usize] = source.not();
                 }
 
+                OpCode::Minus { dest, source } => {
+                    let value = registers.stack_frame[source.0 as usize];
+                    registers.stack_frame[dest.0 as usize] = value
+                        .unary_negate()
+                        .ok_or(BinaryOperatorError::UnaryNegate)?;
+                }
+
                 OpCode::AddRR { dest, left, right } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = registers.stack_frame[right.0 as usize];
@@ -660,20 +667,6 @@ pub fn step_vm<'gc>(
                     registers.stack_frame[dest.0 as usize] = left
                         .exponentiate(right)
                         .ok_or(BinaryOperatorError::Exponentiate)?;
-                }
-
-                OpCode::UnegR { dest, value } => {
-                    let value = registers.stack_frame[value.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = value
-                        .unary_negate()
-                        .ok_or(BinaryOperatorError::UnaryNegate)?;
-                }
-
-                OpCode::UnegC { dest, value } => {
-                    let value = current_function.0.proto.constants[value.0 as usize].to_value();
-                    registers.stack_frame[dest.0 as usize] = value
-                        .unary_negate()
-                        .ok_or(BinaryOperatorError::UnaryNegate)?;
                 }
             }
 

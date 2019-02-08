@@ -197,6 +197,10 @@ pub fn simple_binop_const_fold<'gc>(
         SimpleBinOp::Add => left.add(right),
         SimpleBinOp::Sub => left.subtract(right),
         SimpleBinOp::Mul => left.multiply(right),
+        SimpleBinOp::Mod => left.modulo(right),
+        SimpleBinOp::Pow => left.exponentiate(right),
+        SimpleBinOp::Div => left.float_divide(right),
+        SimpleBinOp::IDiv => left.floor_divide(right),
         _ => None,
     }
     .and_then(Constant::from_value)
@@ -286,6 +290,7 @@ pub fn comparison_binop_const_fold<'gc>(
 
 pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterIndex) -> OpCode {
     match unop {
+        UnaryOperator::Minus => OpCode::Minus { dest, source },
         UnaryOperator::Not => OpCode::Not { dest, source },
         UnaryOperator::Len => OpCode::Length { dest, source },
         _ => panic!("unimplemented unary operator {:?}", unop),

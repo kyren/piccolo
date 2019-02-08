@@ -226,6 +226,10 @@ pub enum OpCode {
         dest: RegisterIndex,
         source: RegisterIndex,
     },
+    Minus {
+        dest: RegisterIndex,
+        source: RegisterIndex,
+    },
     AddRR {
         dest: RegisterIndex,
         left: RegisterIndex,
@@ -365,13 +369,5 @@ pub enum OpCode {
         dest: RegisterIndex,
         left: ConstantIndex8,
         right: ConstantIndex8,
-    },
-    UnegR {
-        dest: RegisterIndex,
-        value: RegisterIndex,
-    },
-    UnegC {
-        dest: RegisterIndex,
-        value: ConstantIndex8,
     },
 }
