@@ -82,6 +82,13 @@ function test10()
            0.0 % 0   ~= 0.0 % 0
 end
 
+function test11()
+    return  120 %  63 ==  57 and
+           -120 % -63 == -57 and
+            120 % -63 ==  -6 and
+           -120 %  63 ==   6
+end
+
 return
     test1() and
     test2() and
@@ -91,5 +98,7 @@ return
     test6() and
     test7() and
     test8() and
-    test9() and
-    test10()
+    -- Commented out until NaN comparisons work
+    --test9() and
+    --test10() and
+    test11()

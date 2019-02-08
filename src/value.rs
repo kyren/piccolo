@@ -153,8 +153,8 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    /// When given a % b, lua computes the remainder, not the modulo.
-    /// However, Rust computes the modulo correctly.  (e.g. -2 % 3 = 1 according to lua, and -2
+    /// When given a % b, lua computes the modulo, not the remainder.
+    /// However, Rust computes the remainder.  (e.g. -2 % 3 = 1 according to lua, and -2
     /// according to Rust.)
     /// This is why there is the second step.  Hopefully, the compiler will optimize the extra
     /// mod out
