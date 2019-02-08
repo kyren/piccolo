@@ -450,6 +450,54 @@ pub fn step_vm<'gc>(
                     }
                 }
 
+                OpCode::LessRR {
+                    skip_if,
+                    left,
+                    right,
+                } => {
+                    let left = registers.stack_frame[left.0 as usize];
+                    let right = registers.stack_frame[right.0 as usize];
+                    if (left == right) == skip_if {
+                        *registers.pc += 1;
+                    }
+                }
+
+                OpCode::LessRC {
+                    skip_if,
+                    left,
+                    right,
+                } => {
+                    let left = registers.stack_frame[left.0 as usize];
+                    let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                    if (left == right) == skip_if {
+                        *registers.pc += 1;
+                    }
+                }
+
+                OpCode::LessCR {
+                    skip_if,
+                    left,
+                    right,
+                } => {
+                    let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                    let right = registers.stack_frame[right.0 as usize];
+                    if (left == right) == skip_if {
+                        *registers.pc += 1;
+                    }
+                }
+
+                OpCode::LessCC {
+                    skip_if,
+                    left,
+                    right,
+                } => {
+                    let left = current_function.0.proto.constants[left.0 as usize];
+                    let right = current_function.0.proto.constants[right.0 as usize];
+                    if (left == right) == skip_if {
+                        *registers.pc += 1;
+                    }
+                }
+
                 OpCode::Not { dest, source } => {
                     let source = registers.stack_frame[source.0 as usize];
                     registers.stack_frame[dest.0 as usize] = source.not();

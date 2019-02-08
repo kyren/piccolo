@@ -222,6 +222,26 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    LessRR {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    LessRC {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    LessCR {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    LessCC {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
     Not {
         dest: RegisterIndex,
         source: RegisterIndex,

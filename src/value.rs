@@ -163,6 +163,10 @@ impl<'gc> Value<'gc> {
             return None;
         }
 
+        if self.to_number().is_some() && other.to_number().unwrap_or(1.0) == 0.0 {
+            return Some(Value::Number(-f64::NAN));
+        }
+
         bin_op(
             self,
             other,
