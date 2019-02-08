@@ -313,7 +313,7 @@ pub fn comparison_binop_const_fold<'gc>(
     right: Constant<'gc>,
 ) -> Option<Constant<'gc>> {
     match comparison_binop {
-        ComparisonBinOp::Equal => Some(Constant::Boolean(left == right)),
+        ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
         _ => None,
     }
 }

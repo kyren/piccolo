@@ -443,8 +443,8 @@ pub fn step_vm<'gc>(
                     left,
                     right,
                 } => {
-                    let left = current_function.0.proto.constants[left.0 as usize];
-                    let right = current_function.0.proto.constants[right.0 as usize];
+                    let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                    let right = current_function.0.proto.constants[right.0 as usize].to_value();
                     if (left == right) == skip_if {
                         *registers.pc += 1;
                     }

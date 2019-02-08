@@ -1,22 +1,22 @@
 function test1()
-    return 2   + 3   == 5   and
-           2.0 + 3.0 == 5.0 and
-           2   + 3.0 == 5.0 and
-           2.0 + 3   == 5.0
+    return 2   + 3   == 5 and
+           2.0 + 3.0 == 5 and
+           2   + 3.0 == 5 and
+           2.0 + 3   == 5
 end
 
 function test2()
-    return 2   - 3   == -1   and
-           2.0 - 3.0 == -1.0 and
-           2   - 3.0 == -1.0 and
-           2.0 - 3   == -1.0
+    return 2   - 3   == -1 and
+           2.0 - 3.0 == -1 and
+           2   - 3.0 == -1 and
+           2.0 - 3   == -1
 end
 
 function test3()
-    return 2   * 3   == 6   and
-           2.0 * 3.0 == 6.0 and
-           2   * 3.0 == 6.0 and
-           2.0 * 3   == 6.0
+    return 2   * 3   == 6 and
+           2.0 * 3.0 == 6 and
+           2   * 3.0 == 6 and
+           2.0 * 3   == 6
 end
 
 function test4()
@@ -27,31 +27,31 @@ function test4()
 end
 
 function test5()
-    return 7   // 3   == 2   and
-           7.0 // 3.0 == 2.0 and
-           7   // 3.0 == 2.0 and
-           7.0 // 3   == 2.0
+    return 7   // 3   == 2 and
+           7.0 // 3.0 == 2 and
+           7   // 3.0 == 2 and
+           7.0 // 3   == 2
 end
 
 function test6()
-    return 7   % 3   == 1   and
-           7.0 % 3.0 == 1.0 and
-           7   % 3.0 == 1.0 and
-           7.0 % 3   == 1.0
+    return 7   % 3   == 1 and
+           7.0 % 3.0 == 1 and
+           7   % 3.0 == 1 and
+           7.0 % 3   == 1
 end
 
 function test7()
-    return -7   % 3   == 2   and
-           -7.0 % 3.0 == 2.0 and
-           -7   % 3.0 == 2.0 and
-           -7.0 % 3   == 2.0
+    return -7   % 3   == 2 and
+           -7.0 % 3.0 == 2 and
+           -7   % 3.0 == 2 and
+           -7.0 % 3   == 2
 end
 
 function test8()
-    return 3   ^ 4   == 81.0 and
-           3.0 ^ 4.0 == 81.0 and
-           3   ^ 4.0 == 81.0 and
-           3.0 ^ 4   == 81.0
+    return 3   ^ 4   == 81 and
+           3.0 ^ 4.0 == 81 and
+           3   ^ 4.0 == 81 and
+           3.0 ^ 4   == 81
 end
 
 function test9()
@@ -98,7 +98,6 @@ return
     test6() and
     test7() and
     test8() and
-    -- Commented out until NaN comparisons work
-    --test9() and
-    --test10() and
+    test9() and
+    test10() and
     test11()
