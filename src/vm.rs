@@ -457,7 +457,7 @@ pub fn step_vm<'gc>(
                 } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = registers.stack_frame[right.0 as usize];
-                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) != skip_if {
+                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) == skip_if {
                         *registers.pc += 1;
                     }
                 }
@@ -469,7 +469,7 @@ pub fn step_vm<'gc>(
                 } => {
                     let left = registers.stack_frame[left.0 as usize];
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) != skip_if {
+                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) == skip_if {
                         *registers.pc += 1;
                     }
                 }
@@ -481,7 +481,7 @@ pub fn step_vm<'gc>(
                 } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = registers.stack_frame[right.0 as usize];
-                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) != skip_if {
+                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) == skip_if {
                         *registers.pc += 1;
                     }
                 }
@@ -493,7 +493,7 @@ pub fn step_vm<'gc>(
                 } => {
                     let left = current_function.0.proto.constants[left.0 as usize].to_value();
                     let right = current_function.0.proto.constants[right.0 as usize].to_value();
-                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) != skip_if {
+                    if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) == skip_if {
                         *registers.pc += 1;
                     }
                 }

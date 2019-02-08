@@ -276,28 +276,28 @@ pub fn comparison_binop_opcode(
         ComparisonBinOp::LessThan => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
                 OpCode::LessRR {
-                    skip_if: !skip_if,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
                 OpCode::LessRC {
-                    skip_if: !skip_if,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
                 OpCode::LessCR {
-                    skip_if: !skip_if,
+                    skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
                 OpCode::LessCC {
-                    skip_if: !skip_if,
+                    skip_if,
                     left,
                     right,
                 }
