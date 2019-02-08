@@ -109,8 +109,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| Value::Integer(a.wrapping_add(b)),
-            &|a, b| Value::Number(a + b),
+            |a, b| Value::Integer(a.wrapping_add(b)),
+            |a, b| Value::Number(a + b),
         )
     }
 
@@ -118,8 +118,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| Value::Integer(a.wrapping_sub(b)),
-            &|a, b| Value::Number(a - b),
+            |a, b| Value::Integer(a.wrapping_sub(b)),
+            |a, b| Value::Number(a - b),
         )
     }
 
@@ -127,8 +127,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| Value::Integer(a.wrapping_mul(b)),
-            &|a, b| Value::Number(a * b),
+            |a, b| Value::Integer(a.wrapping_mul(b)),
+            |a, b| Value::Number(a * b),
         )
     }
 
@@ -137,8 +137,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| safe_div(a, b, &|a, b| Value::Number(a as f64 / b as f64)),
-            &|a, b| safe_div(a, b, &|a, b| Value::Number(a / b)),
+            |a, b| safe_div(a, b, |a, b| Value::Number(a as f64 / b as f64)),
+            |a, b| safe_div(a, b, |a, b| Value::Number(a / b)),
         )
     }
 
@@ -148,8 +148,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| safe_div(a, b, &|a, b| Value::Integer(a.wrapping_div(b))),
-            &|a, b| safe_div(a, b, &|a, b| Value::Number((a / b).floor())),
+            |a, b| safe_div(a, b, |a, b| Value::Integer(a.wrapping_div(b))),
+            |a, b| safe_div(a, b, |a, b| Value::Number((a / b).floor())),
         )
     }
 
@@ -166,8 +166,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| safe_div(a, b, &|a, b| Value::Integer(((a % b) + b) % b)),
-            &|a, b| safe_div(a, b, &|a, b| Value::Number(((a % b) + b) % b)),
+            |a, b| safe_div(a, b, |a, b| Value::Integer(((a % b) + b) % b)),
+            |a, b| safe_div(a, b, |a, b| Value::Number(((a % b) + b) % b)),
         )
     }
 
@@ -177,8 +177,8 @@ impl<'gc> Value<'gc> {
         bin_op(
             self,
             other,
-            &|a, b| Value::Number((a as f64).powf(b as f64)),
-            &|a, b| Value::Number(a.powf(b)),
+            |a, b| Value::Number((a as f64).powf(b as f64)),
+            |a, b| Value::Number(a.powf(b)),
         )
     }
 
@@ -191,7 +191,7 @@ impl<'gc> Value<'gc> {
     }
 
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        bin_op(self, other, &|a, b| a < b, &|a, b| a < b)
+        bin_op(self, other, |a, b| a < b, |a, b| a < b)
     }
 
     pub fn display<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
@@ -263,12 +263,11 @@ fn copysign(to: f64, from: f64) -> f64 {
     to * if from < 0.0 { -1.0 } else { 1.0 }
 }
 
-fn bin_op<'gc, U, F: Fn(i64, i64) -> U, G: Fn(f64, f64) -> U>(
-    lhs: Value<'gc>,
-    rhs: Value<'gc>,
-    ifun: &F,
-    ffun: &G,
-) -> Option<U> {
+fn bin_op<'gc, U, F, G>(lhs: Value<'gc>, rhs: Value<'gc>, ifun: F, ffun: G) -> Option<U>
+where
+    F: Fn(i64, i64) -> U,
+    G: Fn(f64, f64) -> U,
+{
     match (lhs.to_integer(), rhs.to_integer()) {
         (Some(a), Some(b)) => Some(ifun(a, b)),
         _ => match (lhs.to_number(), rhs.to_number()) {
@@ -279,7 +278,7 @@ fn bin_op<'gc, U, F: Fn(i64, i64) -> U, G: Fn(f64, f64) -> U>(
 }
 
 // A small helper function to handle division-like zero handling
-fn safe_div<'gc, T, F>(lhs: T, rhs: T, f: &F) -> Value<'gc>
+fn safe_div<'gc, T, F>(lhs: T, rhs: T, f: F) -> Value<'gc>
 where
     T: ToPrimitive + Zero,
     F: Fn(T, T) -> Value<'gc>,
