@@ -111,4 +111,6 @@ return
     test8() and
     test9() and
     test10() and
-    test11()
+    test11() and
+    test12() and
+    test13()
