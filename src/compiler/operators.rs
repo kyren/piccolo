@@ -317,7 +317,7 @@ pub fn comparison_binop_const_fold<'gc>(
         ComparisonBinOp::LessThan => match left.to_value().less_than(right.to_value()) {
             Some(a) => Some(Constant::Boolean(a)),
             None => None,
-        }
+        },
         _ => None,
     }
 }
@@ -336,7 +336,7 @@ pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<
         UnaryOperator::Minus => match cons.to_value().unary_negate() {
             Some(a) => Constant::from_value(a),
             None => None,
-        }
+        },
         UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
         _ => None,
     }
