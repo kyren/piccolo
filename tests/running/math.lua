@@ -1,3 +1,15 @@
+function is_inf(n)
+    return n == 1.0 / 0.0
+end
+
+function is_nan(n)
+    return n ~= n
+end
+
+function is_err(f)
+    return pcall(f) == false
+end
+
 function test1()
     return 2   + 3   == 5 and
            2.0 + 3.0 == 5 and
@@ -55,22 +67,26 @@ function test8()
 end
 
 function test9()
-    return 1   /  0   ~= -1 / 0 and
-           1.0 /  0.0 ~= -1 / 0 and
-           1   /  0.0 ~= -1 / 0 and
-           1.0 /  0   ~= -1 / 0 and
-           0   /  0   ~=  0 / 0 and
-           0.0 /  0.0 ~=  0 / 0 and
-           0   /  0.0 ~=  0 / 0 and
-           0.0 /  0   ~=  0 / 0 and
-           1   // 0   ~= -1 / 0 and
-           1.0 // 0.0 ~= -1 / 0 and
-           1   // 0.0 ~= -1 / 0 and
-           1.0 // 0   ~= -1 / 0 and
-           0   // 0   ~=  0 / 0 and
-           0.0 // 0.0 ~=  0 / 0 and
-           0   // 0.0 ~=  0 / 0 and
-           0.0 // 0   ~=  0 / 0
+    return
+        is_inf(1 / 0) and
+        is_inf(1.0 / 0.0) and
+        is_inf(1 / 0.0) and
+        is_inf(1.0 / 0.0) and
+
+        is_nan(0 / 0) and
+        is_nan(0.0 / 0.0) and
+        is_nan(0 / 0.0) and
+        is_nan(0.0 / 0) and
+
+        is_err(function() return 1 // 0 end) and
+        is_inf(1.0 // 0.0) and
+        is_inf(1.0 // 0) and
+        is_inf(1 // 0.0) and
+
+        is_err(function() return 0 // 0 end) and
+        is_nan(0.0 // 0.0) and
+        is_nan(0.0 // 0) and
+        is_nan(0 // 0.0)
 end
 
 function test10()
