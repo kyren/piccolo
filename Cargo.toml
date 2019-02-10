@@ -7,11 +7,12 @@ edition = "2018"
 [workspace]
 members = [
     "./gc-arena/",
+    "./gc-sequence/",
 ]
 
 [dependencies]
-rustc-hash = "1.0"
+clap = "2.32"
 num-traits = "0.2"
+rustc-hash = "1.0"
+rustyline = "3.0"
 gc-arena = { path = "./gc-arena" }
-rustyline = "3.0.0"
-clap = "~2.32"

@@ -1,0 +1,8 @@
+[package]
+name = "gc-sequence"
+version = "0.1.0"
+authors = ["kyren <kerriganw@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gc-arena = { path = "../gc-arena" }

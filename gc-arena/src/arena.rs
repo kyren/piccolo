@@ -94,22 +94,19 @@ impl ArenaParameters {
 #[macro_export]
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
-        struct $arena {
-            context: $crate::Context,
-            root: ::std::mem::ManuallyDrop<$root<'static>>,
-        }
-        make_arena!(@impl $arena, $root);
+        make_arena!(@impl pub(self) $arena, $root);
     };
 
     ($v:vis $arena:ident, $root:ident) => {
+        make_arena!(@impl $v $arena, $root);
+    };
+
+    (@impl $v:vis $arena:ident, $root:ident) => {
         $v struct $arena {
             context: $crate::Context,
             root: ::std::mem::ManuallyDrop<$root<'static>>,
         }
-        make_arena!(@impl $arena, $root);
-    };
 
-    (@impl $arena:ident, $root:ident) => {
         impl $arena {
             /// Create a new arena with the given garbage collector tuning parameters.  You must
             /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
