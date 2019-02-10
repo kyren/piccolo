@@ -1,8 +1,11 @@
-use std::{i64, io};
+use std::{f64, i64, io};
 
 use gc_arena::{Collect, Gc, GcCell};
 
-use crate::{Callback, Closure, String, Table, Thread};
+use crate::{
+    lexer::{read_float, read_hex_float},
+    Callback, Closure, String, Table, Thread,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(require_copy)]
@@ -79,47 +82,106 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// Interprets Numbers, Integers, and Strings as a Number, if possible.
+    pub fn to_number(self) -> Option<f64> {
+        match self {
+            Value::Integer(a) => Some(a as f64),
+            Value::Number(a) => Some(a),
+            Value::String(a) => {
+                if let Some(f) = read_hex_float(&a) {
+                    Some(f)
+                } else if let Some(f) = read_float(&a) {
+                    Some(f)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_add(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a + b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 + b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a + b as f64)),
-            _ => None,
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_add(b)))
+        } else {
+            Some(Value::Number(self.to_number()? + other.to_number()?))
         }
     }
 
     pub fn subtract(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_sub(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a - b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 - b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a - b as f64)),
-            _ => None,
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_sub(b)))
+        } else {
+            Some(Value::Number(self.to_number()? - other.to_number()?))
         }
     }
 
     pub fn multiply(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_mul(b))),
-            (Value::Number(a), Value::Number(b)) => Some(Value::Number(a * b)),
-            (Value::Integer(a), Value::Number(b)) => Some(Value::Number(a as f64 * b)),
-            (Value::Number(a), Value::Integer(b)) => Some(Value::Number(a * b as f64)),
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_mul(b)))
+        } else {
+            Some(Value::Number(self.to_number()? * other.to_number()?))
+        }
+    }
+
+    /// This operation always returns a Number, even when called with Integer arguments.
+    pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Number(self.to_number()? / other.to_number()?))
+    }
+
+    /// This operation returns an Integer only if both arguments are Integers.  Rounding is towards
+    /// negative infinity.
+    pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            if b == 0 {
+                None
+            } else {
+                Some(Value::Integer(a.wrapping_div(b)))
+            }
+        } else {
+            Some(Value::Number(
+                (self.to_number()? / other.to_number()?).floor(),
+            ))
+        }
+    }
+
+    /// Computes the Lua modulus (`%`) operator.  This is unlike Rust's `%` operator which computes
+    /// the remainder.
+    pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            if b == 0 {
+                None
+            } else {
+                Some(Value::Integer(((a % b) + b) % b))
+            }
+        } else {
+            let (a, b) = (self.to_number()?, other.to_number()?);
+            Some(Value::Number(((a % b) + b) % b))
+        }
+    }
+
+    /// This operation always returns a Number, even when called with Integer arguments.
+    pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Number(self.to_number()?.powf(other.to_number()?)))
+    }
+
+    pub fn negate(self) -> Option<Value<'gc>> {
+        match self {
+            Value::Integer(a) => Some(Value::Integer(a.wrapping_neg())),
+            Value::Number(a) => Some(Value::Number(-a)),
             _ => None,
         }
     }
 
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(a < b),
-            (Value::Number(a), Value::Number(b)) => Some(a < b),
-            (Value::Integer(a), Value::Number(b)) => Some((a as f64) < b),
-            (Value::Number(a), Value::Integer(b)) => Some(a < (b as f64)),
-            _ => None,
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(a < b)
+        } else {
+            Some(self.to_number()? < other.to_number()?)
         }
     }
 
