@@ -100,6 +100,14 @@ function test13()
            not not true
 end
 
+function test14()
+    return
+        "1.0" + 1.0 == 2.0 and
+        1.0 + "0x1.0" == 2.0 and
+        "0x10.0" + "3.0" == 19.0 and
+        "0x10" + "4" == 20
+end
+
 return
     test1() and
     test2() and
@@ -113,4 +121,5 @@ return
     test10() and
     test11() and
     test12() and
-    test13()
+    test13() and
+    test14()

@@ -3,7 +3,10 @@ use std::{f64, i64, io};
 use gc_arena::{Collect, Gc, GcCell};
 use num_traits::{identities::Zero, ToPrimitive};
 
-use crate::{Callback, Closure, String, Table, Thread};
+use crate::{
+    lexer::{read_float, read_hex_float},
+    Callback, Closure, String, Table, Thread,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(require_copy)]
@@ -86,9 +89,15 @@ impl<'gc> Value<'gc> {
         match self {
             Value::Integer(a) => Some(a as f64),
             Value::Number(a) => Some(a),
-            Value::String(a) => std::string::String::from_utf8(a.as_bytes().to_vec())
-                .ok()
-                .and_then(|a| a.parse::<f64>().ok()),
+            Value::String(a) => {
+                if let Some(f) = read_hex_float(&a) {
+                    Some(f)
+                } else if let Some(f) = read_float(&a) {
+                    Some(f)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
