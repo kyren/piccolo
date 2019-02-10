@@ -505,9 +505,8 @@ pub fn step_vm<'gc>(
 
                 OpCode::Minus { dest, source } => {
                     let value = registers.stack_frame[source.0 as usize];
-                    registers.stack_frame[dest.0 as usize] = value
-                        .unary_negate()
-                        .ok_or(BinaryOperatorError::UnaryNegate)?;
+                    registers.stack_frame[dest.0 as usize] =
+                        value.negate().ok_or(BinaryOperatorError::UnaryNegate)?;
                 }
 
                 OpCode::AddRR { dest, left, right } => {

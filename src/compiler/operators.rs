@@ -333,7 +333,7 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
 
 pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<Constant<'gc>> {
     match unop {
-        UnaryOperator::Minus => match cons.to_value().unary_negate() {
+        UnaryOperator::Minus => match cons.to_value().negate() {
             Some(a) => Constant::from_value(a),
             None => None,
         },

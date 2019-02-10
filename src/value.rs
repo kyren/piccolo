@@ -186,7 +186,7 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    pub fn unary_negate(self) -> Option<Value<'gc>> {
+    pub fn negate(self) -> Option<Value<'gc>> {
         match self {
             Value::Integer(a) => Some(Value::Integer(-a)),
             Value::Number(a) => Some(Value::Number(-a)),
