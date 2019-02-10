@@ -100,43 +100,32 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    /// If this Value is an Integer, returns it (does no casting from other types).
-    pub fn to_integer(self) -> Option<i64> {
-        match self {
-            Value::Integer(a) => Some(a),
-            _ => None,
-        }
-    }
-
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        bin_op(
-            self,
-            other,
-            |a, b| Some(Value::Integer(a.wrapping_add(b))),
-            |a, b| Some(Value::Number(a + b)),
-        )
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_add(b)))
+        } else {
+            Some(Value::Number(self.to_number()? + other.to_number()?))
+        }
     }
 
     pub fn subtract(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        bin_op(
-            self,
-            other,
-            |a, b| Some(Value::Integer(a.wrapping_sub(b))),
-            |a, b| Some(Value::Number(a - b)),
-        )
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_sub(b)))
+        } else {
+            Some(Value::Number(self.to_number()? - other.to_number()?))
+        }
     }
 
     pub fn multiply(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        bin_op(
-            self,
-            other,
-            |a, b| Some(Value::Integer(a.wrapping_mul(b))),
-            |a, b| Some(Value::Number(a * b)),
-        )
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(Value::Integer(a.wrapping_mul(b)))
+        } else {
+            Some(Value::Number(self.to_number()? * other.to_number()?))
+        }
     }
 
     /// This operation always returns a Number, even when called with Integer arguments.
@@ -147,37 +136,32 @@ impl<'gc> Value<'gc> {
     /// This operation returns an Integer only if both arguments are Integers.  Rounding is towards
     /// negative infinity.
     pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        bin_op(
-            self,
-            other,
-            |a, b| {
-                if b == 0 {
-                    None
-                } else {
-                    Some(Value::Integer(a.wrapping_div(b)))
-                }
-            },
-            |a, b| Some(Value::Number((a / b).floor())),
-        )
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            if b == 0 {
+                None
+            } else {
+                Some(Value::Integer(a.wrapping_div(b)))
+            }
+        } else {
+            Some(Value::Number(
+                (self.to_number()? / other.to_number()?).floor(),
+            ))
+        }
     }
 
     /// Computes the Lua modulus (`%`) operator.  This is unlike Rust's `%` operator which computes
     /// the remainder.
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        // In the future will be able to use euclidean modulus
-        // https://github.com/rust-lang/rust/issues/49048
-        bin_op(
-            self,
-            other,
-            |a, b| {
-                if b == 0 {
-                    None
-                } else {
-                    Some(Value::Integer(((a % b) + b) % b))
-                }
-            },
-            |a, b| Some(Value::Number(((a % b) + b) % b)),
-        )
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            if b == 0 {
+                None
+            } else {
+                Some(Value::Integer(((a % b) + b) % b))
+            }
+        } else {
+            let (a, b) = (self.to_number()?, other.to_number()?);
+            Some(Value::Number(((a % b) + b) % b))
+        }
     }
 
     /// This operation always returns a Number, even when called with Integer arguments.
@@ -187,14 +171,18 @@ impl<'gc> Value<'gc> {
 
     pub fn negate(self) -> Option<Value<'gc>> {
         match self {
-            Value::Integer(a) => Some(Value::Integer(-a)),
+            Value::Integer(a) => Some(Value::Integer(a.wrapping_neg())),
             Value::Number(a) => Some(Value::Number(-a)),
             _ => None,
         }
     }
 
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        bin_op(self, other, |a, b| Some(a < b), |a, b| Some(a < b))
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(a < b)
+        } else {
+            Some(self.to_number()? < other.to_number()?)
+        }
     }
 
     pub fn display<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
@@ -257,19 +245,5 @@ impl<'gc> From<Closure<'gc>> for Value<'gc> {
 impl<'gc> From<Callback<'gc>> for Value<'gc> {
     fn from(v: Callback<'gc>) -> Value<'gc> {
         Value::Function(Function::Callback(v))
-    }
-}
-
-fn bin_op<'gc, U, F, G>(lhs: Value<'gc>, rhs: Value<'gc>, ifun: F, ffun: G) -> Option<U>
-where
-    F: Fn(i64, i64) -> Option<U>,
-    G: Fn(f64, f64) -> Option<U>,
-{
-    match (lhs.to_integer(), rhs.to_integer()) {
-        (Some(a), Some(b)) => ifun(a, b),
-        _ => match (lhs.to_number(), rhs.to_number()) {
-            (Some(a), Some(b)) => ffun(a, b),
-            _ => None,
-        },
     }
 }
