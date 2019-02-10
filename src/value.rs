@@ -83,8 +83,7 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    /// Uses native Rust function "parse," which has not been evaluated yet as being correct in the
-    /// context of parsing lua numbers.
+    /// Interprets Numbers, Integers, and Strings as a Number, if possible.
     pub fn to_number(self) -> Option<f64> {
         match self {
             Value::Integer(a) => Some(a as f64),
@@ -102,7 +101,7 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    /// Only Integers can become integers, unfortunately.
+    /// If this Value is an Integer, returns it (does no casting from other types).
     pub fn to_integer(self) -> Option<i64> {
         match self {
             Value::Integer(a) => Some(a),
@@ -141,7 +140,7 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    /// This operation always returns a Number, even when called by int arguments
+    /// This operation always returns a Number, even when called with Integer arguments.
     pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         bin_op(
             self,
@@ -151,8 +150,8 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    /// This operation returns an Integer only if both arguments are integers
-    /// Rounding is towards negative infinity
+    /// This operation returns an Integer only if both arguments are Integers.  Rounding is towards
+    /// negative infinity.
     pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         bin_op(
             self,
@@ -162,11 +161,8 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    /// When given a % b, lua computes the modulo, not the remainder.
-    /// However, Rust computes the remainder.  (e.g. -2 % 3 = 1 according to lua, and -2
-    /// according to Rust.)
-    /// This is why there is the second step.  Hopefully, the compiler will optimize the extra
-    /// mod out
+    /// Computes the Lua modulus (`%`) operator.  This is unlike Rust's `%` operator which computes
+    /// the remainder.
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if self.to_integer().is_some() && other.to_integer() == Some(0) {
             return None;
@@ -184,7 +180,7 @@ impl<'gc> Value<'gc> {
         )
     }
 
-    /// This operation always returns a Number, even when called by int arguments
+    /// This operation always returns a Number, even when called by Integer arguments.
     pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
         // No need for special casing, 0^0 = 1 in both Rust and Lua
         bin_op(
