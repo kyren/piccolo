@@ -8,8 +8,9 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{Collect, GcCell, MutationContext};
 
 use crate::{
-    callback::CallbackSequenceBox, CallbackResult, Closure, Continuation, Error, Function,
-    LuaContext, RegisterIndex, TypeError, UpValue, UpValueState, Value, VarCount,
+    callback::CallbackSequenceBox, vm::run_vm, CallbackResult, Closure, Continuation, Error,
+    Function, LuaContext, RegisterIndex, Sequence, TypeError, UpValue, UpValueState, Value,
+    VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -114,6 +115,51 @@ impl fmt::Display for ThreadError {
     }
 }
 
+#[derive(Collect)]
+#[collect(empty_drop)]
+pub struct ThreadSequence<'gc>(pub Thread<'gc>);
+
+impl<'gc> ThreadSequence<'gc> {
+    pub fn call_function(
+        mc: MutationContext<'gc, '_>,
+        thread: Thread<'gc>,
+        function: Function<'gc>,
+        args: &[Value<'gc>],
+    ) -> Result<ThreadSequence<'gc>, ThreadError> {
+        thread.start(mc, function, args)?;
+        Ok(ThreadSequence(thread))
+    }
+}
+
+impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
+    type Item = Vec<Value<'gc>>;
+    type Error = Error<'gc>;
+
+    fn step(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        lc: LuaContext<'gc>,
+    ) -> Option<Result<Self::Item, Self::Error>> {
+        match self.0.mode() {
+            ThreadMode::Results => self.0.take_results(mc),
+            ThreadMode::Callback => {
+                self.0.step_callback(mc, lc).unwrap();
+                None
+            }
+            ThreadMode::Lua => {
+                const INSTRUCTION_GRANULARITY: u32 = 64;
+                self.0.step_lua(mc, INSTRUCTION_GRANULARITY).unwrap();
+                None
+            }
+            mode => Some(Err(ThreadError::BadMode {
+                expected: None,
+                found: mode,
+            }
+            .into())),
+        }
+    }
+}
+
 impl<'gc> Thread<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, allow_yield: bool) -> Thread<'gc> {
         Thread(GcCell::allocate(
@@ -167,24 +213,6 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
     ) -> Option<Result<Vec<Value<'gc>>, Error<'gc>>> {
         self.0.write(mc).result.take()
-    }
-
-    // If this thread is in `Lua` mode, locks the thread and returns a handle to interact with the
-    // current Lua frame.
-    pub fn lua_frame<'a>(
-        &'a self,
-        mc: MutationContext<'gc, 'a>,
-    ) -> Result<LuaFrame<'gc, 'a>, ThreadError> {
-        let state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Lua)?;
-        match state.frames.last() {
-            Some(Frame::Lua { .. }) => Ok(LuaFrame {
-                state,
-                mutation_context: mc,
-                thread: *self,
-            }),
-            _ => panic!("no top lua frame"),
-        }
     }
 
     // If the thread is in `Suspended` mode, resume it.
@@ -301,6 +329,43 @@ impl<'gc> Thread<'gc> {
         }
         Ok(())
     }
+
+    // If the thread is in `Lua` mode, run the VM for the given number of instructions, or until the
+    // Thread transitions out of `Lua` mode.
+    pub fn step_lua(
+        self,
+        mc: MutationContext<'gc, '_>,
+        mut instructions: u32,
+    ) -> Result<(), ThreadError> {
+        check_mode(&self.0.read(), ThreadMode::Lua)?;
+        loop {
+            let state = self.0.write(mc);
+            match state.frames.last() {
+                Some(Frame::Lua { .. }) => {
+                    let lua_frame = LuaFrame {
+                        state,
+                        mutation_context: mc,
+                        thread: self,
+                    };
+                    match run_vm(mc, lua_frame, instructions) {
+                        Err(err) => {
+                            let mut state = self.0.write(mc);
+                            unwind(self, &mut state, mc, err);
+                            break;
+                        }
+                        Ok(i) => {
+                            if i == 0 {
+                                break;
+                            }
+                            instructions = i;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
@@ -330,16 +395,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     mutation_context: self.mutation_context,
                 }
             }
-            _ => panic!("top frame is not lua frame"),
-        }
-    }
-
-    // Returns true if the Lua frame is currently variable: a function has returned a variable
-    // number of arguments or `LuaFrame::varargs` has been called.  A variable thread must be
-    // consumed by calling a function with variable arguments or returning variable arguments.
-    pub fn is_variable(&mut self) -> bool {
-        match self.state.frames.last_mut() {
-            Some(Frame::Lua { is_variable, .. }) => *is_variable,
             _ => panic!("top frame is not lua frame"),
         }
     }

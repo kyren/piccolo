@@ -1,8 +1,8 @@
 use gc_arena::MutationContext;
 
 use crate::{
-    sequence_fn_with, thread::ThreadMode, vm::ThreadSequence, Callback, CallbackResult,
-    IntoSequence, LuaContext, RuntimeError, SequenceExt, String, Table, Thread, TypeError, Value,
+    sequence_fn_with, thread::ThreadMode, Callback, CallbackResult, IntoSequence, LuaContext,
+    RuntimeError, SequenceExt, String, Table, Thread, ThreadSequence, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
