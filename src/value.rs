@@ -159,11 +159,11 @@ impl<'gc> Value<'gc> {
     /// This is why there is the second step.  Hopefully, the compiler will optimize the extra
     /// mod out
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if self.to_integer().is_some() && other.to_integer().unwrap_or(1) == 0 {
+        if self.to_integer().is_some() && other.to_integer() == Some(0) {
             return None;
         }
 
-        if self.to_number().is_some() && other.to_number().unwrap_or(1.0) == 0.0 {
+        if self.to_number().is_some() && other.to_number() == Some(0.0) {
             return Some(Value::Number(-f64::NAN));
         }
 
