@@ -36,9 +36,9 @@ pub use sequence::{
 };
 pub use string::{InternedStringSet, String, StringError};
 pub use table::{InvalidTableKey, Table, TableState};
-pub use thread::{Thread, ThreadError};
+pub use thread::{Thread, ThreadError, ThreadSequence};
 pub use types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
 pub use value::{Function, Value};
-pub use vm::{BinaryOperatorError, ThreadSequence};
+pub use vm::BinaryOperatorError;
