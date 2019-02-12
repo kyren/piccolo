@@ -50,9 +50,10 @@ design.
 
 * An actual cycle detecting, incremental GC similar to the one in PUC-Rio Lua
   5.3
-* Lua is compiled to VM bytecode similar to PUC-Rio Lua's, and there are a
-  complete set of VM instructions implemented (minus bitwise mathematical
-  operators).
+* A basic Lua bytecode compiler
+* Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
+  there are a complete set of VM instructions implemented (minus bitwise
+  mathematical operators).
 * Most of the core Lua language works (currently only missing bitwise
   mathematical operators).  Some tricky Lua features that currently work:
   * Real closures with proper upvalue handling
