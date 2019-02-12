@@ -125,7 +125,7 @@ discussion:
 
 `luster` is licensed under either of:
 
-* MIT license (LICENSE-MIT)[LICENSE-MIT] or http://opensource.org/licenses/MIT
-* CC0 (LICENSE-CC0)[LICENSE-CC0] or https://creativecommons.org/publicdomain/zero/1.0/
+* MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
+* CC0 [LICENSE-CC0](LICENSE-CC0) or https://creativecommons.org/publicdomain/zero/1.0/
 
 at your option.
