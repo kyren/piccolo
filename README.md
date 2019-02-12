@@ -6,9 +6,9 @@ My eventual goals with `luster` are somewhat ambitious:
   * Be a practical, useful Lua interpreter that is "pragmatically compatible"
     with the latest PUC-Rio Lua (5.3, soon 5.4)
   * Be generally at least as fast as PUC-Rio Lua
-  * Using primarily safe Rust
-  * Allow creating safe Lua bindings to Rust that are dramatically faster than
-    what is possible with `rlua` and PUC-Rio's C API.
+    * Using primarily safe Rust
+  * Allow creating safe Lua bindings to Rust that are dramatically easier and
+    faster than what is possible with `rlua` and PUC-Rio's C API.
   * Demonstrate a novel set of techniques for using garbage collected pointers
     in safe Rust, and show that the techniques work by implementing a real
     project with them.
@@ -18,8 +18,8 @@ My eventual goals with `luster` are somewhat ambitious:
 ### A novel system for Rust <-> GC interaction ###
 
 `luster` has a real, cycle detecting, incremental garbage collector with cheap
-`Gc` pointers that are machine pointer sized and implement `Copy`, and are
-usable from safe Rust.
+`Gc` pointers that are machine pointer sized and implement `Copy` and are
+usable from safe Rust.  It achieves this by combining three techniques:
 
 1) An unsafe `Collect` trait which allows tracing through garbage collected
    types that, despite being unsafe, can be implemented safely using procedural
