@@ -83,9 +83,13 @@ design.
   but letting userdata safely participate in garbage collection and having easy,
   performant APIs for userdata methods are much harder.
 * Tables with weak keys / values, "ephemeron" tables.
+* The compiled VM code is in a couple of ways worse than what PUC-Rio Lua will
+  generate.  Notably, there is a JMP chaining optimization that is not yet
+  implemented that makes most loops much slower than in PUC-Rio Lua.
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
+* Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more that I haven't listed
 
 ### What may never be implemented ###
