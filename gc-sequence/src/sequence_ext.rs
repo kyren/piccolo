@@ -1,98 +1,69 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::{IntoSequence, Sequence};
+use crate::{
+    flatten::Flatten,
+    map::Map,
+    then::{Then, ThenWith},
+    Sequence,
+};
 
-use super::and_then::{AndThen, AndThenWith};
-use super::flatten::Flatten;
-use super::map::{Map, MapError, MapOk};
-use super::then::{Then, ThenWith};
-
-/// Extension trait for `Sequence` that provides useful combinator methods, similarly to
-/// `FutureExt`.  A key difference with `FutureExt` comes from `Sequence` requiring `Collect`: it is
-/// currently not possible for arbitrary Rust closures to implement `Collect`, so there are
-/// `xxx_with` variant methods that allow you to manually close over a type `C: Collect` to manually
-/// capture `Collect` implementing types.  Tuples up to size 16 automatically implement `Collect`,
-/// so this is a convenient way to manually capture a reasonable number of such values.
+/// Extension trait for `Sequence` that provides useful combinator methods.
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
-    /// Map a function over result of this sequence.  The given function is run as soon as the
-    /// result is produced in the *same* call to `Sequence::step`, so there does not necessarily
-    /// have to be a `Collect` bound on the `R` result type.
-    fn map_ok<F, R>(self, f: F) -> MapOk<Self, F>
-    where
-        F: 'static + FnOnce(Self::Item) -> R,
-    {
-        MapOk::new(self, f)
-    }
-
-    /// Similar to `map`, but maps the given function over the error of this sequence, if it results
-    /// in an error.
-    fn map_err<F, R>(self, f: F) -> MapError<Self, F>
-    where
-        F: 'static + FnOnce(Self::Error) -> R,
-    {
-        MapError::new(self, f)
-    }
-
-    /// Similar to `map`, but maps the given function over the Result of this sequence, regardless
-    /// if it is an Ok or an Err.
+    /// Map a function over result of this sequence.
+    ///
+    /// The given function is run as soon as the result is produced in the *same* call to
+    /// `Sequence::step`, so there does not necessarily have to be a `Collect` bound on the `R`
+    /// result type.
     fn map<F, R>(self, f: F) -> Map<Self, F>
     where
-        F: 'static + FnOnce(Result<Self::Item, Self::Error>) -> R,
+        F: 'static + FnOnce(Self::Output) -> R,
     {
         Map::new(self, f)
     }
 
-    /// Execute another sequence step after this sequence completes, regardless of the success or
-    /// failure status.  The given callback is executed during a separate `Sequence::step` call
-    /// after this sequence completes, so the return value must implement `Collect` so that it can
-    /// be stored between gc mutations.
-    fn then<F, R>(self, f: F) -> Then<'gc, Self, F, R>
+    /// Execute another sequence step after this sequence completes.
+    ///
+    /// The given callback is executed during a separate `Sequence::step` call after this sequence
+    /// completes, so the return value must implement `Collect` so that it can be stored between gc
+    /// mutations.
+    fn then<F, R>(self, f: F) -> Then<Self, F, R>
     where
-        F: 'static + FnOnce(MutationContext<'gc, '_>, Result<Self::Item, Self::Error>) -> R,
-        R: IntoSequence<'gc>,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Output) -> R,
+        R: Sequence<'gc>,
     {
         Then::new(self, f)
     }
 
     /// Equivalent to `then` but calls the function with the given context parameter.
-    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<'gc, Self, C, F, R>
+    ///
+    /// The context parameter can be anything that implements `Collect`, it exists to allow closures
+    /// to manually close over variables that implement `Collect`, because there is no way currently
+    /// for closure types to automatically themselves implement `Collect` and are thus required to
+    /// be 'static.
+    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<Self, C, F, R>
     where
         C: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Result<Self::Item, Self::Error>) -> R,
-        R: IntoSequence<'gc>,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Output) -> R,
+        R: Sequence<'gc>,
     {
         ThenWith::new(self, c, f)
     }
 
-    /// Similar to `then`, but only calls the given function if this sequence completes
-    /// *successfully*.  Also similarly to `then`, it calls the given function in a separate
-    /// `Sequence::step` work unit.
-    fn and_then<F, R>(self, f: F) -> AndThen<'gc, Self, F, R>
-    where
-        F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Item) -> R,
-        R: IntoSequence<'gc>,
-    {
-        AndThen::new(self, f)
-    }
-
-    /// Equivalent to `and_then`, but calls the function with the given context parameter.
-    fn and_then_with<C, F, R>(self, c: C, f: F) -> AndThenWith<'gc, Self, C, F, R>
-    where
-        C: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Item) -> R,
-        R: IntoSequence<'gc>,
-    {
-        AndThenWith::new(self, c, f)
-    }
-
+    /// If this sequence results in another sequence, this combinator flattens them so that they are
+    /// executed one after another.  It is roughly equivalent to calling `s.then(|x| x)`.
     fn flatten(self) -> Flatten<'gc, Self>
     where
-        Self::Item: IntoSequence<'gc, Error = Self::Error>,
+        Self::Output: Sequence<'gc>,
     {
         Flatten::new(self)
     }
 
-    fn boxed(self) -> Box<Sequence<'gc, Item = Self::Item, Error = Self::Error> + 'gc>
+    /// Turn this sequence into a boxed sequence type.
+    ///
+    /// The return type is a `dyn Sequence` because where you would need to produce a boxed sequence
+    /// you generally are doing this to purposefully forget what the particular sequence type is,
+    /// and doing this here eases type inference.
+    fn boxed(self) -> Box<dyn Sequence<'gc, Output = Self::Output> + 'gc>
     where
         Self: 'gc,
     {

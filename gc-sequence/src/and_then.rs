@@ -1,45 +1,34 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::{IntoSequence, Sequence};
+use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub enum AndThen<'gc, S, F, R>
-where
-    S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, S::Item) -> R,
-    R: IntoSequence<'gc>,
-{
+pub enum AndThen<S, F, R> {
     First(S, Option<StaticCollect<F>>),
-    Second(R::Sequence),
+    Second(R),
 }
 
-impl<'gc, S, F, R> AndThen<'gc, S, F, R>
-where
-    S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, S::Item) -> R,
-    R: IntoSequence<'gc>,
-{
-    pub fn new(s: S, f: F) -> AndThen<'gc, S, F, R> {
+impl<S, F, R> AndThen<S, F, R> {
+    pub fn new(s: S, f: F) -> AndThen<S, F, R> {
         AndThen::First(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, F, R> Sequence<'gc> for AndThen<'gc, S, F, R>
+impl<'gc, S, F, R, I, I2, E> Sequence<'gc> for AndThen<S, F, R>
 where
-    S: Sequence<'gc>,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, S::Item) -> R,
-    R: IntoSequence<'gc, Error = S::Error>,
+    S: Sequence<'gc, Output = Result<I, E>>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, I) -> R,
+    R: Sequence<'gc, Output = Result<I2, E>>,
 {
-    type Item = R::Item;
-    type Error = R::Error;
+    type Output = Result<I2, E>;
 
-    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R::Item, R::Error>> {
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self {
             AndThen::First(s1, f) => match s1.step(mc) {
                 Some(Ok(res)) => {
-                    *self = AndThen::Second(f.take().unwrap().0(mc, res).into_sequence());
+                    *self = AndThen::Second(f.take().unwrap().0(mc, res));
                     None
                 }
                 Some(Err(err)) => Some(Err(err)),
@@ -53,45 +42,32 @@ where
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub enum AndThenWith<'gc, S, C, F, R>
-where
-    S: Sequence<'gc>,
-    C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Item) -> R,
-    R: IntoSequence<'gc>,
-{
+pub enum AndThenWith<S, C, F, R> {
     First(S, Option<(C, StaticCollect<F>)>),
-    Second(R::Sequence),
+    Second(R),
 }
 
-impl<'gc, S, C, F, R> AndThenWith<'gc, S, C, F, R>
-where
-    S: Sequence<'gc>,
-    C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Item) -> R,
-    R: IntoSequence<'gc>,
-{
-    pub fn new(s: S, c: C, f: F) -> AndThenWith<'gc, S, C, F, R> {
+impl<S, C, F, R> AndThenWith<S, C, F, R> {
+    pub fn new(s: S, c: C, f: F) -> AndThenWith<S, C, F, R> {
         AndThenWith::First(s, Some((c, StaticCollect(f))))
     }
 }
 
-impl<'gc, S, C, F, R> Sequence<'gc> for AndThenWith<'gc, S, C, F, R>
+impl<'gc, S, C, F, R, I, I2, E> Sequence<'gc> for AndThenWith<S, C, F, R>
 where
-    S: Sequence<'gc>,
+    S: Sequence<'gc, Output = Result<I, E>>,
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Item) -> R,
-    R: IntoSequence<'gc, Error = S::Error>,
+    F: 'static + FnOnce(MutationContext<'gc, '_>, C, I) -> R,
+    R: Sequence<'gc, Output = Result<I2, E>>,
 {
-    type Item = R::Item;
-    type Error = R::Error;
+    type Output = Result<I2, E>;
 
-    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Result<R::Item, R::Error>> {
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self {
             AndThenWith::First(s1, f) => match s1.step(mc) {
                 Some(Ok(res)) => {
                     let (c, StaticCollect(f)) = f.take().unwrap();
-                    *self = AndThenWith::Second(f(mc, c, res).into_sequence());
+                    *self = AndThenWith::Second(f(mc, c, res));
                     None
                 }
                 Some(Err(err)) => Some(Err(err)),

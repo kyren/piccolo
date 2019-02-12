@@ -8,17 +8,16 @@ macro_rules! make_sequencable_arena {
             use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
             use gc_sequence::{Sequence, SequenceExt};
 
-            type DynSequence<'gc> =
-                dyn Sequence<'gc, Item = Box<dyn Any + 'static>, Error = Box<dyn Any + 'static>>
-                    + 'gc;
-
             use super::$root;
 
             #[derive(Collect)]
             #[collect(empty_drop)]
             struct InnerRoot<'gc> {
                 root: $root<'gc>,
-                current_sequence: GcCell<'gc, Option<Box<DynSequence<'gc>>>>,
+                current_sequence: GcCell<
+                    'gc,
+                    Option<Box<dyn Sequence<'gc, Output = Box<dyn Any + 'static>> + 'gc>>,
+                >,
             }
 
             make_arena!(InnerArena, InnerRoot);
@@ -59,22 +58,14 @@ macro_rules! make_sequencable_arena {
                 }
 
                 #[allow(unused)]
-                pub fn sequence<F, I, E>(mut self, f: F) -> Sequencer<I, E>
+                pub fn sequence<F, O>(mut self, f: F) -> Sequencer<O>
                 where
-                    I: 'static,
-                    E: 'static,
-                    F: for<'gc> FnOnce(
-                        &$root<'gc>,
-                    )
-                        -> Box<Sequence<'gc, Item = I, Error = E> + 'gc>,
+                    O: 'static,
+                    F: for<'gc> FnOnce(&$root<'gc>) -> Box<dyn Sequence<'gc, Output = O> + 'gc>,
                 {
                     self.0.mutate(move |mc, root| {
-                        *root.current_sequence.write(mc) = Some(
-                            f(&root.root)
-                                .map_ok(|r| -> Box<Any> { Box::new(r) })
-                                .map_err(|e| -> Box<Any> { Box::new(e) })
-                                .boxed(),
-                        );
+                        *root.current_sequence.write(mc) =
+                            Some(f(&root.root).map(|r| -> Box<Any> { Box::new(r) }).boxed());
                     });
                     Sequencer(self.0, PhantomData)
                 }
@@ -103,18 +94,14 @@ macro_rules! make_sequencable_arena {
                 }
             }
 
-            pub(super) struct Sequencer<I, E>(InnerArena, PhantomData<(I, E)>)
-            where
-                I: 'static,
-                E: 'static;
+            pub(super) struct Sequencer<O>(InnerArena, PhantomData<O>);
 
-            impl<I, E> Sequencer<I, E>
+            impl<O> Sequencer<O>
             where
-                I: 'static,
-                E: 'static,
+                O: 'static,
             {
                 #[allow(unused)]
-                pub fn step(mut self) -> Result<(Arena, Result<I, E>), Sequencer<I, E>> {
+                pub fn step(mut self) -> Result<(Arena, O), Sequencer<O>> {
                     let r = self.0.mutate(move |mc, root| {
                         root.current_sequence.write(mc).as_mut().unwrap().step(mc)
                     });
@@ -123,13 +110,10 @@ macro_rules! make_sequencable_arena {
                         self.0.mutate(|mc, root| {
                             *root.current_sequence.write(mc) = None;
                         });
-
-                        let r = match r {
-                            Ok(r) => Ok(*Box::<Any + 'static>::downcast(r).unwrap()),
-                            Err(e) => Err(*Box::<Any + 'static>::downcast(e).unwrap()),
-                        };
-
-                        Ok((Arena(self.0), r))
+                        Ok((
+                            Arena(self.0),
+                            *Box::<dyn Any + 'static>::downcast(r).unwrap(),
+                        ))
                     } else {
                         Err(self)
                     }
