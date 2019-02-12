@@ -26,35 +26,35 @@ usable from safe Rust.  It achieves this by combining three techniques:
    macros.
 2) Branding `Gc` pointers by unique, invariant "generative" lifetimes to ensure
    that such pointers are isolated to a single root object, and to guarantee
-   that outside mutations all such pointers are either reachable from the root
-   object or are safe to collect.
+   that, outside an active call to `mutate`, all such pointers are either
+   reachable from the root object or are safe to collect.
 3) The mutation API, while being safe via "generativity", does not make it easy
    to allow garbage collection to take place continuously.  Since no garbage
-   collection can take place during calls to `mutate`, long running mutations
-   are problematic.  By using a `futures`-like combinator based "sequencing"
-   API, we can recover the ability for garbage collect to take place with as
-   fine of a granularity as necessary, with garbage collection taking place
-   in-between the "sequence" steps.
+   collection at all can take place during a call to `mutate`, long running
+   mutations are problematic.  By using a `futures`-like combinator based
+   "sequencing" API, we can recover the ability for garbage collect to take
+   place with as fine of a granularity as necessary, with garbage collection
+   taking place in-between the "sequence" steps.
 
 (These ideas are not all mine, this project is heavily derived from
 [rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 and the idea of using "generativity" comes from [You can't spell trust without
-Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).
+Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).)
 
-(While the interface to garbage collected pointers is interesting, the actual
+While the interface to garbage collected pointers is interesting, the actual
 garbage collector itself is currently only a very basic (but adequate)
 mark-and-sweep collector.  This could be replaced in the future with a better
-design.)
+design.
 
 ### What currently works ###
 
 * An actual cycle detecting, incremental GC similar to the one in PUC-Rio Lua
   5.3
-* Lua is compiled to VM bytecode similar to PUC-Rio Lua's bytecode, and there
-  are a complete set of VM instructions implemented (minus bitwise mathematical
+* Lua is compiled to VM bytecode similar to PUC-Rio Lua's, and there are a
+  complete set of VM instructions implemented (minus bitwise mathematical
   operators).
 * Most of the core Lua language works (currently only missing bitwise
-  mathematical operators), some tricky Lua features that currently work:
+  mathematical operators).  Some tricky Lua features that currently work:
   * Real closures with proper upvalue handling
   * Tail calls
   * Variable arguments and returns
@@ -64,15 +64,15 @@ design.)
 * A few tiny bits of the stdlib
 * Basic support for Rust callbacks (missing some fast-path APIs that I think
   will be necessary).
-* A simple `repl` (try it with `cargo run luster`)
+* A simple REPL (try it with `cargo run luster`!)
 
 ### What currently doesn't work ###
 
 * Most of the stdlib is not implemented (`debug` (which may never be completely
   implemented), `io`, `math`, `os`, `package`, `string`, `table`, `utf8`, most
   top-level functions are unimplemented.  All that works right now is: `print`,
-  `error`, and `pcall`, and the hard bits from `coroutine`.
-* Metatables and metamethods.  Most of this will not be terribly hard to
+  `error`, `pcall`, and the hard bits from `coroutine`.
+* Metatables and metamethods.  Most of this should not be terribly hard to
   implement *except* `__gc`, which will require implementing finalizers in
   `gc-arena`.
 * Garbage collector finalization.  An algorithm and basic API for finalization
@@ -95,8 +95,8 @@ consider non-goals.  This list is also preliminary, everything here is up for
 discussion:
 
 * An API compatible with the PUC-Rio Lua C API.  It would be amazingly difficult
-  to implement and would be very slow, and much of it would be impossible (esp
-  longjmp error handling and adjacent behavior).
+  to implement and would be very slow, and some of it would be basically
+  impossible (longjmp error handling and adjacent behavior).
 * Perfect compatibility with certain classes of behavior in PUC-Rio Lua:
   * PUC-Rio Lua behaves differently on systems depending on the OS, environment,
     compilation settings, system locale (lexing numbers changes depending on the
