@@ -127,7 +127,7 @@ macro_rules! make_arena {
                 }
             }
 
-            /// Similar to `new`, but allows for a root creation function that can fail.
+            /// Similar to `new`, but allows for constructor that can fail.
             #[allow(unused)]
             pub fn try_new<F, E>(
                 arena_parameters: $crate::ArenaParameters,

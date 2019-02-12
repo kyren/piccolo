@@ -1,5 +1,4 @@
 use gc_arena::{ArenaParameters, Collect, Gc};
-
 use gc_sequence::{self as sequence, make_sequencable_arena, SequenceExt, SequenceResultExt};
 
 #[derive(Collect)]

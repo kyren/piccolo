@@ -1,4 +1,4 @@
-use gc_arena::{ArenaParameters, Collect};
+use gc_arena::{ArenaParameters, Collect, MutationContext};
 use gc_sequence::{make_sequencable_arena, Sequence};
 
 use crate::{
@@ -14,9 +14,7 @@ pub struct LuaRoot<'gc> {
     pub interned_strings: InternedStringSet<'gc>,
 }
 
-pub struct Lua {
-    arena: Option<lua_arena::Arena>,
-}
+pub struct Lua(Option<lua_arena::Arena>);
 
 impl Lua {
     pub fn new() -> Lua {
@@ -32,26 +30,48 @@ impl Lua {
 
             root
         });
-        Lua { arena: Some(arena) }
+        Lua(Some(arena))
     }
 
-    /// Runs a sequence of actions inside the given Lua context and return the result.
-    pub fn sequence<F, O>(&mut self, f: F) -> O
+    /// Runs a single action inside the Lua arena, during which no garbage collection may take place.
+    pub fn mutate<F, R>(&mut self, f: F) -> R
     where
-        O: 'static,
-        F: for<'gc> FnOnce(LuaRoot<'gc>) -> Box<dyn Sequence<'gc, Output = O> + 'gc>,
+        R: 'static,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>, LuaRoot<'gc>) -> R,
     {
-        let mut sequencer = self.arena.take().unwrap().sequence(move |root| f(*root));
+        let arena = self.0.as_mut().unwrap();
+        let r = arena.mutate(move |mc, root| f(mc, *root));
+        if arena.allocation_debt() > COLLECTOR_GRANULARITY {
+            arena.collect_debt();
+        }
+        r
+    }
+
+    /// Runs a sequence of actions inside the Lua arena and return the result.  Garbage collection
+    /// may take place in-between sequence steps.
+    pub fn sequence<F, R>(&mut self, f: F) -> R
+    where
+        R: 'static,
+        F: for<'gc> FnOnce(LuaRoot<'gc>) -> Box<dyn Sequence<'gc, Output = R> + 'gc>,
+    {
+        let mut sequencer = self.0.take().unwrap().sequence(move |root| f(*root));
         loop {
             match sequencer.step() {
                 Ok((arena, output)) => {
-                    self.arena = Some(arena);
+                    self.0 = Some(arena);
                     return output;
                 }
-                Err(s) => sequencer = s,
+                Err(s) => {
+                    sequencer = s;
+                    if sequencer.allocation_debt() > COLLECTOR_GRANULARITY {
+                        sequencer.collect_debt();
+                    }
+                }
             }
         }
     }
 }
 
 make_sequencable_arena!(lua_arena, LuaRoot);
+
+const COLLECTOR_GRANULARITY: f64 = 1024.0;
