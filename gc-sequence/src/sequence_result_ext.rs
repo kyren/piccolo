@@ -49,7 +49,8 @@ pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I,
         AndThen::new(self, f)
     }
 
-    /// Equivalent to `and_then`, but calls the function with the given context parameter.
+    /// Equivalent to `SequenceResultExt::and_then`, but calls the function with the given context
+    /// parameter.
     fn and_then_with<C, F, R>(self, c: C, f: F) -> AndThenWith<Self, C, F, I>
     where
         C: Collect,
@@ -72,7 +73,8 @@ pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I,
         FlattenOk::new(AndThen::new(self, f))
     }
 
-    /// Equivalent to `and_then`, but calls the function with the given context parameter.
+    /// Equivalent to `SequenceResultExt::and_then`, but calls the function with the given context
+    /// parameter.
     fn and_chain_with<C, F, R, I2>(self, c: C, f: F) -> FlattenOk<AndThenWith<Self, C, F, I>, R>
     where
         C: Collect,
