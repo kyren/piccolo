@@ -3,6 +3,7 @@ name = "luster"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
+license = "MIT OR CC0"
 
 [workspace]
 members = [

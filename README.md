@@ -120,3 +120,12 @@ discussion:
 * `package.loadlib` and all functionality which allows loading C libraries.
 * Being able to predictably catch `__gc` errors in Lua (I am not sure about this
   one yet, this may be difficult or it may not).
+
+## License ##
+
+`luster` is licensed under either of:
+
+* MIT license (LICENSE-MIT)[LICENSE-MIT] or http://opensource.org/licenses/MIT
+* CC0 (LICENSE-CC0)[LICENSE-CC0] or https://creativecommons.org/publicdomain/zero/1.0/
+
+at your option.
