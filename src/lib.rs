@@ -10,7 +10,6 @@ mod lexer;
 mod lua;
 mod opcode;
 pub mod parser;
-pub mod sequence;
 mod string;
 mod table;
 mod thread;
@@ -28,12 +27,9 @@ pub use compiler::{compile, compile_chunk, CompilerError};
 pub use constant::Constant;
 pub use error::{Error, RuntimeError, StaticError, TypeError};
 pub use lexer::{Lexer, LexerError, Token};
-pub use lua::{Lua, LuaContext};
+pub use lua::{Lua, LuaRoot};
 pub use opcode::OpCode;
 pub use parser::{parse_chunk, ParserError};
-pub use sequence::{
-    sequence_fn, sequence_fn_with, IntoSequence, Sequence, SequenceExt, SequenceFn, SequenceFnWith,
-};
 pub use string::{InternedStringSet, String, StringError};
 pub use table::{InvalidTableKey, Table, TableState};
 pub use thread::{Thread, ThreadError, ThreadSequence};

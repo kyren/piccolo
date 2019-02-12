@@ -1,10 +1,8 @@
 use std::fs::{read_dir, File};
 use std::io::{stdout, Write};
 
-use luster::{
-    compile, io, parse_chunk, sequence_fn, Closure, Error, Function, Lua, SequenceExt,
-    ThreadSequence, Value,
-};
+use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
+use luster::{compile, io, parse_chunk, Closure, Error, Function, Lua, ThreadSequence, Value};
 
 fn test_dir(dir: &str, run_code: bool) {
     let mut file_failed = false;
@@ -20,23 +18,22 @@ fn test_dir(dir: &str, run_code: bool) {
                 let _ = writeln!(stdout(), "{} file {:?}", op, path);
                 if run_code {
                     let mut lua = Lua::new();
-                    let r = lua.sequence(|_| {
-                        sequence_fn(move |mc, lc| {
+                    let r = lua.sequence(|root| {
+                        sequence::from_fn_with(root, move |mc, root| {
                             Ok(Closure::new(
                                 mc,
-                                compile(mc, lc.interned_strings, file)?,
-                                Some(lc.globals),
+                                compile(mc, root.interned_strings, file)?,
+                                Some(root.globals),
                             )?)
                         })
-                        .and_then(move |mc, lc, closure| {
+                        .and_chain_with(root, move |mc, root, closure| {
                             Ok(ThreadSequence::call_function(
                                 mc,
-                                lc.main_thread,
+                                root.main_thread,
                                 Function::Closure(closure),
                                 &[],
                             )?)
                         })
-                        .flatten()
                         .map_ok(|r| match &r[..] {
                             &[Value::Boolean(true)] => false,
                             v => {

@@ -5,35 +5,44 @@ use crate::Sequence;
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub enum Then<S, F, R> {
+pub enum Then<'gc, S, F>
+where
+    S: Sequence<'gc>,
+{
     First(S, Option<StaticCollect<F>>),
-    Second(R),
+    Second(Option<(S::Output, StaticCollect<F>)>),
 }
 
-impl<S, F, R> Then<S, F, R> {
-    pub fn new(s: S, f: F) -> Then<S, F, R> {
+impl<'gc, S, F> Then<'gc, S, F>
+where
+    S: Sequence<'gc>,
+{
+    pub fn new(s: S, f: F) -> Then<'gc, S, F> {
         Then::First(s, Some(StaticCollect(f)))
     }
 }
 
-impl<'gc, S, F, R> Sequence<'gc> for Then<S, F, R>
+impl<'gc, S, F, R> Sequence<'gc> for Then<'gc, S, F>
 where
     S: Sequence<'gc>,
+    S::Output: Collect,
     F: 'static + FnOnce(MutationContext<'gc, '_>, S::Output) -> R,
-    R: Sequence<'gc>,
 {
-    type Output = <R as Sequence<'gc>>::Output;
+    type Output = R;
 
-    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<R> {
         match self {
-            Then::First(s1, f) => match s1.step(mc) {
+            Then::First(seq, f) => match seq.step(mc) {
                 Some(res) => {
-                    *self = Then::Second(f.take().unwrap().0(mc, res));
+                    *self = Then::Second(Some((res, f.take().unwrap())));
                     None
                 }
                 None => None,
             },
-            Then::Second(s2) => s2.step(mc),
+            Then::Second(sec) => {
+                let (res, f) = sec.take().expect("cannot step a finished sequence");
+                Some(f.0(mc, res))
+            }
         }
     }
 }
@@ -41,37 +50,46 @@ where
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
-pub enum ThenWith<S, C, F, R> {
+pub enum ThenWith<'gc, S, C, F>
+where
+    S: Sequence<'gc>,
+{
     First(S, Option<(C, StaticCollect<F>)>),
-    Second(R),
+    Second(Option<(C, S::Output, StaticCollect<F>)>),
 }
 
-impl<S, C, F, R> ThenWith<S, C, F, R> {
-    pub fn new(s: S, c: C, f: F) -> ThenWith<S, C, F, R> {
+impl<'gc, S, C, F> ThenWith<'gc, S, C, F>
+where
+    S: Sequence<'gc>,
+{
+    pub fn new(s: S, c: C, f: F) -> ThenWith<'gc, S, C, F> {
         ThenWith::First(s, Some((c, StaticCollect(f))))
     }
 }
 
-impl<'gc, S, C, F, R> Sequence<'gc> for ThenWith<S, C, F, R>
+impl<'gc, S, C, F, R> Sequence<'gc> for ThenWith<'gc, S, C, F>
 where
     S: Sequence<'gc>,
+    S::Output: Collect,
     C: Collect,
     F: 'static + FnOnce(MutationContext<'gc, '_>, C, S::Output) -> R,
-    R: Sequence<'gc>,
 {
-    type Output = <R as Sequence<'gc>>::Output;
+    type Output = R;
 
-    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<R> {
         match self {
-            ThenWith::First(s1, f) => match s1.step(mc) {
+            ThenWith::First(seq, cf) => match seq.step(mc) {
                 Some(res) => {
-                    let (c, StaticCollect(f)) = f.take().unwrap();
-                    *self = ThenWith::Second(f(mc, c, res));
+                    let (c, f) = cf.take().unwrap();
+                    *self = ThenWith::Second(Some((c, res, f)));
                     None
                 }
                 None => None,
             },
-            ThenWith::Second(s2) => s2.step(mc),
+            ThenWith::Second(sec) => {
+                let (c, res, f) = sec.take().expect("cannot step a finished sequence");
+                Some(f.0(mc, c, res))
+            }
         }
     }
 }

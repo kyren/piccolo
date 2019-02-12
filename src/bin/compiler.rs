@@ -5,7 +5,8 @@ use std::env;
 use std::error::Error as StdError;
 use std::fs::File;
 
-use luster::{compile, io, sequence_fn, Error, Lua, SequenceExt};
+use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
+use luster::{compile, io, Error, Lua};
 
 fn main() -> Result<(), Box<StdError>> {
     let mut args = env::args();
@@ -15,12 +16,15 @@ fn main() -> Result<(), Box<StdError>> {
     )?)?;
 
     let mut lua = Lua::new();
-    lua.sequence(|_| {
-        sequence_fn(move |mc, lc| -> Result<(), Error> {
-            let function = compile(mc, lc.interned_strings, file)?;
-            println!("output: {:#?}", function);
-            Ok(())
-        })
+    lua.sequence(|root| {
+        sequence::from_fn_with(
+            root.interned_strings,
+            |mc, interned_strings| -> Result<(), Error> {
+                let function = compile(mc, interned_strings, file)?;
+                println!("output: {:#?}", function);
+                Ok(())
+            },
+        )
         .map_err(|e| e.to_static())
         .boxed()
     })?;

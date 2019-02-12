@@ -20,13 +20,15 @@ fn test_sequencer() {
     let mut sequence = arena.sequence(|root| {
         sequence::from_fn_with(root.test, |_, test| {
             if *test == 42 {
-                sequence::ok(*test + 10)
+                Ok(*test + 10)
             } else {
-                sequence::err("will not be generated")
+                Err("will not be generated")
             }
         })
-        .and_then(|_, r| sequence::ok(r + 12))
-        .then(|_, res| sequence::done(res.expect("should not be error")))
+        .and_then(|_, r| Ok(r + 12))
+        .and_chain(|_, r| Ok(sequence::ok(r - 10)))
+        .then(|_, res| res.expect("should not be error"))
+        .chain(|_, r| sequence::done(r + 10))
         .map(|r| sequence::done(r - 60))
         .flatten()
         .boxed()

@@ -2,7 +2,7 @@ use gc_arena::{Collect, MutationContext};
 
 use crate::{
     flatten::Flatten,
-    map::Map,
+    map::{Map, MapWith},
     then::{Then, ThenWith},
     Sequence,
 };
@@ -11,9 +11,8 @@ use crate::{
 pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     /// Map a function over result of this sequence.
     ///
-    /// The given function is run as soon as the result is produced in the *same* call to
-    /// `Sequence::step`, so there does not necessarily have to be a `Collect` bound on the `R`
-    /// result type.
+    /// The given function is run in the same call to `Sequence::step` that produces the result of
+    /// this sequence.
     fn map<F, R>(self, f: F) -> Map<Self, F>
     where
         F: 'static + FnOnce(Self::Output) -> R,
@@ -21,36 +20,79 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
         Map::new(self, f)
     }
 
-    /// Execute another sequence step after this sequence completes.
+    /// Equivalent to `SequencExt::map` but calls the function with a context parameter.
     ///
-    /// The given callback is executed during a separate `Sequence::step` call after this sequence
-    /// completes, so the return value must implement `Collect` so that it can be stored between gc
-    /// mutations.
-    fn then<F, R>(self, f: F) -> Then<Self, F, R>
+    /// The context parameter can be anything that implements `Collect`.  It exists to allow
+    /// closures to manually close over variables that implement `Collect`, because there is no way
+    /// currently for closure types to automatically implement `Collect` and are thus required to be
+    /// 'static.
+    fn map_with<C, F, R>(self, c: C, f: F) -> MapWith<Self, C, F>
     where
+        C: Collect,
+        F: 'static + FnOnce(C, Self::Output) -> R,
+    {
+        MapWith::new(self, c, f)
+    }
+
+    /// Execute a separate sequence step after this sequence completes.
+    ///
+    /// The given function is run in a separate `Sequence::step` call from the one that produces the
+    /// result of this sequence.
+    fn then<F, R>(self, f: F) -> Then<'gc, Self, F>
+    where
+        Self::Output: Collect,
         F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Output) -> R,
-        R: Sequence<'gc>,
     {
         Then::new(self, f)
     }
 
-    /// Equivalent to `then` but calls the function with the given context parameter.
+    /// Equivalent to `SequenceExt::then` but calls the function with the given context parameter.
     ///
     /// The context parameter can be anything that implements `Collect`, it exists to allow closures
     /// to manually close over variables that implement `Collect`, because there is no way currently
     /// for closure types to automatically themselves implement `Collect` and are thus required to
     /// be 'static.
-    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<Self, C, F, R>
+    fn then_with<C, F, R>(self, c: C, f: F) -> ThenWith<'gc, Self, C, F>
     where
         C: Collect,
+        Self::Output: Collect,
         F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Output) -> R,
-        R: Sequence<'gc>,
     {
         ThenWith::new(self, c, f)
     }
 
+    /// Call a function on the result of this sequence, producing a new sequence to run.
+    ///
+    /// The given function is run in a separate `Sequence::step` call to the one that produces a
+    /// result of this sequence, and the `Sequence` that this function results in is run in
+    /// additional separate `Sequence::step` calls.
+    fn chain<F, R>(self, f: F) -> Flatten<'gc, Then<'gc, Self, F>>
+    where
+        Self::Output: Collect,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, Self::Output) -> R,
+        R: Sequence<'gc>,
+    {
+        Flatten::new(Then::new(self, f))
+    }
+
+    /// Equivalent to `SequenceExt::chain` but calls the function with the given context parameter.
+    ///
+    /// The context parameter can be anything that implements `Collect`, it exists to allow closures
+    /// to manually close over variables that implement `Collect`, because there is no way currently
+    /// for closure types to automatically themselves implement `Collect` and are thus required to
+    /// be 'static.
+    fn chain_with<C, F, R>(self, c: C, f: F) -> Flatten<'gc, ThenWith<'gc, Self, C, F>>
+    where
+        C: Collect,
+        Self::Output: Collect,
+        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Output) -> R,
+        R: Sequence<'gc>,
+    {
+        Flatten::new(ThenWith::new(self, c, f))
+    }
+
     /// If this sequence results in another sequence, this combinator flattens them so that they are
-    /// executed one after another.  It is roughly equivalent to calling `s.then(|x| x)`.
+    /// executed one after another.
     fn flatten(self) -> Flatten<'gc, Self>
     where
         Self::Output: Sequence<'gc>,

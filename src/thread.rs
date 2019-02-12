@@ -6,11 +6,11 @@ use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, GcCell, MutationContext};
+use gc_sequence::Sequence;
 
 use crate::{
-    callback::CallbackSequenceBox, vm::run_vm, CallbackResult, Closure, Continuation, Error,
-    Function, LuaContext, RegisterIndex, Sequence, TypeError, UpValue, UpValueState, Value,
-    VarCount,
+    vm::run_vm, CallbackResult, Closure, Continuation, Error, Function, RegisterIndex, TypeError,
+    UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -132,18 +132,13 @@ impl<'gc> ThreadSequence<'gc> {
 }
 
 impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
-    type Item = Vec<Value<'gc>>;
-    type Error = Error<'gc>;
+    type Output = Result<Vec<Value<'gc>>, Error<'gc>>;
 
-    fn step(
-        &mut self,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-    ) -> Option<Result<Self::Item, Self::Error>> {
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self.0.mode() {
             ThreadMode::Results => self.0.take_results(mc),
             ThreadMode::Callback => {
-                self.0.step_callback(mc, lc).unwrap();
+                self.0.step_callback(mc).unwrap();
                 None
             }
             ThreadMode::Lua => {
@@ -255,18 +250,14 @@ impl<'gc> Thread<'gc> {
     }
 
     // If the thread is in `Callback` mode, step the callback
-    pub fn step_callback(
-        self,
-        mc: MutationContext<'gc, '_>,
-        lc: LuaContext<'gc>,
-    ) -> Result<(), ThreadError> {
+    pub fn step_callback(self, mc: MutationContext<'gc, '_>) -> Result<(), ThreadError> {
         let mut state = self.0.write(mc);
         check_mode(&state, ThreadMode::Callback)?;
         match state.frames.last_mut() {
             Some(Frame::Callback(sequence)) => {
                 let mut sequence = sequence.take().expect("pending callback missing");
                 drop(state);
-                match sequence.step(mc, lc) {
+                match sequence.step(mc) {
                     None => {
                         let mut state = self.0.write(mc);
                         match state.frames.last_mut() {
@@ -819,11 +810,13 @@ enum Frame<'gc> {
     },
     Continuation {
         bottom: usize,
-        continuation: Option<Continuation>,
+        continuation: Option<Continuation<'gc>>,
     },
     StartCoroutine(Function<'gc>),
     ResumeCoroutine,
-    Callback(Option<CallbackSequenceBox<'gc>>),
+    Callback(
+        Option<Box<dyn Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>> + 'gc>>,
+    ),
 }
 
 fn get_mode<'gc>(state: &ThreadState<'gc>) -> ThreadMode {

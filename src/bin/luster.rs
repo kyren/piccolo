@@ -3,11 +3,12 @@ use std::fs::File;
 use std::vec::Vec;
 
 use clap::{App, Arg};
-use luster::{
-    compile, io, sequence_fn, Closure, Error, Function, Lua, ParserError, SequenceExt, StaticError,
-    ThreadSequence,
-};
 use rustyline::Editor;
+
+use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
+use luster::{
+    compile, io, Closure, Error, Function, Lua, ParserError, StaticError, ThreadSequence,
+};
 
 fn run_repl(lua: &mut Lua) {
     let mut editor = Editor::<()>::new();
@@ -24,9 +25,9 @@ fn run_repl(lua: &mut Lua) {
 
             let line_clone = line.clone();
 
-            match lua.sequence(move |_| {
-                sequence_fn(move |mc, lc| {
-                    let result = compile(mc, lc.interned_strings, line_clone.as_bytes());
+            match lua.sequence(move |root| {
+                sequence::from_fn_with(root, move |mc, root| {
+                    let result = compile(mc, root.interned_strings, line_clone.as_bytes());
                     let result = match result {
                         Ok(res) => Ok(res),
                         err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => {
@@ -34,21 +35,20 @@ fn run_repl(lua: &mut Lua) {
                         }
                         Err(_) => compile(
                             mc,
-                            lc.interned_strings,
+                            root.interned_strings,
                             (String::new() + "return " + &line_clone).as_bytes(),
                         ),
                     };
-                    Ok(Closure::new(mc, result?, Some(lc.globals))?)
+                    Ok(Closure::new(mc, result?, Some(root.globals))?)
                 })
-                .and_then(|mc, lc, closure| {
+                .and_chain_with(root, |mc, root, closure| {
                     Ok(ThreadSequence::call_function(
                         mc,
-                        lc.main_thread,
+                        root.main_thread,
                         Function::Closure(closure),
                         &[],
                     )?)
                 })
-                .flatten()
                 .map(|values| match values {
                     Ok(values) => {
                         let output = values
@@ -113,23 +113,22 @@ fn main() -> Result<(), Box<StdError>> {
 
     let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
 
-    lua.sequence(|_| {
-        sequence_fn(|mc, lc| {
+    lua.sequence(|root| {
+        sequence::from_fn_with(root, |mc, root| {
             Ok(Closure::new(
                 mc,
-                compile(mc, lc.interned_strings, file)?,
-                Some(lc.globals),
+                compile(mc, root.interned_strings, file)?,
+                Some(root.globals),
             )?)
         })
-        .and_then(|mc, lc, closure| {
+        .and_chain_with(root, |mc, root, closure| {
             Ok(ThreadSequence::call_function(
                 mc,
-                lc.main_thread,
+                root.main_thread,
                 Function::Closure(closure),
                 &[],
             )?)
         })
-        .flatten()
         .map_ok(|_| ())
         .map_err(|e| e.to_static())
         .boxed()

@@ -1,11 +1,12 @@
 use gc_arena::MutationContext;
+use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 
 use crate::{
-    sequence_fn_with, thread::ThreadMode, Callback, CallbackResult, IntoSequence, LuaContext,
-    RuntimeError, SequenceExt, String, Table, Thread, ThreadSequence, TypeError, Value,
+    thread::ThreadMode, Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Thread,
+    ThreadSequence, TypeError, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env: Table<'gc>) {
+pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env: Table<'gc>) {
     let coroutine = Table::new(mc);
 
     coroutine
@@ -16,19 +17,20 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                 let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
                     value => {
-                        return Err(TypeError {
-                            expected: "function",
-                            found: value.type_name(),
-                        }
-                        .into())
-                        .into_sequence()
+                        return sequence::err(
+                            TypeError {
+                                expected: "function",
+                                found: value.type_name(),
+                            }
+                            .into(),
+                        )
                         .boxed();
                     }
                 };
 
-                sequence_fn_with(function, |mc, _, function| {
+                sequence::from_fn_with(function, |mc, function| {
                     let thread = Thread::new(mc, true);
-                    thread.start_suspended(mc, function)?;
+                    thread.start_suspended(mc, function).unwrap();
                     Ok(CallbackResult::Return(vec![Value::Thread(thread)]))
                 })
                 .boxed()
@@ -40,22 +42,23 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"resume"),
-            Callback::new(mc, |mut args| {
+            Callback::new_with(mc, root.interned_strings, |interned_strings, mut args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
-                        return Err(TypeError {
-                            expected: "thread",
-                            found: value.type_name(),
-                        }
-                        .into())
-                        .into_sequence()
+                        return sequence::err(
+                            TypeError {
+                                expected: "thread",
+                                found: value.type_name(),
+                            }
+                            .into(),
+                        )
                         .boxed();
                     }
                 };
 
                 args.remove(0);
-                sequence_fn_with((thread, args), |mc, _, (thread, args)| {
+                sequence::from_fn_with((thread, args), |mc, (thread, args)| {
                     if let Ok(()) = thread.resume(mc, &args) {
                         Ok(ThreadSequence(thread))
                     } else {
@@ -65,16 +68,14 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                         .into())
                     }
                 })
-                .flatten()
-                .then(|mc, lc, res| {
+                .flatten_ok()
+                .then_with(*interned_strings, |mc, interned_strings, res| {
                     Ok(CallbackResult::Return(match res {
                         Ok(mut res) => {
                             res.insert(0, Value::Boolean(true));
                             res
                         }
-                        Err(err) => {
-                            vec![Value::Boolean(false), err.to_value(mc, lc.interned_strings)]
-                        }
+                        Err(err) => vec![Value::Boolean(false), err.to_value(mc, interned_strings)],
                     }))
                 })
                 .boxed()
@@ -86,19 +87,22 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"status"),
-            Callback::new_immediate(mc, |args| {
+            Callback::new(mc, |args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
-                        return Err(TypeError {
-                            expected: "thread",
-                            found: value.type_name(),
-                        }
-                        .into());
+                        return sequence::err(
+                            TypeError {
+                                expected: "thread",
+                                found: value.type_name(),
+                            }
+                            .into(),
+                        )
+                        .boxed();
                     }
                 };
 
-                Ok(CallbackResult::Return(vec![Value::String(
+                sequence::ok(CallbackResult::Return(vec![Value::String(
                     String::new_static(match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Results => b"dead",
                         ThreadMode::Lua => b"normal",
@@ -106,6 +110,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
                         ThreadMode::Suspended => b"suspended",
                     }),
                 )]))
+                .boxed()
             }),
         )
         .unwrap();
@@ -114,7 +119,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _: LuaContext<'gc>, env
         .set(
             mc,
             String::new_static(b"yield"),
-            Callback::new_immediate(mc, |args| Ok(CallbackResult::Yield(args))),
+            Callback::new(mc, |args| sequence::ok(CallbackResult::Yield(args)).boxed()),
         )
         .unwrap();
 

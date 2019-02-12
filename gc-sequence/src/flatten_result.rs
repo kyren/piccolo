@@ -5,18 +5,18 @@ use crate::Sequence;
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Collect)]
 #[collect(empty_drop)]
-pub enum FlattenResult<S, I> {
+pub enum FlattenOk<S, I> {
     First(S),
     Second(I),
 }
 
-impl<S, I> FlattenResult<S, I> {
-    pub fn new(s: S) -> FlattenResult<S, I> {
-        FlattenResult::First(s)
+impl<S, I> FlattenOk<S, I> {
+    pub fn new(s: S) -> FlattenOk<S, I> {
+        FlattenOk::First(s)
     }
 }
 
-impl<'gc, S, I, E, I2> Sequence<'gc> for FlattenResult<S, I>
+impl<'gc, S, I, E, I2> Sequence<'gc> for FlattenOk<S, I>
 where
     S: Sequence<'gc, Output = Result<I, E>>,
     I: Sequence<'gc, Output = Result<I2, E>>,
@@ -25,15 +25,15 @@ where
 
     fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self {
-            FlattenResult::First(f) => match f.step(mc) {
+            FlattenOk::First(f) => match f.step(mc) {
                 Some(Ok(s)) => {
-                    *self = FlattenResult::Second(s);
+                    *self = FlattenOk::Second(s);
                     None
                 }
                 Some(Err(err)) => Some(Err(err)),
                 None => None,
             },
-            FlattenResult::Second(s) => s.step(mc),
+            FlattenOk::Second(s) => s.step(mc),
         }
     }
 }

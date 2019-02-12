@@ -2,7 +2,7 @@ use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::Sequence;
 
-#[must_use = "sequences do nothing unless steped"]
+#[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
 #[collect(empty_drop)]
 pub struct MapOk<S, F>(S, Option<StaticCollect<F>>);
@@ -27,6 +27,37 @@ where
                 .take()
                 .expect("cannot step a finished sequence")
                 .0(res))),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+#[must_use = "sequences do nothing unless stepped"]
+#[derive(Debug, Collect)]
+#[collect(empty_drop)]
+pub struct MapOkWith<S, C, F>(S, Option<(C, StaticCollect<F>)>);
+
+impl<S, C, F> MapOkWith<S, C, F> {
+    pub fn new(s: S, c: C, f: F) -> MapOkWith<S, C, F> {
+        MapOkWith(s, Some((c, StaticCollect(f))))
+    }
+}
+
+impl<'gc, S, C, F, I, E, R> Sequence<'gc> for MapOkWith<S, C, F>
+where
+    S: Sequence<'gc, Output = Result<I, E>>,
+    C: Collect,
+    F: 'static + FnOnce(C, I) -> R,
+{
+    type Output = Result<R, E>;
+
+    fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
+        match self.0.step(mc) {
+            Some(Ok(res)) => {
+                let (c, StaticCollect(f)) = self.1.take().expect("cannot step a finished sequence");
+                Some(Ok(f(c, res)))
+            }
             Some(Err(err)) => Some(Err(err)),
             None => None,
         }
