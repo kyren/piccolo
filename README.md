@@ -43,8 +43,8 @@ Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).)
 
 While the interface to garbage collected pointers is interesting, the actual
 garbage collector itself is currently only a very basic (but adequate)
-mark-and-sweep collector.  This could be replaced in the future with a better
-design.
+incremental mark-and-sweep collector.  This could be replaced in the future with
+a better design.
 
 ### What currently works ###
 
