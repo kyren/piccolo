@@ -12,12 +12,12 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
                     mc,
                     root.interned_strings,
                     &br#"
-                            function do_error()
-                                error('test error')
-                            end
+                        function do_error()
+                            error('test error')
+                        end
 
-                            do_error()
-                        "#[..],
+                        do_error()
+                    "#[..],
                 )?,
                 Some(root.globals),
             )?)
