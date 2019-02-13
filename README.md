@@ -1,6 +1,6 @@
 [![Build Status](https://travis-ci.org/kyren/luster.svg?branch=master)](https://travis-ci.org/kyren/luster)
 
-## luster - An experimental Lua VM implemented in pure Rust ##
+# luster - An experimental Lua VM implemented in pure Rust #
 
 My eventual goals with `luster` are somewhat ambitious:
   * Be a practical, useful Lua interpreter that is "pragmatically compatible"
@@ -15,7 +15,7 @@ My eventual goals with `luster` are somewhat ambitious:
 
 **This project is in active development and currently very WIP**
 
-### A novel system for Rust <-> GC interaction ###
+## A novel system for Rust <-> GC interaction ##
 
 `luster` has a real, cycle detecting, incremental garbage collector with
 zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)
@@ -46,7 +46,7 @@ garbage collector itself is currently only a very basic (but adequate)
 incremental mark-and-sweep collector.  This could be replaced in the future with
 a better design.
 
-### What currently works ###
+## What currently works ##
 
 * An actual cycle detecting, incremental GC similar to the one in PUC-Rio Lua
   5.3
@@ -68,7 +68,7 @@ a better design.
   will be necessary).
 * A simple REPL (try it with `cargo run luster`!)
 
-### What currently doesn't work ###
+## What currently doesn't work ##
 
 * Most of the stdlib is not implemented (`debug` (which may never be completely
   implemented), `io`, `math`, `os`, `package`, `string`, `table`, `utf8`, most
@@ -93,7 +93,7 @@ a better design.
 * Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more that I haven't listed
 
-### What may never be implemented ###
+## What may never be implemented ##
 
 This is not an exhaustive list, but these are some things which I currently
 consider non-goals.  This list is also preliminary, everything here is up for
