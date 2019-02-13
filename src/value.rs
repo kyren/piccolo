@@ -180,8 +180,20 @@ impl<'gc> Value<'gc> {
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(a < b)
+        } else if let (Value::String(a), Value::String(b)) = (self, other) {
+            Some(a.as_bytes() < b.as_bytes())
         } else {
             Some(self.to_number()? < other.to_number()?)
+        }
+    }
+    
+    pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
+        if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
+            Some(a <= b)
+        } else if let (Value::String(a), Value::String(b)) = (self, other) {
+            Some(a.as_bytes() <= b.as_bytes())
+        } else {
+            Some(self.to_number()? <= other.to_number()?)
         }
     }
 

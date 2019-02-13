@@ -20,6 +20,7 @@ pub enum BinaryOperatorError {
     Exponentiate,
     UnaryNegate,
     LessThan,
+    LessEqual,
 }
 
 impl StdError for BinaryOperatorError {}
@@ -36,6 +37,7 @@ impl fmt::Display for BinaryOperatorError {
             BinaryOperatorError::Exponentiate => write!(fmt, "cannot exponentiate values"),
             BinaryOperatorError::UnaryNegate => write!(fmt, "cannot negate value"),
             BinaryOperatorError::LessThan => write!(fmt, "cannot compare values with <"),
+            BinaryOperatorError::LessEqual => write!(fmt, "cannot compare values with <="),
         }
     }
 }
@@ -435,6 +437,54 @@ pub fn run_vm<'gc>(
                 let left = current_function.0.proto.constants[left.0 as usize].to_value();
                 let right = current_function.0.proto.constants[right.0 as usize].to_value();
                 if (left.less_than(right).ok_or(BinaryOperatorError::LessThan)?) == skip_if {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LsEqRR {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                if (left.less_equal(right).ok_or(BinaryOperatorError::LessEqual)?) == skip_if {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LsEqRC {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                if (left.less_equal(right).ok_or(BinaryOperatorError::LessEqual)?) == skip_if {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LsEqCR {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                if (left.less_equal(right).ok_or(BinaryOperatorError::LessEqual)?) == skip_if {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LsEqCC {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                if (left.less_equal(right).ok_or(BinaryOperatorError::LessEqual)?) == skip_if {
                     *registers.pc += 1;
                 }
             }

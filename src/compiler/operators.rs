@@ -303,7 +303,96 @@ pub fn comparison_binop_opcode(
                 }
             }
         },
-        _ => panic!("unsupported binary operator {:?}", comparison_binop),
+        ComparisonBinOp::LessEqual => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LsEqRR {
+                    skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LsEqRC {
+                    skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LsEqCR {
+                    skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LsEqCC {
+                    skip_if,
+                    left,
+                    right,
+                }
+            }
+        },
+        ComparisonBinOp::GreaterThan => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LsEqRR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LsEqRC {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LsEqCR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LsEqCC {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+        },
+        ComparisonBinOp::GreaterEqual => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LessRR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LessRC {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::LessCR {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::LessCC {
+                    skip_if: !skip_if,
+                    left,
+                    right,
+                }
+            }
+        },
     }
 }
 
@@ -315,6 +404,10 @@ pub fn comparison_binop_const_fold<'gc>(
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
         ComparisonBinOp::LessThan => match left.to_value().less_than(right.to_value()) {
+            Some(a) => Some(Constant::Boolean(a)),
+            None => None,
+        },
+        ComparisonBinOp::LessEqual => match left.to_value().less_equal(right.to_value()) {
             Some(a) => Some(Constant::Boolean(a)),
             None => None,
         },

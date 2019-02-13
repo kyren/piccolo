@@ -112,11 +112,29 @@ function test12()
 end
 
 function test13()
+    return      1 <= 2  and
+           not (2 <= 1) and
+                1 <= 1
+end
+
+function test14()
+    return not (1 > 2) and
+                2 > 1  and
+           not (1 > 1)
+end
+
+function test15()
+    return not (1 >= 2) and
+                2 >= 1  and
+                1 >= 1
+end
+
+function test16()
     return -(-1) == 1 and
            not not true
 end
 
-function test14()
+function test17()
     return
         "1.0" + 1.0 == 2.0 and
         1.0 + "0x1.0" == 2.0 and
@@ -138,4 +156,7 @@ return
     test11() and
     test12() and
     test13() and
-    test14()
+    test14() and
+    test15() and
+    test16() and
+    test17()

@@ -242,6 +242,26 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    LsEqRR {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    LsEqRC {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    LsEqCR {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    LsEqCC {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
     Not {
         dest: RegisterIndex,
         source: RegisterIndex,
