@@ -410,4 +410,108 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    BAndRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BAndRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BAndCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BAndCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BOrRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BOrRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BOrCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BOrCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BXorRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BXorRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BXorCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BXorCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    ShLRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    ShLRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    ShLCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    ShLCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    ShRRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    ShRRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    ShRCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    ShRCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BNot {
+        dest: RegisterIndex,
+        source: RegisterIndex,
+    },
 }

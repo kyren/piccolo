@@ -182,7 +182,76 @@ pub fn simple_binop_opcode(
                 OpCode::PowCC { dest, left, right }
             }
         },
-        _ => panic!("unsupported binary operator {:?}", simple_binop),
+        SimpleBinOp::BitAnd => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BAndRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BAndRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BAndCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BAndCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::BitOr => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BOrRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BOrRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BOrCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BOrCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::BitXor => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BXorRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BXorRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::BXorCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::BXorCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::ShiftLeft => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ShLRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ShLRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ShLCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ShLCC { dest, left, right }
+            }
+        },
+        SimpleBinOp::ShiftRight => match (left, right) {
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ShRRR { dest, left, right }
+            }
+            (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ShRRC { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
+                OpCode::ShRCR { dest, left, right }
+            }
+            (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
+                OpCode::ShRCC { dest, left, right }
+            }
+        },
     }
 }
 
@@ -405,11 +474,11 @@ pub fn comparison_binop_const_fold<'gc>(
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
         ComparisonBinOp::LessThan => match left.to_value().less_than(right.to_value()) {
             Some(a) => Some(Constant::Boolean(a)),
-            None => None,
+            _ => None,
         },
         ComparisonBinOp::LessEqual => match left.to_value().less_equal(right.to_value()) {
             Some(a) => Some(Constant::Boolean(a)),
-            None => None,
+            _ => None,
         },
         _ => None,
     }
@@ -419,8 +488,8 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
     match unop {
         UnaryOperator::Minus => OpCode::Minus { dest, source },
         UnaryOperator::Not => OpCode::Not { dest, source },
+        UnaryOperator::BitNot => OpCode::BNot { dest, source },
         UnaryOperator::Len => OpCode::Length { dest, source },
-        _ => panic!("unimplemented unary operator {:?}", unop),
     }
 }
 
@@ -428,9 +497,13 @@ pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<
     match unop {
         UnaryOperator::Minus => match cons.to_value().negate() {
             Some(a) => Constant::from_value(a),
-            None => None,
+            _ => None,
         },
         UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
+        UnaryOperator::BitNot => match cons.to_value().bitwise_not() {
+            Some(a) => Constant::from_value(a),
+            _ => None,
+        },
         _ => None,
     }
 }

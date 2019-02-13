@@ -90,12 +90,39 @@ impl<'gc> Value<'gc> {
             Value::String(a) => {
                 if let Some(f) = read_hex_float(&a) {
                     Some(f)
-                } else if let Some(f) = read_float(&a) {
-                    Some(f)
+                } else {
+                    read_float(&a)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
+    pub fn to_integer(self) -> Option<i64> {
+        match self {
+            Value::Integer(a) => Some(a),
+            Value::Number(a) => {
+                if ((a as i64) as f64) == a {
+                    Some(a as i64)
                 } else {
                     None
                 }
             }
+            Value::String(a) => match if let Some(f) = read_hex_float(&a) {
+                Some(f)
+            } else {
+                read_float(&a)
+            } {
+                Some(f) => {
+                    if ((f as i64) as f64) == f {
+                        Some(f as i64)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -103,6 +130,8 @@ impl<'gc> Value<'gc> {
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
+
+    // Mathematical operators
 
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
@@ -177,6 +206,36 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    // Bitwise operators
+
+    pub fn bitwise_not(self) -> Option<Value<'gc>> {
+        Some(Value::Integer(!self.to_integer()?))
+    }
+
+    pub fn bitwise_and(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Integer(self.to_integer()? & other.to_integer()?))
+    }
+
+    pub fn bitwise_or(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Integer(self.to_integer()? | other.to_integer()?))
+    }
+
+    pub fn bitwise_xor(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Integer(self.to_integer()? ^ other.to_integer()?))
+    }
+
+    pub fn shift_left(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Integer(self.to_integer()? << other.to_integer()?))
+    }
+
+    pub fn shift_right(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(Value::Integer(
+            (self.to_integer()? as u64 >> other.to_integer()? as u64) as i64,
+        ))
+    }
+
+    // Comparison operators
+
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(a < b)
@@ -186,7 +245,7 @@ impl<'gc> Value<'gc> {
             Some(self.to_number()? < other.to_number()?)
         }
     }
-    
+
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(a <= b)
