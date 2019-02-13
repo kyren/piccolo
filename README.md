@@ -36,7 +36,7 @@ and are usable from safe Rust.  It achieves this by combining three techniques:
    place with as fine of a granularity as necessary, with garbage collection
    taking place in-between the "sequence" steps.
 
-(These ideas are not all mine, this project is heavily derived from
+(These ideas are not all mine, the garbage collector is heavily derived from
 [rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 and the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).)
@@ -120,6 +120,20 @@ discussion:
 * `package.loadlib` and all functionality which allows loading C libraries.
 * Being able to predictably catch `__gc` errors in Lua (I am not sure about this
   one yet, this may be difficult or it may not).
+
+## Contributing ##
+
+The project is still in an early state and there is lots left to do!  If you are
+interested in contributing, please take a look at [TODO.md](TODO.md) for ideas.
+
+Much of the work left to do is *design* work rather than simply implementing
+features, and this is probably the place where help would be most appreciated.
+Almost none of the internal APIs are what I would consider final, and for some
+of the very tricky pieces like `gc-sequence` and callbacks, there is a LOT of
+room for improvement in the API design (to put it mildly!).  If you think you
+have a way to make using `luster` more ergonomic, or simply want to complain
+about ways that it is not ergonomic (there are many), please feel free to file
+an issue and we can discuss it!
 
 ## License ##
 
