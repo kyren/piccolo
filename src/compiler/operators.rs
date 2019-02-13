@@ -184,72 +184,72 @@ pub fn simple_binop_opcode(
         },
         SimpleBinOp::BitAnd => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BAndRR { dest, left, right }
+                OpCode::BitAndRR { dest, left, right }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BAndRC { dest, left, right }
+                OpCode::BitAndRC { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BAndCR { dest, left, right }
+                OpCode::BitAndCR { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BAndCC { dest, left, right }
+                OpCode::BitAndCC { dest, left, right }
             }
         },
         SimpleBinOp::BitOr => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BOrRR { dest, left, right }
+                OpCode::BitOrRR { dest, left, right }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BOrRC { dest, left, right }
+                OpCode::BitOrRC { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BOrCR { dest, left, right }
+                OpCode::BitOrCR { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BOrCC { dest, left, right }
+                OpCode::BitOrCC { dest, left, right }
             }
         },
         SimpleBinOp::BitXor => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BXorRR { dest, left, right }
+                OpCode::BitXorRR { dest, left, right }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BXorRC { dest, left, right }
+                OpCode::BitXorRC { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::BXorCR { dest, left, right }
+                OpCode::BitXorCR { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::BXorCC { dest, left, right }
+                OpCode::BitXorCC { dest, left, right }
             }
         },
         SimpleBinOp::ShiftLeft => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::ShLRR { dest, left, right }
+                OpCode::ShiftLeftRR { dest, left, right }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::ShLRC { dest, left, right }
+                OpCode::ShiftLeftRC { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::ShLCR { dest, left, right }
+                OpCode::ShiftLeftCR { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::ShLCC { dest, left, right }
+                OpCode::ShiftLeftCC { dest, left, right }
             }
         },
         SimpleBinOp::ShiftRight => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::ShRRR { dest, left, right }
+                OpCode::ShiftRightRR { dest, left, right }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::ShRRC { dest, left, right }
+                OpCode::ShiftRightRC { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::ShRCR { dest, left, right }
+                OpCode::ShiftRightCR { dest, left, right }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::ShRCC { dest, left, right }
+                OpCode::ShiftRightCC { dest, left, right }
             }
         },
     }
@@ -374,28 +374,28 @@ pub fn comparison_binop_opcode(
         },
         ComparisonBinOp::LessEqual => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::LsEqRR {
+                OpCode::LessEqRR {
                     skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::LsEqRC {
+                OpCode::LessEqRC {
                     skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::LsEqCR {
+                OpCode::LessEqCR {
                     skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::LsEqCC {
+                OpCode::LessEqCC {
                     skip_if,
                     left,
                     right,
@@ -404,28 +404,28 @@ pub fn comparison_binop_opcode(
         },
         ComparisonBinOp::GreaterThan => match (left, right) {
             (RegisterOrConstant::Register(left), RegisterOrConstant::Register(right)) => {
-                OpCode::LsEqRR {
+                OpCode::LessEqRR {
                     skip_if: !skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Register(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::LsEqRC {
+                OpCode::LessEqRC {
                     skip_if: !skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Register(right)) => {
-                OpCode::LsEqCR {
+                OpCode::LessEqCR {
                     skip_if: !skip_if,
                     left,
                     right,
                 }
             }
             (RegisterOrConstant::Constant(left), RegisterOrConstant::Constant(right)) => {
-                OpCode::LsEqCC {
+                OpCode::LessEqCC {
                     skip_if: !skip_if,
                     left,
                     right,
@@ -488,7 +488,7 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
     match unop {
         UnaryOperator::Minus => OpCode::Minus { dest, source },
         UnaryOperator::Not => OpCode::Not { dest, source },
-        UnaryOperator::BitNot => OpCode::BNot { dest, source },
+        UnaryOperator::BitNot => OpCode::BitNot { dest, source },
         UnaryOperator::Len => OpCode::Length { dest, source },
     }
 }
