@@ -17,9 +17,9 @@ My eventual goals with `luster` are somewhat ambitious:
 
 ### A novel system for Rust <-> GC interaction ###
 
-`luster` has a real, cycle detecting, incremental garbage collector with cheap
-`Gc` pointers that are machine pointer sized and implement `Copy` and are
-usable from safe Rust.  It achieves this by combining three techniques:
+`luster` has a real, cycle detecting, incremental garbage collector with
+zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)
+and are usable from safe Rust.  It achieves this by combining three techniques:
 
 1) An unsafe `Collect` trait which allows tracing through garbage collected
    types that, despite being unsafe, can be implemented safely using procedural
@@ -62,7 +62,8 @@ a better design.
   * Coroutines, including yielding through Rust callbacks (like through `pcall`)
   * gotos with label handling that matches Lua 5.3
   * proper _ENV handling
-* A few tiny bits of the stdlib
+* A few tiny bits of the stdlib (`print`, `error`, `pcall`, and the hard bits
+  from `coroutine`)
 * Basic support for Rust callbacks (missing some fast-path APIs that I think
   will be necessary).
 * A simple REPL (try it with `cargo run luster`!)
@@ -71,8 +72,7 @@ a better design.
 
 * Most of the stdlib is not implemented (`debug` (which may never be completely
   implemented), `io`, `math`, `os`, `package`, `string`, `table`, `utf8`, most
-  top-level functions are unimplemented.  All that works right now is: `print`,
-  `error`, `pcall`, and the hard bits from `coroutine`.
+  top-level functions are unimplemented.
 * Metatables and metamethods.  Most of this should not be terribly hard to
   implement *except* `__gc`, which will require implementing finalizers in
   `gc-arena`.
