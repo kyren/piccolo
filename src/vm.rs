@@ -19,7 +19,13 @@ pub enum BinaryOperatorError {
     Modulo,
     Exponentiate,
     UnaryNegate,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
     LessThan,
+    LessEqual,
 }
 
 impl StdError for BinaryOperatorError {}
@@ -35,7 +41,13 @@ impl fmt::Display for BinaryOperatorError {
             BinaryOperatorError::Modulo => write!(fmt, "cannot modulo values"),
             BinaryOperatorError::Exponentiate => write!(fmt, "cannot exponentiate values"),
             BinaryOperatorError::UnaryNegate => write!(fmt, "cannot negate value"),
+            BinaryOperatorError::BitAnd => write!(fmt, "cannot bitwise AND values"),
+            BinaryOperatorError::BitOr => write!(fmt, "cannot bitwise OR values"),
+            BinaryOperatorError::BitXor => write!(fmt, "cannot bitwise XOR values"),
+            BinaryOperatorError::ShiftLeft => write!(fmt, "cannot shift value left"),
+            BinaryOperatorError::ShiftRight => write!(fmt, "cannot shift value right"),
             BinaryOperatorError::LessThan => write!(fmt, "cannot compare values with <"),
+            BinaryOperatorError::LessEqual => write!(fmt, "cannot compare values with <="),
         }
     }
 }
@@ -439,6 +451,70 @@ pub fn run_vm<'gc>(
                 }
             }
 
+            OpCode::LessEqRR {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                if (left
+                    .less_equal(right)
+                    .ok_or(BinaryOperatorError::LessEqual)?)
+                    == skip_if
+                {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LessEqRC {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                if (left
+                    .less_equal(right)
+                    .ok_or(BinaryOperatorError::LessEqual)?)
+                    == skip_if
+                {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LessEqCR {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                if (left
+                    .less_equal(right)
+                    .ok_or(BinaryOperatorError::LessEqual)?)
+                    == skip_if
+                {
+                    *registers.pc += 1;
+                }
+            }
+
+            OpCode::LessEqCC {
+                skip_if,
+                left,
+                right,
+            } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                if (left
+                    .less_equal(right)
+                    .ok_or(BinaryOperatorError::LessEqual)?)
+                    == skip_if
+                {
+                    *registers.pc += 1;
+                }
+            }
+
             OpCode::Not { dest, source } => {
                 let source = registers.stack_frame[source.0 as usize];
                 registers.stack_frame[dest.0 as usize] = source.not();
@@ -448,6 +524,13 @@ pub fn run_vm<'gc>(
                 let value = registers.stack_frame[source.0 as usize];
                 registers.stack_frame[dest.0 as usize] =
                     value.negate().ok_or(BinaryOperatorError::UnaryNegate)?;
+            }
+
+            OpCode::BitNot { dest, source } => {
+                let value = registers.stack_frame[source.0 as usize];
+                registers.stack_frame[dest.0 as usize] = value
+                    .bitwise_not()
+                    .ok_or(BinaryOperatorError::UnaryNegate)?;
             }
 
             OpCode::AddRR { dest, left, right } => {
@@ -656,6 +739,154 @@ pub fn run_vm<'gc>(
                 registers.stack_frame[dest.0 as usize] = left
                     .exponentiate(right)
                     .ok_or(BinaryOperatorError::Exponentiate)?;
+            }
+
+            OpCode::BitAndRR { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_and(right).ok_or(BinaryOperatorError::BitAnd)?;
+            }
+
+            OpCode::BitAndRC { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_and(right).ok_or(BinaryOperatorError::BitAnd)?;
+            }
+
+            OpCode::BitAndCR { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_and(right).ok_or(BinaryOperatorError::BitAnd)?;
+            }
+
+            OpCode::BitAndCC { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_and(right).ok_or(BinaryOperatorError::BitAnd)?;
+            }
+
+            OpCode::BitOrRR { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_or(right).ok_or(BinaryOperatorError::BitOr)?;
+            }
+
+            OpCode::BitOrRC { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_or(right).ok_or(BinaryOperatorError::BitOr)?;
+            }
+
+            OpCode::BitOrCR { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_or(right).ok_or(BinaryOperatorError::BitOr)?;
+            }
+
+            OpCode::BitOrCC { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_or(right).ok_or(BinaryOperatorError::BitOr)?;
+            }
+
+            OpCode::BitXorRR { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_xor(right).ok_or(BinaryOperatorError::BitXor)?;
+            }
+
+            OpCode::BitXorRC { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_xor(right).ok_or(BinaryOperatorError::BitXor)?;
+            }
+
+            OpCode::BitXorCR { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_xor(right).ok_or(BinaryOperatorError::BitXor)?;
+            }
+
+            OpCode::BitXorCC { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] =
+                    left.bitwise_xor(right).ok_or(BinaryOperatorError::BitXor)?;
+            }
+
+            OpCode::ShiftLeftRR { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_left(right)
+                    .ok_or(BinaryOperatorError::ShiftLeft)?;
+            }
+
+            OpCode::ShiftLeftRC { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_left(right)
+                    .ok_or(BinaryOperatorError::ShiftLeft)?;
+            }
+
+            OpCode::ShiftLeftCR { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_left(right)
+                    .ok_or(BinaryOperatorError::ShiftLeft)?;
+            }
+
+            OpCode::ShiftLeftCC { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_left(right)
+                    .ok_or(BinaryOperatorError::ShiftLeft)?;
+            }
+
+            OpCode::ShiftRightRR { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_right(right)
+                    .ok_or(BinaryOperatorError::ShiftRight)?;
+            }
+
+            OpCode::ShiftRightRC { dest, left, right } => {
+                let left = registers.stack_frame[left.0 as usize];
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_right(right)
+                    .ok_or(BinaryOperatorError::ShiftRight)?;
+            }
+
+            OpCode::ShiftRightCR { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = registers.stack_frame[right.0 as usize];
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_right(right)
+                    .ok_or(BinaryOperatorError::ShiftRight)?;
+            }
+
+            OpCode::ShiftRightCC { dest, left, right } => {
+                let left = current_function.0.proto.constants[left.0 as usize].to_value();
+                let right = current_function.0.proto.constants[right.0 as usize].to_value();
+                registers.stack_frame[dest.0 as usize] = left
+                    .shift_right(right)
+                    .ok_or(BinaryOperatorError::ShiftRight)?;
             }
         }
 

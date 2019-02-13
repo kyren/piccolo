@@ -242,6 +242,26 @@ pub enum OpCode {
         left: ConstantIndex8,
         right: ConstantIndex8,
     },
+    LessEqRR {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    LessEqRC {
+        skip_if: bool,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    LessEqCR {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    LessEqCC {
+        skip_if: bool,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
     Not {
         dest: RegisterIndex,
         source: RegisterIndex,
@@ -389,5 +409,109 @@ pub enum OpCode {
         dest: RegisterIndex,
         left: ConstantIndex8,
         right: ConstantIndex8,
+    },
+    BitAndRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BitAndRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BitAndCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BitAndCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BitOrRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BitOrRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BitOrCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BitOrCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BitXorRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    BitXorRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    BitXorCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    BitXorCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    ShiftLeftRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    ShiftLeftRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    ShiftLeftCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    ShiftLeftCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    ShiftRightRR {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: RegisterIndex,
+    },
+    ShiftRightRC {
+        dest: RegisterIndex,
+        left: RegisterIndex,
+        right: ConstantIndex8,
+    },
+    ShiftRightCR {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: RegisterIndex,
+    },
+    ShiftRightCC {
+        dest: RegisterIndex,
+        left: ConstantIndex8,
+        right: ConstantIndex8,
+    },
+    BitNot {
+        dest: RegisterIndex,
+        source: RegisterIndex,
     },
 }
