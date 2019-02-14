@@ -277,23 +277,41 @@ pub fn run_vm<'gc>(
                 let index = registers.stack_frame[base.0 as usize];
                 let limit = registers.stack_frame[base.0 as usize + 1];
                 let step = registers.stack_frame[base.0 as usize + 2];
-                registers.stack_frame[base.0 as usize] =
-                    index.add(step).ok_or(BinaryOperatorError::Add)?;
-                let past_end = if step
-                    .less_than(Value::Integer(0))
-                    .ok_or(BinaryOperatorError::LessThan)?
-                {
-                    index
-                        .less_than(limit)
-                        .ok_or(BinaryOperatorError::LessThan)?
-                } else {
-                    limit
-                        .less_than(index)
-                        .ok_or(BinaryOperatorError::LessThan)?
-                };
-                if !past_end {
-                    *registers.pc = add_offset(*registers.pc, jump);
-                    registers.stack_frame[base.0 as usize + 3] = index;
+                match (index, limit, step) {
+                    (Value::Integer(mut index), Value::Integer(limit), Value::Integer(step)) => {
+                        index = index + step;
+                        registers.stack_frame[base.0 as usize] = Value::Integer(index);
+
+                        let past_end = if step < 0 {
+                            index < limit
+                        } else {
+                            limit < index
+                        };
+                        if !past_end {
+                            *registers.pc = add_offset(*registers.pc, jump);
+                            registers.stack_frame[base.0 as usize + 3] = Value::Integer(index);
+                        }
+                    }
+                    (index, limit, step) => {
+                        if let (Some(mut index), Some(limit), Some(step)) =
+                            (index.to_number(), limit.to_number(), step.to_number())
+                        {
+                            index = index + step;
+                            registers.stack_frame[base.0 as usize] = Value::Number(index);
+
+                            let past_end = if step < 0.0 {
+                                index < limit
+                            } else {
+                                limit < index
+                            };
+                            if !past_end {
+                                *registers.pc = add_offset(*registers.pc, jump);
+                                registers.stack_frame[base.0 as usize + 3] = Value::Number(index);
+                            }
+                        } else {
+                            return Err(BinaryOperatorError::Add.into());
+                        }
+                    }
                 }
             }
 

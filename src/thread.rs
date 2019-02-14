@@ -142,7 +142,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 None
             }
             ThreadMode::Lua => {
-                const INSTRUCTION_GRANULARITY: u32 = 64;
+                const INSTRUCTION_GRANULARITY: u32 = 256;
                 self.0.step_lua(mc, INSTRUCTION_GRANULARITY).unwrap();
                 None
             }
