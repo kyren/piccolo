@@ -274,12 +274,13 @@ pub fn run_vm<'gc>(
             }
 
             OpCode::NumericForLoop { base, jump } => {
-                let index = registers.stack_frame[base.0 as usize];
-                let limit = registers.stack_frame[base.0 as usize + 1];
-                let step = registers.stack_frame[base.0 as usize + 2];
-                match (index, limit, step) {
-                    (Value::Integer(mut index), Value::Integer(limit), Value::Integer(step)) => {
-                        index = index + step;
+                match (
+                    registers.stack_frame[base.0 as usize],
+                    registers.stack_frame[base.0 as usize + 1],
+                    registers.stack_frame[base.0 as usize + 2],
+                ) {
+                    (Value::Integer(index), Value::Integer(limit), Value::Integer(step)) => {
+                        let index = index + step;
                         registers.stack_frame[base.0 as usize] = Value::Integer(index);
 
                         let past_end = if step < 0 {
@@ -293,10 +294,10 @@ pub fn run_vm<'gc>(
                         }
                     }
                     (index, limit, step) => {
-                        if let (Some(mut index), Some(limit), Some(step)) =
+                        if let (Some(index), Some(limit), Some(step)) =
                             (index.to_number(), limit.to_number(), step.to_number())
                         {
-                            index = index + step;
+                            let index = index + step;
                             registers.stack_frame[base.0 as usize] = Value::Number(index);
 
                             let past_end = if step < 0.0 {
@@ -919,6 +920,7 @@ pub fn run_vm<'gc>(
     Ok(instructions)
 }
 
+#[inline]
 fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
     match value {
         Value::Table(t) => Ok(t),
@@ -929,6 +931,7 @@ fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
     }
 }
 
+#[inline]
 fn add_offset(pc: usize, offset: i16) -> usize {
     if offset > 0 {
         pc.checked_add(offset as usize).unwrap()
