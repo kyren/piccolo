@@ -274,25 +274,26 @@ pub fn run_vm<'gc>(
             }
 
             OpCode::NumericForLoop { base, jump } => {
-                registers.stack_frame[base.0 as usize] = registers.stack_frame[base.0 as usize]
-                    .add(registers.stack_frame[base.0 as usize + 2])
-                    .ok_or(BinaryOperatorError::Add)?;
-                let past_end = if registers.stack_frame[base.0 as usize + 2]
+                let index = registers.stack_frame[base.0 as usize];
+                let limit = registers.stack_frame[base.0 as usize + 1];
+                let step = registers.stack_frame[base.0 as usize + 2];
+                registers.stack_frame[base.0 as usize] =
+                    index.add(step).ok_or(BinaryOperatorError::Add)?;
+                let past_end = if step
                     .less_than(Value::Integer(0))
                     .ok_or(BinaryOperatorError::LessThan)?
                 {
-                    registers.stack_frame[base.0 as usize]
-                        .less_than(registers.stack_frame[base.0 as usize + 1])
+                    index
+                        .less_than(limit)
                         .ok_or(BinaryOperatorError::LessThan)?
                 } else {
-                    registers.stack_frame[base.0 as usize + 1]
-                        .less_than(registers.stack_frame[base.0 as usize])
+                    limit
+                        .less_than(index)
                         .ok_or(BinaryOperatorError::LessThan)?
                 };
                 if !past_end {
                     *registers.pc = add_offset(*registers.pc, jump);
-                    registers.stack_frame[base.0 as usize + 3] =
-                        registers.stack_frame[base.0 as usize];
+                    registers.stack_frame[base.0 as usize + 3] = index;
                 }
             }
 
