@@ -28,7 +28,6 @@ pub enum Value<'gc> {
 }
 
 impl<'gc> PartialEq for Value<'gc> {
-    #[inline]
     fn eq(&self, other: &Value<'gc>) -> bool {
         match (*self, *other) {
             (Value::Nil, Value::Nil) => true,
@@ -75,7 +74,6 @@ impl<'gc> Value<'gc> {
     }
 
     /// Lua `nil` and `false` are false, anything else is true.
-    #[inline]
     pub fn to_bool(self) -> bool {
         match self {
             Value::Nil => false,
@@ -85,7 +83,6 @@ impl<'gc> Value<'gc> {
     }
 
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
-    #[inline]
     pub fn to_number(self) -> Option<f64> {
         match self {
             Value::Integer(a) => Some(a as f64),
@@ -102,7 +99,6 @@ impl<'gc> Value<'gc> {
     }
 
     /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
-    #[inline]
     pub fn to_integer(self) -> Option<i64> {
         match self {
             Value::Integer(a) => Some(a),
@@ -131,14 +127,12 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    #[inline]
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
 
     // Mathematical operators
 
-    #[inline]
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(Value::Integer(a.wrapping_add(b)))
@@ -147,7 +141,6 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    #[inline]
     pub fn subtract(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(Value::Integer(a.wrapping_sub(b)))
@@ -156,7 +149,6 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    #[inline]
     pub fn multiply(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(Value::Integer(a.wrapping_mul(b)))
@@ -166,14 +158,12 @@ impl<'gc> Value<'gc> {
     }
 
     /// This operation always returns a Number, even when called with Integer arguments.
-    #[inline]
     pub fn float_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Number(self.to_number()? / other.to_number()?))
     }
 
     /// This operation returns an Integer only if both arguments are Integers.  Rounding is towards
     /// negative infinity.
-    #[inline]
     pub fn floor_divide(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             if b == 0 {
@@ -190,7 +180,6 @@ impl<'gc> Value<'gc> {
 
     /// Computes the Lua modulus (`%`) operator.  This is unlike Rust's `%` operator which computes
     /// the remainder.
-    #[inline]
     pub fn modulo(self, other: Value<'gc>) -> Option<Value<'gc>> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             if b == 0 {
@@ -205,12 +194,10 @@ impl<'gc> Value<'gc> {
     }
 
     /// This operation always returns a Number, even when called with Integer arguments.
-    #[inline]
     pub fn exponentiate(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Number(self.to_number()?.powf(other.to_number()?)))
     }
 
-    #[inline]
     pub fn negate(self) -> Option<Value<'gc>> {
         match self {
             Value::Integer(a) => Some(Value::Integer(a.wrapping_neg())),
@@ -221,32 +208,26 @@ impl<'gc> Value<'gc> {
 
     // Bitwise operators
 
-    #[inline]
     pub fn bitwise_not(self) -> Option<Value<'gc>> {
         Some(Value::Integer(!self.to_integer()?))
     }
 
-    #[inline]
     pub fn bitwise_and(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Integer(self.to_integer()? & other.to_integer()?))
     }
 
-    #[inline]
     pub fn bitwise_or(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Integer(self.to_integer()? | other.to_integer()?))
     }
 
-    #[inline]
     pub fn bitwise_xor(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Integer(self.to_integer()? ^ other.to_integer()?))
     }
 
-    #[inline]
     pub fn shift_left(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Integer(self.to_integer()? << other.to_integer()?))
     }
 
-    #[inline]
     pub fn shift_right(self, other: Value<'gc>) -> Option<Value<'gc>> {
         Some(Value::Integer(
             (self.to_integer()? as u64 >> other.to_integer()? as u64) as i64,
@@ -255,7 +236,6 @@ impl<'gc> Value<'gc> {
 
     // Comparison operators
 
-    #[inline]
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(a < b)
@@ -266,7 +246,6 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    #[inline]
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
         if let (Value::Integer(a), Value::Integer(b)) = (self, other) {
             Some(a <= b)

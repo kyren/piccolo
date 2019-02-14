@@ -920,7 +920,6 @@ pub fn run_vm<'gc>(
     Ok(instructions)
 }
 
-#[inline]
 fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
     match value {
         Value::Table(t) => Ok(t),
@@ -931,7 +930,6 @@ fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
     }
 }
 
-#[inline]
 fn add_offset(pc: usize, offset: i16) -> usize {
     if offset > 0 {
         pc.checked_add(offset as usize).unwrap()
