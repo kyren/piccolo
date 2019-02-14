@@ -28,6 +28,7 @@ pub enum Value<'gc> {
 }
 
 impl<'gc> PartialEq for Value<'gc> {
+    #[inline]
     fn eq(&self, other: &Value<'gc>) -> bool {
         match (*self, *other) {
             (Value::Nil, Value::Nil) => true,
@@ -60,7 +61,6 @@ impl<'gc> PartialEq for Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
-    #[inline]
     pub fn type_name(self) -> &'static str {
         match self {
             Value::Nil => "nil",
