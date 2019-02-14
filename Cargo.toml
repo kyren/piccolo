@@ -21,5 +21,6 @@ clap = "2.32"
 num-traits = "0.2"
 rustc-hash = "1.0"
 rustyline = "3.0"
+arrayref = "0.3"
 gc-arena = { path = "./gc-arena" }
 gc-sequence = { path = "./gc-sequence" }

@@ -5,6 +5,8 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
+use arrayref::array_mut_ref;
+
 use gc_arena::{Collect, GcCell, MutationContext};
 use gc_sequence::Sequence;
 
@@ -69,9 +71,9 @@ pub struct ThreadState<'gc> {
     allow_yield: bool,
 }
 
-pub struct LuaRegisters<'gc, 'a> {
+pub struct LuaConstantRegisters<'gc, 'a> {
     pub pc: &'a mut usize,
-    pub stack_frame: &'a mut [Value<'gc>],
+    pub stack_frame: &'a mut [Value<'gc>; 256],
     upper_stack: &'a mut [Value<'gc>],
     base: usize,
     open_upvalues: &'a mut BTreeMap<usize, UpValue<'gc>>,
@@ -370,21 +372,47 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
     }
 
-    // returns a view of the Lua frame's registers
-    pub fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
+    // returns a view of the Lua frame's registers if the frame does not currently have a variable
+    // stack.
+    pub fn constant_registers<'b>(&'b mut self) -> Option<LuaConstantRegisters<'gc, 'b>> {
         let state: &mut ThreadState<'gc> = &mut self.state;
         match state.frames.last_mut() {
-            Some(Frame::Lua { base, pc, .. }) => {
+            Some(Frame::Lua {
+                base,
+                pc,
+                is_variable,
+                ..
+            }) => {
                 let (upper_stack, stack_frame) = state.values.split_at_mut(*base);
-                LuaRegisters {
-                    pc,
-                    stack_frame,
-                    upper_stack,
-                    base: *base,
-                    open_upvalues: &mut state.open_upvalues,
-                    thread: self.thread,
-                    mutation_context: self.mutation_context,
+                if *is_variable {
+                    None
+                } else {
+                    Some(LuaConstantRegisters {
+                        pc,
+                        stack_frame: array_mut_ref!(stack_frame, 0, 256),
+                        upper_stack,
+                        base: *base,
+                        open_upvalues: &mut state.open_upvalues,
+                        thread: self.thread,
+                        mutation_context: self.mutation_context,
+                    })
                 }
+            }
+            _ => panic!("top frame is not lua frame"),
+        }
+    }
+
+    pub fn get_pc(&self) -> usize {
+        match self.state.frames.last() {
+            Some(Frame::Lua { pc, .. }) => *pc,
+            _ => panic!("top frame is not lua frame"),
+        }
+    }
+
+    pub fn set_pc(&mut self, new_pc: usize) {
+        match self.state.frames.last_mut() {
+            Some(Frame::Lua { pc, .. }) => {
+                *pc = new_pc;
             }
             _ => panic!("top frame is not lua frame"),
         }
@@ -458,7 +486,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 match state.values[function_index] {
                     Value::Function(Function::Closure(closure)) => {
                         let fixed_params = closure.0.proto.fixed_params as usize;
-                        let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
                             state.values.truncate(function_index + 1 + arg_count);
@@ -468,14 +495,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             function_index + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        state.values.resize(base + 256, Value::Nil);
 
                         state.frames.push(Frame::Lua {
                             bottom: function_index,
                             base,
                             is_variable: false,
                             pc: 0,
-                            stack_size,
                             expected_returns: None,
                         });
                         Ok(())
@@ -534,7 +560,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 match state.values[function_index] {
                     Value::Function(Function::Closure(closure)) => {
                         let fixed_params = closure.0.proto.fixed_params as usize;
-                        let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
                             state.values[function_index + 1..].rotate_left(fixed_params);
@@ -543,14 +568,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             function_index + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        state.values.resize(base + 256, Value::Nil);
 
                         state.frames.push(Frame::Lua {
                             bottom: function_index,
                             base,
                             is_variable: false,
                             pc: 0,
-                            stack_size,
                             expected_returns: None,
                         });
                         Ok(())
@@ -609,7 +633,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         }
 
                         let fixed_params = closure.0.proto.fixed_params as usize;
-                        let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
                             state.values.truncate(bottom + 1 + arg_count);
@@ -619,14 +642,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             bottom + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        state.values.resize(base + 256, Value::Nil);
 
                         state.frames.push(Frame::Lua {
                             bottom,
                             base,
                             is_variable: false,
                             pc: 0,
-                            stack_size,
                             expected_returns: None,
                         });
                         Ok(())
@@ -688,7 +710,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         expected_returns,
                         is_variable,
                         base,
-                        stack_size,
                         ..
                     }) => {
                         let expected_returns =
@@ -710,7 +731,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             state.values.truncate(bottom + returning);
                             *is_variable = true;
                         } else {
-                            state.values.resize(*base + *stack_size, Value::Nil);
+                            state.values.resize(*base + 256, Value::Nil);
                             *is_variable = false;
                         }
                     }
@@ -728,7 +749,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 }
 
-impl<'gc, 'a> LuaRegisters<'gc, 'a> {
+impl<'gc, 'a> LuaConstantRegisters<'gc, 'a> {
     pub fn open_upvalue(&mut self, reg: RegisterIndex) -> UpValue<'gc> {
         let ind = self.base + reg.0 as usize;
         match self.open_upvalues.entry(ind) {
@@ -805,7 +826,6 @@ enum Frame<'gc> {
         base: usize,
         is_variable: bool,
         pc: usize,
-        stack_size: usize,
         expected_returns: Option<VarCount>,
     },
     Continuation {
@@ -860,7 +880,6 @@ fn ext_call_function<'gc>(
     match function {
         Function::Closure(closure) => {
             let fixed_params = closure.0.proto.fixed_params as usize;
-            let stack_size = closure.0.proto.stack_size as usize;
 
             let var_params = if args.len() > fixed_params {
                 args.len() - fixed_params
@@ -870,7 +889,7 @@ fn ext_call_function<'gc>(
             let bottom = state.values.len();
             let base = bottom + 1 + var_params;
 
-            state.values.resize(base + stack_size, Value::Nil);
+            state.values.resize(base + 256, Value::Nil);
 
             state.values[bottom] = Value::Function(Function::Closure(closure));
             for i in 0..fixed_params {
@@ -885,7 +904,6 @@ fn ext_call_function<'gc>(
                 base,
                 is_variable: false,
                 pc: 0,
-                stack_size,
                 expected_returns: None,
             });
         }
@@ -904,7 +922,6 @@ fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
             expected_returns,
             is_variable,
             base,
-            stack_size,
             ..
         }) => {
             let ret_count = expected_returns
@@ -924,7 +941,7 @@ fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
 
             *is_variable = ret_count.is_variable();
             if !ret_count.is_variable() {
-                state.values.resize(*base + *stack_size, Value::Nil);
+                state.values.resize(*base + 256, Value::Nil);
             }
         }
         _ => panic!("no lua frame to return to"),
