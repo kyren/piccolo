@@ -5,8 +5,8 @@ use std::{fmt, io};
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::{
-    BinaryOperatorError, ClosureError, CompilerError, InternedStringSet, InvalidTableKey,
-    ParserError, StringError, ThreadError, Value,
+    BadThreadMode, BinaryOperatorError, ClosureError, CompilerError, InternedStringSet,
+    InvalidTableKey, ParserError, StringError, ThreadError, Value,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]
@@ -54,6 +54,7 @@ pub enum Error<'gc> {
     InvalidTableKey(InvalidTableKey),
     StringError(StringError),
     ThreadError(ThreadError),
+    BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
     RuntimeError(RuntimeError<'gc>),
@@ -71,6 +72,7 @@ impl<'gc> fmt::Display for Error<'gc> {
             Error::InvalidTableKey(error) => write!(fmt, "invalid table key: {}", error),
             Error::StringError(error) => write!(fmt, "string error: {}", error),
             Error::ThreadError(error) => write!(fmt, "thread error: {}", error),
+            Error::BadThreadMode(error) => write!(fmt, "bad thread mode: {}", error),
             Error::TypeError(error) => write!(fmt, "type error: {}", error),
             Error::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
             Error::RuntimeError(error) => write!(fmt, "runtime error: {}", error),
@@ -120,6 +122,12 @@ impl<'gc> From<ThreadError> for Error<'gc> {
     }
 }
 
+impl<'gc> From<BadThreadMode> for Error<'gc> {
+    fn from(error: BadThreadMode) -> Error<'gc> {
+        Error::BadThreadMode(error)
+    }
+}
+
 impl<'gc> From<TypeError> for Error<'gc> {
     fn from(error: TypeError) -> Error<'gc> {
         Error::TypeError(error)
@@ -148,6 +156,7 @@ impl<'gc> Error<'gc> {
             Error::InvalidTableKey(error) => StaticError::InvalidTableKey(error),
             Error::StringError(error) => StaticError::StringError(error),
             Error::ThreadError(error) => StaticError::ThreadError(error),
+            Error::BadThreadMode(error) => StaticError::BadThreadMode(error),
             Error::TypeError(error) => StaticError::TypeError(error),
             Error::BinaryOperatorError(error) => StaticError::BinaryOperatorError(error),
             Error::RuntimeError(error) => {
@@ -183,6 +192,7 @@ pub enum StaticError {
     InvalidTableKey(InvalidTableKey),
     StringError(StringError),
     ThreadError(ThreadError),
+    BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
     RuntimeError(String),
@@ -200,6 +210,7 @@ impl fmt::Display for StaticError {
             StaticError::InvalidTableKey(error) => write!(fmt, "invalid table key: {}", error),
             StaticError::StringError(error) => write!(fmt, "string error: {}", error),
             StaticError::ThreadError(error) => write!(fmt, "thread error: {}", error),
+            StaticError::BadThreadMode(error) => write!(fmt, "bad thread mode: {}", error),
             StaticError::TypeError(error) => write!(fmt, "type error: {}", error),
             StaticError::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
             StaticError::RuntimeError(error) => write!(fmt, "runtime error: {}", error),

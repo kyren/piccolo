@@ -2,7 +2,7 @@ use gc_arena::MutationContext;
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 
 use crate::{
-    thread::ThreadMode, Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Thread,
+    Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Thread, ThreadMode,
     ThreadSequence, TypeError, Value,
 };
 

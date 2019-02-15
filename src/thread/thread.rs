@@ -1,7 +1,6 @@
 use std::cell::RefMut;
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
-use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
@@ -9,8 +8,8 @@ use gc_arena::{Collect, GcCell, MutationContext};
 use gc_sequence::Sequence;
 
 use crate::{
-    vm::run_vm, CallbackResult, Closure, Continuation, Error, Function, RegisterIndex, TypeError,
-    UpValue, UpValueState, Value, VarCount,
+    thread::run_vm, BadThreadMode, CallbackResult, Closure, Continuation, Error, Function,
+    RegisterIndex, ThreadError, TypeError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -79,42 +78,6 @@ pub struct LuaRegisters<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
 }
 
-#[derive(Debug, Clone, Copy, Collect)]
-#[collect(require_static)]
-pub enum ThreadError {
-    ExpectedVariable(bool),
-    BadCall(TypeError),
-    BadYield,
-    BadMode {
-        expected: Option<ThreadMode>,
-        found: ThreadMode,
-    },
-}
-
-impl StdError for ThreadError {}
-
-impl fmt::Display for ThreadError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ThreadError::ExpectedVariable(true) => {
-                write!(fmt, "operation expects variable lua thread")
-            }
-            ThreadError::ExpectedVariable(false) => {
-                write!(fmt, "operation expects constant lua thread")
-            }
-            ThreadError::BadCall(type_error) => fmt::Display::fmt(type_error, fmt),
-            ThreadError::BadYield => write!(fmt, "yield from unyieldable function"),
-            ThreadError::BadMode { expected, found } => {
-                write!(fmt, "bad thread mode: {:?}", found)?;
-                if let Some(expected) = expected {
-                    write!(fmt, " expected: {:?}", expected)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
 #[derive(Collect)]
 #[collect(empty_drop)]
 pub struct ThreadSequence<'gc>(pub Thread<'gc>);
@@ -125,7 +88,7 @@ impl<'gc> ThreadSequence<'gc> {
         thread: Thread<'gc>,
         function: Function<'gc>,
         args: &[Value<'gc>],
-    ) -> Result<ThreadSequence<'gc>, ThreadError> {
+    ) -> Result<ThreadSequence<'gc>, BadThreadMode> {
         thread.start(mc, function, args)?;
         Ok(ThreadSequence(thread))
     }
@@ -146,7 +109,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
                 self.0.step_lua(mc, INSTRUCTION_GRANULARITY).unwrap();
                 None
             }
-            mode => Some(Err(ThreadError::BadMode {
+            mode => Some(Err(BadThreadMode {
                 expected: None,
                 found: mode,
             }
@@ -183,7 +146,7 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         function: Function<'gc>,
         args: &[Value<'gc>],
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), BadThreadMode> {
         let mut state = self.0.write(mc);
         check_mode(&state, ThreadMode::Stopped)?;
         ext_call_function(&mut state, function, args);
@@ -195,7 +158,7 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         function: Function<'gc>,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), BadThreadMode> {
         let mut state = self.0.write(mc);
         check_mode(&state, ThreadMode::Stopped)?;
         state.frames.push(Frame::StartCoroutine(function));
@@ -215,7 +178,7 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         args: &[Value<'gc>],
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), BadThreadMode> {
         let mut state = self.0.write(mc);
         check_mode(&state, ThreadMode::Suspended)?;
         match state.frames.pop() {
@@ -250,7 +213,7 @@ impl<'gc> Thread<'gc> {
     }
 
     // If the thread is in `Callback` mode, step the callback
-    pub fn step_callback(self, mc: MutationContext<'gc, '_>) -> Result<(), ThreadError> {
+    pub fn step_callback(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
         let mut state = self.0.write(mc);
         check_mode(&state, ThreadMode::Callback)?;
         match state.frames.last_mut() {
@@ -327,7 +290,7 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         mut instructions: u32,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), BadThreadMode> {
         check_mode(&self.0.read(), ThreadMode::Lua)?;
         loop {
             let state = self.0.write(mc);
@@ -840,10 +803,10 @@ fn get_mode<'gc>(state: &ThreadState<'gc>) -> ThreadMode {
     }
 }
 
-fn check_mode<'gc>(state: &ThreadState<'gc>, expected: ThreadMode) -> Result<(), ThreadError> {
+fn check_mode<'gc>(state: &ThreadState<'gc>, expected: ThreadMode) -> Result<(), BadThreadMode> {
     let found = get_mode(state);
     if found != expected {
-        Err(ThreadError::BadMode {
+        Err(BadThreadMode {
             expected: Some(expected),
             found,
         })
