@@ -13,6 +13,8 @@ pub(crate) fn run_vm<'gc>(
     mut lua_frame: LuaFrame<'gc, '_>,
     mut instructions: u32,
 ) -> Result<u32, Error<'gc>> {
+    assert_ne!(instructions, 0);
+
     let current_function = lua_frame.closure();
     let mut registers = lua_frame.registers();
 
@@ -154,12 +156,12 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::TailCall { func, args } => {
-                lua_frame.tail_call_function(func, args)?;
+                lua_frame.tail_call_function(mc, func, args)?;
                 break;
             }
 
             OpCode::Return { start, count } => {
-                lua_frame.return_upper(start, count)?;
+                lua_frame.return_upper(mc, start, count)?;
                 break;
             }
 
@@ -174,7 +176,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 *registers.pc = add_offset(*registers.pc, offset);
                 if let Some(r) = close_upvalues.to_u8() {
-                    registers.close_upvalues(RegisterIndex(r));
+                    registers.close_upvalues(mc, RegisterIndex(r));
                 }
             }
 
@@ -207,7 +209,7 @@ pub(crate) fn run_vm<'gc>(
                             panic!("_ENV upvalue is only allowed on top-level closure");
                         }
                         UpValueDescriptor::ParentLocal(reg) => {
-                            upvalues.push(registers.open_upvalue(reg));
+                            upvalues.push(registers.open_upvalue(mc, reg));
                         }
                         UpValueDescriptor::Outer(uvindex) => {
                             upvalues.push(current_function.0.upvalues[uvindex.0 as usize]);
@@ -319,6 +321,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetUpValue { source, dest } => {
                 registers.set_upvalue(
+                    mc,
                     current_function.0.upvalues[dest.0 as usize],
                     registers.stack_frame[source.0 as usize],
                 );

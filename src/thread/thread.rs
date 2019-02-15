@@ -1,4 +1,3 @@
-use std::cell::RefMut;
 use std::collections::btree_map::Entry as BTreeEntry;
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
@@ -38,7 +37,7 @@ impl<'gc> Hash for Thread<'gc> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
-    // No frames are on the thread
+    // No frames are on the thread and there are no available results
     Stopped,
     // Thread has available results
     Results,
@@ -64,8 +63,7 @@ pub(crate) struct ThreadState<'gc> {
 
 pub(crate) struct LuaFrame<'gc, 'a> {
     thread: Thread<'gc>,
-    mutation_context: MutationContext<'gc, 'a>,
-    state: RefMut<'a, ThreadState<'gc>>,
+    state: &'a mut ThreadState<'gc>,
 }
 
 pub(crate) struct LuaRegisters<'gc, 'a> {
@@ -75,7 +73,6 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
     base: usize,
     open_upvalues: &'a mut BTreeMap<usize, UpValue<'gc>>,
     thread: Thread<'gc>,
-    mutation_context: MutationContext<'gc, 'a>,
 }
 
 impl<'gc> ThreadSequence<'gc> {
@@ -274,15 +271,29 @@ impl<'gc> Thread<'gc> {
             }
             Some(Frame::Lua { .. }) => {
                 const VM_GRANULARITY: u32 = 256;
+                let mut instructions = VM_GRANULARITY;
 
-                let lua_frame = LuaFrame {
-                    state,
-                    mutation_context: mc,
-                    thread: self,
-                };
-                if let Err(err) = run_vm(mc, lua_frame, VM_GRANULARITY) {
-                    let mut state = self.0.write(mc);
-                    unwind(self, &mut state, mc, err);
+                loop {
+                    let lua_frame = LuaFrame {
+                        state: &mut state,
+                        thread: self,
+                    };
+                    match run_vm(mc, lua_frame, instructions) {
+                        Err(err) => {
+                            unwind(self, &mut state, mc, err);
+                            break;
+                        }
+                        Ok(i) => {
+                            if let Some(Frame::Lua { .. }) = state.frames.last() {
+                                instructions = i;
+                                if instructions == 0 {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             _ => panic!("no callback or lua frame"),
@@ -294,7 +305,7 @@ impl<'gc> Thread<'gc> {
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Returns the active closure for this Lua frame
-    pub fn closure(&self) -> Closure<'gc> {
+    pub(crate) fn closure(&self) -> Closure<'gc> {
         match self.state.frames.last() {
             Some(Frame::Lua { bottom, .. }) => match self.state.values[*bottom] {
                 Value::Function(Function::Closure(c)) => c,
@@ -305,19 +316,17 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // returns a view of the Lua frame's registers
-    pub fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.last_mut() {
+    pub(crate) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
+        match self.state.frames.last_mut() {
             Some(Frame::Lua { base, pc, .. }) => {
-                let (upper_stack, stack_frame) = state.values.split_at_mut(*base);
+                let (upper_stack, stack_frame) = self.state.values.split_at_mut(*base);
                 LuaRegisters {
                     pc,
                     stack_frame,
                     upper_stack,
                     base: *base,
-                    open_upvalues: &mut state.open_upvalues,
+                    open_upvalues: &mut self.state.open_upvalues,
                     thread: self.thread,
-                    mutation_context: self.mutation_context,
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -325,9 +334,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Place the current frame's varargs at the given register, expecting the given count
-    pub fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), ThreadError> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.last_mut() {
+    pub(crate) fn varargs(
+        &mut self,
+        dest: RegisterIndex,
+        count: VarCount,
+    ) -> Result<(), ThreadError> {
+        match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 bottom,
                 base,
@@ -343,17 +355,17 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let dest = *base + dest.0 as usize;
                 if let Some(count) = count.to_constant() {
                     for i in 0..count as usize {
-                        state.values[dest + i] = if i < varargs_len {
-                            state.values[varargs_start + i]
+                        self.state.values[dest + i] = if i < varargs_len {
+                            self.state.values[varargs_start + i]
                         } else {
                             Value::Nil
                         };
                     }
                 } else {
                     *is_variable = true;
-                    state.values.resize(dest + varargs_len, Value::Nil);
+                    self.state.values.resize(dest + varargs_len, Value::Nil);
                     for i in 0..varargs_len {
-                        state.values[dest + i] = state.values[varargs_start + i];
+                        self.state.values[dest + i] = self.state.values[varargs_start + i];
                     }
                 }
             }
@@ -364,14 +376,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     // Call the function at the given register with the given arguments.  On return, results will be
     // placed starting at the function register.
-    pub fn call_function(
-        mut self,
+    pub(crate) fn call_function(
+        self,
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
     ) -> Result<(), ThreadError> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.last_mut() {
+        match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 expected_returns,
                 is_variable,
@@ -387,24 +398,24 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let arg_count = args
                     .to_constant()
                     .map(|c| c as usize)
-                    .unwrap_or(state.values.len() - function_index - 1);
+                    .unwrap_or(self.state.values.len() - function_index - 1);
 
-                match state.values[function_index] {
+                match self.state.values[function_index] {
                     Value::Function(Function::Closure(closure)) => {
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            state.values.truncate(function_index + 1 + arg_count);
-                            state.values[function_index + 1..].rotate_left(fixed_params);
+                            self.state.values.truncate(function_index + 1 + arg_count);
+                            self.state.values[function_index + 1..].rotate_left(fixed_params);
                             function_index + 1 + (arg_count - fixed_params)
                         } else {
                             function_index + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        self.state.values.resize(base + stack_size, Value::Nil);
 
-                        state.frames.push(Frame::Lua {
+                        self.state.frames.push(Frame::Lua {
                             bottom: function_index,
                             base,
                             is_variable: false,
@@ -416,11 +427,11 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     }
                     Value::Function(Function::Callback(callback)) => {
                         let seq = callback.call(
-                            state.values[function_index + 1..function_index + 1 + arg_count]
+                            self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
-                        state.frames.push(Frame::Callback(Some(seq)));
-                        state.values.resize(function_index, Value::Nil);
+                        self.state.frames.push(Frame::Callback(Some(seq)));
+                        self.state.values.resize(function_index, Value::Nil);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -436,14 +447,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Calls the function at the given index with a constant number of arguments without
     // invalidating the function or its arguments.  Returns are placed *after* the function and its
     // aruments, and all registers past this are invalidated as normal.
-    pub fn call_function_non_destructive(
-        mut self,
+    pub(crate) fn call_function_non_destructive(
+        self,
         func: RegisterIndex,
         arg_count: u8,
         returns: VarCount,
     ) -> Result<(), ThreadError> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.last_mut() {
+        match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 expected_returns,
                 is_variable,
@@ -458,28 +468,29 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 *expected_returns = Some(returns);
                 let given_function_index = *base + func.0 as usize;
                 let function_index = given_function_index + 1 + arg_count;
-                state
+                self.state
                     .values
                     .resize(function_index + 1 + arg_count, Value::Nil);
                 for i in 0..arg_count + 1 {
-                    state.values[function_index + i] = state.values[given_function_index + i];
+                    self.state.values[function_index + i] =
+                        self.state.values[given_function_index + i];
                 }
 
-                match state.values[function_index] {
+                match self.state.values[function_index] {
                     Value::Function(Function::Closure(closure)) => {
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            state.values[function_index + 1..].rotate_left(fixed_params);
+                            self.state.values[function_index + 1..].rotate_left(fixed_params);
                             function_index + 1 + (arg_count - fixed_params)
                         } else {
                             function_index + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        self.state.values.resize(base + stack_size, Value::Nil);
 
-                        state.frames.push(Frame::Lua {
+                        self.state.frames.push(Frame::Lua {
                             bottom: function_index,
                             base,
                             is_variable: false,
@@ -491,11 +502,11 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     }
                     Value::Function(Function::Callback(callback)) => {
                         let seq = callback.call(
-                            state.values[function_index + 1..function_index + 1 + arg_count]
+                            self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
-                        state.frames.push(Frame::Callback(Some(seq)));
-                        state.values.resize(function_index, Value::Nil);
+                        self.state.frames.push(Frame::Callback(Some(seq)));
+                        self.state.values.resize(function_index, Value::Nil);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -510,13 +521,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     // Tail-call the function at the given register with the given arguments.  Pops the current Lua
     // frame, pushing a new frame for the given function.
-    pub fn tail_call_function(
-        mut self,
+    pub(crate) fn tail_call_function(
+        self,
+        mc: MutationContext<'gc, '_>,
         func: RegisterIndex,
         args: VarCount,
     ) -> Result<(), ThreadError> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.pop() {
+        match self.state.frames.pop() {
             Some(Frame::Lua {
                 bottom,
                 base,
@@ -527,35 +538,36 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     return Err(ThreadError::ExpectedVariable(is_variable));
                 }
 
-                close_upvalues(self.thread, state, self.mutation_context, bottom);
+                close_upvalues(self.thread, self.state, mc, bottom);
 
                 let function_index = base + func.0 as usize;
                 let arg_count = args
                     .to_constant()
                     .map(|c| c as usize)
-                    .unwrap_or(state.values.len() - function_index - 1);
+                    .unwrap_or(self.state.values.len() - function_index - 1);
 
-                match state.values[function_index] {
+                match self.state.values[function_index] {
                     Value::Function(Function::Closure(closure)) => {
-                        state.values[bottom] = state.values[function_index];
+                        self.state.values[bottom] = self.state.values[function_index];
                         for i in 0..arg_count {
-                            state.values[bottom + 1 + i] = state.values[function_index + 1 + i];
+                            self.state.values[bottom + 1 + i] =
+                                self.state.values[function_index + 1 + i];
                         }
 
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            state.values.truncate(bottom + 1 + arg_count);
-                            state.values[bottom + 1..].rotate_left(fixed_params);
+                            self.state.values.truncate(bottom + 1 + arg_count);
+                            self.state.values[bottom + 1..].rotate_left(fixed_params);
                             bottom + 1 + (arg_count - fixed_params)
                         } else {
                             bottom + 1
                         };
 
-                        state.values.resize(base + stack_size, Value::Nil);
+                        self.state.values.resize(base + stack_size, Value::Nil);
 
-                        state.frames.push(Frame::Lua {
+                        self.state.frames.push(Frame::Lua {
                             bottom,
                             base,
                             is_variable: false,
@@ -567,11 +579,11 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     }
                     Value::Function(Function::Callback(callback)) => {
                         let seq = callback.call(
-                            state.values[function_index + 1..function_index + 1 + arg_count]
+                            self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
-                        state.frames.push(Frame::Callback(Some(seq)));
-                        state.values.truncate(bottom);
+                        self.state.frames.push(Frame::Callback(Some(seq)));
+                        self.state.values.truncate(bottom);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -585,13 +597,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Return to the upper frame with results starting at the given register index.
-    pub fn return_upper(
-        mut self,
+    pub(crate) fn return_upper(
+        self,
+        mc: MutationContext<'gc, '_>,
         start: RegisterIndex,
         count: VarCount,
     ) -> Result<(), ThreadError> {
-        let state: &mut ThreadState<'gc> = &mut self.state;
-        match state.frames.pop() {
+        match self.state.frames.pop() {
             Some(Frame::Lua {
                 bottom,
                 base,
@@ -601,22 +613,22 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 if is_variable != count.is_variable() {
                     return Err(ThreadError::ExpectedVariable(is_variable));
                 }
-                close_upvalues(self.thread, state, self.mutation_context, bottom);
+                close_upvalues(self.thread, self.state, mc, bottom);
 
                 let start = base + start.0 as usize;
                 let count = count
                     .to_constant()
                     .map(|c| c as usize)
-                    .unwrap_or(state.values.len() - start);
+                    .unwrap_or(self.state.values.len() - start);
 
-                match state.frames.last_mut() {
+                match self.state.frames.last_mut() {
                     Some(Frame::Continuation { continuation, .. }) => {
                         let continuation = continuation.take().expect("continuation missing");
-                        let ret_vals = state.values[start..start + count].to_vec();
-                        state.values.truncate(bottom);
+                        let ret_vals = self.state.values[start..start + count].to_vec();
+                        self.state.values.truncate(bottom);
                         let seq = continuation.call(Ok(ret_vals));
-                        state.frames.pop();
-                        state.frames.push(Frame::Callback(Some(seq)));
+                        self.state.frames.pop();
+                        self.state.frames.push(Frame::Callback(Some(seq)));
                     }
                     Some(Frame::Lua {
                         expected_returns,
@@ -633,25 +645,25 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             .unwrap_or(count);
 
                         for i in 0..returning.min(count) {
-                            state.values[bottom + i] = state.values[start + i]
+                            self.state.values[bottom + i] = self.state.values[start + i]
                         }
 
                         for i in count..returning {
-                            state.values[bottom + i] = Value::Nil;
+                            self.state.values[bottom + i] = Value::Nil;
                         }
 
                         if expected_returns.is_variable() {
-                            state.values.truncate(bottom + returning);
+                            self.state.values.truncate(bottom + returning);
                             *is_variable = true;
                         } else {
-                            state.values.resize(*base + *stack_size, Value::Nil);
+                            self.state.values.resize(*base + *stack_size, Value::Nil);
                             *is_variable = false;
                         }
                     }
                     None => {
-                        let ret_vals = state.values[start..start + count].to_vec();
-                        state.result = Some(Ok(ret_vals));
-                        state.values.clear();
+                        let ret_vals = self.state.values[start..start + count].to_vec();
+                        self.state.result = Some(Ok(ret_vals));
+                        self.state.values.clear();
                     }
                     _ => panic!("lua frame must be above a continuation or lua frame"),
                 }
@@ -663,15 +675,16 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 }
 
 impl<'gc, 'a> LuaRegisters<'gc, 'a> {
-    pub fn open_upvalue(&mut self, reg: RegisterIndex) -> UpValue<'gc> {
+    pub fn open_upvalue(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        reg: RegisterIndex,
+    ) -> UpValue<'gc> {
         let ind = self.base + reg.0 as usize;
         match self.open_upvalues.entry(ind) {
             BTreeEntry::Occupied(occupied) => *occupied.get(),
             BTreeEntry::Vacant(vacant) => {
-                let uv = UpValue(GcCell::allocate(
-                    self.mutation_context,
-                    UpValueState::Open(self.thread, ind),
-                ));
+                let uv = UpValue(GcCell::allocate(mc, UpValueState::Open(self.thread, ind)));
                 vacant.insert(uv);
                 uv
             }
@@ -695,8 +708,13 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub fn set_upvalue(&mut self, upvalue: UpValue<'gc>, value: Value<'gc>) {
-        let mut uv = upvalue.0.write(self.mutation_context);
+    pub fn set_upvalue(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        upvalue: UpValue<'gc>,
+        value: Value<'gc>,
+    ) {
+        let mut uv = upvalue.0.write(mc);
         match &mut *uv {
             UpValueState::Open(thread, ind) => {
                 if *thread == self.thread {
@@ -706,19 +724,19 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
                         self.stack_frame[*ind - self.base] = value;
                     }
                 } else {
-                    thread.0.write(self.mutation_context).values[*ind] = value;
+                    thread.0.write(mc).values[*ind] = value;
                 }
             }
             UpValueState::Closed(v) => *v = value,
         }
     }
 
-    pub fn close_upvalues(&mut self, register: RegisterIndex) {
+    pub fn close_upvalues(&mut self, mc: MutationContext<'gc, '_>, register: RegisterIndex) {
         for (_, upval) in self
             .open_upvalues
             .split_off(&(self.base + register.0 as usize))
         {
-            let mut upval = upval.0.write(self.mutation_context);
+            let mut upval = upval.0.write(mc);
             if let UpValueState::Open(upvalue_thread, ind) = *upval {
                 assert!(upvalue_thread == self.thread);
                 *upval = UpValueState::Closed(if ind < self.base {
