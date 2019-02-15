@@ -5,9 +5,10 @@ use crate::{
     RegisterIndex, String, Table, TypeError, UpValueDescriptor, Value, VarCount,
 };
 
-// Runs the VM until the current LuaFrame may have been changed.  Returns the number of instructions
-// left to run (or 0 if all requested instructions were run).
-pub fn run_vm<'gc>(
+// Runs the VM for the given number of instructions or until the current LuaFrame may have been
+// changed.  Returns the number of instructions that were not run, or 0 if all requested
+// instructions were run.
+pub(crate) fn run_vm<'gc>(
     mc: MutationContext<'gc, '_>,
     mut lua_frame: LuaFrame<'gc, '_>,
     mut instructions: u32,

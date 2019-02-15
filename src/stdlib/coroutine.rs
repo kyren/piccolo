@@ -103,10 +103,11 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env
                 };
 
                 sequence::ok(CallbackResult::Return(vec![Value::String(
+                    // TODO: When the current thread is available again for callbacks, whether or
+                    // not the active thread matches will determine 'normal' from 'running'.
                     String::new_static(match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Results => b"dead",
-                        ThreadMode::Lua => b"normal",
-                        ThreadMode::Callback | ThreadMode::Running => b"running",
+                        ThreadMode::Running => b"running",
                         ThreadMode::Suspended => b"suspended",
                     }),
                 )]))

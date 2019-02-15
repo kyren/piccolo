@@ -14,7 +14,7 @@ use crate::{
 
 #[derive(Clone, Copy, Collect)]
 #[collect(require_copy)]
-pub struct Thread<'gc>(pub GcCell<'gc, ThreadState<'gc>>);
+pub struct Thread<'gc>(pub(crate) GcCell<'gc, ThreadState<'gc>>);
 
 impl<'gc> Debug for Thread<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -42,25 +42,19 @@ pub enum ThreadMode {
     Stopped,
     // Thread has available results
     Results,
-    // Lua code is currently executing
-    Lua,
-    // Waiting on the results of a callback
-    Callback,
-    // Currently executing a callback or continuation
+    // Thread has an active Lua frame or is waiting on the results of a callback or continuation.
     Running,
-    // Waiting being resumed
+    // Thread has yielded and is waiting on being resumed
     Suspended,
-}
-
-pub struct LuaFrame<'gc, 'a> {
-    thread: Thread<'gc>,
-    mutation_context: MutationContext<'gc, 'a>,
-    state: RefMut<'a, ThreadState<'gc>>,
 }
 
 #[derive(Collect)]
 #[collect(empty_drop)]
-pub struct ThreadState<'gc> {
+pub struct ThreadSequence<'gc>(pub Thread<'gc>);
+
+#[derive(Collect)]
+#[collect(empty_drop)]
+pub(crate) struct ThreadState<'gc> {
     values: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
@@ -68,7 +62,13 @@ pub struct ThreadState<'gc> {
     allow_yield: bool,
 }
 
-pub struct LuaRegisters<'gc, 'a> {
+pub(crate) struct LuaFrame<'gc, 'a> {
+    thread: Thread<'gc>,
+    mutation_context: MutationContext<'gc, 'a>,
+    state: RefMut<'a, ThreadState<'gc>>,
+}
+
+pub(crate) struct LuaRegisters<'gc, 'a> {
     pub pc: &'a mut usize,
     pub stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
@@ -78,11 +78,8 @@ pub struct LuaRegisters<'gc, 'a> {
     mutation_context: MutationContext<'gc, 'a>,
 }
 
-#[derive(Collect)]
-#[collect(empty_drop)]
-pub struct ThreadSequence<'gc>(pub Thread<'gc>);
-
 impl<'gc> ThreadSequence<'gc> {
+    /// Thread must be `Stopped` in order to call a function on it.
     pub fn call_function(
         mc: MutationContext<'gc, '_>,
         thread: Thread<'gc>,
@@ -100,13 +97,8 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self.0.mode() {
             ThreadMode::Results => self.0.take_results(mc),
-            ThreadMode::Callback => {
-                self.0.step_callback(mc).unwrap();
-                None
-            }
-            ThreadMode::Lua => {
-                const INSTRUCTION_GRANULARITY: u32 = 256;
-                self.0.step_lua(mc, INSTRUCTION_GRANULARITY).unwrap();
+            ThreadMode::Running => {
+                self.0.step(mc).unwrap();
                 None
             }
             mode => Some(Err(BadThreadMode {
@@ -140,7 +132,7 @@ impl<'gc> Thread<'gc> {
         }
     }
 
-    // If this thread is `Stopped`, start a new function with the given arguments.
+    /// If this thread is `Stopped`, start a new function with the given arguments.
     pub fn start(
         self,
         mc: MutationContext<'gc, '_>,
@@ -153,7 +145,7 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    // If this thread is `Stopped`, start a new suspended function.
+    /// If this thread is `Stopped`, start a new suspended function.
     pub fn start_suspended(
         self,
         mc: MutationContext<'gc, '_>,
@@ -165,7 +157,7 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    // Take any results if they are available
+    /// Take any results if they are available
     pub fn take_results(
         self,
         mc: MutationContext<'gc, '_>,
@@ -173,7 +165,7 @@ impl<'gc> Thread<'gc> {
         self.0.write(mc).result.take()
     }
 
-    // If the thread is in `Suspended` mode, resume it.
+    /// If the thread is in `Suspended` mode, resume it.
     pub fn resume(
         self,
         mc: MutationContext<'gc, '_>,
@@ -212,10 +204,11 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    // If the thread is in `Callback` mode, step the callback
-    pub fn step_callback(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
+    /// If the thread is in `Running` mode, either run the Lua VM for a while or step any callback
+    /// that we are waiting on.
+    pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
         let mut state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Callback)?;
+        check_mode(&state, ThreadMode::Running)?;
         match state.frames.last_mut() {
             Some(Frame::Callback(sequence)) => {
                 let mut sequence = sequence.take().expect("pending callback missing");
@@ -279,50 +272,28 @@ impl<'gc> Thread<'gc> {
                     }
                 }
             }
-            _ => panic!("no callback frame"),
-        }
-        Ok(())
-    }
+            Some(Frame::Lua { .. }) => {
+                const VM_GRANULARITY: u32 = 256;
 
-    // If the thread is in `Lua` mode, run the VM for the given number of instructions, or until the
-    // Thread transitions out of `Lua` mode.
-    pub fn step_lua(
-        self,
-        mc: MutationContext<'gc, '_>,
-        mut instructions: u32,
-    ) -> Result<(), BadThreadMode> {
-        check_mode(&self.0.read(), ThreadMode::Lua)?;
-        loop {
-            let state = self.0.write(mc);
-            match state.frames.last() {
-                Some(Frame::Lua { .. }) => {
-                    let lua_frame = LuaFrame {
-                        state,
-                        mutation_context: mc,
-                        thread: self,
-                    };
-                    match run_vm(mc, lua_frame, instructions) {
-                        Err(err) => {
-                            let mut state = self.0.write(mc);
-                            unwind(self, &mut state, mc, err);
-                            break;
-                        }
-                        Ok(i) => {
-                            if i == 0 {
-                                break;
-                            }
-                            instructions = i;
-                        }
-                    }
+                let lua_frame = LuaFrame {
+                    state,
+                    mutation_context: mc,
+                    thread: self,
+                };
+                if let Err(err) = run_vm(mc, lua_frame, VM_GRANULARITY) {
+                    let mut state = self.0.write(mc);
+                    unwind(self, &mut state, mc, err);
                 }
-                _ => break,
             }
+            _ => panic!("no callback or lua frame"),
         }
+
         Ok(())
     }
 }
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
+    // Returns the active closure for this Lua frame
     pub fn closure(&self) -> Closure<'gc> {
         match self.state.frames.last() {
             Some(Frame::Lua { bottom, .. }) => match self.state.values[*bottom] {
@@ -795,10 +766,12 @@ fn get_mode<'gc>(state: &ThreadState<'gc>) -> ThreadMode {
                 );
                 ThreadMode::Stopped
             }
-            Some(Frame::Lua { .. }) => ThreadMode::Lua,
-            Some(Frame::Continuation { .. }) => ThreadMode::Running,
-            Some(Frame::StartCoroutine(_)) | Some(Frame::ResumeCoroutine) => ThreadMode::Suspended,
-            Some(Frame::Callback(_)) => ThreadMode::Callback,
+            Some(frame) => match frame {
+                Frame::Callback(_) | Frame::Continuation { .. } | Frame::Lua { .. } => {
+                    ThreadMode::Running
+                }
+                Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+            },
         }
     }
 }
