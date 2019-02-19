@@ -9,12 +9,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"abs"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to abs"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Integer(a) => Ok(CallbackResult::Return(vec![Value::Integer(a.abs())])),
                 a => match a.to_number() {
@@ -33,13 +27,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"acos"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to acos",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.acos())])),
                 _ => Err(
@@ -54,13 +41,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"asin"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to asin",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.asin())])),
                 _ => Err(
@@ -75,13 +55,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"atan"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to atan",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.atan())])),
                 _ => Err(
@@ -96,13 +69,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"atan2"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 2 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to atan2",
-                )))
-                .into());
-            }
-
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
                 args.get(1).cloned().unwrap_or(Value::Nil).to_number(),
@@ -121,13 +87,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"ceil"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to ceil",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![
                     Value::Integer(f.ceil() as i64),
@@ -144,12 +103,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"cos"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to cos"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.cos())])),
                 _ => Err(
@@ -164,13 +117,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"cosh"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to cosh",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.cosh())])),
                 _ => Err(
@@ -185,12 +131,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"deg"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to deg"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.to_degrees())])),
                 _ => Err(
@@ -205,12 +145,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"exp"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to exp"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(
                     std::f64::consts::E.powf(f),
@@ -227,13 +161,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"floor"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to floor",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Integer(
                     f.floor() as i64
@@ -251,13 +178,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"fmod"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to fmod",
-                )))
-                .into());
-            }
-
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
                 args.get(1).cloned().unwrap_or(Value::Nil).to_number(),
@@ -275,13 +195,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"frexp"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to frexp",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
                     let bits = f.to_bits();
@@ -317,13 +230,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"ldexp"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to ldexp",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
                     let bits = f.to_bits();
@@ -352,12 +258,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"log"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to log"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.ln())])),
                 _ => Err(
@@ -372,13 +272,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"log10"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to log10",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.log10())])),
                 _ => Err(
@@ -401,17 +294,13 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
             }
 
             args.iter()
-                .fold(Ok(Value::Number(-std::f64::INFINITY)), |max, entry| {
-                    max.and_then(|max| {
-                        max.less_than(*entry)
-                            .ok_or(
-                                RuntimeError(Value::String(String::new_static(
-                                    b"Bad argument to max",
-                                )))
+                .try_fold(Value::Number(-std::f64::INFINITY), |max, &entry| {
+                    max.less_than(entry)
+                        .ok_or(
+                            RuntimeError(Value::String(String::new_static(b"Bad argument to max")))
                                 .into(),
-                            )
-                            .and_then(|b| if b { Ok(*entry) } else { Ok(max) })
-                    })
+                        )
+                        .and_then(|less| if less { Ok(entry) } else { Ok(max) })
                 })
                 .map(|a| CallbackResult::Return(vec![a]))
         }),
@@ -436,18 +325,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
             }
 
             args.iter()
-                .fold(Ok(Value::Number(std::f64::INFINITY)), |min, entry| {
-                    min.and_then(|min| {
-                        entry
-                            .less_than(min)
-                            .ok_or(
-                                RuntimeError(Value::String(String::new_static(
-                                    b"Bad argument to min",
-                                )))
+                .try_fold(Value::Number(std::f64::INFINITY), |min, &entry| {
+                    entry
+                        .less_than(min)
+                        .ok_or(
+                            RuntimeError(Value::String(String::new_static(b"Bad argument to min")))
                                 .into(),
-                            )
-                            .and_then(|b| if b { Ok(*entry) } else { Ok(min) })
-                    })
+                        )
+                        .and_then(|less| if less { Ok(entry) } else { Ok(min) })
                 })
                 .map(|a| CallbackResult::Return(vec![a]))
         }),
@@ -465,13 +350,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"modf"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to modf",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![
                     Value::Integer(f as i64 / 1),
@@ -496,12 +374,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"rad"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to rad"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.to_radians())])),
                 _ => Err(
@@ -518,12 +390,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"sin"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to sin"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.sin())])),
                 _ => Err(
@@ -538,13 +404,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"sqrt"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to sqrt",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.sqrt())])),
                 _ => Err(
@@ -559,12 +418,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"tan"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to tan"))).into(),
-                );
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.tan())])),
                 _ => Err(
@@ -579,13 +432,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"tointeger"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to tointeger",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil).to_integer() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Integer(f)])),
                 _ => Ok(CallbackResult::Return(vec![Value::Nil])),
@@ -598,13 +444,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"type"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 1 {
-                return Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to type",
-                )))
-                .into());
-            }
-
             match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Integer(_) => Ok(CallbackResult::Return(vec![Value::String(
                     String::new_static(b"integer"),
@@ -622,12 +461,6 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"ult"),
         Callback::new_immediate(mc, |args| {
-            if args.len() != 2 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to ult"))).into(),
-                );
-            }
-
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_integer(),
                 args.get(1).cloned().unwrap_or(Value::Nil).to_integer(),
