@@ -24,26 +24,6 @@ pub enum CallbackReturn<'gc> {
     Sequence(Box<dyn Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>> + 'gc>),
 }
 
-impl<'gc> CallbackReturn<'gc> {
-    pub fn immediate<F>(f: F) -> CallbackReturn<'gc>
-    where
-        F: FnOnce() -> Result<CallbackResult<'gc>, Error<'gc>>,
-    {
-        CallbackReturn::Immediate(f())
-    }
-
-    pub fn sequence<F, S>(f: F) -> CallbackReturn<'gc>
-    where
-        S: 'gc + Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>>,
-        F: FnOnce() -> Result<S, Error<'gc>>,
-    {
-        match f() {
-            Ok(res) => CallbackReturn::Sequence(res.boxed()),
-            Err(err) => CallbackReturn::Immediate(Err(err)),
-        }
-    }
-}
-
 pub trait ContinuationFn<'gc>: Collect {
     fn call(self: Box<Self>, res: Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackReturn<'gc>;
 }
@@ -106,6 +86,53 @@ impl<'gc> Continuation<'gc> {
         )))
     }
 
+    pub fn new_immediate<F>(cont: F) -> Continuation<'gc>
+    where
+        F: 'static
+            + FnOnce(Result<Vec<Value<'gc>>, Error<'gc>>) -> Result<CallbackResult<'gc>, Error<'gc>>,
+    {
+        Continuation::new(move |res| CallbackReturn::Immediate(cont(res)))
+    }
+
+    pub fn new_immediate_with<C, F>(context: C, continuation: F) -> Continuation<'gc>
+    where
+        C: 'gc + Collect,
+        F: 'static
+            + FnOnce(
+                C,
+                Result<Vec<Value<'gc>>, Error<'gc>>,
+            ) -> Result<CallbackResult<'gc>, Error<'gc>>,
+    {
+        Continuation::new_with(context, move |context, res| {
+            CallbackReturn::Immediate(continuation(context, res))
+        })
+    }
+
+    pub fn new_sequence<S, F>(cont: F) -> Continuation<'gc>
+    where
+        S: 'gc + Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>>,
+        F: 'static + FnOnce(Result<Vec<Value<'gc>>, Error<'gc>>) -> Result<S, Error<'gc>>,
+    {
+        Continuation::new(move |res| match cont(res) {
+            Ok(seq) => CallbackReturn::Sequence(seq.boxed()),
+            Err(err) => CallbackReturn::Immediate(Err(err)),
+        })
+    }
+
+    pub fn new_sequence_with<C, S, F>(context: C, continuation: F) -> Continuation<'gc>
+    where
+        C: 'gc + Collect,
+        S: 'gc + Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>>,
+        F: 'static + FnOnce(C, Result<Vec<Value<'gc>>, Error<'gc>>) -> Result<S, Error<'gc>>,
+    {
+        Continuation::new_with(context, move |context, res| {
+            match continuation(context, res) {
+                Ok(seq) => CallbackReturn::Sequence(seq.boxed()),
+                Err(err) => CallbackReturn::Immediate(Err(err)),
+            }
+        })
+    }
+
     pub fn call(self, res: Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackReturn<'gc> {
         self.0.call(res)
     }
@@ -163,6 +190,44 @@ impl<'gc> Callback<'gc> {
             mc,
             Box::new(ContextCallbackFn(c, StaticCollect(f))),
         ))
+    }
+
+    pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
+    where
+        F: 'static + Fn(Vec<Value<'gc>>) -> Result<CallbackResult<'gc>, Error<'gc>>,
+    {
+        Callback::new(mc, move |res| CallbackReturn::Immediate(f(res)))
+    }
+
+    pub fn new_immediate_with<C, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
+    where
+        C: 'gc + Collect,
+        F: 'static + Fn(&C, Vec<Value<'gc>>) -> Result<CallbackResult<'gc>, Error<'gc>>,
+    {
+        Callback::new_with(mc, c, move |c, res| CallbackReturn::Immediate(f(c, res)))
+    }
+
+    pub fn new_sequence<S, F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
+    where
+        S: 'gc + Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>>,
+        F: 'static + Fn(Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
+    {
+        Callback::new(mc, move |res| match f(res) {
+            Ok(seq) => CallbackReturn::Sequence(seq.boxed()),
+            Err(err) => CallbackReturn::Immediate(Err(err)),
+        })
+    }
+
+    pub fn new_sequence_with<C, S, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
+    where
+        C: 'gc + Collect,
+        S: 'gc + Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>>,
+        F: 'static + Fn(&C, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
+    {
+        Callback::new_with(mc, c, move |c, res| match f(c, res) {
+            Ok(seq) => CallbackReturn::Sequence(seq.boxed()),
+            Err(err) => CallbackReturn::Immediate(Err(err)),
+        })
     }
 
     pub fn call(&self, args: Vec<Value<'gc>>) -> CallbackReturn<'gc> {

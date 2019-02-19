@@ -1,7 +1,7 @@
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 use luster::{
-    compile, Callback, CallbackResult, CallbackReturn, Closure, Error, Function, Lua, StaticError,
-    String, ThreadSequence, Value,
+    compile, Callback, CallbackResult, Closure, Error, Function, Lua, StaticError, String,
+    ThreadSequence, Value,
 };
 
 #[test]
@@ -9,10 +9,10 @@ fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|root| {
         sequence::from_fn_with(root, |mc, root| {
-            let callback = Callback::new(mc, |args| {
+            let callback = Callback::new_immediate(mc, |args| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(42));
-                CallbackReturn::Immediate(Ok(CallbackResult::Return(ret)))
+                Ok(CallbackResult::Return(ret))
             });
             root.globals
                 .set(mc, String::new_static(b"callback"), callback)?;
@@ -53,10 +53,10 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|root| {
         sequence::from_fn_with(root, |mc, root| {
-            let callback = Callback::new(mc, |args| {
+            let callback = Callback::new_immediate(mc, |args| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(3));
-                CallbackReturn::Immediate(Ok(CallbackResult::Return(ret)))
+                Ok(CallbackResult::Return(ret))
             });
             root.globals
                 .set(mc, String::new_static(b"callback"), callback)?;
