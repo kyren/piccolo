@@ -151,7 +151,7 @@ pub(crate) fn run_vm<'gc>(
                 args,
                 returns,
             } => {
-                lua_frame.call_function(func, args, returns)?;
+                lua_frame.call_function(mc, func, args, returns)?;
                 break;
             }
 
@@ -273,7 +273,12 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::GenericForCall { base, var_count } => {
-                lua_frame.call_function_non_destructive(base, 2, VarCount::constant(var_count))?;
+                lua_frame.call_function_non_destructive(
+                    mc,
+                    base,
+                    2,
+                    VarCount::constant(var_count),
+                )?;
                 break;
             }
 

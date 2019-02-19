@@ -18,7 +18,7 @@ mod value;
 
 mod stdlib;
 
-pub use callback::{Callback, CallbackResult, Continuation};
+pub use callback::{Callback, CallbackResult, CallbackReturn, Continuation};
 pub use closure::{
     Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor, UpValueState,
 };
