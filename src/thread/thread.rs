@@ -846,6 +846,9 @@ fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
     };
 }
 
+// TODO: `unwind`, `return_ext`, and `callback_return` have to be merged somehow, because otherwise
+// they are a stack overflow risk in pathalogical or malicious cases.
+
 fn unwind<'gc>(
     thread: Thread<'gc>,
     state: &mut ThreadState<'gc>,
