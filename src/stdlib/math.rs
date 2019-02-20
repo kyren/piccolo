@@ -437,7 +437,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
                     Ok(CallbackResult::Return(vec![]))
                 }
                 _ => Err(RuntimeError(Value::String(String::new_static(
-                    b"Bad argument to random",
+                    b"Bad argument to randomseed",
                 )))
                 .into()),
             }
