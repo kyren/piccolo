@@ -2,8 +2,14 @@ use gc_arena::MutationContext;
 
 use crate::{Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Value};
 
+use rand::{FromEntropy, Rng, SeedableRng};
+use rand_xoshiro::Xoshiro256StarStar;
+use std::{cell::RefCell, ops::DerefMut, rc::Rc};
+
 pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<'gc>) {
     let math = Table::new(mc);
+    let seeded_rng: Rc<RefCell<Xoshiro256StarStar>> =
+        Rc::new(RefCell::new(Xoshiro256StarStar::from_entropy()));
 
     math.set(
         mc,
@@ -385,6 +391,59 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
     .unwrap();
 
     // TODO: Random and Randomseed
+    let random_rng = seeded_rng.clone();
+    math.set(
+        mc,
+        String::new_static(b"random"),
+        Callback::new_immediate(mc, move |args| {
+            let rng = &random_rng;
+            match (
+                args.get(0).cloned().unwrap_or(Value::Nil),
+                args.get(1).cloned().unwrap_or(Value::Nil),
+            ) {
+                (Value::Nil, Value::Nil) => Ok(CallbackResult::Return(vec![Value::Number(
+                    rng.borrow_mut().gen::<f64>(),
+                )])),
+                (a, b) => {
+                    if let (Some(first), Value::Nil) = (a.to_integer(), b) {
+                        Ok(CallbackResult::Return(vec![Value::Integer(
+                            rng.borrow_mut().gen_range(1, first + 1),
+                        )]))
+                    } else if let (Some(first), Some(second)) = (a.to_integer(), b.to_integer()) {
+                        Ok(CallbackResult::Return(vec![Value::Integer(
+                            rng.borrow_mut().gen_range(first, second + 1),
+                        )]))
+                    } else {
+                        Err(RuntimeError(Value::String(String::new_static(
+                            b"Bad argument to random",
+                        )))
+                        .into())
+                    }
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    let randomseed_rng = seeded_rng.clone();
+    math.set(
+        mc,
+        String::new_static(b"randomseed"),
+        Callback::new_immediate(mc, move |args| {
+            let rng = &randomseed_rng;
+            match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
+                Some(f) => {
+                    *(rng.borrow_mut().deref_mut()) = Xoshiro256StarStar::seed_from_u64(f as u64);
+                    Ok(CallbackResult::Return(vec![]))
+                }
+                _ => Err(RuntimeError(Value::String(String::new_static(
+                    b"Bad argument to random",
+                )))
+                .into()),
+            }
+        }),
+    )
+    .unwrap();
 
     math.set(
         mc,
