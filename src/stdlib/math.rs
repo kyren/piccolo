@@ -190,12 +190,11 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
             ) {
                 (Some(f), Some(g)) => {
                     let result = (f % g).abs();
-                    if f < 0.0 {
-                        Ok(CallbackResult::Return(vec![Value::Number(-result)]))
+                    Ok(CallbackResult::Return(vec![Value::Number(if f < 0.0 {
+                        -result
                     } else {
-                        Ok(CallbackResult::Return(vec![Value::Number(result)]))
-                    }
-
+                        result
+                    })]))
                 }
                 _ => Err(
                     RuntimeError(Value::String(String::new_static(b"Bad argument to fmod"))).into(),
