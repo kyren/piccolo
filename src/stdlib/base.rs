@@ -90,15 +90,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env: Tab
                 )))
                 .into());
             }
-            match args.get(0).cloned().unwrap() {
-                // Lua5.3 does not differentiate between a floating point and integer number
-                Value::Integer(_) => Ok(CallbackResult::Return(vec![Value::String(
-                    String::new_static(b"number"),
-                )])),
-                a => Ok(CallbackResult::Return(vec![Value::String(
-                    String::new_static(a.type_name().as_bytes()),
-                )])),
-            }
+            Ok(CallbackResult::Return(vec![Value::String(
+                String::new_static(args.get(0).cloned().unwrap().type_name().as_bytes()),
+            )]))
         }),
     )
     .unwrap();
