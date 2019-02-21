@@ -2,7 +2,7 @@ use std::error::Error as StdError;
 use std::fs::File;
 use std::vec::Vec;
 
-use clap::{App, Arg};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
 use rustyline::Editor;
 
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
@@ -92,9 +92,10 @@ fn run_repl(lua: &mut Lua) {
 }
 
 fn main() -> Result<(), Box<StdError>> {
-    let matches = App::new("luster")
-        .version("0.1.0")
-        .about("A Lua interpreter")
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .about(crate_description!())
+        .author(crate_authors!(", "))
         .arg(
             Arg::with_name("repl")
                 .short("r")
