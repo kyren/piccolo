@@ -249,25 +249,12 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"ldexp"),
         Callback::new_immediate(mc, |args| {
-            match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
-                Some(f) if f.is_finite() => {
-                    let bits = f.to_bits();
-                    // Set the exponent to exactly 01111111111_b, then put into the range of
-                    // the result
-                    let m = f64::from_bits((bits | (0x3ff << 52)) & (!(1 << 62)));
-                    // Extract the exponent, chop off the sign bit, and adjust the offset, then
-                    // put into range of result
-                    let e = ((bits >> 52) & 0x7ff) as i64 - 1023;
+            match (args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
+                   args.get(1).cloned().unwrap_or(Value::Nil).to_number()) {
 
+                (Some(f), Some(g)) => {
                     Ok(CallbackResult::Return(vec![
-                        Value::Number(m),
-                        Value::Integer(e),
-                    ]))
-                }
-                Some(f) => {
-                    Ok(CallbackResult::Return(vec![
-                        Value::Number(f),
-                        Value::Integer(0),
+                        Value::Number(f * 2.0_f64.powf(g))
                     ]))
                 }
                 _ => Err(
