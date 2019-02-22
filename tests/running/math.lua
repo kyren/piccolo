@@ -215,6 +215,8 @@ function test17()
            math.max(3, 3.0, 3.0) == 3 and
            is_integer(math.max(3, 3.0, 3.0)) and
            math.max(-5, -4, -3, -2, -1, 0, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1) == 10
+    -- Tests we do not currently pass due to incompatibility with PUC-Rio Lua
+    --     is_err(math.max("1"))
 end
 
 function test18()
@@ -225,6 +227,9 @@ function test18()
            math.min(3, 3.0, 3.0) == 3 and
            is_integer(math.min(3, 3.0, 3.0)) and
            math.min(5, 4, 3, 2, 1, 0, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1) == -10
+    -- Tests we do not currently pass due to incompatibility with PUC-Rio Lua
+    --     is_err(math.min("1"))
+    --     is_nan(math.min(0.0 % 0.0, 1, 2))
 end
 
 function test19()
