@@ -67,8 +67,8 @@ a better design.
 * A basic Lua bytecode compiler
 * Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
   there are a complete set of VM instructions implemented
-* Almost all of the core Lua language works.  Some tricky Lua features that are
-   included in this:
+* Almost all of the core Lua language (minus metatables) works.  Some tricky Lua
+   features that are included in this:
   * Real closures with proper upvalue handling
   * Tail calls
   * Variable arguments and returns
