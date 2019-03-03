@@ -77,8 +77,7 @@ a better design.
   * proper _ENV handling
 * A few tiny bits of the stdlib (`print`, `error`, `pcall`, a lot of of `math`,
   and the hard bits from `coroutine`)
-* Basic support for Rust callbacks (missing some fast-path APIs that I think
-  will be necessary).
+* Basic support for Rust callbacks
 * A simple REPL (try it with `cargo run luster`!)
 
 ## What currently doesn't work ##
