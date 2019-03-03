@@ -6,7 +6,7 @@
 
 The following test program is currently 6x slower than PUC-Rio Lua, this is a
 good starting point for optimization work.  Need to investigate specifically why
-this is 6x slower:
+this is 6x slower: (Update, now only 3x slower just from changing LTO settings).
 
 ```lua
 local sum = 0
@@ -25,14 +25,6 @@ print(sum)
 50000005000000
 0.566 secs
 ```
-
----
-
-Currently callbacks *always* produce a boxed `Sequence` which must be stepped at
-least once to return a value.  This is (probably?) extremely slow, and there
-will probably need to be a special type of callback for callbacks that return
-immediately.  This used to exist but was removed during `Thread` changes and
-when implementing "continuations", to simplify it.
 
 ---
 
@@ -88,9 +80,10 @@ Nearly all of Lua's stdlib is unimplemented:
 * coroutine - hard parts are implemented!, only needs convenience functions to be finished
 * debug - a huge can of worms
 * io - will require userdata support
-* math - a good starting point
+* math - a good starting point (much of this is now implemented)
 * os - a small can of worms?
-* package - `package.cpath` and `package.loadlib` are probably impossible
+* package - `package.cpath` and `package.loadlib` are probably impossible or at
+  least wildly inadvisable
 * string - a good starting point, but contains a lot of complex functions
 * table - a good starting point
 * utf8 - probably after `string`

@@ -35,11 +35,22 @@ and are usable from safe Rust.  It achieves this by combining three techniques:
    "sequencing" API, we can recover the ability for garbage collect to take
    place with as fine of a granularity as necessary, with garbage collection
    taking place in-between the "sequence" steps.
+   
+The last point has benefits beyond safe garbage collection: it means that the
+entire VM *including* sequences of Lua -> Rust and Rust -> Lua callbacks is
+expressed in a sort of "stackless" or what is sometimes called "trampoline" style.
+The interpreter receives a `Sequence` state machine to execute and simply loops,
+calling `Sequence::step` until the operation is finished (and garbage collecting
+in-between the `step` calls).  This "stackless" style allows for some
+interesting concurrency patterns that are difficult or impossible to do using
+PUC-Rio Lua.
 
 (These ideas are not all mine, the garbage collector is heavily derived from
 [rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
-and the idea of using "generativity" comes from [You can't spell trust without
-Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).)
+the idea of using "generativity" comes from [You can't spell trust without
+Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), the
+vast majority of the `Sequence` design is taken directly from futures-rs, and
+the idea of using a "trampoline" loop is taken from scheme.)
 
 While the interface to garbage collected pointers is interesting, the actual
 garbage collector itself is currently only a very basic (but adequate)
@@ -52,18 +63,17 @@ a better design.
   5.3
 * A basic Lua bytecode compiler
 * Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
-  there are a complete set of VM instructions implemented (minus bitwise
-  mathematical operators).
-* Most of the core Lua language works (currently only missing bitwise
-  mathematical operators).  Some tricky Lua features that currently work:
+  there are a complete set of VM instructions implemented
+* Almost all of the core Lua language works.  Some tricky Lua features that are
+   included in this:
   * Real closures with proper upvalue handling
   * Tail calls
   * Variable arguments and returns
   * Coroutines, including yielding through Rust callbacks (like through `pcall`)
   * gotos with label handling that matches Lua 5.3
   * proper _ENV handling
-* A few tiny bits of the stdlib (`print`, `error`, `pcall`, and the hard bits
-  from `coroutine`)
+* A few tiny bits of the stdlib (`print`, `error`, `pcall`, a lot of of `math`,
+  and the hard bits from `coroutine`)
 * Basic support for Rust callbacks (missing some fast-path APIs that I think
   will be necessary).
 * A simple REPL (try it with `cargo run luster`!)
@@ -71,8 +81,8 @@ a better design.
 ## What currently doesn't work ##
 
 * Most of the stdlib is not implemented (`debug` (which may never be completely
-  implemented), `io`, `math`, `os`, `package`, `string`, `table`, `utf8`, most
-  top-level functions are unimplemented.
+  implemented), `io`, `os`, `package`, `string`, `table`, `utf8`, most top-level
+  functions are unimplemented.
 * Metatables and metamethods.  Most of this should not be terribly hard to
   implement *except* `__gc`, which will require implementing finalizers in
   `gc-arena`.
