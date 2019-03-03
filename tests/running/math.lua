@@ -1,7 +1,3 @@
-function is_inf(n)
-    return n == 1.0 / 0.0
-end
-
 function is_nan(n)
     return n ~= n
 end
@@ -10,153 +6,387 @@ function is_err(f)
     return pcall(f) == false
 end
 
+function is_integer(n)
+    return is_err(function() return n % 0 end)
+end
+
 function test1()
-    return 2   + 3   == 5 and
-           2.0 + 3.0 == 5 and
-           2   + 3.0 == 5 and
-           2.0 + 3   == 5
+    return math.abs(  1)     == 1    and
+           math.abs( -1)     == 1    and
+           math.abs(  1.0)   == 1.0  and
+           math.abs( -1.0)   == 1.0  and
+           is_integer(math.abs(1  )) and
+       not is_integer(math.abs(1.0))
 end
 
 function test2()
-    return 2   - 3   == -1 and
-           2.0 - 3.0 == -1 and
-           2   - 3.0 == -1 and
-           2.0 - 3   == -1
+    return math.acos(1) == 0.0 and
+           math.abs(math.acos(0)   - math.pi/2) < 1e-7 and
+           math.abs(math.acos(0.5) - math.pi/3) < 1e-7 and
+           math.abs(math.acos(-1)  - math.pi) < 1e-7 and
+           is_nan(math.acos( 2)) and
+           is_nan(math.acos(-2)) and
+       not is_integer(math.acos(1))
 end
 
 function test3()
-    return 2   * 3   == 6 and
-           2.0 * 3.0 == 6 and
-           2   * 3.0 == 6 and
-           2.0 * 3   == 6
+    return math.asin(0) == 0.0 and
+           math.abs(math.asin(1)   - math.pi/2) < 1e-7 and
+           math.abs(math.asin(0.5) - math.pi/6) < 1e-7 and
+           math.abs(math.asin(-1)  + math.pi/2) < 1e-7 and
+           is_nan(math.asin( 2)) and
+           is_nan(math.asin(-2)) and
+       not is_integer(math.asin(0))
 end
 
 function test4()
-    return 3   / 2   == 1.5 and
-           3.0 / 2.0 == 1.5 and
-           3   / 2.0 == 1.5 and
-           3.0 / 2   == 1.5
+    return math.atan(0) == 0.0 and
+           math.abs(math.atan(1)   - math.pi/4) < 1e-7 and
+           math.abs(math.atan(0.5) - 0.46364760900081) < 1e-7 and
+           math.abs(math.atan(-1)  + math.pi/4) < 1e-7 and
+           math.abs(math.atan(2)   - 1.1071487177941) < 1e-7 and
+           math.abs(math.atan(-2)  + 1.1071487177941) < 1e-7 and
+           math.abs(math.atan(math.huge)  - math.pi/2) < 1e-7 and
+           math.abs(math.atan(-math.huge) + math.pi/2) < 1e-7 and
+       not is_integer(math.atan(0))
 end
 
 function test5()
-    return 7   // 3   == 2 and
-           7.0 // 3.0 == 2 and
-           7   // 3.0 == 2 and
-           7.0 // 3   == 2
+    return math.atan2(0, 0) == 0.0 and
+           math.atan2(0, 1) == 0.0 and
+           math.abs(math.atan2( 1,  0) - math.pi/2)  < 1e-7 and
+           math.abs(math.atan2( 1,  1) - math.pi/4) < 1e-7 and
+           math.abs(math.atan2(-1,  1) + math.pi/4) < 1e-7 and
+           math.abs(math.atan2( 1, -1) - 3*math.pi/4)  < 1e-7 and
+           math.abs(math.atan2(-1, -1) + 3*math.pi/4)  < 1e-7 and
+           math.abs(math.atan2(math.huge, 1) - math.pi/2) < 1e-7 and
+       not is_integer(math.atan2(0, 0))
 end
 
 function test6()
-    return 7   % 3   == 1 and
-           7.0 % 3.0 == 1 and
-           7   % 3.0 == 1 and
-           7.0 % 3   == 1
+    return math.ceil( 1.0) ==  1 and
+           math.ceil(-1.0) == -1 and
+           math.ceil( 1.1) ==  2 and
+           math.ceil(-1.1) == -1 and
+           is_integer(math.ceil(1.0))
 end
 
 function test7()
-    return -7   % 3   == 2 and
-           -7.0 % 3.0 == 2 and
-           -7   % 3.0 == 2 and
-           -7.0 % 3   == 2
+    return math.cos(0) == 1.0 and
+           math.abs(math.cos(math.pi) + 1.0) < 1e-7 and
+           math.abs(math.cos(math.pi/6) - math.sqrt(3)/2) < 1e-7 and
+           math.abs(math.cos(1) - 0.5403023058681398) < 1e-7 and
+           is_nan(math.cos(math.huge)) and
+       not is_integer(math.cos(0))
 end
 
 function test8()
-    return 3   ^ 4   == 81 and
-           3.0 ^ 4.0 == 81 and
-           3   ^ 4.0 == 81 and
-           3.0 ^ 4   == 81
+    return math.cosh(0) == 1.0 and
+           math.abs(math.cosh( 1) - 1.543080634815244) < 1e-7 and
+           math.abs(math.cosh(-1) - 1.543080634815244) < 1e-7 and
+           math.cosh(math.huge) == math.huge and
+       not is_integer(math.cosh(0))
 end
 
 function test9()
-    return
-        is_inf(1 / 0) and
-        is_inf(1.0 / 0.0) and
-        is_inf(1 / 0.0) and
-        is_inf(1.0 / 0.0) and
-
-        is_nan(0 / 0) and
-        is_nan(0.0 / 0.0) and
-        is_nan(0 / 0.0) and
-        is_nan(0.0 / 0) and
-
-        is_err(function() return 1 // 0 end) and
-        is_inf(1.0 // 0.0) and
-        is_inf(1.0 // 0) and
-        is_inf(1 // 0.0) and
-
-        is_err(function() return 0 // 0 end) and
-        is_nan(0.0 // 0.0) and
-        is_nan(0.0 // 0) and
-        is_nan(0 // 0.0)
+    return math.abs(math.deg(math.pi) - 180) < 1e-7 and
+           math.abs(math.deg(1) - 180/math.pi) < 1e-7 and
+       not is_integer(math.deg(math.pi))
 end
 
 function test10()
-    return 1.0 % 0.0 ~= 1.0 % 0.0 and
-           1   % 0.0 ~= 1   % 0.0 and
-           1.0 % 0   ~= 1.0 % 0   and
-           0.0 % 0.0 ~= 0.0 % 0.0 and
-           0   % 0.0 ~= 0   % 0.0 and
-           0.0 % 0   ~= 0.0 % 0
+    return math.abs(math.exp(1) - 2.718281828459) < 1e-7 and
+           math.exp(0) == 1 and
+           math.abs(math.exp(-1) - 0.36787944117144) < 1e-7 and
+           math.exp(-math.huge) == 0 and
+           math.exp(math.huge) == math.huge and
+       not is_integer(math.exp(0))
 end
 
 function test11()
-    return  120 %  63 ==  57 and
-           -120 % -63 == -57 and
-            120 % -63 ==  -6 and
-           -120 %  63 ==   6
+    return math.floor( 1.0) ==  1 and
+           math.floor(-1.0) == -1 and
+           math.floor( 1.1) ==  1 and
+           math.floor(-1.1) == -2 and
+           is_integer(math.ceil(1.0))
 end
 
 function test12()
-    return      1 < 2  and
-           not (2 < 1) and
-           not (1 < 1)
+    return math.abs(math.fmod( 6.2,  3.4) - 2.8) < 1e-7 and
+           math.abs(math.fmod(-6.2,  3.4) + 2.8) < 1e-7 and
+           math.abs(math.fmod( 6.2, -3.4) - 2.8) < 1e-7 and
+           math.abs(math.fmod(-6.2, -3.4) + 2.8) < 1e-7 and
+       not is_integer(math.fmod(1.0, 1.0))
 end
 
 function test13()
-    return      1 <= 2  and
-           not (2 <= 1) and
-                1 <= 1
+    return
+        math.abs(math.frexp(87573.1902197) - 0.6681304185463) < 1e-7 and
+        select(2, math.frexp(87573.1902197)) == 17 and
+        math.abs(math.frexp(16723.61465171) - 0.51036421666595) < 1e-7 and
+        select(2, math.frexp(16723.61465171)) == 15 and
+        math.abs(math.frexp(-171089.69623223) + 0.6526553963937) < 1e-7 and
+        select(2, math.frexp(-171089.69623223)) == 18 and
+        math.abs(math.frexp(152965.60153365) - 0.5835174619051) < 1e-7 and
+        select(2, math.frexp(152965.60153365)) == 18 and
+        math.abs(math.frexp(-491699.40967113) + 0.93784219679094) < 1e-7 and
+        select(2, math.frexp(-491699.40967113)) == 19 and
+        math.abs(math.frexp(-90102.646965533) + 0.68742864200999) < 1e-7 and
+        select(2, math.frexp(-90102.646965533)) == 17 and
+        math.abs(math.frexp(-182550.06847903) + 0.69637324706662) < 1e-7 and
+        select(2, math.frexp(-182550.06847903)) == 18 and
+        math.abs(math.frexp(327863.1796129) - 0.62534938738423) < 1e-7 and
+        select(2, math.frexp(327863.1796129)) == 19 and
+        math.abs(math.frexp(404005.37056848) - 0.77057909120271) < 1e-7 and
+        select(2, math.frexp(404005.37056848)) == 19 and
+        math.abs(math.frexp(-314283.14419463) + 0.59944752539565) < 1e-7 and
+        select(2, math.frexp(-314283.14419463)) == 19 and
+        math.abs(math.frexp(1.6586243640632e-08) - 0.556541984375) < 1e-7 and
+        select(2, math.frexp(1.6586243640632e-08)) == -25 and
+        math.abs(math.frexp(-3.6877257842571e-07) + 0.77337215039063) < 1e-7 and
+        select(2, math.frexp(-3.6877257842571e-07)) == -21 and
+        math.abs(math.frexp(1.6591683961452e-09) - 0.89075925000003) < 1e-7 and
+        select(2, math.frexp(1.6591683961452e-09)) == -29 and
+        math.abs(math.frexp(-3.9305121637881e-08) + 0.659430515625) < 1e-7 and
+        select(2, math.frexp(-3.9305121637881e-08)) == -24 and
+        math.abs(math.frexp(-4.7698671976104e-07) + 0.50015682666016) < 1e-7 and
+        select(2, math.frexp(-4.7698671976104e-07)) == -20 and
+        math.abs(math.frexp(-2.3943610163406e-07) + 0.50213389941406) < 1e-7 and
+        select(2, math.frexp(-2.3943610163406e-07)) == -21 and
+        math.abs(math.frexp(-4.9012135714292e-09) + 0.65782974999999) < 1e-7 and
+        select(2, math.frexp(-4.9012135714292e-09)) == -27 and
+        math.abs(math.frexp(-4.9168974207714e-07) + 0.51557406298828) < 1e-7 and
+        select(2, math.frexp(-4.9168974207714e-07)) == -20 and
+        math.abs(math.frexp(-4.7032095026225e-08) + 0.7890676171875) < 1e-7 and
+        select(2, math.frexp(-4.7032095026225e-08)) == -24 and
+        math.abs(math.frexp(4.8018892854452e-07) - 0.5035145859375) < 1e-7 and
+        select(2, math.frexp(4.8018892854452e-07)) == -20 and
+        select(2, math.frexp(math.huge)) == 0 and
+        math.frexp(-math.huge) == -math.huge and
+        select(2, math.frexp(math.huge)) == 0 and
+        is_nan(math.frexp(0.0 % 0.0)) and
+        select(2, math.frexp(0.0 % 0.0)) == 0
 end
 
 function test14()
-    return not (1 > 2) and
-                2 > 1  and
-           not (1 > 1)
+    return
+        math.abs(math.ldexp(0.6681304185463, 17) - 87573.1902197) < 1e-7 * 2^17 and
+        math.abs(math.ldexp(0.51036421666595, 15) - 16723.61465171) < 1e-7 * 2^15 and
+        math.abs(math.ldexp(-0.6526553963937, 18) + 171089.69623223) < 1e-7 * 2^18 and
+        math.abs(math.ldexp(0.5835174619051, 18) - 152965.60153365) < 1e-7 * 2^18 and
+        math.abs(math.ldexp(-0.93784219679094, 19) + 491699.40967113) < 1e-7 * 2^19 and
+        math.abs(math.ldexp(-0.68742864200999, 17) + 90102.646965533) < 1e-7 * 2^17 and
+        math.abs(math.ldexp(-0.69637324706662, 18) + 182550.06847903) < 1e-7 * 2^18 and
+        math.abs(math.ldexp(0.62534938738423, 19) - 327863.1796129) < 1e-7 * 2^19 and
+        math.abs(math.ldexp(0.77057909120271, 19) - 404005.37056848) < 1e-7 * 2^19 and
+        math.abs(math.ldexp(-0.59944752539565, 19) + 314283.14419463) < 1e-7 * 2^19 and
+        math.abs(math.ldexp(0.556541984375, -25) - 1.6586243640632e-08) < 1e-7 * 2^-25 and
+        math.abs(math.ldexp(-0.77337215039063, -21) + 3.6877257842571e-07) < 1e-7 * 2^-21 and
+        math.abs(math.ldexp(0.89075925000003, -29) - 1.6591683961452e-09) < 1e-7 * 2^-29 and
+        math.abs(math.ldexp(-0.659430515625, -24) + 3.9305121637881e-08) < 1e-7 * 2^-24 and
+        math.abs(math.ldexp(-0.50015682666016, -20) + 4.7698671976104e-07) < 1e-7 * 2^-20 and
+        math.abs(math.ldexp(-0.50213389941406, -21) + 2.3943610163406e-07) < 1e-7 * 2^-21 and
+        math.abs(math.ldexp(-0.65782974999999, -27) + 4.9012135714292e-09) < 1e-7 * 2^-27 and
+        math.abs(math.ldexp(-0.51557406298828, -20) + 4.9168974207714e-07) < 1e-7 * 2^-20 and
+        math.abs(math.ldexp(-0.7890676171875, -24) + 4.7032095026225e-08) < 1e-7 * 2^-24 and
+        math.abs(math.ldexp(0.5035145859375, -20) - 4.8018892854452e-07) < 1e-7 * 2^-20
 end
 
 function test15()
-    return not (1 >= 2) and
-                2 >= 1  and
-                1 >= 1
+    return math.log(0) == -math.huge and
+           math.log(1) == 0.0 and
+           math.abs(math.log(10) - 2.302585092994) < 1e-7 and
+           is_nan(math.log(-1))
 end
 
 function test16()
-    return -(-1) == 1 and
-           not not true
+    return math.log10(0) == -math.huge and
+           math.log10(1) == 0.0 and
+           math.log10(10) == 1.0 and
+           math.abs(math.log10(3.1622776601684) - 0.5) < 1e-7 and
+           is_nan(math.log10(-1))
 end
 
 function test17()
-    return
-        "1.0" + 1.0 == 2.0 and
-        1.0 + "0x1.0" == 2.0 and
-        "0x10.0" + "3.0" == 19.0 and
-        "0x10" + "4" == 20
+    return math.max(1, 2, 3) == 3 and
+           is_integer(math.max(1, 2, 3)) and
+           math.max(1.0, 2.0, 3.0) == 3.0 and
+       not is_integer(math.max(1.0, 2.0, 3.0)) and
+           math.max(3, 3.0, 3.0) == 3 and
+           is_integer(math.max(3, 3.0, 3.0)) and
+           math.max(-5, -4, -3, -2, -1, 0, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1) == 10
+    -- Tests we do not currently pass due to incompatibility with PUC-Rio Lua
+    --     is_err(math.max(1, "2", 1))
 end
 
-return
-    test1() and
-    test2() and
-    test3() and
-    test4() and
-    test5() and
-    test6() and
-    test7() and
-    test8() and
-    test9() and
-    test10() and
-    test11() and
-    test12() and
-    test13() and
-    test14() and
-    test15() and
-    test16() and
-    test17()
+function test18()
+    return math.min(3, 2, 1) == 1 and
+           is_integer(math.min(3, 2, 1)) and
+           math.min(3.0, 2.0, 1.0) == 1.0 and
+       not is_integer(math.min(3.0, 2.0, 1.0)) and
+           math.min(3, 3.0, 3.0) == 3 and
+           is_integer(math.min(3, 3.0, 3.0)) and
+           math.min(5, 4, 3, 2, 1, 0, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1) == -10
+    -- Tests we do not currently pass due to incompatibility with PUC-Rio Lua
+    --     is_err(math.min(1, "2", 1))
+    --     is_nan(math.min(0.0 % 0.0, 1, 2))
+end
+
+function test19()
+    return
+        math.modf(216.57550707459) == 216 and
+        math.abs(select(2, math.modf(216.57550707459)) - 0.5755070745945) < 1e-7 and
+        math.modf(-356.93994024768) == -356 and
+        math.abs(select(2, math.modf(-356.93994024768)) + 0.93994024768472) < 1e-7 and
+        math.modf(-230.78241851181) == -230 and
+        math.abs(select(2, math.modf(-230.78241851181)) + 0.78241851180792) < 1e-7 and
+        math.modf(-184.36720222235) == -184 and
+        math.abs(select(2, math.modf(-184.36720222235)) + 0.36720222234726) < 1e-7 and
+        math.modf(95.250256825238) == 95 and
+        math.abs(select(2, math.modf(95.250256825238)) - 0.25025682523847) < 1e-7 and
+        math.modf(-383.47252598032) == -383 and
+        math.abs(select(2, math.modf(-383.47252598032)) + 0.47252598032355) < 1e-7 and
+        math.modf(480.07427062839) == 480 and
+        math.abs(select(2, math.modf(480.07427062839)) - 0.074270628392696) < 1e-7 and
+        math.modf(123.98638017476) == 123 and
+        math.abs(select(2, math.modf(123.98638017476)) - 0.98638017475605) < 1e-7 and
+        math.modf(365.17379572615) == 365 and
+        math.abs(select(2, math.modf(365.17379572615)) - 0.17379572615027) < 1e-7 and
+        math.modf(-271.84157492593) == -271 and
+        math.abs(select(2, math.modf(-271.84157492593)) + 0.84157492592931) < 1e-7 and
+        math.modf(347.25950565189) == 347 and
+        math.abs(select(2, math.modf(347.25950565189)) - 0.25950565189123) < 1e-7 and
+        math.modf(406.10403195024) == 406 and
+        math.abs(select(2, math.modf(406.10403195024)) - 0.10403195023537) < 1e-7 and
+        math.modf(365.7353548333) == 365 and
+        math.abs(select(2, math.modf(365.7353548333)) - 0.73535483330488) < 1e-7 and
+        math.modf(352.64282440767) == 352 and
+        math.abs(select(2, math.modf(352.64282440767)) - 0.64282440766692) < 1e-7 and
+        math.modf(256.04179827496) == 256 and
+        math.abs(select(2, math.modf(256.04179827496)) - 0.041798274964094) < 1e-7 and
+        math.modf(-278.28463632613) == -278 and
+        math.abs(select(2, math.modf(-278.28463632613)) + 0.2846363261342) < 1e-7 and
+        math.modf(-206.89806248993) == -206 and
+        math.abs(select(2, math.modf(-206.89806248993)) + 0.89806248992682) < 1e-7 and
+        math.modf(-76.712315436453) == -76 and
+        math.abs(select(2, math.modf(-76.712315436453)) + 0.71231543645263) < 1e-7 and
+        math.modf(205.99580463022) == 205 and
+        math.abs(select(2, math.modf(205.99580463022)) - 0.99580463021994) < 1e-7 and
+        math.modf(-13.91322305426) == -13 and
+        math.abs(select(2, math.modf(-13.91322305426)) + 0.91322305426002) < 1e-7
+end
+
+function test20()
+    return math.abs(math.rad(180) - math.pi) < 1e-7 and
+           math.abs(math.rad(360) - 2*math.pi) < 1e-7 and
+           math.abs(math.rad(15) - math.pi/12) < 1e-7
+end
+
+function test21()
+    local good = true
+    for i=1,10000,1 do
+        local rand = math.random()
+        good = good and rand >= 0 and rand < 1
+    end
+
+    for i=1,10000,1 do
+        local rand = math.random(4, 20)
+        good = good and rand >= 4 and rand <= 20
+    end
+
+    for i=1,10000,1 do
+        local rand = math.random(35)
+        good = good and rand >= 1 and rand <= 35
+    end
+
+    local numbers1 = {}
+    math.randomseed(8675309)
+    for i=1,10000,1 do
+        numbers1[#numbers1 + 1] = math.random()
+    end
+
+    local numbers2 = {}
+    math.randomseed(8675309)
+    for i=1,10000,1 do
+        numbers2[#numbers2 + 1] = math.random()
+    end
+
+    for i=1,10000,1 do
+        good = good and numbers1[i] == numbers2[i]
+    end
+
+    return good
+end
+
+function test22()
+    return math.sin(0) == 0.0 and
+           math.abs(math.sin(math.pi) - 0.0) < 1e-7 and
+           math.abs(math.sin(math.pi/6) - 0.5) < 1e-7 and
+           math.abs(math.sin(1) - 0.8414709848079) < 1e-7 and
+           is_nan(math.sin(math.huge)) and
+       not is_integer(math.sin(0))
+end
+
+function test23()
+    return math.abs(math.sqrt(1.0) - 1.0) < 1e-7 and
+           math.abs(math.sqrt(4.0) - 2.0) < 1e-7 and
+           math.abs(math.sqrt(0.09) - 0.3) < 1e-7 and
+           is_nan(math.sqrt(-3))
+end
+
+function test24()
+    return math.tan(0) == 0.0 and
+           math.abs(math.tan(math.pi) - 0.0) < 1e-7 and
+           math.abs(math.tan(math.pi/6) - 0.57735026918963) < 1e-7 and
+           math.abs(math.tan(1) - 1.5574077246549) < 1e-7 and
+           is_nan(math.tan(math.huge)) and
+       not is_integer(math.tan(0))
+end
+
+function test25()
+    return math.tointeger(1.0) == 1 and
+           math.tointeger(1.1) == nil and
+           math.tointeger(-3.0) == -3 and
+           math.tointeger(4.00000002) == nil and
+           is_integer(math.tointeger(8.0))
+end
+
+function test26()
+    return math.type(1) == "integer" and
+           math.type(1.0) == "float" and
+           math.type("1.0") == nil
+end
+
+function test27()
+    return not math.ult(-3, 2) and
+               math.ult(-3, -2) and
+               math.ult(1, 2)
+end
+
+return test1() and
+       test2() and
+       test3() and
+       test4() and
+       test5() and
+       test6() and
+       test7() and
+       test8() and
+       test9() and
+       test10() and
+       test11() and
+       test12() and
+       test13() and
+       test14() and
+       test15() and
+       test16() and
+       test17() and
+       test18() and
+       test19() and
+       test20() and
+       test21() and
+       test22() and
+       test23() and
+       test24() and
+       test25() and
+       test26() and
+       test27()

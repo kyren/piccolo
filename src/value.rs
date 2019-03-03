@@ -64,8 +64,7 @@ impl<'gc> Value<'gc> {
         match self {
             Value::Nil => "nil",
             Value::Boolean(_) => "boolean",
-            Value::Integer(_) => "integer",
-            Value::Number(_) => "number",
+            Value::Integer(_) | Value::Number(_) => "number",
             Value::String(_) => "string",
             Value::Table(_) => "table",
             Value::Function(_) => "function",

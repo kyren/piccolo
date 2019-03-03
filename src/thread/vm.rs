@@ -512,7 +512,7 @@ pub(crate) fn run_vm<'gc>(
                 let value = registers.stack_frame[source.0 as usize];
                 registers.stack_frame[dest.0 as usize] = value
                     .bitwise_not()
-                    .ok_or(BinaryOperatorError::UnaryNegate)?;
+                    .ok_or(BinaryOperatorError::BitNot)?;
             }
 
             OpCode::AddRR { dest, left, right } => {

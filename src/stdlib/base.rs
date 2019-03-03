@@ -79,4 +79,41 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env: Tab
         }),
     )
     .unwrap();
+
+    env.set(
+        mc,
+        String::new_static(b"type"),
+        Callback::new_immediate(mc, |args| {
+            if args.len() == 0 {
+                return Err(RuntimeError(Value::String(String::new_static(
+                    b"Missing argument to type",
+                )))
+                .into());
+            }
+            Ok(CallbackResult::Return(vec![Value::String(
+                String::new_static(args.get(0).cloned().unwrap().type_name().as_bytes()),
+            )]))
+        }),
+    )
+    .unwrap();
+
+    env.set(
+        mc,
+        String::new_static(b"select"),
+        Callback::new_immediate(mc, |args| {
+            match args.get(0).cloned().unwrap_or(Value::Nil).to_integer() {
+                Some(n) if n >= 1 && (n as usize) <= args.len() => Ok(CallbackResult::Return(
+                    args[n as usize..args.len()].to_vec(),
+                )),
+                // This is required because Rust will panic if the starting slice index is out of
+                // range by more than one
+                Some(n) if n as usize > args.len() => Ok(CallbackResult::Return(vec![])),
+                _ => Err(RuntimeError(Value::String(String::new_static(
+                    b"Bad argument to select",
+                )))
+                .into()),
+            }
+        }),
+    )
+    .unwrap();
 }
