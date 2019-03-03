@@ -4,10 +4,10 @@ use gc_arena::MutationContext;
 use gc_sequence as sequence;
 
 use crate::{
-    Callback, CallbackResult, Continuation, LuaRoot, RuntimeError, String, Table, TypeError, Value,
+    Callback, CallbackResult, Continuation, Root, RuntimeError, String, Table, TypeError, Value,
 };
 
-pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env: Table<'gc>) {
+pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<'gc>) {
     env.set(
         mc,
         String::new_static(b"print"),

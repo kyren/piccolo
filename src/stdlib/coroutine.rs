@@ -2,11 +2,11 @@ use gc_arena::MutationContext;
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 
 use crate::{
-    Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Thread, ThreadMode,
+    Callback, CallbackResult, Root, RuntimeError, String, Table, Thread, ThreadMode,
     ThreadSequence, TypeError, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: LuaRoot<'gc>, env: Table<'gc>) {
+pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<'gc>) {
     let coroutine = Table::new(mc);
 
     coroutine

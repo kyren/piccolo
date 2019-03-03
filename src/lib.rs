@@ -26,7 +26,7 @@ pub use compiler::{compile, compile_chunk, CompilerError};
 pub use constant::Constant;
 pub use error::{Error, RuntimeError, StaticError, TypeError};
 pub use lexer::{Lexer, LexerError, Token};
-pub use lua::{Lua, LuaRoot};
+pub use lua::{Lua, Root};
 pub use opcode::OpCode;
 pub use parser::{parse_chunk, ParserError};
 pub use string::{InternedStringSet, String, StringError};

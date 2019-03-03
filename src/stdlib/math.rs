@@ -1,12 +1,12 @@
 use gc_arena::MutationContext;
 
-use crate::{Callback, CallbackResult, LuaRoot, RuntimeError, String, Table, Value};
+use crate::{Callback, CallbackResult, Root, RuntimeError, String, Table, Value};
 
 use rand::{FromEntropy, Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{cell::RefCell, ops::DerefMut, rc::Rc};
 
-pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<'gc>) {
+pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
     let math = Table::new(mc);
     let seeded_rng: Rc<RefCell<Xoshiro256StarStar>> =
         Rc::new(RefCell::new(Xoshiro256StarStar::from_entropy()));
@@ -223,12 +223,10 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
                         Value::Integer(e),
                     ]))
                 }
-                Some(f) => {
-                    Ok(CallbackResult::Return(vec![
-                        Value::Number(f),
-                        Value::Integer(0),
-                    ]))
-                }
+                Some(f) => Ok(CallbackResult::Return(vec![
+                    Value::Number(f),
+                    Value::Integer(0),
+                ])),
                 _ => Err(
                     RuntimeError(Value::String(String::new_static(b"Bad argument to frexp")))
                         .into(),
@@ -249,14 +247,13 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: LuaRoot<'gc>, env: Table<
         mc,
         String::new_static(b"ldexp"),
         Callback::new_immediate(mc, |args| {
-            match (args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
-                   args.get(1).cloned().unwrap_or(Value::Nil).to_number()) {
-
-                (Some(f), Some(g)) => {
-                    Ok(CallbackResult::Return(vec![
-                        Value::Number(f * 2.0_f64.powf(g))
-                    ]))
-                }
+            match (
+                args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
+                args.get(1).cloned().unwrap_or(Value::Nil).to_number(),
+            ) {
+                (Some(f), Some(g)) => Ok(CallbackResult::Return(vec![Value::Number(
+                    f * 2.0_f64.powf(g),
+                )])),
                 _ => Err(
                     RuntimeError(Value::String(String::new_static(b"Bad argument to ldexp")))
                         .into(),

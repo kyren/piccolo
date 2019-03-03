@@ -50,7 +50,15 @@
 #[macro_export]
 macro_rules! make_sequencable_arena {
     ($module:ident, $root:ident) => {
-        mod $module {
+        make_sequencable_arena!(@impl pub(self), pub(super), $module, $root);
+    };
+
+    ($vis:vis $module:ident, $root:ident) => {
+        make_sequencable_arena!(@impl $vis, $vis, $module, $root);
+    };
+
+    (@impl $modvis:vis, $innervis:vis, $module:ident, $root:ident) => {
+        $modvis mod $module {
             use std::any::Any;
             use std::marker::PhantomData;
 
@@ -71,12 +79,12 @@ macro_rules! make_sequencable_arena {
 
             make_arena!(InnerArena, InnerRoot);
 
-            pub(super) struct Arena(InnerArena);
+            $innervis struct Arena(InnerArena);
 
             impl Arena {
                 /// Create a new arena with the given garbage collector tuning parameters.
                 #[allow(unused)]
-                pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena
+                $innervis fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena
                 where
                     F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> $root<'gc>,
                 {
@@ -88,7 +96,7 @@ macro_rules! make_sequencable_arena {
 
                 /// Allows for creating an arena with a constructor that can fail.
                 #[allow(unused)]
-                pub fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena, E>
+                $innervis fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena, E>
                 where
                     F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Result<$root<'gc>, E>,
                 {
@@ -103,7 +111,7 @@ macro_rules! make_sequencable_arena {
                 /// Provides access to a garbage collected arena, during which no garbage collection
                 /// may take place.
                 #[allow(unused)]
-                pub fn mutate<F, R>(&mut self, f: F) -> R
+                $innervis fn mutate<F, R>(&mut self, f: F) -> R
                 where
                     F: for<'gc> FnOnce(MutationContext<'gc, '_>, &$root<'gc>) -> R,
                 {
@@ -116,7 +124,7 @@ macro_rules! make_sequencable_arena {
                 /// Consumes this arena type, but the arena will be returned when the `Sequencer` is
                 /// finished.
                 #[allow(unused)]
-                pub fn sequence<F, O>(mut self, f: F) -> Sequencer<O>
+                $innervis fn sequence<F, O>(mut self, f: F) -> Sequencer<O>
                 where
                     O: 'static,
                     F: for<'gc> FnOnce(&$root<'gc>) -> Box<dyn Sequence<'gc, Output = O> + 'gc>,
@@ -131,7 +139,7 @@ macro_rules! make_sequencable_arena {
                 /// Returns total currently used memory
                 #[allow(unused)]
                 #[inline]
-                pub fn total_allocated(&self) -> usize {
+                $innervis fn total_allocated(&self) -> usize {
                     self.0.total_allocated()
                 }
 
@@ -139,7 +147,7 @@ macro_rules! make_sequencable_arena {
                 /// as allocation takes place based on the `ArenaParameters` set for this arena.
                 #[allow(unused)]
                 #[inline]
-                pub fn allocation_debt(&self) -> f64 {
+                $innervis fn allocation_debt(&self) -> f64 {
                     self.0.allocation_debt()
                 }
 
@@ -148,19 +156,19 @@ macro_rules! make_sequencable_arena {
                 /// this method when the allocation debt is above some threshold.
                 #[allow(unused)]
                 #[inline]
-                pub fn collect_debt(&mut self) {
+                $innervis fn collect_debt(&mut self) {
                     self.0.collect_debt()
                 }
 
                 /// Run the current garbage collection cycle to completion, stopping once the
                 /// garbage collector has entered the sleeping phase.
                 #[allow(unused)]
-                pub fn collect_all(&mut self) {
+                $innervis fn collect_all(&mut self) {
                     self.0.collect_all()
                 }
             }
 
-            pub(super) struct Sequencer<O>(InnerArena, PhantomData<O>);
+            $innervis struct Sequencer<O>(InnerArena, PhantomData<O>);
 
             impl<O> Sequencer<O>
             where
@@ -169,7 +177,7 @@ macro_rules! make_sequencable_arena {
                 /// Steps the current sequence.  Returns `Ok((arena, result))` if the sequence is
                 /// complete, and `Err(self)` otherwise.
                 #[allow(unused)]
-                pub fn step(mut self) -> Result<(Arena, O), Sequencer<O>> {
+                $innervis fn step(mut self) -> Result<(Arena, O), Sequencer<O>> {
                     let r = self.0.mutate(move |mc, root| {
                         root.current_sequence.write(mc).as_mut().unwrap().step(mc)
                     });
@@ -188,7 +196,7 @@ macro_rules! make_sequencable_arena {
                 }
 
                 /// *Abort* this sequence, returning the inner arena type.
-                pub fn abort(mut self) -> Arena {
+                $innervis fn abort(mut self) -> Arena {
                     self.0.mutate(|mc, root| {
                         *root.current_sequence.write(mc) = None;
                     });
@@ -197,24 +205,24 @@ macro_rules! make_sequencable_arena {
 
                 #[allow(unused)]
                 #[inline]
-                pub fn total_allocated(&self) -> usize {
+                $innervis fn total_allocated(&self) -> usize {
                     self.0.total_allocated()
                 }
 
                 #[allow(unused)]
                 #[inline]
-                pub fn allocation_debt(&self) -> f64 {
+                $innervis fn allocation_debt(&self) -> f64 {
                     self.0.allocation_debt()
                 }
 
                 #[allow(unused)]
                 #[inline]
-                pub fn collect_debt(&mut self) {
+                $innervis fn collect_debt(&mut self) {
                     self.0.collect_debt()
                 }
 
                 #[allow(unused)]
-                pub fn collect_all(&mut self) {
+                $innervis fn collect_all(&mut self) {
                     self.0.collect_all()
                 }
             }

@@ -8,37 +8,50 @@ use crate::{
 
 #[derive(Collect, Clone, Copy)]
 #[collect(require_copy)]
-pub struct LuaRoot<'gc> {
+pub struct Root<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,
     pub interned_strings: InternedStringSet<'gc>,
 }
 
+impl<'gc> Root<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>) -> Root<'gc> {
+        let root = Root {
+            main_thread: Thread::new(mc, false),
+            globals: Table::new(mc),
+            interned_strings: InternedStringSet::new(mc),
+        };
+
+        load_base(mc, root, root.globals);
+        load_coroutine(mc, root, root.globals);
+        load_math(mc, root, root.globals);
+
+        root
+    }
+}
+
+make_sequencable_arena!(pub lua_arena, Root);
+
+pub use lua_arena::Arena;
+pub use lua_arena::Sequencer;
+
+/// Simpler wrapper for `Arena` that automatically garbage collects at reasonable intervals.
 pub struct Lua(Option<lua_arena::Arena>);
+
+const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
 impl Lua {
     pub fn new() -> Lua {
-        let arena = lua_arena::Arena::new(ArenaParameters::default(), |mc| {
-            let root = LuaRoot {
-                main_thread: Thread::new(mc, false),
-                globals: Table::new(mc),
-                interned_strings: InternedStringSet::new(mc),
-            };
-
-            load_base(mc, root, root.globals);
-            load_coroutine(mc, root, root.globals);
-            load_math(mc, root, root.globals);
-
-            root
-        });
-        Lua(Some(arena))
+        Lua(Some(Arena::new(ArenaParameters::default(), |mc| {
+            Root::new(mc)
+        })))
     }
 
     /// Runs a single action inside the Lua arena, during which no garbage collection may take place.
     pub fn mutate<F, R>(&mut self, f: F) -> R
     where
         R: 'static,
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>, LuaRoot<'gc>) -> R,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc>) -> R,
     {
         let arena = self.0.as_mut().unwrap();
         let r = arena.mutate(move |mc, root| f(mc, *root));
@@ -53,7 +66,7 @@ impl Lua {
     pub fn sequence<F, R>(&mut self, f: F) -> R
     where
         R: 'static,
-        F: for<'gc> FnOnce(LuaRoot<'gc>) -> Box<dyn Sequence<'gc, Output = R> + 'gc>,
+        F: for<'gc> FnOnce(Root<'gc>) -> Box<dyn Sequence<'gc, Output = R> + 'gc>,
     {
         let mut sequencer = self.0.take().unwrap().sequence(move |root| f(*root));
         loop {
@@ -72,7 +85,3 @@ impl Lua {
         }
     }
 }
-
-make_sequencable_arena!(lua_arena, LuaRoot);
-
-const COLLECTOR_GRANULARITY: f64 = 1024.0;
