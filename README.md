@@ -38,10 +38,12 @@ and are usable from safe Rust.  It achieves this by combining three techniques:
    
 The last point has benefits beyond safe garbage collection: it means that the
 entire VM *including* sequences of Lua -> Rust and Rust -> Lua callbacks is
-expressed in a sort of "stackless" or what is sometimes called "trampoline" style.
-The interpreter receives a `Sequence` state machine to execute and simply loops,
-calling `Sequence::step` until the operation is finished (and garbage collecting
-in-between the `step` calls).  This "stackless" style allows for some
+expressed in a sort of "stackless" or what is sometimes called "trampoline"
+style.  Rather than implementing the VM or callbacks with recursion and the Rust
+stack, VM executions and callbacks are constructed as `Sequence` state machines
+via combinators.  The interpreter receives this `Sequence` to execute and simply
+loops, calling `Sequence::step` until the operation is finished (and garbage
+collecting in-between the `step` calls).  This "stackless" style allows for some
 interesting concurrency patterns that are difficult or impossible to do using
 PUC-Rio Lua.
 
@@ -49,8 +51,9 @@ PUC-Rio Lua.
 [rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), the
-vast majority of the `Sequence` design is taken directly from futures-rs, and
-the idea of using a "trampoline" loop is taken from scheme.)
+vast majority of the `Sequence` design is taken directly from
+[futures-rs](https://github.com/rust-lang-nursery/futures-rs), and the idea of
+using a "trampoline" loop is taken from scheme / Stackless Python.)
 
 While the interface to garbage collected pointers is interesting, the actual
 garbage collector itself is currently only a very basic (but adequate)
