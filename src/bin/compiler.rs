@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<StdError>> {
     let mut lua = Lua::new();
     lua.mutate(|mc, root| -> Result<(), StaticError> {
         let function = compile(mc, root.interned_strings, file).map_err(|e| e.to_static())?;
-        println!("output: {:#?}", function);
+        println!("{}", function);
         Ok(())
     })?;
 
