@@ -75,8 +75,8 @@ a better design.
   * Coroutines, including yielding through Rust callbacks (like through `pcall`)
   * gotos with label handling that matches Lua 5.3
   * proper _ENV handling
-* A few tiny bits of the stdlib (`print`, `error`, `pcall`, a lot of of `math`,
-  and the hard bits from `coroutine`)
+* A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
+  from `coroutine`)
 * Basic support for Rust callbacks
 * A simple REPL (try it with `cargo run luster`!)
 

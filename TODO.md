@@ -80,7 +80,6 @@ Nearly all of Lua's stdlib is unimplemented:
 * coroutine - hard parts are implemented!, only needs convenience functions to be finished
 * debug - a huge can of worms
 * io - will require userdata support
-* math - a good starting point (much of this is now implemented)
 * os - a small can of worms?
 * package - `package.cpath` and `package.loadlib` are probably impossible or at
   least wildly inadvisable
