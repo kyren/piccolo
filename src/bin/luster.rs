@@ -102,6 +102,12 @@ fn main() -> Result<(), Box<StdError>> {
                 .long("repl")
                 .help("Load into REPL after loading file, if any"),
         )
+        .arg(
+            Arg::with_name("dump")
+                .short("d")
+                .long("dump")
+                .help("Dump bytecode"),
+        )
         .arg(Arg::with_name("file").help("File to interpret").index(1))
         .get_matches();
 
@@ -114,6 +120,21 @@ fn main() -> Result<(), Box<StdError>> {
 
     let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
 
+    if matches.is_present("dump") {
+        lua.sequence(|root| {
+            sequence::from_fn_with(root, |mc, root| {
+                let proto = compile(mc, root.interned_strings, file)?;
+                println!("{}", proto);
+                Ok(())
+            })
+            .map_ok(|_| ())
+            .map_err(|e: Error| e.to_static())
+            .boxed()
+        })?;
+        return Ok(());
+    }
+
+    let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
     lua.sequence(|root| {
         sequence::from_fn_with(root, |mc, root| {
             Ok(Closure::new(
