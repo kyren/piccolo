@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Display};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -22,6 +22,12 @@ impl<'gc, T: 'gc + Collect + Debug> Debug for Gc<'gc, T> {
         fmt.debug_struct("Gc")
             .field("ptr", unsafe { &*self.ptr.as_ref().value.get() })
             .finish()
+    }
+}
+
+impl<'gc, T: 'gc + Collect + Display> Display for Gc<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", unsafe { &*self.ptr.as_ref().value.get() })
     }
 }
 

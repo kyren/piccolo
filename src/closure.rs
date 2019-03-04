@@ -26,6 +26,45 @@ pub struct FunctionProto<'gc> {
     pub prototypes: Vec<Gc<'gc, FunctionProto<'gc>>>,
 }
 
+// Pretty-print a `FunctionProto` with minimal formatting
+impl<'gc> fmt::Display for FunctionProto<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "=============")?;
+        writeln!(f, "FunctionProto({:p})", self)?;
+        writeln!(f, "=============")?;
+        writeln!(
+            f,
+            "fixed_params: {}, has_varargs: {}, stack_size: {}",
+            self.fixed_params, self.has_varargs, self.stack_size
+        )?;
+        if self.constants.len() > 0 {
+            writeln!(f, "constants:")?;
+            for (i, c) in self.constants.iter().enumerate() {
+                writeln!(f, "{}: {:?}", i, c)?;
+            }
+        }
+        if self.opcodes.len() > 0 {
+            writeln!(f, "opcodes:")?;
+            for (i, c) in self.opcodes.iter().enumerate() {
+                writeln!(f, "{}: {:?}", i, c)?;
+            }
+        }
+        if self.upvalues.len() > 0 {
+            writeln!(f, "upvalues:")?;
+            for (i, u) in self.upvalues.iter().enumerate() {
+                writeln!(f, "{}: {:?}", i, u)?;
+            }
+        }
+        if self.prototypes.len() > 0 {
+            writeln!(f, "prototypes:")?;
+            for p in self.prototypes.iter() {
+                writeln!(f, "{}", p)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Collect, Copy, Clone)]
 #[collect(require_copy)]
 pub enum UpValueState<'gc> {
