@@ -106,6 +106,7 @@ fn main() -> Result<(), Box<StdError>> {
             Arg::with_name("dump")
                 .short("d")
                 .long("dump")
+                .conflicts_with("repl")
                 .help("Dump bytecode"),
         )
         .arg(Arg::with_name("file").help("File to interpret").index(1))
