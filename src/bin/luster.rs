@@ -134,7 +134,6 @@ fn main() -> Result<(), Box<StdError>> {
         return Ok(());
     }
 
-    let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
     lua.sequence(|root| {
         sequence::from_fn_with(root, |mc, root| {
             Ok(Closure::new(
