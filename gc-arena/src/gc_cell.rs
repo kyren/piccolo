@@ -22,9 +22,7 @@ impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
 
 impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("GcCell")
-            .field("cell", &self.0.cell)
-            .finish()
+        fmt.debug_tuple("GcCell").field(&self.0).finish()
     }
 }
 

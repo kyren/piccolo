@@ -1,9 +1,10 @@
 use std::borrow::Borrow;
 use std::error::Error as StdError;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::ops::Deref;
+use std::str;
 
 use rustc_hash::FxHashSet;
 
@@ -27,13 +28,32 @@ impl fmt::Display for StringError {
     }
 }
 
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Copy, Clone, Collect)]
 #[collect(require_copy)]
 pub enum String<'gc> {
     Short8(u8, Gc<'gc, [u8; 8]>),
     Short32(u8, Gc<'gc, [u8; 32]>),
     Long(Gc<'gc, Box<[u8]>>),
     Static(&'static [u8]),
+}
+
+impl<'gc> Debug for String<'gc> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            String::Short8(_, _) => fmt.write_str("Short8")?,
+            String::Short32(_, _) => fmt.write_str("Short32")?,
+            String::Long(_) => fmt.write_str("Long")?,
+            String::Static(_) => fmt.write_str("Static")?,
+        }
+        fmt.write_str("(")?;
+        if let Ok(s) = str::from_utf8(self.as_bytes()) {
+            Debug::fmt(s, fmt)?;
+        } else {
+            Debug::fmt(self.as_bytes(), fmt)?;
+        }
+        fmt.write_str(")")?;
+        Ok(())
+    }
 }
 
 impl<'gc> String<'gc> {
