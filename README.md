@@ -47,7 +47,7 @@ collecting in-between the `step` calls).  This "stackless" style allows for some
 interesting concurrency patterns that are difficult or impossible to do using
 PUC-Rio Lua.
 
-(These ideas are not all mine, the garbage collector is heavily derived from
+(These ideas are not all mine, much of the basic design is heavily derived from
 [rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), the
