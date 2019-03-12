@@ -2,7 +2,7 @@ use gc_arena::{ArenaParameters, Collect, MutationContext};
 use gc_sequence::{make_sequencable_arena, Sequence};
 
 use crate::{
-    stdlib::{load_base, load_coroutine, load_math},
+    stdlib::{load_base, load_coroutine, load_math, load_string},
     InternedStringSet, Table, Thread,
 };
 
@@ -25,6 +25,7 @@ impl<'gc> Root<'gc> {
         load_base(mc, root, root.globals);
         load_coroutine(mc, root, root.globals);
         load_math(mc, root, root.globals);
+        load_string(mc, root, root.globals);
 
         root
     }
