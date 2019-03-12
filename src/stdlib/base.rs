@@ -38,6 +38,24 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
+        String::new_static(b"assert"),
+        Callback::new_immediate(mc, |args| {
+            let v = args.get(0).cloned().unwrap_or(Value::Nil);
+            let message = args.get(1).cloned().unwrap_or(
+                Value::String(String::new_static(b"assertion failed!"))
+            );
+
+            if v.to_bool() {
+                Ok(CallbackResult::Return(args))
+            } else {
+                Err(RuntimeError(message).into())
+            }
+        })
+    )
+    .unwrap();
+
+    env.set(
+        mc,
         String::new_static(b"pcall"),
         Callback::new_immediate_with(mc, root.interned_strings, |interned_strings, mut args| {
             let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
