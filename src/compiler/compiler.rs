@@ -738,44 +738,73 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         &mut self,
         assignment: &AssignmentStatement<String<'gc>>,
     ) -> Result<(), CompilerError> {
-        for (i, target) in assignment.targets.iter().enumerate() {
-            let expr = if i < assignment.values.len() {
-                self.expression(&assignment.values[i])?
-            } else {
-                ExprDescriptor::Constant(Constant::Nil)
-            };
+        let target_len = assignment.targets.len();
+        let val_len = assignment.values.len();
+        assert!(val_len != 0);
 
+        fn assign<'gc, 'a, 's>(
+            this: &'s mut Compiler<'gc, 'a>,
+            target: &AssignmentTarget<String<'gc>>,
+            expr: ExprDescriptor<'gc>,
+        ) -> Result<(), CompilerError> {
             match target {
-                AssignmentTarget::Name(name) => match self.find_variable(*name)? {
+                AssignmentTarget::Name(name) => match this.find_variable(*name)? {
                     VariableDescriptor::Local(dest) => {
-                        self.expr_discharge(expr, ExprDestination::Register(dest))?;
+                        this.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
                     VariableDescriptor::UpValue(dest) => {
-                        let (source, source_is_temp) = self.expr_any_register(expr)?;
-                        self.current_function
+                        let (source, source_is_temp) = this.expr_any_register(expr)?;
+                        this.current_function
                             .opcodes
                             .push(OpCode::SetUpValue { source, dest });
                         if source_is_temp {
-                            self.current_function.register_allocator.free(source);
+                            this.current_function.register_allocator.free(source);
                         }
                     }
                     VariableDescriptor::Global(name) => {
-                        let env = self.get_environment()?;
+                        let env = this.get_environment()?;
                         let key = ExprDescriptor::Constant(Constant::String(name));
-                        self.set_table(env, key, expr)?;
+                        this.set_table(env, key, expr)?;
                     }
                 },
 
                 AssignmentTarget::Field(table, field) => {
-                    let table = self.suffixed_expression(table)?;
+                    let table = this.suffixed_expression(table)?;
                     let key = match field {
                         FieldSuffix::Named(name) => {
                             ExprDescriptor::Constant(Constant::String(*name))
                         }
-                        FieldSuffix::Indexed(idx) => self.expression(idx)?,
+                        FieldSuffix::Indexed(idx) => this.expression(idx)?,
                     };
-                    self.set_table(table, key, expr)?;
+                    this.set_table(table, key, expr)?;
                 }
+            }
+            Ok(())
+        }
+
+        for i in 0..val_len {
+            let expr = self.expression(&assignment.values[i])?;
+
+            if i >= target_len {
+                let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                self.current_function.register_allocator.free(reg);
+            } else if i == val_len - 1 {
+                let top = self.current_function.register_allocator.stack_top();
+
+                let targets_left =
+                    cast(1 + target_len - val_len).ok_or(CompilerError::Registers)?;
+                let results = self.expr_push_count(expr, targets_left)?;
+
+                for j in 0..targets_left {
+                    let expr = ExprDescriptor::Variable(VariableDescriptor::Local(RegisterIndex(
+                        results.0 + j,
+                    )));
+                    assign(self, &assignment.targets[val_len - 1 + j as usize], expr)?;
+                }
+
+                self.current_function.register_allocator.pop_to(top);
+            } else {
+                assign(self, &assignment.targets[i], expr)?;
             }
         }
 
@@ -1069,7 +1098,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             } else {
                 &mut this.upper_functions[i]
             }
-        };
+        }
 
         for i in (0..=current_function).rev() {
             for j in (0..get_function(self, i).locals.len()).rev() {

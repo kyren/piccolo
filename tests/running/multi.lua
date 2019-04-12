@@ -35,8 +35,32 @@ local function test4()
     return inner(2, 3) == 5
 end
 
+local function test5()
+    local function inner(a, ...)
+        return a, ...
+    end
+
+    local a, b, c, d
+    a, b, c, d = 42, inner(1, 2, 3)
+    return a == 42 and b == 1 and c == 2 and d == 3
+end
+
+local function test6()
+    local function inner(p, ...)
+        local a, b, c
+        a, b, c = p, ...
+        return a, b, c
+    end
+
+    local a, b, c
+    a, b, c = inner(1, 2, 3)
+    return a == 1 and b == 2 and c == 3
+end
+
 return
     test1() and
     test2() and
     test3() and
-    test4()
+    test4() and
+    test5() and
+    test6()
