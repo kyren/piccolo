@@ -16,6 +16,7 @@ use crate::Value;
 #[collect(require_static)]
 pub enum StringError {
     Concat { bad_type: &'static str },
+    TooLong,
 }
 
 impl StdError for StringError {}
@@ -24,6 +25,7 @@ impl fmt::Display for StringError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             StringError::Concat { bad_type } => write!(fmt, "cannot concat {}", bad_type),
+            StringError::TooLong => write!(fmt, "string is too long"),
         }
     }
 }
@@ -99,7 +101,7 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(String::Long(Gc::allocate(mc, bytes.into_boxed_slice())))
+        Ok(String::new(mc, &bytes))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -108,6 +110,22 @@ impl<'gc> String<'gc> {
             String::Short32(l, b) => &b[0..*l as usize],
             String::Long(b) => b,
             String::Static(b) => b,
+        }
+    }
+
+    pub fn len(&self) -> i64 {
+        fn as_i64(len: usize) -> i64 {
+            if len <= std::i64::MAX as usize {
+                len as i64
+            } else {
+                panic!("string is too long")
+            }
+        }
+
+        match self {
+            String::Short8(l, _) | String::Short32(l, _) => *l as i64,
+            String::Long(b) => as_i64(b.len()),
+            String::Static(b) => as_i64(b.len()),
         }
     }
 }
