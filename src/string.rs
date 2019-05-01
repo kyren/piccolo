@@ -113,17 +113,17 @@ impl<'gc> String<'gc> {
         }
     }
 
-    pub fn len(&self) -> Result<i64, StringError> {
-        fn as_i64(len: usize) -> Result<i64, StringError> {
+    pub fn len(&self) -> i64 {
+        fn as_i64(len: usize) -> i64 {
             if len <= std::i64::MAX as usize {
-                Ok(len as i64)
+                len as i64
             } else {
-                Err(StringError::TooLong)
+                panic!("string is too long")
             }
         }
 
         match self {
-            String::Short8(l, _) | String::Short32(l, _) => Ok(*l as i64),
+            String::Short8(l, _) | String::Short32(l, _) => *l as i64,
             String::Long(b) => as_i64(b.len()),
             String::Static(b) => as_i64(b.len()),
         }

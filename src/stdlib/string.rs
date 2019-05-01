@@ -17,9 +17,8 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
                         .cloned()
                         .unwrap_or(Value::Nil)
                         .to_string(mc)
-                        .and_then(|s| s.len().ok())
                     {
-                        Some(len) => Ok(CallbackResult::Return(vec![Value::Integer(len)])),
+                        Some(s) => Ok(CallbackResult::Return(vec![Value::Integer(s.len())])),
                         _ => Err(RuntimeError(Value::String(String::new_static(
                             b"Bad argument to len",
                         )))
