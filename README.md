@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/kyren/luster.svg?branch=master)](https://travis-ci.org/kyren/luster)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/luster.svg)](https://circleci.com/gh/kyren/luster)
 
 # luster - An experimental Lua VM implemented in pure Rust #
 
@@ -13,7 +13,9 @@ My eventual goals with `luster` are somewhat ambitious:
     in safe Rust, and show that the techniques work by implementing a real
     project with them.
 
-**This project is in active development and currently very WIP**
+**This project is in active development and currently very WIP.  Most of the
+above is not true yet!**  Currently luster mostly serves as an example of the
+experimental garbage collection technique it uses.
 
 ## A novel system for Rust <-> GC interaction ##
 
