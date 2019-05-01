@@ -1,6 +1,6 @@
 use std::{f64, i64, io};
 
-use gc_arena::{Collect, Gc, GcCell};
+use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
     lexer::{read_float, read_hex_float},
@@ -122,6 +122,16 @@ impl<'gc> Value<'gc> {
                 }
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// Interprets Numbers, Integers, and Strings as a String, if possible.
+    pub fn to_string(self, mc: MutationContext<'gc, '_>) -> Option<String<'gc>> {
+        match self {
+            Value::Integer(a) => Some(String::concat(mc, &[Value::Integer(a)]).unwrap()),
+            Value::Number(a) => Some(String::concat(mc, &[Value::Number(a)]).unwrap()),
+            Value::String(a) => Some(a),
             _ => None,
         }
     }
