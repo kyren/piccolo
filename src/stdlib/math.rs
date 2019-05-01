@@ -297,9 +297,10 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         String::new_static(b"max"),
         Callback::new_immediate(mc, |args| {
             if args.len() == 0 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to max"))).into(),
-                );
+                return Err(RuntimeError(Value::String(String::new_static(
+                    b"Bad argument to max",
+                )))
+                .into());
             }
 
             args.iter()
@@ -328,9 +329,10 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         String::new_static(b"min"),
         Callback::new_immediate(mc, |args| {
             if args.len() == 0 {
-                return Err(
-                    RuntimeError(Value::String(String::new_static(b"Bad argument to min"))).into(),
-                );
+                return Err(RuntimeError(Value::String(String::new_static(
+                    b"Bad argument to min",
+                )))
+                .into());
             }
 
             args.iter()
