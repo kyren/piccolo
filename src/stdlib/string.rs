@@ -19,7 +19,7 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
                         .to_string(mc)
                     {
                         Some(s) => Ok(CallbackResult::Return(vec![Value::Integer(s.len())])),
-                        _ => Err(RuntimeError(Value::String(String::new_static(
+                        None => Err(RuntimeError(Value::String(String::new_static(
                             b"Bad argument to len",
                         )))
                         .into()),
