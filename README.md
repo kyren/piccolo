@@ -17,7 +17,12 @@ My eventual goals with `luster` are somewhat ambitious:
 above is not true yet!**  Currently luster mostly serves as an example of the
 experimental garbage collection technique it uses.
 
-## A novel system for Rust <-> GC interaction ##
+## A unique system for Rust <-> GC interaction ##
+
+*The garbage collector system for luster is now in its [own
+repo](https://github.com/kyren/gc-arena), and also on crates.io (This may
+change in the future when luster supports object finalization). See the README
+in the linked repo for more detail about the GC design.*
 
 `luster` has a real, cycle detecting, incremental garbage collector with
 zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)
@@ -49,18 +54,10 @@ collecting in-between the `step` calls).  This "stackless" style allows for some
 interesting concurrency patterns that are difficult or impossible to do using
 PUC-Rio Lua.
 
-(These ideas are not all mine, much of the basic design is heavily derived from
-[rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
-the idea of using "generativity" comes from [You can't spell trust without
-Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), the
-vast majority of the `Sequence` design is taken directly from
-[futures-rs](https://github.com/rust-lang-nursery/futures-rs), and the idea of
-using a "trampoline" loop is taken from scheme / Stackless Python.)
-
 While the interface to garbage collected pointers is interesting, the actual
-garbage collector itself is currently only a very basic (but adequate)
-incremental mark-and-sweep collector.  This could be replaced in the future with
-a better design.
+garbage collector itself is currently only a very basic incremental
+mark-and-sweep collector.  This could be replaced in the future with a better
+design.
 
 ## What currently works ##
 
