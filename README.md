@@ -20,9 +20,9 @@ experimental garbage collection technique it uses.
 ## A unique system for Rust <-> GC interaction ##
 
 *The garbage collector system for luster is now in its [own
-repo](https://github.com/kyren/gc-arena), and also on crates.io (This may
-change in the future when luster supports object finalization). See the README
-in the linked repo for more detail about the GC design.*
+repo](https://github.com/kyren/gc-arena), and also on crates.io.  (luster may
+need to go back to having its own fork once to support object finalization). See
+the README in the linked repo for more detail about the GC design.*
 
 `luster` has a real, cycle detecting, incremental garbage collector with
 zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)

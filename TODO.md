@@ -4,9 +4,10 @@
 
 ## Speed improvements ##
 
-The following test program is currently 6x slower than PUC-Rio Lua, this is a
-good starting point for optimization work.  Need to investigate specifically why
-this is 6x slower: (Update, now only 3x slower just from changing LTO settings).
+The following test program is currently ~6x~ 3x slower than PUC-Rio Lua, this is
+a good starting point for optimization work.  Need to investigate specifically
+why this is 6x slower: (Update, now only 3x slower just from changing LTO
+settings).
 
 ```lua
 local sum = 0
