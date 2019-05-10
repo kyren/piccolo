@@ -298,6 +298,12 @@ impl<'gc> From<f64> for Value<'gc> {
     }
 }
 
+impl<'gc> From<&'static str> for Value<'gc> {
+    fn from(v: &'static str) -> Value<'gc> {
+        Value::String(String::new_static(v.as_bytes()))
+    }
+}
+
 impl<'gc> From<String<'gc>> for Value<'gc> {
     fn from(v: String<'gc>) -> Value<'gc> {
         Value::String(v)

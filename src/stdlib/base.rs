@@ -10,7 +10,7 @@ use crate::{
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<'gc>) {
     env.set(
         mc,
-        String::new_static(b"print"),
+        "print",
         Callback::new_immediate(mc, |args| {
             let mut stdout = io::stdout();
             for i in 0..args.len() {
@@ -28,7 +28,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
-        String::new_static(b"error"),
+        "error",
         Callback::new_immediate(mc, |args| {
             let err = args.get(0).cloned().unwrap_or(Value::Nil);
             Err(RuntimeError(err).into())
@@ -38,7 +38,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
-        String::new_static(b"assert"),
+        "assert",
         Callback::new_immediate(mc, |args| {
             let v = args.get(0).cloned().unwrap_or(Value::Nil);
             let message = args
@@ -57,7 +57,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
-        String::new_static(b"pcall"),
+        "pcall",
         Callback::new_immediate_with(mc, root.interned_strings, |interned_strings, mut args| {
             let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Function(function) => function,
@@ -101,7 +101,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
-        String::new_static(b"type"),
+        "type",
         Callback::new_immediate(mc, |args| {
             if args.len() == 0 {
                 return Err(RuntimeError(Value::String(String::new_static(
@@ -118,7 +118,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<
 
     env.set(
         mc,
-        String::new_static(b"select"),
+        "select",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_integer() {
                 Some(n) if n >= 1 && (n as usize) <= args.len() => Ok(CallbackResult::Return(

@@ -13,7 +13,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"abs"),
+        "abs",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Integer(a) => Ok(CallbackResult::Return(vec![Value::Integer(a.abs())])),
@@ -31,7 +31,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"acos"),
+        "acos",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.acos())])),
@@ -45,7 +45,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"asin"),
+        "asin",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.asin())])),
@@ -59,7 +59,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"atan"),
+        "atan",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.atan())])),
@@ -73,7 +73,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"atan2"),
+        "atan2",
         Callback::new_immediate(mc, |args| {
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
@@ -91,7 +91,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"ceil"),
+        "ceil",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![
@@ -107,7 +107,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"cos"),
+        "cos",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.cos())])),
@@ -121,7 +121,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"cosh"),
+        "cosh",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.cosh())])),
@@ -135,7 +135,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"deg"),
+        "deg",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.to_degrees())])),
@@ -149,7 +149,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"exp"),
+        "exp",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(
@@ -165,7 +165,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"floor"),
+        "floor",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Integer(
@@ -182,7 +182,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"fmod"),
+        "fmod",
         Callback::new_immediate(mc, |args| {
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
@@ -206,7 +206,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"frexp"),
+        "frexp",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) if f.is_finite() => {
@@ -238,14 +238,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"huge"),
+        "huge",
         Value::Number(std::f64::INFINITY),
     )
     .unwrap();
 
     math.set(
         mc,
-        String::new_static(b"ldexp"),
+        "ldexp",
         Callback::new_immediate(mc, |args| {
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_number(),
@@ -265,7 +265,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"log"),
+        "log",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.ln())])),
@@ -279,7 +279,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"log10"),
+        "log10",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.log10())])),
@@ -294,7 +294,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"max"),
+        "max",
         Callback::new_immediate(mc, |args| {
             if args.len() == 0 {
                 return Err(RuntimeError(Value::String(String::new_static(
@@ -319,14 +319,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"maxinteger"),
+        "maxinteger",
         Value::Integer(std::i64::MAX),
     )
     .unwrap();
 
     math.set(
         mc,
-        String::new_static(b"min"),
+        "min",
         Callback::new_immediate(mc, |args| {
             if args.len() == 0 {
                 return Err(RuntimeError(Value::String(String::new_static(
@@ -352,14 +352,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"mininteger"),
+        "mininteger",
         Value::Integer(std::i64::MIN),
     )
     .unwrap();
 
     math.set(
         mc,
-        String::new_static(b"modf"),
+        "modf",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![
@@ -376,14 +376,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"pi"),
+        "pi",
         Value::Number(std::f64::consts::PI),
     )
     .unwrap();
 
     math.set(
         mc,
-        String::new_static(b"rad"),
+        "rad",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.to_radians())])),
@@ -399,7 +399,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     let random_rng = seeded_rng.clone();
     math.set(
         mc,
-        String::new_static(b"random"),
+        "random",
         Callback::new_immediate(mc, move |args| {
             let rng = &random_rng;
             match (
@@ -433,7 +433,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     let randomseed_rng = seeded_rng.clone();
     math.set(
         mc,
-        String::new_static(b"randomseed"),
+        "randomseed",
         Callback::new_immediate(mc, move |args| {
             let rng = &randomseed_rng;
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
@@ -452,7 +452,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"sin"),
+        "sin",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.sin())])),
@@ -466,7 +466,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"sqrt"),
+        "sqrt",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.sqrt())])),
@@ -480,7 +480,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"tan"),
+        "tan",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Number(f.tan())])),
@@ -494,7 +494,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"tointeger"),
+        "tointeger",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil).to_integer() {
                 Some(f) => Ok(CallbackResult::Return(vec![Value::Integer(f)])),
@@ -506,7 +506,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"type"),
+        "type",
         Callback::new_immediate(mc, |args| {
             match args.get(0).cloned().unwrap_or(Value::Nil) {
                 Value::Integer(_) => Ok(CallbackResult::Return(vec![Value::String(
@@ -523,7 +523,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
 
     math.set(
         mc,
-        String::new_static(b"ult"),
+        "ult",
         Callback::new_immediate(mc, |args| {
             match (
                 args.get(0).cloned().unwrap_or(Value::Nil).to_integer(),
@@ -540,5 +540,5 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     )
     .unwrap();
 
-    env.set(mc, String::new_static(b"math"), math).unwrap();
+    env.set(mc, "math", math).unwrap();
 }

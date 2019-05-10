@@ -12,7 +12,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: T
     coroutine
         .set(
             mc,
-            String::new_static(b"create"),
+            "create",
             Callback::new_sequence(mc, |args| {
                 let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
@@ -37,7 +37,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: T
     coroutine
         .set(
             mc,
-            String::new_static(b"resume"),
+            "resume",
             Callback::new_sequence_with(mc, root.interned_strings, |interned_strings, mut args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
@@ -85,7 +85,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: T
     coroutine
         .set(
             mc,
-            String::new_static(b"status"),
+            "status",
             Callback::new_immediate(mc, |args| {
                 let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
@@ -114,11 +114,10 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: T
     coroutine
         .set(
             mc,
-            String::new_static(b"yield"),
+            "yield",
             Callback::new_immediate(mc, |args| Ok(CallbackResult::Yield(args))),
         )
         .unwrap();
 
-    env.set(mc, String::new_static(b"coroutine"), coroutine)
-        .unwrap();
+    env.set(mc, "coroutine", coroutine).unwrap();
 }

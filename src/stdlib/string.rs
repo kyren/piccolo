@@ -9,7 +9,7 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
     string
         .set(
             mc,
-            String::new_static(b"len"),
+            "len",
             Callback::new_sequence(mc, |args| {
                 Ok(sequence::from_fn_with(args, |mc, args| {
                     match args.get(0).cloned().unwrap_or(Value::Nil).to_string(mc) {
@@ -24,5 +24,5 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
         )
         .unwrap();
 
-    env.set(mc, String::new_static(b"string"), string).unwrap();
+    env.set(mc, "string", string).unwrap();
 }
