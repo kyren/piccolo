@@ -1,7 +1,7 @@
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 use luster::{
-    compile, Callback, CallbackResult, Closure, Error, Function, Lua, StaticError,
-    ThreadSequence, Value,
+    compile, Callback, CallbackResult, Closure, Error, Function, Lua, StaticError, ThreadSequence,
+    Value,
 };
 
 #[test]
@@ -14,8 +14,7 @@ fn callback() -> Result<(), Box<StaticError>> {
                 ret.push(Value::Integer(42));
                 Ok(CallbackResult::Return(ret))
             });
-            root.globals
-                .set(mc, "callback", callback)?;
+            root.globals.set(mc, "callback", callback)?;
             Ok(())
         })
         .and_then_with(root, |mc, root, _| {
@@ -58,8 +57,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                 ret.push(Value::Integer(3));
                 Ok(CallbackResult::Return(ret))
             });
-            root.globals
-                .set(mc, "callback", callback)?;
+            root.globals.set(mc, "callback", callback)?;
             Ok(())
         })
         .and_then_with(root, |mc, root, _| {

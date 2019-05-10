@@ -236,12 +236,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     )
     .unwrap();
 
-    math.set(
-        mc,
-        "huge",
-        Value::Number(std::f64::INFINITY),
-    )
-    .unwrap();
+    math.set(mc, "huge", Value::Number(std::f64::INFINITY))
+        .unwrap();
 
     math.set(
         mc,
@@ -317,12 +313,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     )
     .unwrap();
 
-    math.set(
-        mc,
-        "maxinteger",
-        Value::Integer(std::i64::MAX),
-    )
-    .unwrap();
+    math.set(mc, "maxinteger", Value::Integer(std::i64::MAX))
+        .unwrap();
 
     math.set(
         mc,
@@ -350,12 +342,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     )
     .unwrap();
 
-    math.set(
-        mc,
-        "mininteger",
-        Value::Integer(std::i64::MIN),
-    )
-    .unwrap();
+    math.set(mc, "mininteger", Value::Integer(std::i64::MIN))
+        .unwrap();
 
     math.set(
         mc,
@@ -374,12 +362,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     )
     .unwrap();
 
-    math.set(
-        mc,
-        "pi",
-        Value::Number(std::f64::consts::PI),
-    )
-    .unwrap();
+    math.set(mc, "pi", Value::Number(std::f64::consts::PI))
+        .unwrap();
 
     math.set(
         mc,
