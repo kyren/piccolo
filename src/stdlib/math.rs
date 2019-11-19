@@ -2,7 +2,7 @@ use gc_arena::MutationContext;
 
 use crate::{Callback, CallbackResult, Root, RuntimeError, String, Table, Value};
 
-use rand::{FromEntropy, Rng, SeedableRng};
+use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{cell::RefCell, ops::DerefMut, rc::Rc};
 

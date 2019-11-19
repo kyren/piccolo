@@ -29,7 +29,7 @@ impl fmt::Display for TypeError {
 }
 
 #[derive(Debug, Clone, Copy, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct RuntimeError<'gc>(pub Value<'gc>);
 
 impl<'gc> StdError for RuntimeError<'gc> {}
@@ -43,9 +43,8 @@ impl<'gc> fmt::Display for RuntimeError<'gc> {
     }
 }
 
-// Safe, does not implement drop
 #[derive(Debug, Collect)]
-#[collect(unsafe_drop)]
+#[collect(no_drop)]
 pub enum Error<'gc> {
     IoError(StaticCollect<io::Error>),
     ParserError(ParserError),

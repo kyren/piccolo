@@ -8,7 +8,7 @@ use crate::{String, Value};
 /// Immutable value which implements Hash and Eq, where values are equal only when they are bit for
 /// bit identical.
 #[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub enum Constant<'gc> {
     Nil,
     Boolean(bool),

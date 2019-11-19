@@ -42,7 +42,7 @@ fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     }
 }
 
-fn main() -> Result<(), Box<StdError>> {
+fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())

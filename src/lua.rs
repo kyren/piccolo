@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[derive(Collect, Clone, Copy)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct Root<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,

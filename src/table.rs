@@ -10,7 +10,7 @@ use gc_arena::{Collect, GcCell, MutationContext};
 use crate::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct Table<'gc>(pub GcCell<'gc, TableState<'gc>>);
 
 #[derive(Debug, Clone, Copy, Collect)]
@@ -69,7 +69,7 @@ impl<'gc> Table<'gc> {
 }
 
 #[derive(Debug, Collect, Default)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct TableState<'gc> {
     array: Vec<Value<'gc>>,
     map: FxHashMap<TableKey<'gc>, Value<'gc>>,
@@ -256,7 +256,7 @@ impl<'gc> TableState<'gc> {
 
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
 #[derive(Debug, Collect, PartialEq)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 struct TableKey<'gc>(Value<'gc>);
 
 impl<'gc> Eq for TableKey<'gc> {}

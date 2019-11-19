@@ -8,14 +8,14 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub enum Function<'gc> {
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub enum Value<'gc> {
     Nil,
     Boolean(bool),

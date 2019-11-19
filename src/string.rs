@@ -31,7 +31,7 @@ impl fmt::Display for StringError {
 }
 
 #[derive(Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub enum String<'gc> {
     Short8(u8, Gc<'gc, [u8; 8]>),
     Short32(u8, Gc<'gc, [u8; 32]>),
@@ -168,7 +168,7 @@ impl<'gc> Hash for String<'gc> {
 }
 
 #[derive(Collect, Clone, Copy)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct InternedStringSet<'gc>(GcCell<'gc, FxHashSet<String<'gc>>>);
 
 impl<'gc> InternedStringSet<'gc> {

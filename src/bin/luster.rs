@@ -91,7 +91,7 @@ fn run_repl(lua: &mut Lua) {
     }
 }
 
-fn main() -> Result<(), Box<StdError>> {
+fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())

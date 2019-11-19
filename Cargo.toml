@@ -12,10 +12,10 @@ codegen-units = 1
 
 [dependencies]
 clap = "2.32"
-gc-arena = "0.1"
-gc-sequence = "0.1"
+gc-arena = "0.2"
+gc-sequence = "0.2"
 num-traits = "0.2"
-rand = "0.6"
-rand_xoshiro = "0.1"
+rand = "0.7"
+rand_xoshiro = "0.4"
 rustc-hash = "1.0"
-rustyline = "3.0"
+rustyline = "5.0"

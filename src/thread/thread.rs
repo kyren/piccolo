@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct Thread<'gc>(pub(crate) GcCell<'gc, ThreadState<'gc>>);
 
 impl<'gc> Debug for Thread<'gc> {
@@ -48,11 +48,11 @@ pub enum ThreadMode {
 }
 
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct ThreadSequence<'gc>(pub Thread<'gc>);
 
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub(crate) struct ThreadState<'gc> {
     values: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
@@ -710,7 +710,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 }
 
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 enum Frame<'gc> {
     Lua {
         bottom: usize,

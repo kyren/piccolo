@@ -6,9 +6,8 @@ use gc_sequence::{Sequence, SequenceExt};
 
 use crate::{Error, Function, Value};
 
-// Safe, does not implement drop
 #[derive(Collect)]
-#[collect(unsafe_drop)]
+#[collect(no_drop)]
 pub enum CallbackResult<'gc> {
     Return(Vec<Value<'gc>>),
     Yield(Vec<Value<'gc>>),
@@ -28,9 +27,8 @@ pub trait ContinuationFn<'gc>: Collect {
     fn call(self: Box<Self>, res: Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackReturn<'gc>;
 }
 
-// Safe, does not implement drop
 #[derive(Collect)]
-#[collect(unsafe_drop)]
+#[collect(no_drop)]
 pub struct Continuation<'gc>(Box<dyn ContinuationFn<'gc> + 'gc>);
 
 impl<'gc> Continuation<'gc> {
@@ -62,9 +60,8 @@ impl<'gc> Continuation<'gc> {
         C: 'gc + Collect,
         F: 'static + FnOnce(C, Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackReturn<'gc>,
     {
-        // Safe, does not implement drop
         #[derive(Collect)]
-        #[collect(unsafe_drop)]
+        #[collect(no_drop)]
         struct ContextContinuationFn<C, F>(C, StaticCollect<F>);
 
         impl<'gc, C, F> ContinuationFn<'gc> for ContextContinuationFn<C, F>
@@ -143,7 +140,7 @@ pub trait CallbackFn<'gc>: Collect {
 }
 
 #[derive(Clone, Copy, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct Callback<'gc>(pub Gc<'gc, Box<dyn CallbackFn<'gc> + 'gc>>);
 
 impl<'gc> Callback<'gc> {
@@ -173,7 +170,7 @@ impl<'gc> Callback<'gc> {
         F: 'static + Fn(&C, Vec<Value<'gc>>) -> CallbackReturn<'gc>,
     {
         #[derive(Collect)]
-        #[collect(empty_drop)]
+        #[collect(no_drop)]
         struct ContextCallbackFn<C, F>(C, StaticCollect<F>);
 
         impl<'gc, C, F> CallbackFn<'gc> for ContextCallbackFn<C, F>

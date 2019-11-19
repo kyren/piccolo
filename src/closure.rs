@@ -15,7 +15,7 @@ pub enum UpValueDescriptor {
 }
 
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
     pub has_varargs: bool,
@@ -27,25 +27,25 @@ pub struct FunctionProto<'gc> {
 }
 
 #[derive(Debug, Collect, Copy, Clone)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub enum UpValueState<'gc> {
     Open(Thread<'gc>, usize),
     Closed(Value<'gc>),
 }
 
 #[derive(Debug, Collect, Copy, Clone)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct UpValue<'gc>(pub GcCell<'gc, UpValueState<'gc>>);
 
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct ClosureState<'gc> {
     pub proto: Gc<'gc, FunctionProto<'gc>>,
     pub upvalues: Vec<UpValue<'gc>>,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_copy)]
+#[collect(no_drop)]
 pub struct Closure<'gc>(pub Gc<'gc, ClosureState<'gc>>);
 
 impl<'gc> PartialEq for Closure<'gc> {
