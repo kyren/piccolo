@@ -1,5 +1,20 @@
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/luster.svg)](https://circleci.com/gh/kyren/luster)
 
+# This project is currently paused
+
+I'm no longer in need of something like this for a larger project (for my
+current needs wasm is a better fit), and I'm currently waiting on future
+compiler features before going any further.
+
+The futures-like GC API is a neat idea, but using combinators is very very
+painful and AFAICT it is not possible to make a safe API using async / await at
+this time.
+
+I might come back to this in the future if that situation changes or I find a
+solution, see [issue 25](https://github.com/kyren/luster/issues/25).
+
+---
+
 # luster - An experimental Lua VM implemented in pure Rust #
 
 My eventual goals with `luster` are somewhat ambitious:
@@ -13,9 +28,9 @@ My eventual goals with `luster` are somewhat ambitious:
     in safe Rust, and show that the techniques work by implementing a real
     project with them.
 
-**This project is in active development and currently very WIP.  Most of the
-above is not true yet!**  Currently luster mostly serves as an example of the
-experimental garbage collection technique it uses.
+**This project is currently very WIP.  Most of the above is not true yet!**
+Currently luster mostly serves as an example of the experimental garbage
+collection technique it uses.
 
 ## A unique system for Rust <-> GC interaction ##
 
