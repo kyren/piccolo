@@ -1,7 +1,6 @@
 /target/
 **/*.rs.bk
 **/*.sw?
-Cargo.lock
 .DS_Store
 .#*
 .dir-locals.el
