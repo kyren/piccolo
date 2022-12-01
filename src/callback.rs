@@ -61,7 +61,7 @@ impl<'gc> Continuation<'gc> {
         F: 'static + FnOnce(C, Result<Vec<Value<'gc>>, Error<'gc>>) -> CallbackReturn<'gc>,
     {
         #[derive(Collect)]
-        #[collect(no_drop)]
+        #[collect(no_drop, bound = "where C: Collect, F: 'static")]
         struct ContextContinuationFn<C, F>(C, StaticCollect<F>);
 
         impl<'gc, C, F> ContinuationFn<'gc> for ContextContinuationFn<C, F>
@@ -170,7 +170,7 @@ impl<'gc> Callback<'gc> {
         F: 'static + Fn(&C, Vec<Value<'gc>>) -> CallbackReturn<'gc>,
     {
         #[derive(Collect)]
-        #[collect(no_drop)]
+        #[collect(no_drop, bound = "where C: Collect, F: 'static")]
         struct ContextCallbackFn<C, F>(C, StaticCollect<F>);
 
         impl<'gc, C, F> CallbackFn<'gc> for ContextCallbackFn<C, F>

@@ -5,3 +5,5 @@ Cargo.lock
 .DS_Store
 .#*
 .dir-locals.el
+.envrc
+shell.nix

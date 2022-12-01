@@ -2,7 +2,7 @@
 name = "luster"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT OR CC0"
 
 [profile.release]
@@ -12,8 +12,8 @@ codegen-units = 1
 
 [dependencies]
 clap = "2.32"
-gc-arena = "0.2"
-gc-sequence = "0.2"
+gc-arena = { git = "https://github.com/kyren/gc-arena" }
+gc-sequence = { git = "https://github.com/kyren/gc-arena" }
 num-traits = "0.2"
 rand = "0.7"
 rand_xoshiro = "0.4"

@@ -31,7 +31,8 @@ impl<'gc> Root<'gc> {
     }
 }
 
-make_sequencable_arena!(pub lua_arena, Root);
+type MyRoot<'gc> = Root<'gc>;
+make_sequencable_arena!(pub lua_arena, MyRoot);
 
 pub use lua_arena::Arena;
 pub use lua_arena::Sequencer;
