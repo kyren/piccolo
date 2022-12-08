@@ -16,7 +16,6 @@ use crate::Value;
 #[collect(require_static)]
 pub enum StringError {
     Concat { bad_type: &'static str },
-    TooLong,
 }
 
 impl StdError for StringError {}
@@ -25,7 +24,6 @@ impl fmt::Display for StringError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             StringError::Concat { bad_type } => write!(fmt, "cannot concat {}", bad_type),
-            StringError::TooLong => write!(fmt, "string is too long"),
         }
     }
 }
@@ -60,17 +58,32 @@ impl<'gc> Debug for String<'gc> {
 
 impl<'gc> String<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+        String::new_mapped(mc, s, |from, idx| from[idx])
+    }
+
+    pub fn new_mapped<F>(mc: MutationContext<'gc, '_>, s: &[u8], f: F) -> String<'gc>
+    where
+        F: Fn(&[u8], usize) -> u8,
+    {
         let len = s.len();
         if len <= 8 {
             let mut b = [0; 8];
-            b[..len].copy_from_slice(s);
+            for i in 0..len {
+                b[i] = f(s, i);
+            }
             String::Short8(len as u8, Gc::allocate(mc, b))
         } else if len <= 32 {
             let mut b = [0; 32];
-            b[..len].copy_from_slice(s);
+            for i in 0..len {
+                b[i] = f(s, i);
+            }
             String::Short32(len as u8, Gc::allocate(mc, b))
         } else {
-            String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice()))
+            let mut v = Vec::with_capacity(len);
+            for i in 0..len {
+                v.push(f(s, i));
+            }
+            String::Long(Gc::allocate(mc, v.into_boxed_slice()))
         }
     }
 
@@ -127,6 +140,22 @@ impl<'gc> String<'gc> {
             String::Long(b) => as_i64(b.len()),
             String::Static(b) => as_i64(b.len()),
         }
+    }
+
+    pub fn upper(&self, mc: MutationContext<'gc, '_>) -> String<'gc> {
+        String::new_mapped(mc, self.as_bytes(), |from, idx| {
+            from[idx].to_ascii_uppercase()
+        })
+    }
+
+    pub fn lower(&self, mc: MutationContext<'gc, '_>) -> String<'gc> {
+        String::new_mapped(mc, self.as_bytes(), |from, idx| {
+            from[idx].to_ascii_lowercase()
+        })
+    }
+
+    pub fn reverse(&self, mc: MutationContext<'gc, '_>) -> String<'gc> {
+        String::new_mapped(mc, self.as_bytes(), |from, idx| from[from.len() - idx - 1])
     }
 }
 
