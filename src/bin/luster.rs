@@ -2,26 +2,23 @@ use std::error::Error as StdError;
 use std::fs::File;
 use std::vec::Vec;
 
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
-use rustyline::Editor;
+use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
+use rustyline::DefaultEditor;
 
 use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 use luster::{
     compile, io, Closure, Error, Function, Lua, ParserError, StaticError, ThreadSequence,
 };
 
-fn run_repl(lua: &mut Lua) {
-    let mut editor = Editor::<()>::new();
+fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
+    let mut editor = DefaultEditor::new()?;
 
     loop {
         let mut prompt = "> ";
         let mut line = String::new();
 
         loop {
-            match editor.readline(prompt) {
-                Ok(input) => line.push_str(&input),
-                Err(_) => return,
-            }
+            line.push_str(&editor.readline(prompt)?);
 
             let line_clone = line.clone();
 
@@ -66,7 +63,7 @@ fn run_repl(lua: &mut Lua) {
                     match line.chars().last() {
                         Some(c) => {
                             if c == '\n' {
-                                editor.add_history_entry(line);
+                                editor.add_history_entry(line)?;
                                 eprintln!("error: {}", err.err().unwrap());
                                 break;
                             }
@@ -77,12 +74,12 @@ fn run_repl(lua: &mut Lua) {
                     }
                 }
                 Ok(out_string) => {
-                    editor.add_history_entry(line);
+                    editor.add_history_entry(line)?;
                     println!("{}", out_string);
                     break;
                 }
                 Err(e) => {
-                    editor.add_history_entry(line);
+                    editor.add_history_entry(line)?;
                     eprintln!("error: {}", e);
                     break;
                 }
@@ -92,27 +89,27 @@ fn run_repl(lua: &mut Lua) {
 }
 
 fn main() -> Result<(), Box<dyn StdError>> {
-    let matches = App::new(crate_name!())
+    let matches = Command::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())
         .author(crate_authors!(", "))
         .arg(
-            Arg::with_name("repl")
-                .short("r")
+            Arg::new("repl")
+                .short('r')
                 .long("repl")
                 .help("Load into REPL after loading file, if any"),
         )
-        .arg(Arg::with_name("file").help("File to interpret").index(1))
+        .arg(Arg::new("file").help("File to interpret").index(1))
         .get_matches();
 
     let mut lua = Lua::new();
 
-    if !matches.is_present("file") {
-        run_repl(&mut lua);
+    if !matches.contains_id("file") {
+        run_repl(&mut lua)?;
         return Ok(());
     }
 
-    let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
+    let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
     lua.sequence(|root| {
         sequence::from_fn_with(root, |mc, root| {
@@ -135,8 +132,8 @@ fn main() -> Result<(), Box<dyn StdError>> {
         .boxed()
     })?;
 
-    if matches.is_present("repl") {
-        run_repl(&mut lua);
+    if matches.contains_id("repl") {
+        run_repl(&mut lua)?;
     }
 
     Ok(())

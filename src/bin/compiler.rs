@@ -1,10 +1,10 @@
 extern crate gc_arena;
 extern crate luster;
 
-use std::error::Error as StdError;
 use std::fs::File;
+use std::{error::Error as StdError, path::PathBuf};
 
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
+use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
 use luster::{compile, io, parser, FunctionProto, Lua, StaticError};
 
@@ -43,27 +43,27 @@ fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
 }
 
 fn main() -> Result<(), Box<dyn StdError>> {
-    let matches = App::new(crate_name!())
+    let matches = Command::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())
         .author(crate_authors!(", "))
         .arg(
-            Arg::with_name("parse")
-                .short("p")
+            Arg::new("parse")
+                .short('p')
                 .long("parse")
                 .help("Parse file only and output AST"),
         )
         .arg(
-            Arg::with_name("file")
+            Arg::new("file")
                 .required(true)
                 .help("File to compile")
                 .index(1),
         )
         .get_matches();
 
-    let file = io::buffered_read(File::open(matches.value_of("file").unwrap())?)?;
+    let file = io::buffered_read(File::open(matches.get_one::<PathBuf>("file").unwrap())?)?;
 
-    if matches.is_present("parse") {
+    if matches.contains_id("parse") {
         let chunk = parser::parse_chunk(file, |s| s.as_ref().to_vec().into_boxed_slice())?;
         println!("{:#?}", chunk);
     } else {

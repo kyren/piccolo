@@ -49,7 +49,8 @@ impl Lua {
         })))
     }
 
-    /// Runs a single action inside the Lua arena, during which no garbage collection may take place.
+    /// Runs a single action inside the Lua arena, during which no garbage collection may take
+    /// place.
     pub fn mutate<F, R>(&mut self, f: F) -> R
     where
         R: 'static,

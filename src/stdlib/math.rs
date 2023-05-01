@@ -412,11 +412,11 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
                 (a, b) => {
                     if let (Some(first), Value::Nil) = (a.to_integer(), b) {
                         Ok(CallbackResult::Return(vec![Value::Integer(
-                            rng.borrow_mut().gen_range(1, first + 1),
+                            rng.borrow_mut().gen_range(1..first + 1),
                         )]))
                     } else if let (Some(first), Some(second)) = (a.to_integer(), b.to_integer()) {
                         Ok(CallbackResult::Return(vec![Value::Integer(
-                            rng.borrow_mut().gen_range(first, second + 1),
+                            rng.borrow_mut().gen_range(first..second + 1),
                         )]))
                     } else {
                         Err(RuntimeError(Value::String(String::new_static(
