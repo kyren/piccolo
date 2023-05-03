@@ -1,10 +1,10 @@
 use std::io::{self, Write};
 
 use gc_arena::MutationContext;
-use gc_sequence as sequence;
 
 use crate::{
-    Callback, CallbackResult, Continuation, Root, RuntimeError, String, Table, TypeError, Value,
+    sequence, Callback, CallbackResult, Continuation, Root, RuntimeError, String, Table, TypeError,
+    Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<'gc>) {

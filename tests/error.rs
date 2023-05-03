@@ -1,5 +1,7 @@
-use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
-use luster::{compile, Closure, Error, Function, Lua, StaticError, ThreadSequence};
+use luster::{
+    compile, sequence, Closure, Error, Function, Lua, SequenceExt, SequenceResultExt, StaticError,
+    ThreadSequence,
+};
 
 #[test]
 fn error_unwind() -> Result<(), Box<StaticError>> {

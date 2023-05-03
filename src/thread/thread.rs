@@ -4,8 +4,8 @@ use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, GcCell, MutationContext};
-use gc_sequence::Sequence;
 
+use crate::Sequence;
 use crate::{
     thread::run_vm, BadThreadMode, CallbackResult, CallbackReturn, Closure, Continuation, Error,
     Function, RegisterIndex, ThreadError, TypeError, UpValue, UpValueState, Value, VarCount,

@@ -1,5 +1,4 @@
 use std::hash::{Hash, Hasher};
-use std::mem;
 
 use gc_arena::Collect;
 
@@ -52,7 +51,7 @@ impl<'gc> PartialEq for Constant<'gc> {
             (Constant::Integer(a), Constant::Integer(b)) => a == b,
             (Constant::Integer(_), _) => false,
 
-            (Constant::Number(a), Constant::Number(b)) => float_bytes(*a) == float_bytes(*b),
+            (Constant::Number(a), Constant::Number(b)) => a.to_bits() == b.to_bits(),
             (Constant::Number(_), _) => false,
 
             (Constant::String(a), Constant::String(b)) => a == b,
@@ -79,7 +78,7 @@ impl<'gc> Hash for Constant<'gc> {
             }
             Constant::Number(n) => {
                 Hash::hash(&3, state);
-                float_bytes(*n).hash(state);
+                n.to_bits().hash(state);
             }
             Constant::String(s) => {
                 Hash::hash(&4, state);
@@ -87,8 +86,4 @@ impl<'gc> Hash for Constant<'gc> {
             }
         }
     }
-}
-
-fn float_bytes(f: f64) -> u64 {
-    unsafe { mem::transmute(f) }
 }

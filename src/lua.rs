@@ -1,9 +1,8 @@
-use gc_arena::{ArenaParameters, Collect, MutationContext};
-use gc_sequence::{make_sequencable_arena, Sequence};
+use gc_arena::{Arena, ArenaParameters, Collect, MutationContext, Rootable};
 
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
-    InternedStringSet, Table, Thread,
+    InternedStringSet, Sequence, Table, Thread,
 };
 
 #[derive(Collect, Clone, Copy)]
@@ -31,14 +30,7 @@ impl<'gc> Root<'gc> {
     }
 }
 
-type MyRoot<'gc> = Root<'gc>;
-make_sequencable_arena!(pub lua_arena, MyRoot);
-
-pub use lua_arena::Arena;
-pub use lua_arena::Sequencer;
-
-/// Simpler wrapper for `Arena` that automatically garbage collects at reasonable intervals.
-pub struct Lua(Option<lua_arena::Arena>);
+pub struct Lua(Option<Arena<Rootable![Root<'gc>]>>);
 
 const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
@@ -71,20 +63,30 @@ impl Lua {
         R: 'static,
         F: for<'gc> FnOnce(Root<'gc>) -> Box<dyn Sequence<'gc, Output = R> + 'gc>,
     {
-        let mut sequencer = self.0.take().unwrap().sequence(move |root| f(*root));
-        loop {
-            match sequencer.step() {
-                Ok((arena, output)) => {
-                    self.0 = Some(arena);
-                    return output;
-                }
-                Err(s) => {
-                    sequencer = s;
-                    if sequencer.allocation_debt() > COLLECTOR_GRANULARITY {
-                        sequencer.collect_debt();
-                    }
-                }
-            }
+        #[derive(Collect)]
+        #[collect(no_drop, bound = "")]
+        struct RootSequence<'gc, R> {
+            root: Root<'gc>,
+            sequence: Box<dyn Sequence<'gc, Output = R> + 'gc>,
         }
+
+        let mut sequence = self
+            .0
+            .take()
+            .unwrap()
+            .map_root::<Rootable![RootSequence<'gc, R>]>(|_, root| RootSequence {
+                root,
+                sequence: f(root),
+            });
+
+        let res = loop {
+            if let Some(res) = sequence.mutate_root(|mc, arena| arena.sequence.step(mc)) {
+                break res;
+            }
+        };
+
+        self.0 = Some(sequence.map_root(|_, arena| arena.root));
+
+        res
     }
 }

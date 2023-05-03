@@ -1,7 +1,6 @@
-use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 use luster::{
-    compile, Callback, CallbackResult, Closure, Error, Function, Lua, StaticError, String,
-    ThreadSequence, Value,
+    compile, sequence, Callback, CallbackResult, Closure, Error, Function, Lua, SequenceExt,
+    SequenceResultExt, StaticError, String, ThreadSequence, Value,
 };
 
 #[test]

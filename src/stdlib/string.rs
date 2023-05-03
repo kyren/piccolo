@@ -1,7 +1,6 @@
 use gc_arena::MutationContext;
-use gc_sequence as sequence;
 
-use crate::{Callback, CallbackResult, Root, RuntimeError, String, Table, Value};
+use crate::{sequence, Callback, CallbackResult, Root, RuntimeError, String, Table, Value};
 
 pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
     let string = Table::new(mc);

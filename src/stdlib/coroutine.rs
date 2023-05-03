@@ -1,9 +1,8 @@
 use gc_arena::MutationContext;
-use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 
 use crate::{
-    Callback, CallbackResult, Root, RuntimeError, String, Table, Thread, ThreadMode,
-    ThreadSequence, TypeError, Value,
+    sequence, Callback, CallbackResult, Root, RuntimeError, SequenceExt, SequenceResultExt, String,
+    Table, Thread, ThreadMode, ThreadSequence, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, root: Root<'gc>, env: Table<'gc>) {

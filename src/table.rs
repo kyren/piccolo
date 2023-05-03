@@ -332,12 +332,10 @@ fn f64_to_i64(n: f64) -> Option<i64> {
 // corresponding f64s are equal (-0.0 and 0.0 return the same bit pattern).
 fn canonical_float_bytes(f: f64) -> u64 {
     assert!(!f.is_nan());
-    unsafe {
-        if f == 0.0 {
-            mem::transmute(0.0f64)
-        } else {
-            mem::transmute(f)
-        }
+    if f == 0.0 {
+        0.0f64.to_bits()
+    } else {
+        f.to_bits()
     }
 }
 

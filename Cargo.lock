@@ -193,7 +193,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#c8270f5591443e2d0524b45ae5439a6c34120632"
+source = "git+https://github.com/kyren/gc-arena#bb4bbf9ddf2561623155ab12dca73315f719d026"
 dependencies = [
  "gc-arena-derive",
  "sptr",
@@ -202,20 +202,12 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#c8270f5591443e2d0524b45ae5439a6c34120632"
+source = "git+https://github.com/kyren/gc-arena#bb4bbf9ddf2561623155ab12dca73315f719d026"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
  "synstructure",
-]
-
-[[package]]
-name = "gc-sequence"
-version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#c8270f5591443e2d0524b45ae5439a6c34120632"
-dependencies = [
- "gc-arena",
 ]
 
 [[package]]
@@ -285,7 +277,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gc-arena",
- "gc-sequence",
  "num-traits",
  "rand",
  "rand_xoshiro",

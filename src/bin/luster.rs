@@ -5,9 +5,9 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use gc_sequence::{self as sequence, SequenceExt, SequenceResultExt};
 use luster::{
-    compile, io, Closure, Error, Function, Lua, ParserError, StaticError, ThreadSequence,
+    compile, io, sequence, Closure, Error, Function, Lua, ParserError, SequenceExt,
+    SequenceResultExt, StaticError, ThreadSequence,
 };
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {

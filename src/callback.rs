@@ -2,9 +2,8 @@ use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
-use gc_sequence::{Sequence, SequenceExt};
 
-use crate::{Error, Function, Value};
+use crate::{Error, Function, Sequence, SequenceExt, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
