@@ -19,12 +19,12 @@ Project Goals:
 
 Since the focus here is so much on resiliency and safety, Luster is written in
 (almost) entirely *safe* Rust. This is a *slight* copout as most of the unsafe
-code that normally is involved in a language runtime actually lives in `gc-
-arena`, but since we have a safe garbage collection abstraction, (almost) the
+code that normally is involved in a language runtime actually lives in
+`gc-arena`, but since we have a safe garbage collection abstraction, (almost) the
 entire VM can be written in safe code.
 
 *(Luster makes no attempt yet to guard against side channel attacks like
-spectre, so even *if* the VM is extremely safe, running untrusted scripts has
+spectre, so even *if* the VM is memory safe, running untrusted scripts has
 additional risk)*.
 
 **This project is currently very WIP** Right now, the short term goal is to get
