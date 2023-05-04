@@ -33,7 +33,7 @@ use gc_arena::{unsize, Collect, CollectionContext, Gc, MutationContext, Rootable
 //    collection system relies on this), the context can project to a type with any variance in 'gc
 //    and nothing can go wrong.
 
-pub trait AnyValue<'gc> {
+pub unsafe trait AnyValue<'gc> {
     fn get(&self) -> (TypeId, *const ());
 }
 
@@ -102,7 +102,7 @@ where
     }
 }
 
-impl<'gc, R> AnyValue<'gc> for Value<'gc, R>
+unsafe impl<'gc, R> AnyValue<'gc> for Value<'gc, R>
 where
     R: for<'a> Rootable<'a> + ?Sized + 'static,
 {
