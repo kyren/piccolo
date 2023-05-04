@@ -14,7 +14,6 @@ codegen-units = 1
 clap = { version = "4.2", features = ["cargo"] }
 gc-arena = { git = "https://github.com/kyren/gc-arena" }
 num-traits = "0.2"
-rand = "0.8"
-rand_xoshiro = "0.6"
+rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
 rustyline = "11.0"

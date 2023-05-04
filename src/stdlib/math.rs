@@ -2,14 +2,12 @@ use gc_arena::MutationContext;
 
 use crate::{Callback, CallbackReturn, Root, RuntimeError, String, Table, Value};
 
-use rand::{Rng, SeedableRng};
-use rand_xoshiro::Xoshiro256StarStar;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::{cell::RefCell, ops::DerefMut, rc::Rc};
 
 pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
     let math = Table::new(mc);
-    let seeded_rng: Rc<RefCell<Xoshiro256StarStar>> =
-        Rc::new(RefCell::new(Xoshiro256StarStar::from_entropy()));
+    let seeded_rng: Rc<RefCell<SmallRng>> = Rc::new(RefCell::new(SmallRng::from_entropy()));
 
     math.set(
         mc,
@@ -438,7 +436,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
             let rng = &randomseed_rng;
             match args.get(0).cloned().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
-                    *(rng.borrow_mut().deref_mut()) = Xoshiro256StarStar::seed_from_u64(f as u64);
+                    *(rng.borrow_mut().deref_mut()) = SmallRng::seed_from_u64(f as u64);
                     Ok(CallbackReturn::Return(vec![]))
                 }
                 _ => Err(RuntimeError(Value::String(String::new_static(
