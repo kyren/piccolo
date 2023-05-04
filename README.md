@@ -1,8 +1,8 @@
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/luster.svg)](https://circleci.com/gh/kyren/luster)
 
-# luster - An experimental Lua VM implemented in pure Rust #
+## luster - An experimental Lua VM implemented in pure Rust ##
 
-## After **four** years, now UN-paused! ##
+**(After *four* years, now UN-paused!)**
 
 Project Goals:
   * Be an arguably working, useful Lua interpreter.
