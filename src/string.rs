@@ -41,8 +41,8 @@ impl<'gc> Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             String::Static(_) => fmt.write_str("Static")?,
-            String::Inline(_) => fmt.write_str("Short")?,
-            String::Buffer(_) => fmt.write_str("Long")?,
+            String::Inline(_) => fmt.write_str("Inline")?,
+            String::Buffer(_) => fmt.write_str("Buffer")?,
         }
         fmt.write_str("(")?;
         if let Ok(s) = str::from_utf8(self.as_bytes()) {
