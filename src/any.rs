@@ -9,7 +9,7 @@ use gc_arena::{unsize, Collect, CollectionContext, Gc, MutationContext, Rootable
 //
 // SAFETY:
 //
-// Non'-static downcasting is notoriously dangerous. Rather than allowing arbitrary non-'static
+// Non-'static downcasting is notoriously dangerous. Rather than allowing arbitrary non-'static
 // data to be downcast, we rely on the fact that *only* a single 'gc lifetime is present in the held
 // type. We use the `Rootable` type as a proxy rather than the stored type itself to know what type
 // is actually being held.
