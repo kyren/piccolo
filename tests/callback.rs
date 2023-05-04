@@ -14,7 +14,7 @@ fn callback() -> Result<(), Box<StaticError>> {
                 Ok(CallbackReturn::Return(ret))
             });
             root.globals
-                .set(mc, String::new_static(b"callback"), callback)?;
+                .set(mc, String::from_static(b"callback"), callback)?;
             Ok(())
         })
         .and_then_with(root, |root, mc, _| {
@@ -22,7 +22,6 @@ fn callback() -> Result<(), Box<StaticError>> {
                 mc,
                 compile(
                     mc,
-                    root.interned_strings,
                     &br#"
                         local a, b, c = callback(1, 2)
                         return a == 1 and b == 2 and c == 42
@@ -58,7 +57,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                 Ok(CallbackReturn::Return(ret))
             });
             root.globals
-                .set(mc, String::new_static(b"callback"), callback)?;
+                .set(mc, String::from_static(b"callback"), callback)?;
             Ok(())
         })
         .and_then_with(root, |root, mc, _| {
@@ -66,7 +65,6 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                 mc,
                 compile(
                     mc,
-                    root.interned_strings,
                     &br#"
                         return callback(1, 2)
                     "#[..],

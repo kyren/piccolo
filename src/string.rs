@@ -6,10 +6,10 @@ use std::{
     io::Write,
     ops::Deref,
     str,
+    string::String as StdString,
 };
 
-use gc_arena::{unsize, Collect, Gc, GcCell, MutationContext};
-use rustc_hash::FxHashSet;
+use gc_arena::{unsize, Collect, Gc, MutationContext};
 
 use crate::Value;
 
@@ -33,16 +33,16 @@ impl fmt::Display for StringError {
 #[collect(no_drop)]
 pub enum String<'gc> {
     Static(&'static [u8]),
-    Short(Gc<'gc, [u8]>),
-    Long(Gc<'gc, Box<[u8]>>),
+    Inline(Gc<'gc, [u8]>),
+    Buffer(Gc<'gc, Vec<u8>>),
 }
 
 impl<'gc> Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             String::Static(_) => fmt.write_str("Static")?,
-            String::Short(_) => fmt.write_str("Short")?,
-            String::Long(_) => fmt.write_str("Long")?,
+            String::Inline(_) => fmt.write_str("Short")?,
+            String::Buffer(_) => fmt.write_str("Long")?,
         }
         fmt.write_str("(")?;
         if let Ok(s) = str::from_utf8(self.as_bytes()) {
@@ -56,14 +56,22 @@ impl<'gc> Debug for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+    pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Vec<u8>) -> String<'gc> {
+        String::Buffer(Gc::allocate(mc, s))
+    }
+
+    pub fn from_std_string(mc: MutationContext<'gc, '_>, s: StdString) -> String<'gc> {
+        Self::from_buffer(mc, s.into_bytes())
+    }
+
+    pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
         macro_rules! alloc_lens {
             ($($i:expr),*) => {
                 match s.len() {
-                    $($i => String::Short(
+                    $($i => String::Inline(
                         unsize!(Gc::allocate(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
                     ),)*
-                    _ => String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice())),
+                    _ => String::Buffer(Gc::allocate(mc, s.to_vec())),
                 }
             };
         }
@@ -74,7 +82,7 @@ impl<'gc> String<'gc> {
         )
     }
 
-    pub fn new_static(s: &'static [u8]) -> String<'gc> {
+    pub fn from_static(s: &'static [u8]) -> String<'gc> {
         String::Static(s)
     }
 
@@ -101,14 +109,14 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(String::new(mc, &bytes))
+        Ok(String::from_buffer(mc, bytes))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             String::Static(b) => b,
-            String::Short(b) => b,
-            String::Long(b) => b,
+            String::Inline(b) => b,
+            String::Buffer(b) => b,
         }
     }
 
@@ -123,8 +131,8 @@ impl<'gc> String<'gc> {
 
         as_i64(match self {
             String::Static(b) => b.len(),
-            String::Short(b) => b.len(),
-            String::Long(b) => b.len(),
+            String::Inline(b) => b.len(),
+            String::Buffer(b) => b.len(),
         })
     }
 }
@@ -163,25 +171,5 @@ impl<'gc> Eq for String<'gc> {}
 impl<'gc> Hash for String<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_bytes().hash(state);
-    }
-}
-
-#[derive(Collect, Clone, Copy)]
-#[collect(no_drop)]
-pub struct InternedStringSet<'gc>(GcCell<'gc, FxHashSet<String<'gc>>>);
-
-impl<'gc> InternedStringSet<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
-        InternedStringSet(GcCell::allocate(mc, FxHashSet::default()))
-    }
-
-    pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
-        if let Some(found) = self.0.read().get(s) {
-            return *found;
-        }
-
-        let s = String::new(mc, s);
-        self.0.write(mc).insert(s);
-        s
     }
 }

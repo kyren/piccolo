@@ -68,8 +68,8 @@ fn main() -> Result<(), Box<dyn StdError>> {
         println!("{:#?}", chunk);
     } else {
         let mut lua = Lua::new();
-        lua.mutate(|mc, root| -> Result<(), StaticError> {
-            let function = compile(mc, root.interned_strings, file).map_err(|e| e.to_static())?;
+        lua.mutate(|mc, _| -> Result<(), StaticError> {
+            let function = compile(mc, file).map_err(|e| e.to_static())?;
             print_function_proto(&function);
             Ok(())
         })?;

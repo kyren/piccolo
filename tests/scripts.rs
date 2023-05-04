@@ -25,11 +25,7 @@ fn test_scripts() {
                 let mut lua = Lua::new();
                 let r = lua.sequence(|root| {
                     sequence::from_fn_with(root, move |root, mc| {
-                        Ok(Closure::new(
-                            mc,
-                            compile(mc, root.interned_strings, file)?,
-                            Some(root.globals),
-                        )?)
+                        Ok(Closure::new(mc, compile(mc, file)?, Some(root.globals))?)
                     })
                     .and_chain_with(root, move |root, mc, closure| {
                         Ok(ThreadSequence::call_function(

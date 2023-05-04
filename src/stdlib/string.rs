@@ -8,11 +8,11 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
     string
         .set(
             mc,
-            String::new_static(b"len"),
+            String::from_static(b"len"),
             Callback::new_immediate(mc, |mc, _, args| {
                 match args.get(0).cloned().unwrap_or(Value::Nil).to_string(mc) {
                     Some(s) => Ok(CallbackReturn::Return(vec![Value::Integer(s.len())])),
-                    None => Err(RuntimeError(Value::String(String::new_static(
+                    None => Err(RuntimeError(Value::String(String::from_static(
                         b"Bad argument to len",
                     )))
                     .into()),
@@ -21,5 +21,5 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
         )
         .unwrap();
 
-    env.set(mc, String::new_static(b"string"), string).unwrap();
+    env.set(mc, String::from_static(b"string"), string).unwrap();
 }

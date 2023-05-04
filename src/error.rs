@@ -3,8 +3,8 @@ use std::{error::Error as StdError, fmt, io, string::String as StdString};
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::{
-    BadThreadMode, BinaryOperatorError, ClosureError, CompilerError, InternedStringSet,
-    InvalidTableKey, ParserError, StringError, ThreadError, Value,
+    BadThreadMode, BinaryOperatorError, ClosureError, CompilerError, InvalidTableKey, ParserError,
+    String, StringError, ThreadError, Value,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]
@@ -164,17 +164,10 @@ impl<'gc> Error<'gc> {
         }
     }
 
-    pub fn to_value(
-        self,
-        mc: MutationContext<'gc, '_>,
-        interned_strings: InternedStringSet<'gc>,
-    ) -> Value<'gc> {
+    pub fn to_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
         match self {
             Error::RuntimeError(error) => error.0,
-            other => {
-                let s = other.to_string();
-                Value::String(interned_strings.new_string(mc, s.as_ref()))
-            }
+            other => Value::String(String::from_std_string(mc, other.to_string())),
         }
     }
 }
@@ -192,7 +185,7 @@ pub enum StaticError {
     BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
-    RuntimeError(String),
+    RuntimeError(StdString),
 }
 
 impl StdError for StaticError {}

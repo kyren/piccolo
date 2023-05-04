@@ -30,7 +30,7 @@ pub use self::{
     opcode::OpCode,
     parser::{parse_chunk, ParserError},
     sequence::{Sequence, SequenceExt, TrySequenceExt},
-    string::{InternedStringSet, String, StringError},
+    string::{String, StringError},
     table::{InvalidTableKey, Table, TableState},
     thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode, ThreadSequence},
     types::{

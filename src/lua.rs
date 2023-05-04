@@ -2,7 +2,7 @@ use gc_arena::{Arena, ArenaParameters, Collect, DynamicRootSet, MutationContext,
 
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
-    InternedStringSet, Sequence, Table, Thread,
+    Sequence, Table, Thread,
 };
 
 #[derive(Collect, Clone, Copy)]
@@ -10,7 +10,6 @@ use crate::{
 pub struct Root<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,
-    pub interned_strings: InternedStringSet<'gc>,
     pub registry: DynamicRootSet<'gc>,
 }
 
@@ -19,7 +18,6 @@ impl<'gc> Root<'gc> {
         let root = Root {
             main_thread: Thread::new(mc, false),
             globals: Table::new(mc),
-            interned_strings: InternedStringSet::new(mc),
             registry: DynamicRootSet::new(mc),
         };
 

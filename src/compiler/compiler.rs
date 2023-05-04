@@ -628,7 +628,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         };
 
         let proto = if function_statement.method.is_some() {
-            let mut parameters = vec![String::new_static(b"self")];
+            let mut parameters = vec![String::from_static(b"self")];
             parameters.extend(&function_statement.definition.parameters);
 
             self.new_prototype(
@@ -1175,7 +1175,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // _ENV.
     fn get_environment(&mut self) -> Result<ExprDescriptor<'gc>, CompilerError> {
         Ok(ExprDescriptor::Variable(
-            self.find_variable(String::new_static(b"_ENV"))?,
+            self.find_variable(String::from_static(b"_ENV"))?,
         ))
     }
 

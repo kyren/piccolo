@@ -24,17 +24,13 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
 
             match lua.sequence(move |root| {
                 sequence::from_fn_with(root, move |root, mc| {
-                    let result = compile(mc, root.interned_strings, line_clone.as_bytes());
+                    let result = compile(mc, line_clone.as_bytes());
                     let result = match result {
                         Ok(res) => Ok(res),
                         err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => {
                             err
                         }
-                        Err(_) => compile(
-                            mc,
-                            root.interned_strings,
-                            (String::new() + "return " + &line_clone).as_bytes(),
-                        ),
+                        Err(_) => compile(mc, (String::new() + "return " + &line_clone).as_bytes()),
                     };
                     Ok(Closure::new(mc, result?, Some(root.globals))?)
                 })
@@ -113,11 +109,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     lua.sequence(|root| {
         sequence::from_fn_with(root, |root, mc| {
-            Ok(Closure::new(
-                mc,
-                compile(mc, root.interned_strings, file)?,
-                Some(root.globals),
-            )?)
+            Ok(Closure::new(mc, compile(mc, file)?, Some(root.globals))?)
         })
         .and_chain_with(root, |root, mc, closure| {
             Ok(ThreadSequence::call_function(
