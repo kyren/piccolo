@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::Sequence;
+use super::Sequence;
 
 pub fn from_fn<'gc, F, R>(f: F) -> SequenceFn<F>
 where
@@ -36,7 +36,7 @@ where
 pub fn from_fn_with<'gc, C, F, R>(c: C, f: F) -> SequenceFnWith<C, F>
 where
     C: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C) -> R,
+    F: 'static + FnOnce(C, MutationContext<'gc, '_>) -> R,
 {
     SequenceFnWith::new(c, f)
 }
@@ -54,13 +54,13 @@ impl<C, F> SequenceFnWith<C, F> {
 
 impl<'gc, C, F, R> Sequence<'gc> for SequenceFnWith<C, F>
 where
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C) -> R,
+    F: 'static + FnOnce(C, MutationContext<'gc, '_>) -> R,
     C: Collect,
 {
     type Output = R;
 
     fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         let (c, StaticCollect(f)) = self.0.take().expect("cannot step a finished sequence");
-        Some(f(mc, c))
+        Some(f(c, mc))
     }
 }

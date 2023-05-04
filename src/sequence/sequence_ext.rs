@@ -56,7 +56,7 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     where
         C: Collect,
         Self::Output: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Output) -> R,
+        F: 'static + FnOnce(C, MutationContext<'gc, '_>, Self::Output) -> R,
     {
         ThenWith::new(self, c, f)
     }
@@ -85,7 +85,7 @@ pub trait SequenceExt<'gc>: Sized + Sequence<'gc> {
     where
         C: Collect,
         Self::Output: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, Self::Output) -> R,
+        F: 'static + FnOnce(C, MutationContext<'gc, '_>, Self::Output) -> R,
         R: Sequence<'gc>,
     {
         Flatten::new(ThenWith::new(self, c, f))

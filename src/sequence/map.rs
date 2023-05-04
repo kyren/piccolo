@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::Sequence;
+use super::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]

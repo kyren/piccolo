@@ -16,24 +16,26 @@ mod thread;
 mod types;
 mod value;
 
-pub use callback::{Callback, CallbackResult, CallbackReturn, Continuation};
-pub use closure::{
-    Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor, UpValueState,
+pub use self::{
+    callback::{Callback, CallbackReturn, CallbackSequence, Continuation},
+    closure::{
+        Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
+        UpValueState,
+    },
+    compiler::{compile, compile_chunk, CompilerError},
+    constant::Constant,
+    error::{Error, RuntimeError, StaticError, TypeError},
+    lexer::{Lexer, LexerError, Token},
+    lua::{Lua, Root},
+    opcode::OpCode,
+    parser::{parse_chunk, ParserError},
+    sequence::{Sequence, SequenceExt, TrySequenceExt},
+    string::{InternedStringSet, String, StringError},
+    table::{InvalidTableKey, Table, TableState},
+    thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode, ThreadSequence},
+    types::{
+        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
+        VarCount,
+    },
+    value::{Function, Value},
 };
-pub use compiler::{compile, compile_chunk, CompilerError};
-pub use constant::Constant;
-pub use error::{Error, RuntimeError, StaticError, TypeError};
-pub use lexer::{Lexer, LexerError, Token};
-pub use lua::{Lua, Root};
-pub use opcode::OpCode;
-pub use parser::{parse_chunk, ParserError};
-pub use sequence::{Sequence, SequenceExt, SequenceResultExt};
-pub use string::{InternedStringSet, String, StringError};
-pub use table::{InvalidTableKey, Table, TableState};
-pub use thread::{
-    BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode, ThreadSequence,
-};
-pub use types::{
-    ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
-};
-pub use value::{Function, Value};

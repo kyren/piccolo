@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
-use crate::Sequence;
+use super::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
@@ -67,7 +67,7 @@ where
     S: Sequence<'gc, Output = Result<I, E>>,
     C: Collect,
     I: Collect,
-    F: 'static + FnOnce(MutationContext<'gc, '_>, C, I) -> Result<R, E>,
+    F: 'static + FnOnce(C, MutationContext<'gc, '_>, I) -> Result<R, E>,
 {
     type Output = Result<R, E>;
 
@@ -87,7 +87,7 @@ where
             },
             AndThenWith::Second(sec) => {
                 let (c, res, f) = sec.take().expect("cannot step a finished sequence");
-                Some(f.0(mc, c, res))
+                Some(f.0(c, mc, res))
             }
         }
     }

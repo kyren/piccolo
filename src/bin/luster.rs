@@ -6,8 +6,8 @@ use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Com
 use rustyline::DefaultEditor;
 
 use luster::{
-    compile, io, sequence, Closure, Error, Function, Lua, ParserError, SequenceExt,
-    SequenceResultExt, StaticError, ThreadSequence,
+    compile, io, sequence, Closure, Error, Function, Lua, ParserError, SequenceExt, StaticError,
+    ThreadSequence, TrySequenceExt,
 };
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
@@ -23,7 +23,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             let line_clone = line.clone();
 
             match lua.sequence(move |root| {
-                sequence::from_fn_with(root, move |mc, root| {
+                sequence::from_fn_with(root, move |root, mc| {
                     let result = compile(mc, root.interned_strings, line_clone.as_bytes());
                     let result = match result {
                         Ok(res) => Ok(res),
@@ -38,7 +38,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
                     };
                     Ok(Closure::new(mc, result?, Some(root.globals))?)
                 })
-                .and_chain_with(root, |mc, root, closure| {
+                .and_chain_with(root, |root, mc, closure| {
                     Ok(ThreadSequence::call_function(
                         mc,
                         root.main_thread,
@@ -112,14 +112,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
     lua.sequence(|root| {
-        sequence::from_fn_with(root, |mc, root| {
+        sequence::from_fn_with(root, |root, mc| {
             Ok(Closure::new(
                 mc,
                 compile(mc, root.interned_strings, file)?,
                 Some(root.globals),
             )?)
         })
-        .and_chain_with(root, |mc, root, closure| {
+        .and_chain_with(root, |root, mc, closure| {
             Ok(ThreadSequence::call_function(
                 mc,
                 root.main_thread,

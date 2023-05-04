@@ -1,4 +1,4 @@
-use gc_arena::{Arena, ArenaParameters, Collect, MutationContext, Rootable};
+use gc_arena::{Arena, ArenaParameters, Collect, DynamicRootSet, MutationContext, Rootable};
 
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
@@ -11,6 +11,7 @@ pub struct Root<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,
     pub interned_strings: InternedStringSet<'gc>,
+    pub registry: DynamicRootSet<'gc>,
 }
 
 impl<'gc> Root<'gc> {
@@ -19,6 +20,7 @@ impl<'gc> Root<'gc> {
             main_thread: Thread::new(mc, false),
             globals: Table::new(mc),
             interned_strings: InternedStringSet::new(mc),
+            registry: DynamicRootSet::new(mc),
         };
 
         load_base(mc, root, root.globals);
@@ -45,7 +47,6 @@ impl Lua {
     /// place.
     pub fn mutate<F, R>(&mut self, f: F) -> R
     where
-        R: 'static,
         F: for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc>) -> R,
     {
         let arena = self.0.as_mut().unwrap();
@@ -56,7 +57,7 @@ impl Lua {
         r
     }
 
-    /// Runs a sequence of actions inside the Lua arena and return the result.  Garbage collection
+    /// Runs a sequence of actions inside the Lua arena and return the result. Garbage collection
     /// may take place in-between sequence steps.
     pub fn sequence<F, R>(&mut self, f: F) -> R
     where

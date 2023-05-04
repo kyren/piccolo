@@ -1,14 +1,15 @@
-use std::collections::btree_map::Entry as BTreeEntry;
-use std::collections::BTreeMap;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::{btree_map::Entry as BTreeEntry, BTreeMap},
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+};
 
 use gc_arena::{Collect, GcCell, MutationContext};
 
-use crate::Sequence;
 use crate::{
-    thread::run_vm, BadThreadMode, CallbackResult, CallbackReturn, Closure, Continuation, Error,
-    Function, RegisterIndex, ThreadError, TypeError, UpValue, UpValueState, Value, VarCount,
+    thread::run_vm, BadThreadMode, CallbackReturn, CallbackSequence, Closure, Continuation, Error,
+    Function, RegisterIndex, Sequence, ThreadError, TypeError, UpValue, UpValueState, Value,
+    VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -184,9 +185,9 @@ impl<'gc> Thread<'gc> {
             Some(Frame::ResumeCoroutine) => match state.frames.last_mut() {
                 Some(Frame::Continuation { continuation, .. }) => {
                     let continuation = continuation.take().expect("continuation missing");
-                    let ret = continuation.call(Ok(args.to_vec()));
+                    let seq = continuation.call(mc, Ok(args.to_vec()));
                     state.frames.pop();
-                    callback_return(self, &mut state, mc, ret);
+                    callback_seq(self, &mut state, mc, seq);
                 }
                 Some(Frame::Lua { .. }) => {
                     return_to_lua(&mut state, args);
@@ -385,12 +386,14 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Value::Function(Function::Callback(callback)) => {
-                        let ret = callback.call(
+                        let seq = callback.call(
+                            mc,
+                            self.thread,
                             self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
                         self.state.values.resize(function_index, Value::Nil);
-                        callback_return(self.thread, &mut self.state, mc, ret);
+                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -461,12 +464,14 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Value::Function(Function::Callback(callback)) => {
-                        let ret = callback.call(
+                        let seq = callback.call(
+                            mc,
+                            self.thread,
                             self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
                         self.state.values.resize(function_index, Value::Nil);
-                        callback_return(self.thread, &mut self.state, mc, ret);
+                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -538,12 +543,14 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Value::Function(Function::Callback(callback)) => {
-                        let ret = callback.call(
+                        let seq = callback.call(
+                            mc,
+                            self.thread,
                             self.state.values[function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
                         );
                         self.state.values.truncate(bottom);
-                        callback_return(self.thread, &mut self.state, mc, ret);
+                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     val => Err(ThreadError::BadCall(TypeError {
@@ -586,9 +593,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         let continuation = continuation.take().expect("continuation missing");
                         let ret_vals = self.state.values[start..start + count].to_vec();
                         self.state.values.truncate(bottom);
-                        let ret = continuation.call(Ok(ret_vals));
+                        let seq = continuation.call(mc, Ok(ret_vals));
                         self.state.frames.pop();
-                        callback_return(self.thread, &mut self.state, mc, ret);
+                        callback_seq(self.thread, &mut self.state, mc, seq);
                     }
                     Some(Frame::Lua {
                         expected_returns,
@@ -727,7 +734,7 @@ enum Frame<'gc> {
     StartCoroutine(Function<'gc>),
     ResumeCoroutine,
     Callback(
-        Option<Box<dyn Sequence<'gc, Output = Result<CallbackResult<'gc>, Error<'gc>>> + 'gc>>,
+        Option<Box<dyn Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>> + 'gc>>,
     ),
 }
 
@@ -806,8 +813,8 @@ fn ext_call_function<'gc>(
             });
         }
         Function::Callback(callback) => {
-            let ret = callback.call(args.to_vec());
-            callback_return(thread, state, mc, ret);
+            let seq = callback.call(mc, thread, args.to_vec());
+            callback_seq(thread, state, mc, seq);
         }
     }
 }
@@ -864,8 +871,8 @@ fn unwind<'gc>(
             close_upvalues(thread, state, mc, *bottom);
             state.values.truncate(*bottom);
             let continuation = continuation.take().expect("missing continuation");
-            let ret = continuation.call(Err(error));
-            callback_return(thread, state, mc, ret);
+            let seq = continuation.call(mc, Err(error));
+            callback_seq(thread, state, mc, seq);
             return;
         }
     }
@@ -878,13 +885,13 @@ fn return_ext<'gc>(
     thread: Thread<'gc>,
     state: &mut ThreadState<'gc>,
     mc: MutationContext<'gc, '_>,
-    res: Result<CallbackResult<'gc>, Error<'gc>>,
+    res: Result<CallbackReturn<'gc>, Error<'gc>>,
 ) {
     match res {
         Err(err) => {
             unwind(thread, state, mc, err);
         }
-        Ok(CallbackResult::Yield(res)) => {
+        Ok(CallbackReturn::Yield(res)) => {
             if state.allow_yield {
                 state.frames.push(Frame::ResumeCoroutine);
                 state.result = Some(Ok(res));
@@ -892,12 +899,12 @@ fn return_ext<'gc>(
                 unwind(thread, state, mc, ThreadError::BadYield.into());
             }
         }
-        Ok(CallbackResult::Return(res)) => match state.frames.last_mut() {
+        Ok(CallbackReturn::Return(res)) => match state.frames.last_mut() {
             Some(Frame::Continuation { continuation, .. }) => {
                 let continuation = continuation.take().expect("continuation missing");
-                let ret = continuation.call(Ok(res));
+                let seq = continuation.call(mc, Ok(res));
                 state.frames.pop();
-                callback_return(thread, state, mc, ret);
+                callback_seq(thread, state, mc, seq);
             }
             Some(Frame::Lua { .. }) => {
                 return_to_lua(state, &res);
@@ -907,7 +914,7 @@ fn return_ext<'gc>(
             }
             _ => panic!("frame above callback must be continuation or lua frame"),
         },
-        Ok(CallbackResult::TailCall {
+        Ok(CallbackReturn::TailCall {
             function,
             args,
             continuation,
@@ -922,17 +929,17 @@ fn return_ext<'gc>(
     }
 }
 
-fn callback_return<'gc>(
+fn callback_seq<'gc>(
     thread: Thread<'gc>,
     state: &mut ThreadState<'gc>,
     mc: MutationContext<'gc, '_>,
-    ret: CallbackReturn<'gc>,
+    seq: CallbackSequence<'gc>,
 ) {
-    match ret {
-        CallbackReturn::Immediate(ret) => {
+    match seq {
+        CallbackSequence::Immediate(ret) => {
             return_ext(thread, state, mc, ret);
         }
-        CallbackReturn::Sequence(seq) => {
+        CallbackSequence::Sequence(seq) => {
             state.frames.push(Frame::Callback(Some(seq)));
         }
     }

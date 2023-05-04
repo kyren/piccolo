@@ -8,7 +8,7 @@ use super::{
 };
 
 /// Extension trait for `Sequences` producing a `Result` that provides useful combinator methods.
-pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I, E>> {
+pub trait TrySequenceExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I, E>> {
     /// Map a function over the result of this sequence if it is successful.
     ///
     /// Similarly to `SequenceExt::map`, this function is run in the same call to `Sequence::step`.
@@ -55,7 +55,7 @@ pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I,
     where
         C: Collect,
         I: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, I) -> Result<R, E>,
+        F: 'static + FnOnce(C, MutationContext<'gc, '_>, I) -> Result<R, E>,
     {
         AndThenWith::new(self, c, f)
     }
@@ -79,7 +79,7 @@ pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I,
     where
         C: Collect,
         I: Collect,
-        F: 'static + FnOnce(MutationContext<'gc, '_>, C, I) -> Result<R, E>,
+        F: 'static + FnOnce(C, MutationContext<'gc, '_>, I) -> Result<R, E>,
         R: Sequence<'gc, Output = Result<I2, E>>,
     {
         FlattenOk::new(AndThenWith::new(self, c, f))
@@ -94,4 +94,4 @@ pub trait SequenceResultExt<'gc, I, E>: Sized + Sequence<'gc, Output = Result<I,
     }
 }
 
-impl<'gc, T, I, E> SequenceResultExt<'gc, I, E> for T where T: Sequence<'gc, Output = Result<I, E>> {}
+impl<'gc, T, I, E> TrySequenceExt<'gc, I, E> for T where T: Sequence<'gc, Output = Result<I, E>> {}

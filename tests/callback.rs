@@ -1,23 +1,23 @@
 use luster::{
-    compile, sequence, Callback, CallbackResult, Closure, Error, Function, Lua, SequenceExt,
-    SequenceResultExt, StaticError, String, ThreadSequence, Value,
+    compile, sequence, Callback, CallbackReturn, Closure, Error, Function, Lua, SequenceExt,
+    StaticError, String, ThreadSequence, TrySequenceExt, Value,
 };
 
 #[test]
 fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|root| {
-        sequence::from_fn_with(root, |mc, root| {
-            let callback = Callback::new_immediate(mc, |args| {
+        sequence::from_fn_with(root, |root, mc| {
+            let callback = Callback::new_immediate(mc, |_, _, args| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(42));
-                Ok(CallbackResult::Return(ret))
+                Ok(CallbackReturn::Return(ret))
             });
             root.globals
                 .set(mc, String::new_static(b"callback"), callback)?;
             Ok(())
         })
-        .and_then_with(root, |mc, root, _| {
+        .and_then_with(root, |root, mc, _| {
             Ok(Closure::new(
                 mc,
                 compile(
@@ -31,7 +31,7 @@ fn callback() -> Result<(), Box<StaticError>> {
                 Some(root.globals),
             )?)
         })
-        .and_chain_with(root, |mc, root, closure| {
+        .and_chain_with(root, |root, mc, closure| {
             Ok(ThreadSequence::call_function(
                 mc,
                 root.main_thread,
@@ -51,17 +51,17 @@ fn callback() -> Result<(), Box<StaticError>> {
 fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|root| {
-        sequence::from_fn_with(root, |mc, root| {
-            let callback = Callback::new_immediate(mc, |args| {
+        sequence::from_fn_with(root, |root, mc| {
+            let callback = Callback::new_immediate(mc, |_, _, args| {
                 let mut ret = args.to_vec();
                 ret.push(Value::Integer(3));
-                Ok(CallbackResult::Return(ret))
+                Ok(CallbackReturn::Return(ret))
             });
             root.globals
                 .set(mc, String::new_static(b"callback"), callback)?;
             Ok(())
         })
-        .and_then_with(root, |mc, root, _| {
+        .and_then_with(root, |root, mc, _| {
             Ok(Closure::new(
                 mc,
                 compile(
@@ -74,7 +74,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
                 Some(root.globals),
             )?)
         })
-        .and_chain_with(root, |mc, root, closure| {
+        .and_chain_with(root, |root, mc, closure| {
             Ok(ThreadSequence::call_function(
                 mc,
                 root.main_thread,

@@ -4,8 +4,8 @@ use std::{
 };
 
 use luster::{
-    compile, io, sequence, Closure, Error, Function, Lua, SequenceExt, SequenceResultExt,
-    ThreadSequence, Value,
+    compile, io, sequence, Closure, Error, Function, Lua, SequenceExt, ThreadSequence,
+    TrySequenceExt, Value,
 };
 
 #[test]
@@ -24,14 +24,14 @@ fn test_scripts() {
                 let _ = writeln!(stdout(), "running {:?}", path);
                 let mut lua = Lua::new();
                 let r = lua.sequence(|root| {
-                    sequence::from_fn_with(root, move |mc, root| {
+                    sequence::from_fn_with(root, move |root, mc| {
                         Ok(Closure::new(
                             mc,
                             compile(mc, root.interned_strings, file)?,
                             Some(root.globals),
                         )?)
                     })
-                    .and_chain_with(root, move |mc, root, closure| {
+                    .and_chain_with(root, move |root, mc, closure| {
                         Ok(ThreadSequence::call_function(
                             mc,
                             root.main_thread,

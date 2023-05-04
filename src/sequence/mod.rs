@@ -15,5 +15,5 @@ pub use self::{
     sequence::Sequence,
     sequence_ext::SequenceExt,
     sequence_fn::{from_fn, from_fn_with},
-    sequence_result_ext::SequenceResultExt,
+    sequence_result_ext::TrySequenceExt,
 };

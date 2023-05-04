@@ -1,13 +1,13 @@
 use luster::{
-    compile, sequence, Closure, Error, Function, Lua, SequenceExt, SequenceResultExt, StaticError,
-    ThreadSequence,
+    compile, sequence, Closure, Error, Function, Lua, SequenceExt, StaticError, ThreadSequence,
+    TrySequenceExt,
 };
 
 #[test]
 fn error_unwind() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
     lua.sequence(|root| {
-        sequence::from_fn_with(root, |mc, root| {
+        sequence::from_fn_with(root, |root, mc| {
             Ok(Closure::new(
                 mc,
                 compile(
@@ -24,7 +24,7 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
                 Some(root.globals),
             )?)
         })
-        .and_chain_with(root, |mc, root, closure| {
+        .and_chain_with(root, |root, mc, closure| {
             Ok(ThreadSequence::call_function(
                 mc,
                 root.main_thread,
@@ -35,7 +35,7 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
                 Err(Error::RuntimeError(_)) => Ok(()),
                 _ => panic!(),
             })
-            .and_chain_with((root, closure), |mc, (root, closure), _| {
+            .and_chain_with((root, closure), |(root, closure), mc, _| {
                 Ok(ThreadSequence::call_function(
                     mc,
                     root.main_thread,
