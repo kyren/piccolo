@@ -18,7 +18,7 @@ Project Goals:
     the interpreter fundamentally slower than PUC-Rio Lua).
 
 Since the focus here is so much on resiliency and safety, Luster is written in
-(almost) entirely *safe* Rust. This is a *slight* copout as most of the unsafe
+(almost) entirely *safe* Rust. This is a *slight* copout as much of the unsafe
 code that normally is involved in a language runtime actually lives in
 `gc-arena`, but since we have a safe garbage collection abstraction, (almost) the
 entire VM can be written in safe code.
