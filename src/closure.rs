@@ -1,6 +1,8 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::{
+    error::Error as StdError,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use gc_arena::{Collect, Gc, GcCell, MutationContext};
 

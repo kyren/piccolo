@@ -1,5 +1,8 @@
-use std::io::{self, Read};
-use std::{char, fmt, i32, i64, str};
+use std::{
+    char, fmt, i32, i64,
+    io::{self, Read},
+    str,
+};
 
 use gc_arena::Collect;
 

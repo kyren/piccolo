@@ -1,7 +1,4 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::io::Read;
-use std::rc::Rc;
+use std::{error::Error as StdError, fmt, io::Read, rc::Rc};
 
 use gc_arena::Collect;
 

@@ -1,11 +1,13 @@
-use std::error::Error as StdError;
-use std::hash::{Hash, Hasher};
-use std::{fmt, i64, mem};
-
-use num_traits::cast;
-use rustc_hash::FxHashMap;
+use std::{
+    error::Error as StdError,
+    fmt,
+    hash::{Hash, Hasher},
+    i64, mem,
+};
 
 use gc_arena::{Collect, GcCell, MutationContext};
+use num_traits::cast;
+use rustc_hash::FxHashMap;
 
 use crate::Value;
 

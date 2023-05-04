@@ -1,14 +1,15 @@
-use std::borrow::Borrow;
-use std::error::Error as StdError;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
-use std::io::Write;
-use std::ops::Deref;
-use std::str;
+use std::{
+    borrow::Borrow,
+    error::Error as StdError,
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+    io::Write,
+    ops::Deref,
+    str,
+};
 
+use gc_arena::{unsize, Collect, Gc, GcCell, MutationContext};
 use rustc_hash::FxHashSet;
-
-use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::Value;
 
@@ -16,7 +17,6 @@ use crate::Value;
 #[collect(require_static)]
 pub enum StringError {
     Concat { bad_type: &'static str },
-    TooLong,
 }
 
 impl StdError for StringError {}
@@ -25,7 +25,6 @@ impl fmt::Display for StringError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             StringError::Concat { bad_type } => write!(fmt, "cannot concat {}", bad_type),
-            StringError::TooLong => write!(fmt, "string is too long"),
         }
     }
 }
@@ -33,19 +32,17 @@ impl fmt::Display for StringError {
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum String<'gc> {
-    Short8(u8, Gc<'gc, [u8; 8]>),
-    Short32(u8, Gc<'gc, [u8; 32]>),
-    Long(Gc<'gc, Box<[u8]>>),
     Static(&'static [u8]),
+    Short(Gc<'gc, [u8]>),
+    Long(Gc<'gc, Box<[u8]>>),
 }
 
 impl<'gc> Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            String::Short8(_, _) => fmt.write_str("Short8")?,
-            String::Short32(_, _) => fmt.write_str("Short32")?,
-            String::Long(_) => fmt.write_str("Long")?,
             String::Static(_) => fmt.write_str("Static")?,
+            String::Short(_) => fmt.write_str("Short")?,
+            String::Long(_) => fmt.write_str("Long")?,
         }
         fmt.write_str("(")?;
         if let Ok(s) = str::from_utf8(self.as_bytes()) {
@@ -64,11 +61,11 @@ impl<'gc> String<'gc> {
         if len <= 8 {
             let mut b = [0; 8];
             b[..len].copy_from_slice(s);
-            String::Short8(len as u8, Gc::allocate(mc, b))
+            String::Short(unsize!(Gc::allocate(mc, b) => [u8]))
         } else if len <= 32 {
             let mut b = [0; 32];
             b[..len].copy_from_slice(s);
-            String::Short32(len as u8, Gc::allocate(mc, b))
+            String::Short(unsize!(Gc::allocate(mc, b) => [u8]))
         } else {
             String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice()))
         }
@@ -106,10 +103,9 @@ impl<'gc> String<'gc> {
 
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            String::Short8(l, b) => &b[0..*l as usize],
-            String::Short32(l, b) => &b[0..*l as usize],
-            String::Long(b) => b,
             String::Static(b) => b,
+            String::Short(b) => b,
+            String::Long(b) => b,
         }
     }
 
@@ -122,11 +118,11 @@ impl<'gc> String<'gc> {
             }
         }
 
-        match self {
-            String::Short8(l, _) | String::Short32(l, _) => *l as i64,
-            String::Long(b) => as_i64(b.len()),
-            String::Static(b) => as_i64(b.len()),
-        }
+        as_i64(match self {
+            String::Static(b) => b.len(),
+            String::Short(b) => b.len(),
+            String::Long(b) => b.len(),
+        })
     }
 }
 

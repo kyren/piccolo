@@ -1,6 +1,4 @@
-use std::error::Error as StdError;
-use std::string::String as StdString;
-use std::{fmt, io};
+use std::{error::Error as StdError, fmt, io, string::String as StdString};
 
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
