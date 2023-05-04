@@ -1,3 +1,4 @@
+mod any;
 mod callback;
 mod closure;
 mod compiler;
@@ -14,6 +15,7 @@ mod string;
 mod table;
 mod thread;
 mod types;
+mod userdata;
 mod value;
 
 pub use self::{
@@ -37,5 +39,6 @@ pub use self::{
         ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
         VarCount,
     },
+    userdata::{UserData, UserDataError},
     value::{Function, Value},
 };

@@ -111,7 +111,7 @@ impl<'gc> TableState<'gc> {
             Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
         } else {
             // If a new element does not fit in either the array or map part of the table, we need
-            // to grow.  First, we find the total count of array candidate elements across the array
+            // to grow. First, we find the total count of array candidate elements across the array
             // part, the map part, and the newly inserted key.
 
             const USIZE_BITS: usize = mem::size_of::<usize>() * 8;
@@ -179,11 +179,11 @@ impl<'gc> TableState<'gc> {
                     true
                 });
             } else {
-                // If we aren't growing the array, we're adding a new element to the map that won't
-                // fit in the advertised capacity.  The capacity of std::collections::HashMap is
-                // just a lower-bound, so we may actually be able to insert past the capacity
+                // If we aren't growing the array, we're adding a new element to the map that
+                // won't fit in the advertised capacity. The capacity of std::collections::HashMap
+                // is just a lower-bound, so we may actually be able to insert past the capacity
                 // without the advertised capacity growing, so to make sure that we don't try to
-                // grow repeatedly, we need to make sure the capacity actually increases.  We simply
+                // grow repeatedly, we need to make sure the capacity actually increases. We simply
                 // double the capacity here.
                 self.map.reserve(old_map_size);
             }
@@ -206,7 +206,7 @@ impl<'gc> TableState<'gc> {
     /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
     /// length.
     pub fn length(&self) -> i64 {
-        // Binary search for a border.  Entry at max must be Nil, min must be 0 or entry at min must
+        // Binary search for a border. Entry at max must be Nil, min must be 0 or entry at min must
         // be != Nil.
         fn binary_search<F: Fn(i64) -> bool>(mut min: i64, mut max: i64, is_nil: F) -> i64 {
             while max - min > 1 {
@@ -230,13 +230,13 @@ impl<'gc> TableState<'gc> {
             // is a border
             array_len
         } else {
-            // Otherwise, we must check the map part for a border.  We need to find some nil value
-            // in the map part as the max for a binary search.
+            // Otherwise, we must check the map part for a border. We need to find some nil value in
+            // the map part as the max for a binary search.
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
             while self.map.contains_key(&TableKey(Value::Integer(max))) {
                 if max == i64::MAX {
-                    // If we can't find a nil entry by doubling, then the table is pathalogical.  We
+                    // If we can't find a nil entry by doubling, then the table is pathalogical. We
                     // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
                     // table, therefore it is Nil, so since the table contains i64::MAX, i64::MAX is
                     // a border.
@@ -294,6 +294,10 @@ impl<'gc> Hash for TableKey<'gc> {
             Value::Thread(t) => {
                 Hash::hash(&7, state);
                 t.hash(state);
+            }
+            Value::UserData(u) => {
+                Hash::hash(&8, state);
+                u.hash(state);
             }
         }
     }

@@ -4,7 +4,7 @@ use gc_arena::{Collect, Gc, GcCell, MutationContext};
 
 use crate::{
     lexer::{read_float, read_hex_float},
-    Callback, Closure, String, Table, Thread,
+    Callback, Closure, String, Table, Thread, UserData,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
@@ -25,6 +25,7 @@ pub enum Value<'gc> {
     Table(Table<'gc>),
     Function(Function<'gc>),
     Thread(Thread<'gc>),
+    UserData(UserData<'gc>),
 }
 
 impl<'gc> PartialEq for Value<'gc> {
@@ -55,6 +56,9 @@ impl<'gc> PartialEq for Value<'gc> {
 
             (Value::Thread(a), Value::Thread(b)) => a == b,
             (Value::Thread(_), _) => false,
+
+            (Value::UserData(a), Value::UserData(b)) => a == b,
+            (Value::UserData(_), _) => false,
         }
     }
 }
@@ -69,6 +73,7 @@ impl<'gc> Value<'gc> {
             Value::Table(_) => "table",
             Value::Function(_) => "function",
             Value::Thread(_) => "thread",
+            Value::UserData(_) => "userdata",
         }
     }
 
@@ -276,6 +281,7 @@ impl<'gc> Value<'gc> {
             Value::Function(Function::Closure(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
             Value::Function(Function::Callback(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
             Value::Thread(t) => write!(w, "<thread {:?}>", GcCell::as_ptr(t.0)),
+            Value::UserData(t) => write!(w, "<userdata {:?}>", Gc::as_ptr(t.0)),
         }
     }
 }
@@ -325,5 +331,11 @@ impl<'gc> From<Closure<'gc>> for Value<'gc> {
 impl<'gc> From<Callback<'gc>> for Value<'gc> {
     fn from(v: Callback<'gc>) -> Value<'gc> {
         Value::Function(Function::Callback(v))
+    }
+}
+
+impl<'gc> From<UserData<'gc>> for Value<'gc> {
+    fn from(v: UserData<'gc>) -> Value<'gc> {
+        Value::UserData(v)
     }
 }

@@ -9,7 +9,7 @@ fn callback() -> Result<(), Box<StaticError>> {
     lua.sequence(|root| {
         sequence::from_fn_with(root, |root, mc| {
             let callback = Callback::new_immediate(mc, |_, _, args| {
-                let mut ret = args.to_vec();
+                let mut ret = args;
                 ret.push(Value::Integer(42));
                 Ok(CallbackReturn::Return(ret))
             });

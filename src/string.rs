@@ -107,6 +107,11 @@ impl<'gc> String<'gc> {
                 Value::Thread(_) => {
                     return Err(StringError::Concat { bad_type: "thread" });
                 }
+                Value::UserData(_) => {
+                    return Err(StringError::Concat {
+                        bad_type: "userdata",
+                    });
+                }
             }
         }
         Ok(String::from_buffer(mc, bytes))
