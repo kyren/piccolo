@@ -57,18 +57,21 @@ impl<'gc> Debug for String<'gc> {
 
 impl<'gc> String<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
-        let len = s.len();
-        if len <= 8 {
-            let mut b = [0; 8];
-            b[..len].copy_from_slice(s);
-            String::Short(unsize!(Gc::allocate(mc, b) => [u8]))
-        } else if len <= 32 {
-            let mut b = [0; 32];
-            b[..len].copy_from_slice(s);
-            String::Short(unsize!(Gc::allocate(mc, b) => [u8]))
-        } else {
-            String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice()))
+        macro_rules! alloc_lens {
+            ($($i:expr),*) => {
+                match s.len() {
+                    $($i => String::Short(
+                        unsize!(Gc::allocate(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
+                    ),)*
+                    _ => String::Long(Gc::allocate(mc, s.to_vec().into_boxed_slice())),
+                }
+            };
         }
+
+        alloc_lens!(
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31, 32
+        )
     }
 
     pub fn new_static(s: &'static [u8]) -> String<'gc> {
