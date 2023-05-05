@@ -1,44 +1,46 @@
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/luster.svg)](https://circleci.com/gh/kyren/luster)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/piccolo.svg)](https://circleci.com/gh/kyren/piccolo)
 
-## luster - An experimental Lua VM implemented in pure Rust ##
+## piccolo - An experimental Lua VM implemented in pure Rust ##
+
+(formerly known as `luster`)
 
 **(After *four* years, now UN-paused!)**
 
 Project Goals:
   * Be an arguably working, useful Lua interpreter.
-  * Be extremely easy to confidently sandbox untrusted scripts.
+  * Be an easy way to confidently sandbox untrusted Lua scripts.
   * Be somewhat resilient against DoS from untrusted scripts (scripts should not
     be able to cause the interpreter to panic and should be guaranteed to pause
     in some reasonable bounded amount of time).
-  * Be easy to bind Rust APIs to Lua safely, with a bindings system that is
+  * Be an easy way to bind Rust APIs to Lua safely, with a bindings system that is
     resilient against weirdness and edge cases, and with user types that can
     safely participate in runtime garbage collection.
   * Be pragmatically compatible with some version(s) of PUC-Rio Lua.
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
 
-Since the focus here is so much on resiliency and safety, Luster is written in
-(almost) entirely *safe* Rust. This is a *slight* copout as much of the unsafe
-code that normally is involved in a language runtime actually lives in
-`gc-arena`, but since we have a safe garbage collection abstraction, (almost) the
-entire VM can be written in safe code.
+Since the focus here is so much on resiliency and safety, `piccolo` is written
+in (almost) entirely *safe* Rust. This is a *slight* copout as much of the
+unsafe code that normally is involved in a language runtime actually lives in
+`gc-arena`, but since we have a safe garbage collection abstraction, (almost)
+the entire VM can be written in safe code.
 
-*(Luster makes no attempt yet to guard against side channel attacks like
+*(`piccolo` makes no attempt yet to guard against side channel attacks like
 spectre, so even *if* the VM is memory safe, running untrusted scripts has
 additional risk)*.
 
 **This project is currently very WIP** Right now, the short term goal is to get
-some usable subset of Lua working, and to have a robust bindings story. `luster`
+some usable subset of Lua working, and to have a robust bindings story. `piccolo`
 is being worked on again to use in a separate game project, and my immediate
 goals are going to be whatever that project requires.
 
 ## A unique system for Rust <-> GC interaction ##
 
-*The garbage collector system for luster is now in its [own repo](
+*The garbage collector system for `piccolo` is now in its [own repo](
 https://github.com/kyren/gc-arena), and also on crates.io. See the
 README in the linked repo for more detail about the GC design.*
 
-`luster` has a real, cycle detecting, incremental garbage collector with zero-
+`piccolo` has a real, cycle detecting, incremental garbage collector with zero-
 cost `Gc` pointers (they are machine pointer sized and implement `Copy`) that
 are usable from safe Rust. It achieves this by combining three techniques:
 
@@ -96,7 +98,7 @@ so for now `Sequence` combinators are what I have.
   from `coroutine`)
 * Basic support for Rust callbacks
 * Garbage collected "userdata" with safe downcasting.
-* A simple REPL (try it with `cargo run luster`)
+* A simple REPL (try it with `cargo run piccolo`)
 
 ## What currently doesn't work ##
 
@@ -134,7 +136,7 @@ consider *almost definite* non-goals.
 * Perfect compatibility with certain classes of behavior in PUC-Rio Lua:
   * PUC-Rio Lua behaves differently on systems depending on the OS, environment,
     compilation settings, system locale (lexing numbers changes depending on the
-    system locale!), etc.  `luster` is more or less aiming to emulate PUC-Rio
+    system locale!), etc.  `piccolo` is more or less aiming to emulate PUC-Rio
     Lua behavior with the "C" locale set with the default settings in
     `luaconf.h` on 64-bit Linux.
   * The specific format of error messages.
@@ -149,9 +151,17 @@ consider *almost definite* non-goals.
 * Perfectly matching all of the (sometimes exotic and weird!) garbage collector
   behavior in PUC-Rio Lua.
 
+## Why is it called 'piccolo'? ##
+
+Well, Lua is portugese for "moon" and...
+
+![piccolo blowing up the moon](piccolo.gif)
+
+...a "piccolo" is a tiny instrument that is easy to carry with you.
+
 ## License ##
 
-`luster` is licensed under either of:
+`piccolo` is licensed under either of:
 
 * MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
 * Creative Commons CC0 1.0 Universal Public Domain Dedication
