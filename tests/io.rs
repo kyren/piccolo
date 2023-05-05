@@ -1,6 +1,6 @@
 use std::io::{BufReader, Read};
 
-use luster::io::skip_prefix;
+use piccolo::io::skip_prefix;
 
 #[test]
 fn test_skip_prefix() {

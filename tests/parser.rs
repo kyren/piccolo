@@ -1,4 +1,4 @@
-use luster::parser::{
+use piccolo::parser::{
     parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression, FunctionCallStatement,
     HeadExpression, PrimaryExpression, SimpleExpression, Statement, SuffixedExpression,
     TableConstructor,

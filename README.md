@@ -155,7 +155,7 @@ consider *almost definite* non-goals.
 
 Well, Lua is portugese for "moon" and...
 
-![piccolo blowing up the moon](piccolo.gif)
+![stop mocking meeee!!!](piccolo.gif)
 
 ...a "piccolo" is a tiny instrument that is easy to carry with you.
 

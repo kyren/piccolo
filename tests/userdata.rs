@@ -1,5 +1,5 @@
 use gc_arena::{Collect, GcCell, Rootable};
-use luster::{
+use piccolo::{
     compile, sequence, Callback, CallbackReturn, Closure, Error, Function, Lua, SequenceExt,
     StaticError, String, ThreadSequence, TrySequenceExt, UserData, UserDataError, Value,
 };

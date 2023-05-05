@@ -1,9 +1,9 @@
 [package]
-name = "luster"
+name = "piccolo"
 version = "0.1.0"
-authors = ["kyren <kerriganw@gmail.com>"]
+authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
-license = "MIT OR CC0"
+license = "MIT"
 
 [profile.release]
 opt-level = 3

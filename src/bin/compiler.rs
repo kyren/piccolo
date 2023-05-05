@@ -1,12 +1,12 @@
 extern crate gc_arena;
-extern crate luster;
+extern crate piccolo;
 
 use std::fs::File;
 use std::{error::Error as StdError, path::PathBuf};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
-use luster::{compile, io, parser, FunctionProto, Lua, StaticError};
+use piccolo::{compile, io, parser, FunctionProto, Lua, StaticError};
 
 fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     println!("=============");

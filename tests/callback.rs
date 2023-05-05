@@ -1,4 +1,4 @@
-use luster::{
+use piccolo::{
     compile, sequence, Callback, CallbackReturn, Closure, Error, Function, Lua, SequenceExt,
     StaticError, String, ThreadSequence, TrySequenceExt, Value,
 };

@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use luster::{
+use piccolo::{
     compile, io, sequence, Closure, Error, Function, Lua, SequenceExt, ThreadSequence,
     TrySequenceExt, Value,
 };
