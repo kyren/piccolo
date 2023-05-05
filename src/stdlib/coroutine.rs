@@ -1,7 +1,7 @@
 use gc_arena::MutationContext;
 
 use crate::{
-    Callback, CallbackReturn, Root, RuntimeError, SequenceExt, String, Table, Thread, ThreadMode,
+    Callback, CallbackReturn, Root, RuntimeError, SequenceExt, Table, Thread, ThreadMode,
     ThreadSequence, TypeError, Value,
 };
 
@@ -11,9 +11,9 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
     coroutine
         .set(
             mc,
-            String::from_static(b"create"),
+            "create",
             Callback::new_immediate(mc, |mc, _, args| {
-                let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
+                let function = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
                     value => {
                         return Err(TypeError {
@@ -34,9 +34,9 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
     coroutine
         .set(
             mc,
-            String::from_static(b"resume"),
+            "resume",
             Callback::new_sequence(mc, |mc, _, mut args| {
-                let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
+                let thread = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
                         return Err(TypeError {
@@ -49,9 +49,9 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
 
                 args.remove(0);
 
-                thread.resume(mc, &args).map_err(|_| {
-                    RuntimeError(Value::String(String::from_static(b"cannot resume thread")))
-                })?;
+                thread
+                    .resume(mc, &args)
+                    .map_err(|_| RuntimeError("cannot resume thread".into()))?;
 
                 Ok(ThreadSequence(thread).then(|mc, res| {
                     Ok(CallbackReturn::Return(match res {
@@ -71,9 +71,9 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
     coroutine
         .set(
             mc,
-            String::from_static(b"status"),
+            "status",
             Callback::new_immediate(mc, |_, current_thread, args| {
-                let thread = match args.get(0).cloned().unwrap_or(Value::Nil) {
+                let thread = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
                         return Err(TypeError {
@@ -84,21 +84,21 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     }
                 };
 
-                Ok(CallbackReturn::Return(vec![Value::String(
+                Ok(CallbackReturn::Return(vec![
                     // TODO: When the current thread is available again for callbacks, whether or
                     // not the active thread matches will determine 'normal' from 'running'.
-                    String::from_static(match thread.mode() {
-                        ThreadMode::Stopped | ThreadMode::Results => b"dead",
+                    Value::from(match thread.mode() {
+                        ThreadMode::Stopped | ThreadMode::Results => "dead",
                         ThreadMode::Running => {
                             if thread == current_thread {
-                                b"running"
+                                "running"
                             } else {
-                                b"normal"
+                                "normal"
                             }
                         }
-                        ThreadMode::Suspended => b"suspended",
+                        ThreadMode::Suspended => "suspended",
                     }),
-                )]))
+                ]))
             }),
         )
         .unwrap();
@@ -106,11 +106,10 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
     coroutine
         .set(
             mc,
-            String::from_static(b"yield"),
+            "yield",
             Callback::new_immediate(mc, |_, _, args| Ok(CallbackReturn::Yield(args))),
         )
         .unwrap();
 
-    env.set(mc, String::from_static(b"coroutine"), coroutine)
-        .unwrap();
+    env.set(mc, "coroutine", coroutine).unwrap();
 }

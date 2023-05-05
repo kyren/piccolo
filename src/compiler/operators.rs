@@ -1,5 +1,7 @@
-use crate::parser::{BinaryOperator, UnaryOperator};
-use crate::{Constant, ConstantIndex8, OpCode, RegisterIndex};
+use crate::{
+    parser::{BinaryOperator, UnaryOperator},
+    raw_ops, Constant, ConstantIndex8, OpCode, RegisterIndex,
+};
 
 // Binary operators which map directly to a single opcode
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
@@ -263,13 +265,13 @@ pub fn simple_binop_const_fold<'gc>(
     let left = left.to_value();
     let right = right.to_value();
     match simple_binop {
-        SimpleBinOp::Add => left.add(right),
-        SimpleBinOp::Sub => left.subtract(right),
-        SimpleBinOp::Mul => left.multiply(right),
-        SimpleBinOp::Mod => left.modulo(right),
-        SimpleBinOp::Pow => left.exponentiate(right),
-        SimpleBinOp::Div => left.float_divide(right),
-        SimpleBinOp::IDiv => left.floor_divide(right),
+        SimpleBinOp::Add => raw_ops::add(left, right),
+        SimpleBinOp::Sub => raw_ops::subtract(left, right),
+        SimpleBinOp::Mul => raw_ops::multiply(left, right),
+        SimpleBinOp::Mod => raw_ops::modulo(left, right),
+        SimpleBinOp::Pow => raw_ops::exponentiate(left, right),
+        SimpleBinOp::Div => raw_ops::float_divide(left, right),
+        SimpleBinOp::IDiv => raw_ops::floor_divide(left, right),
         _ => None,
     }
     .and_then(Constant::from_value)
@@ -472,14 +474,16 @@ pub fn comparison_binop_const_fold<'gc>(
 ) -> Option<Constant<'gc>> {
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.to_value() == right.to_value())),
-        ComparisonBinOp::LessThan => match left.to_value().less_than(right.to_value()) {
+        ComparisonBinOp::LessThan => match raw_ops::less_than(left.to_value(), right.to_value()) {
             Some(a) => Some(Constant::Boolean(a)),
             _ => None,
         },
-        ComparisonBinOp::LessEqual => match left.to_value().less_equal(right.to_value()) {
-            Some(a) => Some(Constant::Boolean(a)),
-            _ => None,
-        },
+        ComparisonBinOp::LessEqual => {
+            match raw_ops::less_equal(left.to_value(), right.to_value()) {
+                Some(a) => Some(Constant::Boolean(a)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -495,12 +499,12 @@ pub fn unop_opcode(unop: UnaryOperator, dest: RegisterIndex, source: RegisterInd
 
 pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<Constant<'gc>> {
     match unop {
-        UnaryOperator::Minus => match cons.to_value().negate() {
+        UnaryOperator::Minus => match raw_ops::negate(cons.to_value()) {
             Some(a) => Constant::from_value(a),
             _ => None,
         },
-        UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
-        UnaryOperator::BitNot => match cons.to_value().bitwise_not() {
+        UnaryOperator::Not => Some(Constant::Boolean(!raw_ops::to_bool(cons.to_value()))),
+        UnaryOperator::BitNot => match raw_ops::bitwise_not(cons.to_value()) {
             Some(a) => Constant::from_value(a),
             _ => None,
         },

@@ -1,7 +1,7 @@
 use gc_arena::{Collect, GcCell, Rootable};
 use piccolo::{
     compile, sequence, Callback, CallbackReturn, Closure, Error, Function, Lua, SequenceExt,
-    StaticError, String, ThreadSequence, TrySequenceExt, UserData, UserDataError, Value,
+    StaticError, ThreadSequence, TrySequenceExt, UserData, UserDataError, Value,
 };
 
 #[derive(Collect)]
@@ -17,8 +17,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
                 mc,
                 MyUserData(GcCell::allocate(mc, 17)),
             );
-            root.globals
-                .set(mc, String::from_static(b"userdata"), userdata)?;
+            root.globals.set(mc, "userdata", userdata)?;
             let callback = Callback::new_immediate(mc, |mc, _, args| {
                 match args[0] {
                     Value::UserData(ud) => {
@@ -30,8 +29,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
                 };
                 Ok(CallbackReturn::Return(vec![]))
             });
-            root.globals
-                .set(mc, String::from_static(b"callback"), callback)?;
+            root.globals.set(mc, "callback", callback)?;
             Ok(())
         })
         .and_then_with(root, |root, mc, _| {

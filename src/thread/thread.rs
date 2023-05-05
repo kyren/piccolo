@@ -32,7 +32,7 @@ impl<'gc> PartialEq for Thread<'gc> {
 
 impl<'gc> Hash for Thread<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        GcCell::as_ptr(self.0).hash(state)
+        self.0.as_ptr().hash(state)
     }
 }
 
@@ -183,12 +183,13 @@ impl<'gc> Thread<'gc> {
                 ext_call_function(self, &mut state, mc, function, args);
             }
             Some(Frame::ResumeCoroutine) => match state.frames.last_mut() {
-                Some(Frame::Continuation { continuation, .. }) => {
-                    let continuation = continuation.take().expect("continuation missing");
-                    let seq = continuation.call(mc, Ok(args.to_vec()));
-                    state.frames.pop();
-                    callback_seq(self, &mut state, mc, seq);
-                }
+                Some(Frame::Continuation { .. }) => match state.frames.pop() {
+                    Some(Frame::Continuation { continuation, .. }) => {
+                        let seq = continuation.call(mc, Ok(args.to_vec()));
+                        callback_seq(self, &mut state, mc, seq);
+                    }
+                    _ => unreachable!(),
+                },
                 Some(Frame::Lua { .. }) => {
                     return_to_lua(&mut state, args);
                 }
@@ -333,7 +334,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Call the function at the given register with the given arguments.  On return, results will be
+    // Call the function at the given register with the given arguments. On return, results will be
     // placed starting at the function register.
     pub(crate) fn call_function(
         mut self,
@@ -407,7 +408,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Calls the function at the given index with a constant number of arguments without
-    // invalidating the function or its arguments.  Returns are placed *after* the function and its
+    // invalidating the function or its arguments. Returns are placed *after* the function and its
     // aruments, and all registers past this are invalidated as normal.
     pub(crate) fn call_function_non_destructive(
         mut self,
@@ -484,7 +485,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
     }
 
-    // Tail-call the function at the given register with the given arguments.  Pops the current Lua
+    // Tail-call the function at the given register with the given arguments. Pops the current Lua
     // frame, pushing a new frame for the given function.
     pub(crate) fn tail_call_function(
         mut self,
@@ -589,14 +590,15 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .unwrap_or(self.state.values.len() - start);
 
                 match self.state.frames.last_mut() {
-                    Some(Frame::Continuation { continuation, .. }) => {
-                        let continuation = continuation.take().expect("continuation missing");
-                        let ret_vals = self.state.values[start..start + count].to_vec();
-                        self.state.values.truncate(bottom);
-                        let seq = continuation.call(mc, Ok(ret_vals));
-                        self.state.frames.pop();
-                        callback_seq(self.thread, &mut self.state, mc, seq);
-                    }
+                    Some(Frame::Continuation { .. }) => match self.state.frames.pop() {
+                        Some(Frame::Continuation { continuation, .. }) => {
+                            let ret_vals = self.state.values[start..start + count].to_vec();
+                            self.state.values.truncate(bottom);
+                            let seq = continuation.call(mc, Ok(ret_vals));
+                            callback_seq(self.thread, &mut self.state, mc, seq);
+                        }
+                        _ => unreachable!(),
+                    },
                     Some(Frame::Lua {
                         expected_returns,
                         is_variable,
@@ -729,7 +731,7 @@ enum Frame<'gc> {
     },
     Continuation {
         bottom: usize,
-        continuation: Option<Continuation<'gc>>,
+        continuation: Continuation<'gc>,
     },
     StartCoroutine(Function<'gc>),
     ResumeCoroutine,
@@ -797,7 +799,7 @@ fn ext_call_function<'gc>(
 
             state.values[bottom] = Value::Function(Function::Closure(closure));
             for i in 0..fixed_params {
-                state.values[base + i] = args.get(i).cloned().unwrap_or(Value::Nil);
+                state.values[base + i] = args.get(i).copied().unwrap_or(Value::Nil);
             }
             for i in 0..var_params {
                 state.values[1 + i] = args[fixed_params + i]
@@ -862,15 +864,14 @@ fn unwind<'gc>(
     mc: MutationContext<'gc, '_>,
     error: Error<'gc>,
 ) {
-    while let Some(mut top_frame) = state.frames.pop() {
+    while let Some(top_frame) = state.frames.pop() {
         if let Frame::Continuation {
             continuation,
             bottom,
-        } = &mut top_frame
+        } = top_frame
         {
-            close_upvalues(thread, state, mc, *bottom);
-            state.values.truncate(*bottom);
-            let continuation = continuation.take().expect("missing continuation");
+            close_upvalues(thread, state, mc, bottom);
+            state.values.truncate(bottom);
             let seq = continuation.call(mc, Err(error));
             callback_seq(thread, state, mc, seq);
             return;
@@ -900,12 +901,13 @@ fn return_ext<'gc>(
             }
         }
         Ok(CallbackReturn::Return(res)) => match state.frames.last_mut() {
-            Some(Frame::Continuation { continuation, .. }) => {
-                let continuation = continuation.take().expect("continuation missing");
-                let seq = continuation.call(mc, Ok(res));
-                state.frames.pop();
-                callback_seq(thread, state, mc, seq);
-            }
+            Some(Frame::Continuation { .. }) => match state.frames.pop() {
+                Some(Frame::Continuation { continuation, .. }) => {
+                    let seq = continuation.call(mc, Ok(res));
+                    callback_seq(thread, state, mc, seq);
+                }
+                _ => unreachable!(),
+            },
             Some(Frame::Lua { .. }) => {
                 return_to_lua(state, &res);
             }
@@ -920,10 +922,12 @@ fn return_ext<'gc>(
             continuation,
         }) => {
             let bottom = state.values.len();
-            state.frames.push(Frame::Continuation {
-                continuation: Some(continuation),
-                bottom,
-            });
+            if let Some(continuation) = continuation {
+                state.frames.push(Frame::Continuation {
+                    continuation,
+                    bottom,
+                });
+            }
             ext_call_function(thread, state, mc, function, &args);
         }
     }

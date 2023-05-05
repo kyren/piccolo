@@ -1,12 +1,12 @@
+mod compiler;
+mod operators;
+mod register_allocator;
+
 use std::io::Read;
 
 use gc_arena::MutationContext;
 
 use crate::{parse_chunk, Error, FunctionProto, String};
-
-mod compiler;
-mod operators;
-mod register_allocator;
 
 pub use self::compiler::{compile_chunk, CompilerError};
 

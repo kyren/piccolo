@@ -76,7 +76,7 @@ impl RegisterAllocator {
     }
 
     /// Allocates a block of registers of the given size (which must be > 0) always at the end of
-    /// the allocated area.  If successful, returns the starting register of the block.
+    /// the allocated area. If successful, returns the starting register of the block.
     #[must_use = "must check whether register push was successful"]
     pub fn push(&mut self, size: u8) -> Option<RegisterIndex> {
         if size == 0 {
@@ -98,7 +98,7 @@ impl RegisterAllocator {
     }
 
     /// Free all registers past the given register, making the given register the new top of the
-    /// stack.  If the given register is >= to the current top, this will have no effect.
+    /// stack. If the given register is >= to the current top, this will have no effect.
     pub fn pop_to(&mut self, new_top: u16) {
         if self.stack_top > new_top {
             for i in new_top..self.stack_top {

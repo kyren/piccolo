@@ -2,29 +2,30 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error as StdError;
 use std::{fmt, iter, mem};
 
+use gc_arena::{Collect, Gc, MutationContext};
 use num_traits::cast;
 
-use gc_arena::{Collect, Gc, MutationContext};
-
-use crate::parser::{
-    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
-    ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
-    FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalFunctionStatement,
-    LocalStatement, PrimaryExpression, RecordKey, RepeatStatement, ReturnStatement,
-    SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor, UnaryOperator,
-    WhileStatement,
-};
 use crate::{
-    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254, PrototypeIndex,
-    RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
+    parser::{
+        AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
+        ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
+        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalFunctionStatement,
+        LocalStatement, PrimaryExpression, RecordKey, RepeatStatement, ReturnStatement,
+        SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
+        UnaryOperator, WhileStatement,
+    },
+    raw_ops, Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254,
+    PrototypeIndex, RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
 };
 
-use super::operators::{
-    categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
-    simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
-    ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp, SimpleBinOp,
+use super::{
+    operators::{
+        categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
+        simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
+        ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp, SimpleBinOp,
+    },
+    register_allocator::RegisterAllocator,
 };
-use super::register_allocator::RegisterAllocator;
 
 #[derive(Debug, Collect)]
 #[collect(require_static)]
@@ -169,10 +170,10 @@ enum JumpLabel<'gc> {
 
 #[derive(Debug)]
 struct BlockDescriptor {
-    // The index of the first local variable in this block.  All locals above this will be freed
-    // when this block is exited.
+    // The index of the first local variable in this block. All locals above this will be freed when
+    // this block is exited.
     stack_bottom: u16,
-    // The index of the first jump target in this block.  All jump targets above this will go out of
+    // The index of the first jump target in this block. All jump targets above this will go out of
     // scope when the block ends.
     bottom_jump_target: usize,
     // True if any lower function has an upvalue reference to variables in this block
@@ -195,9 +196,9 @@ struct PendingJump<'gc> {
     target: JumpLabel<'gc>,
     // The index of the placeholder jump instruction
     instruction: usize,
-    // These are the expected block index and stack top *after* the jump takes place.  These start
-    // as the current block index and stack top at the time of the jump, but will be lowered as
-    // blocks are exited.
+    // These are the expected block index and stack top *after* the jump takes place. These start as
+    // the current block index and stack top at the time of the jump, but will be lowered as blocks
+    // are exited.
     block_index: usize,
     stack_top: u16,
     // Whether there are any upvalues that will go out of scope when the jump takes place.
@@ -262,11 +263,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Handles the statements inside a block according to the trailing labels rule.  In most blocks,
-    // trailing labels are treated specially by Lua.  All labels at the end of a block are treated
-    // as though they are in a separate scope from the rest of the block, to make it legal to jump
-    // to the end of the block over local variable scope.  This is logically equivalent to an extra
-    // `do end` around the inside of the block not including the trailing labels.
+    // Handles the statements inside a block according to the trailing labels rule. In most blocks,
+    // trailing labels are treated specially by Lua. All labels at the end of a block are treated as
+    // though they are in a separate scope from the rest of the block, to make it legal to jump to
+    // the end of the block over local variable scope. This is logically equivalent to an extra `do
+    // end` around the inside of the block not including the trailing labels.
     fn block_statements(&mut self, block: &Block<String<'gc>>) -> Result<(), CompilerError> {
         if let Some(return_statement) = &block.return_statement {
             for statement in &block.statements {
@@ -628,7 +629,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         };
 
         let proto = if function_statement.method.is_some() {
-            let mut parameters = vec![String::from_static(b"self")];
+            let mut parameters = vec![String::from("self")];
             parameters.extend(&function_statement.definition.parameters);
 
             self.new_prototype(
@@ -1108,7 +1109,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
                         // If we've found an upvalue in an upper function, we need to mark the
-                        // blocks in that function as owning an upvalue.  This allows us to skip
+                        // blocks in that function as owning an upvalue. This allows us to skip
                         // closing upvalues in jumps if we know the block does not own any upvalues.
                         for block in get_function(self, i).blocks.iter_mut().rev() {
                             if block.stack_bottom <= register.0 as u16 {
@@ -1174,9 +1175,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
     // _ENV.
     fn get_environment(&mut self) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        Ok(ExprDescriptor::Variable(
-            self.find_variable(String::from_static(b"_ENV"))?,
-        ))
+        Ok(ExprDescriptor::Variable(self.find_variable("_ENV".into())?))
     }
 
     fn unique_jump_label(&mut self) -> JumpLabel<'gc> {
@@ -1297,7 +1296,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     fn get_constant(&mut self, constant: Constant<'gc>) -> Result<ConstantIndex16, CompilerError> {
-        if let Some(constant) = self.current_function.constant_table.get(&constant).cloned() {
+        if let Some(constant) = self.current_function.constant_table.get(&constant).copied() {
             Ok(constant)
         } else {
             let c = ConstantIndex16(
@@ -1398,10 +1397,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    // Performs a function call.  At the end of the function call, the return values will be left at
-    // the top of the stack.  The returns are potentially variable, so none of the returns are
-    // marked as allocated.  Returns the register at which the returns (if any) are placed, which
-    // will always be the current register allocator top.
+    // Performs a function call. At the end of the function call, the return values will be left at
+    // the top of the stack. The returns are potentially variable, so none of the returns are marked
+    // as allocated. Returns the register at which the returns (if any) are placed, which will
+    // always be the current register allocator top.
     fn call_function(
         &mut self,
         func: ExprDescriptor<'gc>,
@@ -1422,7 +1421,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(func)
     }
 
-    // Performs a method call similarly to how `call_function` works.  Method calls have a special
+    // Performs a method call similarly to how `call_function` works. Method calls have a special
     // opcode that make them more efficient than executing them in a naive way.
     fn call_method(
         &mut self,
@@ -1474,8 +1473,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Pushes the given arguments to the top of the stack in preparation for a function call or
-    // return statement.  The arguemnts are *not* marked as allocated in the register allocator, as
-    // they are potentially variable.  Returns the register at which the arguments start, as well as
+    // return statement. The arguemnts are *not* marked as allocated in the register allocator, as
+    // they are potentially variable. Returns the register at which the arguments start, as well as
     // their arity.
     fn push_arguments(
         &mut self,
@@ -1539,7 +1538,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // If the expression is a constant value *and* fits into an 8-bit constant index, return that
     // constant index, otherwise evaluate the expression so that it contains its result in any
-    // register and return that register.  If there is a register that must be freed, returns that
+    // register and return that register. If there is a register that must be freed, returns that
     // register as the second return value.
     fn expr_any_register_or_constant(
         &mut self,
@@ -1893,7 +1892,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 
     // Evaluates an expression and pushes it to a range of newly allocated registers at the top of
-    // the stack.  For single value expressions this sets the rest of the values to Nil.
+    // the stack. For single value expressions this sets the rest of the values to Nil.
     fn expr_push_count(
         &mut self,
         expr: ExprDescriptor<'gc>,
@@ -1999,7 +1998,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         match expr {
             ExprDescriptor::Constant(cons) => {
-                if cons.to_value().to_bool() == skip_if {
+                if raw_ops::to_bool(cons.to_value()) == skip_if {
                     self.current_function.opcodes.push(OpCode::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),

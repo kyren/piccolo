@@ -9,6 +9,7 @@ mod lexer;
 mod lua;
 mod opcode;
 pub mod parser;
+pub mod raw_ops;
 pub mod sequence;
 mod stdlib;
 mod string;
@@ -19,6 +20,7 @@ mod userdata;
 mod value;
 
 pub use self::{
+    any::AnyCell,
     callback::{Callback, CallbackReturn, CallbackSequence, Continuation},
     closure::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
@@ -33,7 +35,7 @@ pub use self::{
     parser::{parse_chunk, ParserError},
     sequence::{Sequence, SequenceExt, TrySequenceExt},
     string::{String, StringError},
-    table::{InvalidTableKey, Table, TableState},
+    table::{InvalidTableKey, Table, TableEntries, TableState},
     thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode, ThreadSequence},
     types::{
         ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,

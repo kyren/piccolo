@@ -733,7 +733,7 @@ where
             }
         }
 
-        Ok(self.peek_buffer.get(n).cloned())
+        Ok(self.peek_buffer.get(n).copied())
     }
 
     fn advance(&mut self, n: usize) {

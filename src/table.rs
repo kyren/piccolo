@@ -53,7 +53,7 @@ impl<'gc> Table<'gc> {
     }
 
     pub fn get<K: Into<Value<'gc>>>(&self, key: K) -> Value<'gc> {
-        self.0.read().get(key.into())
+        self.0.read().entries.get(key.into())
     }
 
     pub fn set<K: Into<Value<'gc>>, V: Into<Value<'gc>>>(
@@ -62,22 +62,41 @@ impl<'gc> Table<'gc> {
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0.write(mc).set(key.into(), value.into())
+        self.0.write(mc).entries.set(key.into(), value.into())
     }
 
     pub fn length(&self) -> i64 {
-        self.0.read().length()
+        self.0.read().entries.length()
     }
+
+    pub fn metatable(&self) -> Option<Table<'gc>> {
+        self.0.read().metatable
+    }
+
+    pub fn set_metatable(
+        &self,
+        mc: MutationContext<'gc, '_>,
+        metatable: Option<Table<'gc>>,
+    ) -> Option<Table<'gc>> {
+        mem::replace(&mut self.0.write(mc).metatable, metatable)
+    }
+}
+
+#[derive(Debug, Default, Collect)]
+#[collect(no_drop)]
+pub struct TableState<'gc> {
+    pub entries: TableEntries<'gc>,
+    pub metatable: Option<Table<'gc>>,
 }
 
 #[derive(Debug, Collect, Default)]
 #[collect(no_drop)]
-pub struct TableState<'gc> {
+pub struct TableEntries<'gc> {
     array: Vec<Value<'gc>>,
     map: FxHashMap<TableKey<'gc>, Value<'gc>>,
 }
 
-impl<'gc> TableState<'gc> {
+impl<'gc> TableEntries<'gc> {
     pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
         if let Some(index) = to_array_index(key) {
             if index < self.array.len() {
@@ -86,7 +105,7 @@ impl<'gc> TableState<'gc> {
         }
 
         if let Ok(key) = TableKey::new(key) {
-            self.map.get(&key).cloned().unwrap_or(Value::Nil)
+            self.map.get(&key).copied().unwrap_or(Value::Nil)
         } else {
             Value::Nil
         }
@@ -161,8 +180,8 @@ impl<'gc> TableState<'gc> {
             let old_array_size = self.array.len();
             let old_map_size = self.map.len();
             if optimal_size > old_array_size {
-                // If we're growing the array part, we need to grow the array and take any newly valid
-                // array keys from the map part.
+                // If we're growing the array part, we need to grow the array and take any newly
+                // valid array keys from the map part.
 
                 self.array.reserve(optimal_size - old_array_size);
                 let capacity = self.array.capacity();

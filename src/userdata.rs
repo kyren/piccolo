@@ -2,12 +2,13 @@ use std::{
     cell::{Ref, RefMut},
     error::Error as StdError,
     fmt,
-    hash::{Hash, Hasher},
+    hash::Hash,
+    mem,
 };
 
-use gc_arena::{Collect, Gc, MutationContext, Rootable};
+use gc_arena::{Collect, MutationContext, Rootable};
 
-use crate::any::{self, AnyValue};
+use crate::{any::AnyCell, Table};
 
 #[derive(Debug, Copy, Clone)]
 pub enum UserDataError {
@@ -26,45 +27,27 @@ impl fmt::Display for UserDataError {
     }
 }
 
-#[derive(Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(no_drop)]
-pub struct UserData<'gc>(pub(crate) Gc<'gc, dyn AnyValue<'gc>>);
-
-impl<'gc> fmt::Debug for UserData<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("UserData")
-            .field(&Gc::as_ptr(self.0))
-            .finish()
-    }
-}
-
-impl<'gc> PartialEq for UserData<'gc> {
-    fn eq(&self, other: &UserData<'gc>) -> bool {
-        Gc::ptr_eq(self.0, other.0)
-    }
-}
-
-impl<'gc> Eq for UserData<'gc> {}
-
-impl<'gc> Hash for UserData<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Gc::as_ptr(self.0).hash(state)
-    }
-}
+pub struct UserData<'gc>(pub AnyCell<'gc, Rootable!['gc_ => UserMetadata<'gc_>]>);
 
 impl<'gc> UserData<'gc> {
     pub fn new<R>(mc: MutationContext<'gc, '_>, val: <R as Rootable<'gc>>::Root) -> Self
     where
         R: for<'a> Rootable<'a> + ?Sized + 'static,
     {
-        UserData(any::new::<R>(mc, val))
+        UserData(AnyCell::<Rootable!['gc_ => UserMetadata<'gc_>]>::new::<R>(
+            mc,
+            UserMetadata { metatable: None },
+            val,
+        ))
     }
 
     pub fn read<'a, R>(&'a self) -> Result<Ref<'a, <R as Rootable<'gc>>::Root>, UserDataError>
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        match any::read::<R>(&self.0) {
+        match self.0.read_data::<R>() {
             Some(Ok(r)) => Ok(r),
             Some(Err(_)) => Err(UserDataError::BorrowError),
             None => Err(UserDataError::WrongType),
@@ -78,10 +61,28 @@ impl<'gc> UserData<'gc> {
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        match any::write::<R>(mc, &self.0) {
+        match self.0.write_data::<R>(mc) {
             Some(Ok(r)) => Ok(r),
             Some(Err(_)) => Err(UserDataError::BorrowError),
             None => Err(UserDataError::WrongType),
         }
     }
+
+    pub fn metatable(&self) -> Option<Table<'gc>> {
+        self.0.read_metadata().unwrap().metatable
+    }
+
+    pub fn set_metatable(
+        &self,
+        mc: MutationContext<'gc, '_>,
+        metatable: Option<Table<'gc>>,
+    ) -> Option<Table<'gc>> {
+        mem::replace(&mut self.0.write_metadata(mc).unwrap().metatable, metatable)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub struct UserMetadata<'gc> {
+    pub metatable: Option<Table<'gc>>,
 }

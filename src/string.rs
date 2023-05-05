@@ -6,7 +6,6 @@ use std::{
     io::Write,
     ops::Deref,
     str,
-    string::String as StdString,
 };
 
 use gc_arena::{unsize, Collect, Gc, MutationContext};
@@ -58,10 +57,6 @@ impl<'gc> Debug for String<'gc> {
 impl<'gc> String<'gc> {
     pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Vec<u8>) -> String<'gc> {
         String::Buffer(Gc::allocate(mc, s))
-    }
-
-    pub fn from_std_string(mc: MutationContext<'gc, '_>, s: StdString) -> String<'gc> {
-        Self::from_buffer(mc, s.into_bytes())
     }
 
     pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
@@ -139,6 +134,12 @@ impl<'gc> String<'gc> {
             String::Inline(b) => b.len(),
             String::Buffer(b) => b.len(),
         })
+    }
+}
+
+impl<'gc> From<&'static str> for String<'gc> {
+    fn from(s: &'static str) -> Self {
+        Self::from_static(s.as_bytes())
     }
 }
 

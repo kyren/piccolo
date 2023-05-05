@@ -15,7 +15,7 @@ pub enum CallbackReturn<'gc> {
     TailCall {
         function: Function<'gc>,
         args: Vec<Value<'gc>>,
-        continuation: Continuation<'gc>,
+        continuation: Option<Continuation<'gc>>,
     },
 }
 
