@@ -1,0 +1,7 @@
+[package]
+name = "piccolo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR CC0"
+description = "placeholder crate for the 'piccolo' Lua VM (to be published)"
+repository = "https://github.com/kyren/piccolo"
