@@ -1,7 +1,7 @@
-extern crate gc_arena;
 extern crate deimos;
+extern crate gc_arena;
 
-use std::{fs::File, error::Error as StdError, path::PathBuf};
+use std::{error::Error as StdError, fs::File, path::PathBuf};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
