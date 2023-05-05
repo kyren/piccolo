@@ -7,9 +7,9 @@ use std::{
 use gc_arena::{Collect, GcCell, MutationContext};
 
 use crate::{
-    thread::run_vm, BadThreadMode, CallbackReturn, CallbackSequence, Closure, Continuation, Error,
-    Function, RegisterIndex, Sequence, ThreadError, TypeError, UpValue, UpValueState, Value,
-    VarCount,
+    meta_ops, thread::run_vm, BadThreadMode, CallbackReturn, CallbackSequence, Closure,
+    Continuation, Error, Function, RegisterIndex, Sequence, ThreadError, UpValue, UpValueState,
+    Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -361,8 +361,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .map(|c| c as usize)
                     .unwrap_or(self.state.values.len() - function_index - 1);
 
-                match self.state.values[function_index] {
-                    Value::Function(Function::Closure(closure)) => {
+                match meta_ops::call(mc, self.state.values[function_index]) {
+                    Ok(Function::Closure(closure)) => {
+                        self.state.values[function_index] = closure.into();
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
@@ -386,7 +387,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Value::Function(Function::Callback(callback)) => {
+                    Ok(Function::Callback(callback)) => {
                         let seq = callback.call(
                             mc,
                             self.thread,
@@ -397,10 +398,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
-                    val => Err(ThreadError::BadCall(TypeError {
-                        expected: "function",
-                        found: val.type_name(),
-                    })),
+                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -440,8 +438,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.values[given_function_index + i];
                 }
 
-                match self.state.values[function_index] {
-                    Value::Function(Function::Closure(closure)) => {
+                match meta_ops::call(mc, self.state.values[function_index]) {
+                    Ok(Function::Closure(closure)) => {
+                        self.state.values[function_index] = closure.into();
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
@@ -464,7 +463,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Value::Function(Function::Callback(callback)) => {
+                    Ok(Function::Callback(callback)) => {
                         let seq = callback.call(
                             mc,
                             self.thread,
@@ -475,10 +474,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
-                    val => Err(ThreadError::BadCall(TypeError {
-                        expected: "function",
-                        found: val.type_name(),
-                    })),
+                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -512,9 +508,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .map(|c| c as usize)
                     .unwrap_or(self.state.values.len() - function_index - 1);
 
-                match self.state.values[function_index] {
-                    Value::Function(Function::Closure(closure)) => {
-                        self.state.values[bottom] = self.state.values[function_index];
+                match meta_ops::call(mc, self.state.values[function_index]) {
+                    Ok(Function::Closure(closure)) => {
+                        self.state.values[bottom] = closure.into();
                         for i in 0..arg_count {
                             self.state.values[bottom + 1 + i] =
                                 self.state.values[function_index + 1 + i];
@@ -543,7 +539,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Value::Function(Function::Callback(callback)) => {
+                    Ok(Function::Callback(callback)) => {
                         let seq = callback.call(
                             mc,
                             self.thread,
@@ -554,10 +550,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
-                    val => Err(ThreadError::BadCall(TypeError {
-                        expected: "function",
-                        found: val.type_name(),
-                    })),
+                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),

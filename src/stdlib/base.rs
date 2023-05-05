@@ -3,8 +3,7 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    raw_ops, Callback, CallbackReturn, Continuation, Root, RuntimeError, String, Table, TypeError,
-    Value,
+    meta_ops, raw_ops, Callback, CallbackReturn, Continuation, Root, RuntimeError, Table, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -54,19 +53,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
 
     env.set(
         mc,
-        String::from_static(b"pcall"),
-        Callback::new_immediate(mc, |_, _, mut args| {
-            let function = match args.get(0).cloned().unwrap_or(Value::Nil) {
-                Value::Function(function) => function,
-                value => {
-                    return Err(TypeError {
-                        expected: "function",
-                        found: value.type_name(),
-                    }
-                    .into());
-                }
-            };
-
+        "pcall",
+        Callback::new_immediate(mc, |mc, _, mut args| {
+            let function = meta_ops::call(mc, args.get(0).copied().unwrap_or(Value::Nil))?;
             args.remove(0);
             Ok(CallbackReturn::TailCall {
                 function,

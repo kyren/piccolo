@@ -7,6 +7,7 @@ mod error;
 pub mod io;
 mod lexer;
 mod lua;
+pub mod meta_ops;
 mod opcode;
 pub mod parser;
 pub mod raw_ops;
