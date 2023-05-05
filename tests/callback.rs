@@ -1,4 +1,4 @@
-use piccolo::{
+use deimos::{
     compile, sequence, Callback, CallbackReturn, Closure, Continuation, Error, Function, Lua,
     SequenceExt, StaticError, ThreadSequence, TrySequenceExt, Value,
 };

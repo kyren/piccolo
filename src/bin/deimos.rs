@@ -5,7 +5,7 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use piccolo::{
+use deimos::{
     compile, io, sequence, Closure, Error, Function, Lua, ParserError, SequenceExt, StaticError,
     ThreadSequence, TrySequenceExt,
 };

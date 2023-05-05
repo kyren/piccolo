@@ -1,4 +1,4 @@
-use piccolo::parser::{
+use deimos::parser::{
     parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression, FunctionCallStatement,
     HeadExpression, PrimaryExpression, SimpleExpression, Statement, SuffixedExpression,
     TableConstructor,

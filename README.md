@@ -1,6 +1,6 @@
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/piccolo.svg)](https://circleci.com/gh/kyren/piccolo)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/deimos.svg)](https://circleci.com/gh/kyren/deimos)
 
-## piccolo - An experimental Lua VM implemented in pure Rust ##
+## deimos - An experimental Lua VM implemented in pure Rust ##
 
 (formerly known as `luster`)
 
@@ -19,28 +19,28 @@ Project Goals:
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
 
-Since the focus here is so much on resiliency and safety, `piccolo` is written
-in (almost) entirely *safe* Rust. This is a *slight* copout as much of the
-unsafe code that normally is involved in a language runtime actually lives in
-`gc-arena`, but since we have a safe garbage collection abstraction, (almost)
-the entire VM can be written in safe code.
+Since the focus here is so much on resiliency and safety, `deimos` is written in
+(almost) entirely *safe* Rust. This is a *slight* copout as much of the unsafe
+code that normally is involved in a language runtime actually lives in `gc-
+arena`, but since we have a safe garbage collection abstraction, (almost) the
+entire VM can be written in safe code.
 
-*(`piccolo` makes no attempt yet to guard against side channel attacks like
+*(`deimos` makes no attempt yet to guard against side channel attacks like
 spectre, so even *if* the VM is memory safe, running untrusted scripts has
 additional risk)*.
 
 **This project is currently very WIP** Right now, the short term goal is to get
-some usable subset of Lua working, and to have a robust bindings story. `piccolo`
+some usable subset of Lua working, and to have a robust bindings story. `deimos`
 is being worked on again to use in a separate game project, and my immediate
 goals are going to be whatever that project requires.
 
 ## A unique system for Rust <-> GC interaction ##
 
-*The garbage collector system for `piccolo` is now in its [own repo](
+*The garbage collector system for `deimos` is now in its [own repo](
 https://github.com/kyren/gc-arena), and also on crates.io. See the
 README in the linked repo for more detail about the GC design.*
 
-`piccolo` has a real, cycle detecting, incremental garbage collector with zero-
+`deimos` has a real, cycle detecting, incremental garbage collector with zero-
 cost `Gc` pointers (they are machine pointer sized and implement `Copy`) that
 are usable from safe Rust. It achieves this by combining three techniques:
 
@@ -98,7 +98,7 @@ so for now `Sequence` combinators are what I have.
   from `coroutine`)
 * Basic support for Rust callbacks
 * Garbage collected "userdata" with safe downcasting.
-* A simple REPL (try it with `cargo run piccolo`)
+* A simple REPL (try it with `cargo run deimos`)
 
 ## What currently doesn't work ##
 
@@ -136,7 +136,7 @@ consider *almost definite* non-goals.
 * Perfect compatibility with certain classes of behavior in PUC-Rio Lua:
   * PUC-Rio Lua behaves differently on systems depending on the OS, environment,
     compilation settings, system locale (lexing numbers changes depending on the
-    system locale!), etc.  `piccolo` is more or less aiming to emulate PUC-Rio
+    system locale!), etc.  `deimos` is more or less aiming to emulate PUC-Rio
     Lua behavior with the "C" locale set with the default settings in
     `luaconf.h` on 64-bit Linux.
   * The specific format of error messages.
@@ -151,19 +151,16 @@ consider *almost definite* non-goals.
 * Perfectly matching all of the (sometimes exotic and weird!) garbage collector
   behavior in PUC-Rio Lua.
 
-## Why is it called 'piccolo'? ##
+## Why is it called 'deimos'? ##
 
-It's a "pico" Lua!
+Lua is the portugese word for "moon", Deimos is the smallest moon of Mars.
 
-It's a tiny instrument that is easy to carry with you?
-
-Also, Lua is portugese for "moon" and...
-
-![Piccolo blowing up the moon](piccolo.gif "STOP MOCKING ME!!")
+Deimos is also the greek god of dread and terror, both of which contribute
+highly to this project's existence.
 
 ## License ##
 
-`piccolo` is licensed under either of:
+`deimos` is licensed under either of:
 
 * MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
 * Creative Commons CC0 1.0 Universal Public Domain Dedication

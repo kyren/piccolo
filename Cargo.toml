@@ -1,5 +1,5 @@
 [package]
-name = "piccolo"
+name = "deimos"
 version = "0.1.0"
 authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"

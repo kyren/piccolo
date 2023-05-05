@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use piccolo::{
+use deimos::{
     compile, io, sequence, Closure, Error, Function, Lua, SequenceExt, ThreadSequence,
     TrySequenceExt, Value,
 };
