@@ -795,7 +795,7 @@ fn ext_call_function<'gc>(
                 state.values[base + i] = args.get(i).copied().unwrap_or(Value::Nil);
             }
             for i in 0..var_params {
-                state.values[1 + i] = args[fixed_params + i]
+                state.values[bottom + 1 + i] = args[fixed_params + i]
             }
 
             state.frames.push(Frame::Lua {
