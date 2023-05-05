@@ -153,11 +153,13 @@ consider *almost definite* non-goals.
 
 ## Why is it called 'piccolo'? ##
 
-Well, Lua is portugese for "moon" and...
+It's a "pico" Lua!
+
+It's a tiny instrument that is easy to carry with you?
+
+Also, Lua is portugese for "moon" and...
 
 ![Piccolo blowing up the moon](piccolo.gif "STOP MOCKING ME!!")
-
-...a "piccolo" is a tiny instrument that is easy to carry with you.
 
 ## License ##
 
