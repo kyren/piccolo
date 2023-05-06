@@ -3,10 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use deimos::{
-    compile, io, sequence, Closure, Error, Function, Lua, SequenceExt, ThreadSequence,
-    TrySequenceExt, Value,
-};
+use deimos::{compile, io, Closure, Function, Lua, StaticValue};
 
 #[test]
 fn test_scripts() {
@@ -23,38 +20,31 @@ fn test_scripts() {
             if ext == "lua" {
                 let _ = writeln!(stdout(), "running {:?}", path);
                 let mut lua = Lua::new();
-                let r = lua.sequence(|root| {
-                    sequence::from_fn_with(root, move |root, mc| {
-                        Ok(Closure::new(mc, compile(mc, file)?, Some(root.globals))?)
-                    })
-                    .and_chain_with(root, move |root, mc, closure| {
-                        Ok(ThreadSequence::call_function(
+
+                match lua
+                    .try_run(|mc, root| {
+                        Ok(root.registry.stash(
                             mc,
-                            root.main_thread,
-                            Function::Closure(closure),
-                            &[],
-                        )?)
+                            Function::Closure(Closure::new(
+                                mc,
+                                compile(mc, file)?,
+                                Some(root.globals),
+                            )?),
+                        ))
                     })
-                    .map_ok(|r| match &r[..] {
-                        &[Value::Boolean(true)] => false,
+                    .and_then(|function| lua.run_function(&function, &[]))
+                {
+                    Ok(ret) => match &ret[..] {
+                        &[StaticValue::Boolean(true)] => {}
                         v => {
                             let _ = writeln!(stdout(), "error: unexpected return values: {:?}", v);
-                            true
+                            file_failed = true;
                         }
-                    })
-                    .map_err(Error::to_static)
-                    .boxed()
-                });
-
-                match r {
+                    },
                     Err(err) => {
                         let _ = writeln!(stdout(), "error encountered running: {:?}", err);
                         file_failed = true;
                     }
-                    Ok(true) => {
-                        file_failed = true;
-                    }
-                    Ok(false) => {}
                 }
             }
         } else {

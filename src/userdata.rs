@@ -6,7 +6,7 @@ use std::{
     mem,
 };
 
-use gc_arena::{Collect, MutationContext, Rootable};
+use gc_arena::{Collect, MutationContext, Root, Rootable};
 
 use crate::{any::AnyCell, Table};
 
@@ -32,9 +32,10 @@ impl fmt::Display for UserDataError {
 pub struct UserData<'gc>(pub AnyCell<'gc, Rootable!['gc_ => UserMetadata<'gc_>]>);
 
 impl<'gc> UserData<'gc> {
-    pub fn new<R>(mc: MutationContext<'gc, '_>, val: <R as Rootable<'gc>>::Root) -> Self
+    pub fn new<R>(mc: MutationContext<'gc, '_>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a> + ?Sized + 'static,
+        Root<'gc, R>: Sized,
     {
         UserData(AnyCell::<Rootable!['gc_ => UserMetadata<'gc_>]>::new::<R>(
             mc,
@@ -43,9 +44,10 @@ impl<'gc> UserData<'gc> {
         ))
     }
 
-    pub fn read<'a, R>(&'a self) -> Result<Ref<'a, <R as Rootable<'gc>>::Root>, UserDataError>
+    pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
+        Root<'gc, R>: Sized,
     {
         match self.0.read_data::<R>() {
             Some(Ok(r)) => Ok(r),
@@ -57,9 +59,10 @@ impl<'gc> UserData<'gc> {
     pub fn write<'a, R>(
         &'a self,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<RefMut<'a, <R as Rootable<'gc>>::Root>, UserDataError>
+    ) -> Result<RefMut<'a, Root<'gc, R>>, UserDataError>
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
+        Root<'gc, R>: Sized,
     {
         match self.0.write_data::<R>(mc) {
             Some(Ok(r)) => Ok(r),

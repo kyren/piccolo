@@ -84,13 +84,13 @@ impl fmt::Display for ThreadError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ThreadError::ExpectedVariable(true) => {
-                write!(fmt, "operation expects variable lua thread")
+                write!(fmt, "operation expects variable stack")
             }
             ThreadError::ExpectedVariable(false) => {
-                write!(fmt, "operation expects constant lua thread")
+                write!(fmt, "unexpected variable stack in operation")
             }
             ThreadError::BadCall(type_error) => fmt::Display::fmt(type_error, fmt),
-            ThreadError::BadYield => write!(fmt, "yield from unyieldable function"),
+            ThreadError::BadYield => write!(fmt, "cannot yield from main thread"),
         }
     }
 }

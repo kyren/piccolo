@@ -1,8 +1,11 @@
 use std::{f64, i64, io};
 
-use gc_arena::{Collect, Gc};
+use gc_arena::{Collect, Gc, MutationContext};
 
-use crate::{Callback, Closure, String, Table, Thread, UserData};
+use crate::{
+    lexer::{read_float, read_hex_float},
+    Callback, Closure, String, Table, Thread, UserData,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
@@ -99,6 +102,74 @@ impl<'gc> Value<'gc> {
             Value::Thread(t) => write!(w, "<thread {:?}>", t.0.as_ptr()),
             Value::UserData(t) => write!(w, "<userdata {:?}>", t.0.as_ptr()),
         }
+    }
+
+    /// Lua `nil` and `false` are false, anything else is true.
+    pub fn to_bool(self) -> bool {
+        match self {
+            Value::Nil => false,
+            Value::Boolean(false) => false,
+            _ => true,
+        }
+    }
+
+    /// Interprets Numbers, Integers, and Strings as a Number, if possible.
+    pub fn to_number(self) -> Option<f64> {
+        match self {
+            Value::Integer(a) => Some(a as f64),
+            Value::Number(a) => Some(a),
+            Value::String(a) => {
+                if let Some(f) = read_hex_float(&a) {
+                    Some(f)
+                } else {
+                    read_float(&a)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
+    pub fn to_integer(self) -> Option<i64> {
+        match self {
+            Value::Integer(a) => Some(a),
+            Value::Number(a) => {
+                if ((a as i64) as f64) == a {
+                    Some(a as i64)
+                } else {
+                    None
+                }
+            }
+            Value::String(a) => match if let Some(f) = read_hex_float(&a) {
+                Some(f)
+            } else {
+                read_float(&a)
+            } {
+                Some(f) => {
+                    if ((f as i64) as f64) == f {
+                        Some(f as i64)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Interprets Numbers, Integers, and Strings as a String, if possible.
+    pub fn to_string(self, mc: MutationContext<'gc, '_>) -> Option<String<'gc>> {
+        match self {
+            Value::Integer(a) => Some(String::concat(mc, &[Value::Integer(a)]).unwrap()),
+            Value::Number(a) => Some(String::concat(mc, &[Value::Number(a)]).unwrap()),
+            Value::String(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    pub fn not(self) -> Value<'gc> {
+        Value::Boolean(!self.to_bool())
     }
 }
 

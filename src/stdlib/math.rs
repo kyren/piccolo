@@ -15,7 +15,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         Callback::new_immediate(mc, |_, _, args| {
             match args.get(0).copied().unwrap_or(Value::Nil) {
                 Value::Integer(a) => Ok(CallbackReturn::Return(vec![Value::Integer(a.abs())])),
-                a => match raw_ops::to_number(a) {
+                a => match a.to_number() {
                     Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.abs())])),
                     _ => Err(RuntimeError("Bad argument to abs".into()).into()),
                 },
@@ -28,7 +28,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "acos",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.acos())])),
                 _ => Err(RuntimeError("Bad argument to acos".into()).into()),
             }
@@ -40,7 +40,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "asin",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.asin())])),
                 _ => Err(RuntimeError("Bad argument to asin".into()).into()),
             }
@@ -52,7 +52,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "atan",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.atan())])),
                 _ => Err(RuntimeError("Bad argument to atan".into()).into()),
             }
@@ -65,8 +65,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "atan2",
         Callback::new_immediate(mc, |_, _, args| {
             match (
-                raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)),
-                raw_ops::to_number(args.get(1).copied().unwrap_or(Value::Nil)),
+                args.get(0).copied().unwrap_or(Value::Nil).to_number(),
+                args.get(1).copied().unwrap_or(Value::Nil).to_number(),
             ) {
                 (Some(f), Some(g)) => Ok(CallbackReturn::Return(vec![Value::Number(f.atan2(g))])),
                 _ => Err(RuntimeError("Bad argument to atan2".into()).into()),
@@ -79,7 +79,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "ceil",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![
                     Value::Integer(f.ceil() as i64),
                 ])),
@@ -93,7 +93,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "cos",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.cos())])),
                 _ => Err(RuntimeError("Bad argument to cos".into()).into()),
             }
@@ -105,7 +105,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "cosh",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.cosh())])),
                 _ => Err(RuntimeError("Bad argument to cosh".into()).into()),
             }
@@ -117,7 +117,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "deg",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.to_degrees())])),
                 _ => Err(RuntimeError("Bad argument to deg".into()).into()),
             }
@@ -129,7 +129,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "exp",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(
                     std::f64::consts::E.powf(f),
                 )])),
@@ -143,7 +143,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "floor",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Integer(
                     f.floor() as i64
                 )])),
@@ -158,8 +158,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "fmod",
         Callback::new_immediate(mc, |_, _, args| {
             match (
-                raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)),
-                raw_ops::to_number(args.get(1).copied().unwrap_or(Value::Nil)),
+                args.get(0).copied().unwrap_or(Value::Nil).to_number(),
+                args.get(1).copied().unwrap_or(Value::Nil).to_number(),
             ) {
                 (Some(f), Some(g)) => {
                     let result = (f % g).abs();
@@ -179,7 +179,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "frexp",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) if f.is_finite() => {
                     let bits = f.to_bits();
                     // Set the exponent to exactly 01111111111_b, then put into the range of
@@ -212,8 +212,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "ldexp",
         Callback::new_immediate(mc, |_, _, args| {
             match (
-                raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)),
-                raw_ops::to_number(args.get(1).copied().unwrap_or(Value::Nil)),
+                args.get(0).copied().unwrap_or(Value::Nil).to_number(),
+                args.get(1).copied().unwrap_or(Value::Nil).to_number(),
             ) {
                 (Some(f), Some(g)) => Ok(CallbackReturn::Return(vec![Value::Number(
                     f * 2.0_f64.powf(g),
@@ -228,7 +228,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "log",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.ln())])),
                 _ => Err(RuntimeError("Bad argument to log".into()).into()),
             }
@@ -240,7 +240,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "log10",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.log10())])),
                 _ => Err(RuntimeError("Bad argument to log10".into()).into()),
             }
@@ -296,7 +296,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "modf",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![
                     Value::Integer(f as i64 / 1),
                     Value::Number(f % 1.0),
@@ -314,7 +314,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "rad",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.to_radians())])),
                 _ => Err(RuntimeError("Bad argument to rad".into()).into()),
             }
@@ -336,13 +336,11 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
                     rng.borrow_mut().gen::<f64>(),
                 )])),
                 (a, b) => {
-                    if let (Some(first), Value::Nil) = (raw_ops::to_integer(a), b) {
+                    if let (Some(first), Value::Nil) = (a.to_integer(), b) {
                         Ok(CallbackReturn::Return(vec![Value::Integer(
                             rng.borrow_mut().gen_range(1..first + 1),
                         )]))
-                    } else if let (Some(first), Some(second)) =
-                        (raw_ops::to_integer(a), raw_ops::to_integer(b))
-                    {
+                    } else if let (Some(first), Some(second)) = (a.to_integer(), b.to_integer()) {
                         Ok(CallbackReturn::Return(vec![Value::Integer(
                             rng.borrow_mut().gen_range(first..second + 1),
                         )]))
@@ -361,7 +359,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "randomseed",
         Callback::new_immediate(mc, move |_, _, args| {
             let rng = &randomseed_rng;
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
                     *(rng.borrow_mut().deref_mut()) = SmallRng::seed_from_u64(f as u64);
                     Ok(CallbackReturn::Return(vec![]))
@@ -376,7 +374,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "sin",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.sin())])),
                 _ => Err(RuntimeError("Bad argument to sin".into()).into()),
             }
@@ -388,7 +386,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "sqrt",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.sqrt())])),
                 _ => Err(RuntimeError("Bad argument to sqrt".into()).into()),
             }
@@ -400,7 +398,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "tan",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_number(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Number(f.tan())])),
                 _ => Err(RuntimeError("Bad argument to tan".into()).into()),
             }
@@ -412,7 +410,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "tointeger",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_integer(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_integer() {
                 Some(f) => Ok(CallbackReturn::Return(vec![Value::Integer(f)])),
                 _ => Ok(CallbackReturn::Return(vec![Value::Nil])),
             }
@@ -438,8 +436,8 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "ult",
         Callback::new_immediate(mc, |_, _, args| {
             match (
-                raw_ops::to_integer(args.get(0).copied().unwrap_or(Value::Nil)),
-                raw_ops::to_integer(args.get(1).copied().unwrap_or(Value::Nil)),
+                args.get(0).copied().unwrap_or(Value::Nil).to_integer(),
+                args.get(1).copied().unwrap_or(Value::Nil).to_integer(),
             ) {
                 (Some(f), Some(g)) => Ok(CallbackReturn::Return(vec![Value::Boolean(
                     (f as u64) < (g as u64),

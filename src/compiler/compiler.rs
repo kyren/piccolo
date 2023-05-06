@@ -14,8 +14,8 @@ use crate::{
         SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
         UnaryOperator, WhileStatement,
     },
-    raw_ops, Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254,
-    PrototypeIndex, RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
+    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254, PrototypeIndex,
+    RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
 };
 
 use super::{
@@ -1998,7 +1998,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         match expr {
             ExprDescriptor::Constant(cons) => {
-                if raw_ops::to_bool(cons.to_value()) == skip_if {
+                if cons.to_value().to_bool() == skip_if {
                     self.current_function.opcodes.push(OpCode::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),

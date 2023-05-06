@@ -814,7 +814,7 @@ fn ext_call_function<'gc>(
     }
 }
 
-// Return to the top Lua frame from an external call
+// Return to the top Lua frame from an external call.
 fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
     match state.frames.last_mut() {
         Some(Frame::Lua {
@@ -848,8 +848,8 @@ fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
     };
 }
 
-// TODO: `unwind`, `return_ext`, and `callback_return` have to be merged somehow, because otherwise
-// they are a stack overflow risk in pathalogical or malicious cases.
+// TODO: `unwind`, `return_ext`, and `callback_seq` have to be merged somehow, because otherwise
+// they are a stack overflow risk in pathalogical cases.
 
 fn unwind<'gc>(
     thread: Thread<'gc>,

@@ -503,7 +503,7 @@ pub fn unop_const_fold<'gc>(unop: UnaryOperator, cons: Constant<'gc>) -> Option<
             Some(a) => Constant::from_value(a),
             _ => None,
         },
-        UnaryOperator::Not => Some(Constant::Boolean(!raw_ops::to_bool(cons.to_value()))),
+        UnaryOperator::Not => Some(Constant::Boolean(!cons.to_value().to_bool())),
         UnaryOperator::BitNot => match raw_ops::bitwise_not(cons.to_value()) {
             Some(a) => Constant::from_value(a),
             _ => None,

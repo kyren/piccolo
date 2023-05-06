@@ -2,9 +2,7 @@ use std::io::{self, Write};
 
 use gc_arena::MutationContext;
 
-use crate::{
-    meta_ops, raw_ops, Callback, CallbackReturn, Continuation, Root, RuntimeError, Table, Value,
-};
+use crate::{meta_ops, Callback, CallbackReturn, Continuation, Root, RuntimeError, Table, Value};
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
     env.set(
@@ -42,7 +40,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             let v = args.get(0).copied().unwrap_or(Value::Nil);
             let message = args.get(1).copied().unwrap_or("assertion failed!".into());
 
-            if raw_ops::to_bool(v) {
+            if v.to_bool() {
                 Ok(CallbackReturn::Return(args))
             } else {
                 Err(RuntimeError(message).into())
@@ -97,7 +95,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
         mc,
         "select",
         Callback::new_immediate(mc, |_, _, args| {
-            match raw_ops::to_integer(args.get(0).copied().unwrap_or(Value::Nil)) {
+            match args.get(0).copied().unwrap_or(Value::Nil).to_integer() {
                 Some(n) if n >= 1 && (n as usize) <= args.len() => Ok(CallbackReturn::Return(
                     args[n as usize..args.len()].to_vec(),
                 )),

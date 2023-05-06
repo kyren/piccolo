@@ -5,7 +5,7 @@ use std::{error::Error as StdError, fs::File, path::PathBuf};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
-use deimos::{compile, io, parser, FunctionProto, Lua, StaticError};
+use deimos::{compile, io, parser, FunctionProto, Lua};
 
 fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     println!("=============");
@@ -67,8 +67,8 @@ fn main() -> Result<(), Box<dyn StdError>> {
         println!("{:#?}", chunk);
     } else {
         let mut lua = Lua::new();
-        lua.mutate(|mc, _| -> Result<(), StaticError> {
-            let function = compile(mc, file).map_err(|e| e.to_static())?;
+        lua.try_run(|mc, _| {
+            let function = compile(mc, file)?;
             print_function_proto(&function);
             Ok(())
         })?;

@@ -11,6 +11,7 @@ pub mod meta_ops;
 mod opcode;
 pub mod parser;
 pub mod raw_ops;
+mod registry;
 pub mod sequence;
 mod stdlib;
 mod string;
@@ -34,6 +35,10 @@ pub use self::{
     lua::{Lua, Root},
     opcode::OpCode,
     parser::{parse_chunk, ParserError},
+    registry::{
+        Registry, StaticCallback, StaticClosure, StaticFunction, StaticString, StaticTable,
+        StaticThread, StaticUserData, StaticValue,
+    },
     sequence::{Sequence, SequenceExt, TrySequenceExt},
     string::{String, StringError},
     table::{InvalidTableKey, Table, TableEntries, TableState},

@@ -182,7 +182,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::Test { value, is_true } => {
                 let value = registers.stack_frame[value.0 as usize];
-                if raw_ops::to_bool(value) == is_true {
+                if value.to_bool() == is_true {
                     *registers.pc += 1;
                 }
             }
@@ -193,7 +193,7 @@ pub(crate) fn run_vm<'gc>(
                 is_true,
             } => {
                 let value = registers.stack_frame[value.0 as usize];
-                if raw_ops::to_bool(value) == is_true {
+                if value.to_bool() == is_true {
                     *registers.pc += 1;
                 } else {
                     registers.stack_frame[dest.0 as usize] = value;
@@ -252,11 +252,9 @@ pub(crate) fn run_vm<'gc>(
                         }
                     }
                     (index, limit, step) => {
-                        if let (Some(index), Some(limit), Some(step)) = (
-                            raw_ops::to_number(index),
-                            raw_ops::to_number(limit),
-                            raw_ops::to_number(step),
-                        ) {
+                        if let (Some(index), Some(limit), Some(step)) =
+                            (index.to_number(), limit.to_number(), step.to_number())
+                        {
                             let index = index + step;
                             registers.stack_frame[base.0 as usize] = Value::Number(index);
 
@@ -287,7 +285,7 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::GenericForLoop { base, jump } => {
-                if raw_ops::to_bool(registers.stack_frame[base.0 as usize + 1]) {
+                if registers.stack_frame[base.0 as usize + 1].to_bool() {
                     registers.stack_frame[base.0 as usize] =
                         registers.stack_frame[base.0 as usize + 1];
                     *registers.pc = add_offset(*registers.pc, jump);
@@ -503,7 +501,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::Not { dest, source } => {
                 let source = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] = raw_ops::not(source);
+                registers.stack_frame[dest.0 as usize] = source.not();
             }
 
             OpCode::Minus { dest, source } => {
