@@ -5,7 +5,7 @@ use std::{
 
 use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
 
-use crate::{Error, Function, Sequence, SequenceExt, Thread, Value};
+use crate::{Error, Function, Sequence, SequenceExt, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -25,12 +25,7 @@ pub enum CallbackSequence<'gc> {
 }
 
 pub trait CallbackFn<'gc>: Collect {
-    fn call(
-        &self,
-        mc: MutationContext<'gc, '_>,
-        calling_thread: Thread<'gc>,
-        args: Vec<Value<'gc>>,
-    ) -> CallbackSequence<'gc>;
+    fn call(&self, mc: MutationContext<'gc, '_>, args: Vec<Value<'gc>>) -> CallbackSequence<'gc>;
 }
 
 #[derive(Clone, Copy, Collect)]
@@ -40,17 +35,15 @@ pub struct Callback<'gc>(pub Gc<'gc, Box<dyn CallbackFn<'gc> + 'gc>>);
 impl<'gc> Callback<'gc> {
     pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
-        F: 'static
-            + Fn(MutationContext<'gc, '_>, Thread<'gc>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
+        F: 'static + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
     {
-        Self::new_with(mc, (), move |_, mc, thread, args| f(mc, thread, args))
+        Self::new_with(mc, (), move |_, mc, args| f(mc, args))
     }
 
     pub fn new_with<C, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
     where
         C: 'gc + Collect,
-        F: 'static
-            + Fn(&C, MutationContext<'gc, '_>, Thread<'gc>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
+        F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
     {
         #[derive(Collect)]
         #[collect(no_drop, bound = "where C: Collect, F: 'static")]
@@ -59,21 +52,14 @@ impl<'gc> Callback<'gc> {
         impl<'gc, C, F> CallbackFn<'gc> for ContextCallbackFn<C, F>
         where
             C: 'gc + Collect,
-            F: 'static
-                + Fn(
-                    &C,
-                    MutationContext<'gc, '_>,
-                    Thread<'gc>,
-                    Vec<Value<'gc>>,
-                ) -> CallbackSequence<'gc>,
+            F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
         {
             fn call(
                 &self,
                 mc: MutationContext<'gc, '_>,
-                calling_thread: Thread<'gc>,
                 args: Vec<Value<'gc>>,
             ) -> CallbackSequence<'gc> {
-                (self.1).0(&self.0, mc, calling_thread, args)
+                (self.1).0(&self.0, mc, args)
             }
         }
 
@@ -86,15 +72,9 @@ impl<'gc> Callback<'gc> {
     pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
         F: 'static
-            + Fn(
-                MutationContext<'gc, '_>,
-                Thread<'gc>,
-                Vec<Value<'gc>>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
-        Self::new(mc, move |mc, thread, res| {
-            CallbackSequence::Immediate(f(mc, thread, res))
-        })
+        Self::new(mc, move |mc, res| CallbackSequence::Immediate(f(mc, res)))
     }
 
     pub fn new_immediate_with<C, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
@@ -104,46 +84,40 @@ impl<'gc> Callback<'gc> {
             + Fn(
                 &C,
                 MutationContext<'gc, '_>,
-                Thread<'gc>,
                 Vec<Value<'gc>>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
-        Self::new_with(mc, c, move |c, mc, thread, res| {
-            CallbackSequence::Immediate(f(c, mc, thread, res))
+        Self::new_with(mc, c, move |c, mc, res| {
+            CallbackSequence::Immediate(f(c, mc, res))
         })
     }
 
     pub fn new_sequence<S, F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
     where
         S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static
-            + Fn(MutationContext<'gc, '_>, Thread<'gc>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
+        F: 'static + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
     {
-        Self::new_sequence_with(mc, (), move |(), mc, thread, res| f(mc, thread, res))
+        Self::new_sequence_with(mc, (), move |(), mc, res| f(mc, res))
     }
 
     pub fn new_sequence_with<C, S, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
     where
         C: 'gc + Collect,
         S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static
-            + Fn(&C, MutationContext<'gc, '_>, Thread<'gc>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
+        F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
     {
-        Self::new_with(mc, c, move |c, mc, thread, res| {
-            match f(c, mc, thread, res) {
-                Ok(seq) => CallbackSequence::Sequence(seq.boxed()),
-                Err(err) => CallbackSequence::Immediate(Err(err)),
-            }
+        Self::new_with(mc, c, move |c, mc, res| match f(c, mc, res) {
+            Ok(seq) => CallbackSequence::Sequence(seq.boxed()),
+            Err(err) => CallbackSequence::Immediate(Err(err)),
         })
     }
 
     pub fn call(
         &self,
         mc: MutationContext<'gc, '_>,
-        current_thread: Thread<'gc>,
         args: Vec<Value<'gc>>,
     ) -> CallbackSequence<'gc> {
-        self.0.call(mc, current_thread, args)
+        self.0.call(mc, args)
     }
 }
 

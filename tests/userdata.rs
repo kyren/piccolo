@@ -16,7 +16,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
         let userdata =
             UserData::new::<Rootable![MyUserData<'gc>]>(mc, MyUserData(GcCell::allocate(mc, 17)));
         root.globals.set(mc, "userdata", userdata)?;
-        let callback = Callback::new_immediate(mc, |mc, _, args| {
+        let callback = Callback::new_immediate(mc, |mc, args| {
             match args[0] {
                 Value::UserData(ud) => {
                     let ud = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();

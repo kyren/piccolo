@@ -30,7 +30,7 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
 
     match metatable.get(MetaMethod::Call.name()) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            Callback::new_immediate_with(mc, (v, f), |&(v, f), mc, _, mut args| {
+            Callback::new_immediate_with(mc, (v, f), |&(v, f), mc, mut args| {
                 args.insert(0, v);
                 Ok(CallbackReturn::TailCall {
                     function: call(mc, f)?,

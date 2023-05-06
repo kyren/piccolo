@@ -9,7 +9,7 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
         .set(
             mc,
             "len",
-            Callback::new_immediate(mc, |mc, _, args| {
+            Callback::new_immediate(mc, |mc, args| {
                 match args.get(0).copied().unwrap_or(Value::Nil).to_string(mc) {
                     Some(s) => Ok(CallbackReturn::Return(vec![Value::Integer(s.len())])),
                     None => Err(RuntimeError("Bad argument to len".into()).into()),

@@ -12,7 +12,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "create",
-            Callback::new_immediate(mc, |mc, _, args| {
+            Callback::new_immediate(mc, |mc, args| {
                 let function = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Function(function) => function,
                     value => {
@@ -35,7 +35,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "resume",
-            Callback::new_sequence(mc, |mc, _, mut args| {
+            Callback::new_sequence(mc, |mc, mut args| {
                 let thread = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
@@ -72,7 +72,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "status",
-            Callback::new_immediate(mc, |_, current_thread, args| {
+            Callback::new_immediate(mc, |_, args| {
                 let thread = match args.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
@@ -89,13 +89,8 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     // not the active thread matches will determine 'normal' from 'running'.
                     Value::from(match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Results => "dead",
-                        ThreadMode::Running => {
-                            if thread == current_thread {
-                                "running"
-                            } else {
-                                "normal"
-                            }
-                        }
+                        ThreadMode::Running => "running",
+                        ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",
                     }),
                 ]))
@@ -107,7 +102,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "yield",
-            Callback::new_immediate(mc, |_, _, args| Ok(CallbackReturn::Yield(args))),
+            Callback::new_immediate(mc, |_, args| Ok(CallbackReturn::Yield(args))),
         )
         .unwrap();
 

@@ -8,7 +8,7 @@ fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |_, _, args| {
+        let callback = Callback::new_immediate(mc, |_, args| {
             let mut ret = args;
             ret.push(Value::Integer(42));
             Ok(CallbackReturn::Return(ret))
@@ -46,7 +46,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |_, _, args| {
+        let callback = Callback::new_immediate(mc, |_, args| {
             let mut ret = args.to_vec();
             ret.push(Value::Integer(3));
             Ok(CallbackReturn::Return(ret))
@@ -87,9 +87,9 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |mc, _, args| {
+        let callback = Callback::new_immediate(mc, |mc, args| {
             Ok(CallbackReturn::TailCall {
-                function: Callback::new_immediate(mc, |_, _, mut args| {
+                function: Callback::new_immediate(mc, |_, mut args| {
                     args.push(3.into());
                     Ok(CallbackReturn::Yield(args))
                 })
@@ -99,7 +99,7 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
                     let mut args = args?;
                     args.push(4.into());
                     Ok(CallbackReturn::TailCall {
-                        function: Callback::new_immediate(mc, |_, _, args| {
+                        function: Callback::new_immediate(mc, |_, args| {
                             Ok(CallbackReturn::Return(args))
                         })
                         .into(),
@@ -108,7 +108,7 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
                             let mut args = args?;
                             args.push(5.into());
                             Ok(CallbackReturn::TailCall {
-                                function: Callback::new_immediate(mc, |_, _, mut args| {
+                                function: Callback::new_immediate(mc, |_, mut args| {
                                     args.push(6.into());
                                     Ok(CallbackReturn::Return(args))
                                 })

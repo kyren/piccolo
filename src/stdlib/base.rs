@@ -8,7 +8,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "print",
-        Callback::new_immediate(mc, |_, _, args| {
+        Callback::new_immediate(mc, |_, args| {
             let mut stdout = io::stdout();
             for i in 0..args.len() {
                 args[i].display(&mut stdout)?;
@@ -26,7 +26,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "error",
-        Callback::new_immediate(mc, |_, _, args| {
+        Callback::new_immediate(mc, |_, args| {
             let err = args.get(0).copied().unwrap_or(Value::Nil);
             Err(RuntimeError(err).into())
         }),
@@ -36,7 +36,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "assert",
-        Callback::new_immediate(mc, |_, _, args| {
+        Callback::new_immediate(mc, |_, args| {
             let v = args.get(0).copied().unwrap_or(Value::Nil);
             let message = args.get(1).copied().unwrap_or("assertion failed!".into());
 
@@ -52,7 +52,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "pcall",
-        Callback::new_immediate(mc, |mc, _, mut args| {
+        Callback::new_immediate(mc, |mc, mut args| {
             let function = meta_ops::call(mc, args.get(0).copied().unwrap_or(Value::Nil))?;
             args.remove(0);
             Ok(CallbackReturn::TailCall {
@@ -77,7 +77,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "type",
-        Callback::new_immediate(mc, |_, _, args| {
+        Callback::new_immediate(mc, |_, args| {
             if args.len() == 0 {
                 return Err(RuntimeError("Missing argument to type".into()).into());
             }
@@ -94,7 +94,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "select",
-        Callback::new_immediate(mc, |_, _, args| {
+        Callback::new_immediate(mc, |_, args| {
             match args.get(0).copied().unwrap_or(Value::Nil).to_integer() {
                 Some(n) if n >= 1 && (n as usize) <= args.len() => Ok(CallbackReturn::Return(
                     args[n as usize..args.len()].to_vec(),
@@ -109,7 +109,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "rawget",
-        Callback::new_immediate(mc, |_, _, args| match (args.get(0), args.get(1)) {
+        Callback::new_immediate(mc, |_, args| match (args.get(0), args.get(1)) {
             (Some(&Value::Table(table)), Some(&key)) => {
                 Ok(CallbackReturn::Return(vec![table.get(key)]))
             }
@@ -121,7 +121,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "rawset",
-        Callback::new_immediate(mc, |mc, _, args| {
+        Callback::new_immediate(mc, |mc, args| {
             match (args.get(0), args.get(1), args.get(2)) {
                 (Some(&Value::Table(table)), Some(&key), Some(&value)) => {
                     table.set(mc, key, value)?;
@@ -136,7 +136,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "getmetatable",
-        Callback::new_immediate(mc, |_, _, args| match args.get(0) {
+        Callback::new_immediate(mc, |_, args| match args.get(0) {
             Some(&Value::Table(table)) => Ok(CallbackReturn::Return(vec![table
                 .metatable()
                 .map(Value::Table)
@@ -149,7 +149,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "setmetatable",
-        Callback::new_immediate(mc, |mc, _, args| match (args.get(0), args.get(1)) {
+        Callback::new_immediate(mc, |mc, args| match (args.get(0), args.get(1)) {
             (Some(&Value::Table(table)), Some(&Value::Table(metatable))) => {
                 table.set_metatable(mc, Some(metatable));
                 Ok(CallbackReturn::Return(vec![table.into()]))

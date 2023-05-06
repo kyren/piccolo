@@ -79,7 +79,7 @@ impl Lua {
 
         loop {
             if self.run(|mc, root| match root.main_thread.mode() {
-                ThreadMode::Running => {
+                ThreadMode::Normal => {
                     root.main_thread.step(mc).unwrap();
                     false
                 }

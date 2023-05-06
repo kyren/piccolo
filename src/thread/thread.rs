@@ -7,7 +7,7 @@ use std::{
 use gc_arena::{Collect, GcCell, MutationContext};
 
 use crate::{
-    meta_ops, thread::run_vm, BadThreadMode, CallbackReturn, CallbackSequence, Closure,
+    meta_ops, thread::run_vm, BadThreadMode, Callback, CallbackReturn, CallbackSequence, Closure,
     Continuation, Error, Function, RegisterIndex, Sequence, ThreadError, UpValue, UpValueState,
     Value, VarCount,
 };
@@ -43,6 +43,8 @@ pub enum ThreadMode {
     // Thread has available results
     Results,
     // Thread has an active Lua frame or is waiting on the results of a callback or continuation.
+    Normal,
+    // Thread is currently inside its own `Thread::step` function.
     Running,
     // Thread has yielded and is waiting on being resumed
     Suspended,
@@ -95,7 +97,7 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
     fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self.0.mode() {
             ThreadMode::Results => self.0.take_results(mc),
-            ThreadMode::Running => {
+            ThreadMode::Normal => {
                 self.0.step(mc).unwrap();
                 None
             }
@@ -124,7 +126,28 @@ impl<'gc> Thread<'gc> {
 
     pub fn mode(self) -> ThreadMode {
         if let Ok(state) = self.0.try_read() {
-            get_mode(&state)
+            if state.result.is_some() {
+                ThreadMode::Results
+            } else {
+                match state.frames.last() {
+                    None => {
+                        assert!(
+                            state.values.is_empty()
+                                && state.open_upvalues.is_empty()
+                                && state.result.is_none(),
+                        );
+                        ThreadMode::Stopped
+                    }
+                    Some(frame) => match frame {
+                        Frame::Lua { .. }
+                        | Frame::Callback { .. }
+                        | Frame::Continuation { .. }
+                        | Frame::Sequence(_) => ThreadMode::Normal,
+                        Frame::Running => ThreadMode::Running,
+                        Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+                    },
+                }
+            }
         } else {
             ThreadMode::Running
         }
@@ -137,9 +160,9 @@ impl<'gc> Thread<'gc> {
         function: Function<'gc>,
         args: &[Value<'gc>],
     ) -> Result<(), BadThreadMode> {
+        self.check_mode(ThreadMode::Stopped)?;
         let mut state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Stopped)?;
-        ext_call_function(self, &mut state, mc, function, args);
+        ext_call_function(&mut state, function, args);
         Ok(())
     }
 
@@ -149,8 +172,8 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
+        self.check_mode(ThreadMode::Stopped)?;
         let mut state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Stopped)?;
         state.frames.push(Frame::StartCoroutine(function));
         Ok(())
     }
@@ -160,7 +183,11 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
     ) -> Option<Result<Vec<Value<'gc>>, Error<'gc>>> {
-        self.0.write(mc).result.take()
+        if let Ok(mut write) = self.0.try_write(mc) {
+            write.result.take()
+        } else {
+            None
+        }
     }
 
     /// If the thread is in `Suspended` mode, resume it.
@@ -169,8 +196,8 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         args: &[Value<'gc>],
     ) -> Result<(), BadThreadMode> {
+        self.check_mode(ThreadMode::Suspended)?;
         let mut state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Suspended)?;
         match state.frames.pop() {
             Some(Frame::StartCoroutine(function)) => {
                 state.frames.pop();
@@ -180,16 +207,12 @@ impl<'gc> Thread<'gc> {
                         && state.frames.is_empty()
                         && state.result.is_none()
                 );
-                ext_call_function(self, &mut state, mc, function, args);
+                ext_call_function(&mut state, function, args);
             }
             Some(Frame::ResumeCoroutine) => match state.frames.last_mut() {
-                Some(Frame::Continuation { .. }) => match state.frames.pop() {
-                    Some(Frame::Continuation { continuation, .. }) => {
-                        let seq = continuation.call(mc, Ok(args.to_vec()));
-                        callback_seq(self, &mut state, mc, seq);
-                    }
-                    _ => unreachable!(),
-                },
+                Some(Frame::Continuation { result, .. }) => {
+                    *result = Some(Ok(args.to_vec()));
+                }
                 Some(Frame::Lua { .. }) => {
                     return_to_lua(&mut state, args);
                 }
@@ -203,33 +226,82 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    /// If the thread is in `Running` mode, either run the Lua VM for a while or step any callback
+    /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
     pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
+        self.check_mode(ThreadMode::Normal)?;
         let mut state = self.0.write(mc);
-        check_mode(&state, ThreadMode::Running)?;
-        match state.frames.last_mut() {
-            Some(Frame::Callback(sequence)) => {
-                let mut sequence = sequence.take().expect("pending callback missing");
+        match state.frames.last_mut().expect("no frame to step") {
+            Frame::Callback { .. } => {
+                let (callback, args) = match state.frames.pop() {
+                    Some(Frame::Callback { callback, args }) => (callback, args),
+                    _ => unreachable!(),
+                };
+                state.frames.push(Frame::Running);
+
                 drop(state);
-                match sequence.step(mc) {
-                    None => {
-                        let mut state = self.0.write(mc);
-                        match state.frames.last_mut() {
-                            Some(Frame::Callback(empty_sequence)) => {
-                                *empty_sequence = Some(sequence);
-                            }
-                            _ => panic!("thread left callback state without finishing callback"),
-                        }
-                    }
-                    Some(res) => {
-                        let mut state = self.0.write(mc);
-                        state.frames.pop();
-                        return_ext(self, &mut state, mc, res);
-                    }
+                let seq = callback.call(mc, args);
+                let mut state = self.0.write(mc);
+
+                assert!(
+                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    "thread state has changed while callback was run"
+                );
+
+                match seq {
+                    CallbackSequence::Immediate(ret) => return_ext(self, &mut state, mc, ret),
+                    CallbackSequence::Sequence(seq) => state.frames.push(Frame::Sequence(seq)),
                 }
             }
-            Some(Frame::Lua { .. }) => {
+            Frame::Continuation { .. } => {
+                let (continuation, result) = match state.frames.pop() {
+                    Some(Frame::Continuation {
+                        continuation,
+                        result,
+                        ..
+                    }) => (continuation, result),
+                    _ => unreachable!(),
+                };
+                state.frames.push(Frame::Running);
+
+                let result = result.expect("top frame is continuation but result is unset");
+
+                drop(state);
+                let seq = continuation.call(mc, result);
+                let mut state = self.0.write(mc);
+
+                assert!(
+                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    "thread state has changed while callback was run"
+                );
+
+                match seq {
+                    CallbackSequence::Immediate(ret) => return_ext(self, &mut state, mc, ret),
+                    CallbackSequence::Sequence(seq) => state.frames.push(Frame::Sequence(seq)),
+                }
+            }
+            Frame::Sequence(_) => {
+                let mut sequence = match state.frames.pop() {
+                    Some(Frame::Sequence(seq)) => seq,
+                    _ => unreachable!(),
+                };
+                state.frames.push(Frame::Running);
+
+                drop(state);
+                let fin = sequence.step(mc);
+                let mut state = self.0.write(mc);
+
+                assert!(
+                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    "thread state has changed while callback was run"
+                );
+
+                match fin {
+                    None => state.frames.push(Frame::Sequence(sequence)),
+                    Some(res) => return_ext(self, &mut state, mc, res),
+                }
+            }
+            Frame::Lua { .. } => {
                 const VM_GRANULARITY: u32 = 256;
                 let mut instructions = VM_GRANULARITY;
 
@@ -256,10 +328,22 @@ impl<'gc> Thread<'gc> {
                     }
                 }
             }
-            _ => panic!("no callback or lua frame"),
+            _ => panic!("tried to step invalid frame type"),
         }
 
         Ok(())
+    }
+
+    fn check_mode(&self, expected: ThreadMode) -> Result<(), BadThreadMode> {
+        let found = self.mode();
+        if found != expected {
+            Err(BadThreadMode {
+                expected: Some(expected),
+                found,
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -337,7 +421,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Call the function at the given register with the given arguments. On return, results will be
     // placed starting at the function register.
     pub(crate) fn call_function(
-        mut self,
+        self,
         mc: MutationContext<'gc, '_>,
         func: RegisterIndex,
         args: VarCount,
@@ -388,14 +472,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Ok(Function::Callback(callback)) => {
-                        let seq = callback.call(
-                            mc,
-                            self.thread,
-                            self.state.values[function_index + 1..function_index + 1 + arg_count]
+                        self.state.frames.push(Frame::Callback {
+                            callback,
+                            args: self.state.values
+                                [function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
-                        );
+                        });
                         self.state.values.resize(function_index, Value::Nil);
-                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     Err(err) => Err(ThreadError::BadCall(err)),
@@ -409,7 +492,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // invalidating the function or its arguments. Returns are placed *after* the function and its
     // aruments, and all registers past this are invalidated as normal.
     pub(crate) fn call_function_non_destructive(
-        mut self,
+        self,
         mc: MutationContext<'gc, '_>,
         func: RegisterIndex,
         arg_count: u8,
@@ -464,14 +547,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Ok(Function::Callback(callback)) => {
-                        let seq = callback.call(
-                            mc,
-                            self.thread,
-                            self.state.values[function_index + 1..function_index + 1 + arg_count]
+                        self.state.frames.push(Frame::Callback {
+                            callback,
+                            args: self.state.values
+                                [function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
-                        );
+                        });
                         self.state.values.resize(function_index, Value::Nil);
-                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     Err(err) => Err(ThreadError::BadCall(err)),
@@ -484,7 +566,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Tail-call the function at the given register with the given arguments. Pops the current Lua
     // frame, pushing a new frame for the given function.
     pub(crate) fn tail_call_function(
-        mut self,
+        self,
         mc: MutationContext<'gc, '_>,
         func: RegisterIndex,
         args: VarCount,
@@ -540,14 +622,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         Ok(())
                     }
                     Ok(Function::Callback(callback)) => {
-                        let seq = callback.call(
-                            mc,
-                            self.thread,
-                            self.state.values[function_index + 1..function_index + 1 + arg_count]
+                        self.state.frames.push(Frame::Callback {
+                            callback,
+                            args: self.state.values
+                                [function_index + 1..function_index + 1 + arg_count]
                                 .to_vec(),
-                        );
+                        });
                         self.state.values.truncate(bottom);
-                        callback_seq(self.thread, &mut self.state, mc, seq);
                         Ok(())
                     }
                     Err(err) => Err(ThreadError::BadCall(err)),
@@ -559,7 +640,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     // Return to the upper frame with results starting at the given register index.
     pub(crate) fn return_upper(
-        mut self,
+        self,
         mc: MutationContext<'gc, '_>,
         start: RegisterIndex,
         count: VarCount,
@@ -583,15 +664,11 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .unwrap_or(self.state.values.len() - start);
 
                 match self.state.frames.last_mut() {
-                    Some(Frame::Continuation { .. }) => match self.state.frames.pop() {
-                        Some(Frame::Continuation { continuation, .. }) => {
-                            let ret_vals = self.state.values[start..start + count].to_vec();
-                            self.state.values.truncate(bottom);
-                            let seq = continuation.call(mc, Ok(ret_vals));
-                            callback_seq(self.thread, &mut self.state, mc, seq);
-                        }
-                        _ => unreachable!(),
-                    },
+                    Some(Frame::Continuation { result, .. }) => {
+                        let ret_vals = self.state.values[start..start + count].to_vec();
+                        self.state.values.truncate(bottom);
+                        *result = Some(Ok(ret_vals));
+                    }
                     Some(Frame::Lua {
                         expected_returns,
                         is_variable,
@@ -722,56 +799,23 @@ enum Frame<'gc> {
         stack_size: usize,
         expected_returns: Option<VarCount>,
     },
+    StartCoroutine(Function<'gc>),
+    ResumeCoroutine,
+    Callback {
+        callback: Callback<'gc>,
+        args: Vec<Value<'gc>>,
+    },
     Continuation {
         bottom: usize,
         continuation: Continuation<'gc>,
+        result: Option<Result<Vec<Value<'gc>>, Error<'gc>>>,
     },
-    StartCoroutine(Function<'gc>),
-    ResumeCoroutine,
-    Callback(
-        Option<Box<dyn Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>> + 'gc>>,
-    ),
-}
-
-fn get_mode<'gc>(state: &ThreadState<'gc>) -> ThreadMode {
-    if state.result.is_some() {
-        ThreadMode::Results
-    } else {
-        match state.frames.last() {
-            None => {
-                assert!(
-                    state.values.is_empty()
-                        && state.open_upvalues.is_empty()
-                        && state.result.is_none(),
-                );
-                ThreadMode::Stopped
-            }
-            Some(frame) => match frame {
-                Frame::Callback(_) | Frame::Continuation { .. } | Frame::Lua { .. } => {
-                    ThreadMode::Running
-                }
-                Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
-            },
-        }
-    }
-}
-
-fn check_mode<'gc>(state: &ThreadState<'gc>, expected: ThreadMode) -> Result<(), BadThreadMode> {
-    let found = get_mode(state);
-    if found != expected {
-        Err(BadThreadMode {
-            expected: Some(expected),
-            found,
-        })
-    } else {
-        Ok(())
-    }
+    Sequence(Box<dyn Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>> + 'gc>),
+    Running,
 }
 
 fn ext_call_function<'gc>(
-    thread: Thread<'gc>,
     state: &mut ThreadState<'gc>,
-    mc: MutationContext<'gc, '_>,
     function: Function<'gc>,
     args: &[Value<'gc>],
 ) {
@@ -808,8 +852,10 @@ fn ext_call_function<'gc>(
             });
         }
         Function::Callback(callback) => {
-            let seq = callback.call(mc, thread, args.to_vec());
-            callback_seq(thread, state, mc, seq);
+            state.frames.push(Frame::Callback {
+                callback,
+                args: args.to_vec(),
+            });
         }
     }
 }
@@ -848,26 +894,25 @@ fn return_to_lua<'gc>(state: &mut ThreadState<'gc>, rets: &[Value<'gc>]) {
     };
 }
 
-// TODO: `unwind`, `return_ext`, and `callback_seq` have to be merged somehow, because otherwise
-// they are a stack overflow risk in pathalogical cases.
-
 fn unwind<'gc>(
     thread: Thread<'gc>,
     state: &mut ThreadState<'gc>,
     mc: MutationContext<'gc, '_>,
     error: Error<'gc>,
 ) {
-    while let Some(top_frame) = state.frames.pop() {
-        if let Frame::Continuation {
-            continuation,
+    while let Some(frame) = state.frames.last_mut() {
+        if let &mut Frame::Continuation {
             bottom,
-        } = top_frame
+            ref mut result,
+            ..
+        } = frame
         {
+            *result = Some(Err(error));
             close_upvalues(thread, state, mc, bottom);
             state.values.truncate(bottom);
-            let seq = continuation.call(mc, Err(error));
-            callback_seq(thread, state, mc, seq);
             return;
+        } else {
+            state.frames.pop();
         }
     }
     close_upvalues(thread, state, mc, 0);
@@ -894,13 +939,9 @@ fn return_ext<'gc>(
             }
         }
         Ok(CallbackReturn::Return(res)) => match state.frames.last_mut() {
-            Some(Frame::Continuation { .. }) => match state.frames.pop() {
-                Some(Frame::Continuation { continuation, .. }) => {
-                    let seq = continuation.call(mc, Ok(res));
-                    callback_seq(thread, state, mc, seq);
-                }
-                _ => unreachable!(),
-            },
+            Some(Frame::Continuation { result, .. }) => {
+                *result = Some(Ok(res));
+            }
             Some(Frame::Lua { .. }) => {
                 return_to_lua(state, &res);
             }
@@ -919,25 +960,10 @@ fn return_ext<'gc>(
                 state.frames.push(Frame::Continuation {
                     continuation,
                     bottom,
+                    result: None,
                 });
             }
-            ext_call_function(thread, state, mc, function, &args);
-        }
-    }
-}
-
-fn callback_seq<'gc>(
-    thread: Thread<'gc>,
-    state: &mut ThreadState<'gc>,
-    mc: MutationContext<'gc, '_>,
-    seq: CallbackSequence<'gc>,
-) {
-    match seq {
-        CallbackSequence::Immediate(ret) => {
-            return_ext(thread, state, mc, ret);
-        }
-        CallbackSequence::Sequence(seq) => {
-            state.frames.push(Frame::Callback(Some(seq)));
+            ext_call_function(state, function, &args);
         }
     }
 }
