@@ -21,8 +21,8 @@ Project Goals:
 
 Since the focus here is so much on resiliency and safety, `deimos` is written in
 (almost) entirely *safe* Rust. This is a *slight* copout as much of the unsafe
-code that normally is involved in a language runtime actually lives in `gc-
-arena`, but since we have a safe garbage collection abstraction, (almost) the
+code that normally is involved in a language runtime actually lives in `gc-arena`,
+but since we have a safe garbage collection abstraction, (almost) the
 entire VM can be written in safe code.
 
 *(`deimos` makes no attempt yet to guard against side channel attacks like
