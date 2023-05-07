@@ -87,6 +87,9 @@ impl<'gc> ThreadState<'gc> {
                     | Frame::Sequence(_) => ThreadMode::Normal,
                     Frame::Running => ThreadMode::Running,
                     Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+                    Frame::PendingContinuation(_) => {
+                        panic!("pending continuation cannot be top frame")
+                    }
                 },
             }
         }
@@ -201,8 +204,8 @@ impl<'gc> Thread<'gc> {
         args: &[Value<'gc>],
     ) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
-        match state.frames.pop() {
-            Some(Frame::StartCoroutine(function)) => {
+        match state.frames.pop().expect("no frame to resume") {
+            Frame::StartCoroutine(function) => {
                 assert!(
                     state.values.is_empty()
                         && state.open_upvalues.is_empty()
@@ -211,11 +214,15 @@ impl<'gc> Thread<'gc> {
                 );
                 ext_call_function(&mut state, function, args);
             }
-            Some(Frame::ResumeCoroutine) => match state.frames.last_mut() {
-                Some(Frame::Continuation { result, .. }) => {
-                    *result = Some(Ok(args.to_vec()));
+            Frame::ResumeCoroutine => match state.frames.pop() {
+                Some(Frame::PendingContinuation(continuation)) => {
+                    state.frames.push(Frame::Continuation {
+                        continuation,
+                        args: Ok(args.to_vec()),
+                    })
                 }
-                Some(Frame::Lua { .. }) => {
+                Some(frame @ Frame::Lua { .. }) => {
+                    state.frames.push(frame);
                     return_to_lua(&mut state, args);
                 }
                 None => {
@@ -223,7 +230,7 @@ impl<'gc> Thread<'gc> {
                 }
                 _ => panic!("resume coroutine frame must be above a continuation or lua frame"),
             },
-            _ => panic!("no suspended coroutine frame"),
+            _ => panic!("top frame not a suspended coroutine"),
         }
         Ok(())
     }
@@ -232,12 +239,8 @@ impl<'gc> Thread<'gc> {
     /// that we are waiting on.
     pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Normal)?;
-        match state.frames.last_mut().expect("no frame to step") {
-            Frame::Callback { .. } => {
-                let (callback, args) = match state.frames.pop() {
-                    Some(Frame::Callback { callback, args }) => (callback, args),
-                    _ => unreachable!(),
-                };
+        match state.frames.pop().expect("no frame to step") {
+            Frame::Callback { callback, args } => {
                 state.frames.push(Frame::Running);
 
                 drop(state);
@@ -254,21 +257,11 @@ impl<'gc> Thread<'gc> {
                     CallbackSequence::Sequence(seq) => state.frames.push(Frame::Sequence(seq)),
                 }
             }
-            Frame::Continuation { .. } => {
-                let (continuation, result) = match state.frames.pop() {
-                    Some(Frame::Continuation {
-                        continuation,
-                        result,
-                        ..
-                    }) => (continuation, result),
-                    _ => unreachable!(),
-                };
+            Frame::Continuation { continuation, args } => {
                 state.frames.push(Frame::Running);
 
-                let result = result.expect("top frame is continuation but result is unset");
-
                 drop(state);
-                let seq = continuation.call(mc, result);
+                let seq = continuation.call(mc, args);
                 let mut state = self.0.write(mc);
 
                 assert!(
@@ -281,11 +274,7 @@ impl<'gc> Thread<'gc> {
                     CallbackSequence::Sequence(seq) => state.frames.push(Frame::Sequence(seq)),
                 }
             }
-            Frame::Sequence(_) => {
-                let mut sequence = match state.frames.pop() {
-                    Some(Frame::Sequence(seq)) => seq,
-                    _ => unreachable!(),
-                };
+            Frame::Sequence(mut sequence) => {
                 state.frames.push(Frame::Running);
 
                 drop(state);
@@ -302,7 +291,9 @@ impl<'gc> Thread<'gc> {
                     Some(res) => return_ext(self, &mut state, mc, res),
                 }
             }
-            Frame::Lua { .. } => {
+            frame @ Frame::Lua { .. } => {
+                state.frames.push(frame);
+
                 const VM_GRANULARITY: u32 = 256;
                 let mut instructions = VM_GRANULARITY;
 
@@ -672,10 +663,18 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .unwrap_or(self.state.values.len() - start);
 
                 match self.state.frames.last_mut() {
-                    Some(Frame::Continuation { result, .. }) => {
+                    Some(Frame::PendingContinuation(_)) => {
                         let ret_vals = self.state.values[start..start + count].to_vec();
                         self.state.values.truncate(bottom);
-                        *result = Some(Ok(ret_vals));
+                        match self.state.frames.pop() {
+                            Some(Frame::PendingContinuation(continuation)) => {
+                                self.state.frames.push(Frame::Continuation {
+                                    continuation,
+                                    args: Ok(ret_vals),
+                                });
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                     Some(Frame::Lua {
                         expected_returns,
@@ -813,10 +812,10 @@ enum Frame<'gc> {
         callback: Callback<'gc>,
         args: Vec<Value<'gc>>,
     },
+    PendingContinuation(Continuation<'gc>),
     Continuation {
-        bottom: usize,
         continuation: Continuation<'gc>,
-        result: Option<Result<Vec<Value<'gc>>, Error<'gc>>>,
+        args: Result<Vec<Value<'gc>>, Error<'gc>>,
     },
     Sequence(Box<dyn Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>> + 'gc>),
     Running,
@@ -908,23 +907,23 @@ fn unwind<'gc>(
     mc: MutationContext<'gc, '_>,
     error: Error<'gc>,
 ) {
-    while let Some(frame) = state.frames.last_mut() {
-        if let &mut Frame::Continuation {
-            bottom,
-            ref mut result,
-            ..
-        } = frame
-        {
-            *result = Some(Err(error));
-            close_upvalues(thread, state, mc, bottom);
-            state.values.truncate(bottom);
-            return;
-        } else {
-            state.frames.pop();
+    while let Some(frame) = state.frames.pop() {
+        match frame {
+            Frame::Lua { bottom, .. } => {
+                close_upvalues(thread, state, mc, bottom);
+                state.values.truncate(bottom);
+            }
+            Frame::PendingContinuation(continuation) => {
+                state.frames.push(Frame::Continuation {
+                    continuation,
+                    args: Err(error),
+                });
+                return;
+            }
+            _ => {}
         }
     }
-    close_upvalues(thread, state, mc, 0);
-    state.values.clear();
+    assert!(state.frames.is_empty() && state.values.is_empty() && state.open_upvalues.is_empty());
     state.returned = Some(Err(error));
 }
 
@@ -946,11 +945,15 @@ fn return_ext<'gc>(
                 unwind(thread, state, mc, ThreadError::BadYield.into());
             }
         }
-        Ok(CallbackReturn::Return(res)) => match state.frames.last_mut() {
-            Some(Frame::Continuation { result, .. }) => {
-                *result = Some(Ok(res));
+        Ok(CallbackReturn::Return(res)) => match state.frames.pop() {
+            Some(Frame::PendingContinuation(continuation)) => {
+                state.frames.push(Frame::Continuation {
+                    continuation,
+                    args: Ok(res),
+                });
             }
-            Some(Frame::Lua { .. }) => {
+            Some(frame @ Frame::Lua { .. }) => {
+                state.frames.push(frame);
                 return_to_lua(state, &res);
             }
             None => {
@@ -963,13 +966,8 @@ fn return_ext<'gc>(
             args,
             continuation,
         }) => {
-            let bottom = state.values.len();
             if let Some(continuation) = continuation {
-                state.frames.push(Frame::Continuation {
-                    continuation,
-                    bottom,
-                    result: None,
-                });
+                state.frames.push(Frame::PendingContinuation(continuation));
             }
             ext_call_function(state, function, &args);
         }
