@@ -9,11 +9,11 @@ use deimos::{compile, io, Closure, Error, Function, Lua, ParserError, StaticErro
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     let function = lua.try_run(|mc, root| {
-        let result = compile(mc, code.as_bytes());
+        let result = compile(mc, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
             err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => err,
-            Err(_) => compile(mc, (String::new() + "return " + code).as_bytes()),
+            Err(_) => compile(mc, code.as_bytes()),
         };
         let closure = Closure::new(mc, result?, Some(root.globals))?;
 

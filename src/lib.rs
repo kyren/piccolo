@@ -12,7 +12,6 @@ mod opcode;
 pub mod parser;
 pub mod raw_ops;
 mod registry;
-pub mod sequence;
 mod stdlib;
 mod string;
 mod table;
@@ -23,7 +22,10 @@ mod value;
 
 pub use self::{
     any::AnyCell,
-    callback::{Callback, CallbackReturn, CallbackSequence, Continuation},
+    callback::{
+        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackResult,
+        CallbackReturn, Continuation, Sequence,
+    },
     closure::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
         UpValueState,
@@ -39,10 +41,9 @@ pub use self::{
         Registry, StaticCallback, StaticClosure, StaticFunction, StaticString, StaticTable,
         StaticThread, StaticUserData, StaticValue,
     },
-    sequence::{Sequence, SequenceExt, TrySequenceExt},
     string::{String, StringError},
     table::{InvalidTableKey, Table, TableEntries, TableState},
-    thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode, ThreadSequence},
+    thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode},
     types::{
         ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
         VarCount,

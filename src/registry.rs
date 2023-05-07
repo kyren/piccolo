@@ -2,7 +2,7 @@ use std::fmt;
 
 use gc_arena::{Collect, DynamicRoot, DynamicRootSet, MutationContext, Rootable};
 
-use crate::{Callback, Closure, Function, String, Table, Thread, UserData, Value};
+use crate::{AnyCallback, Closure, Function, String, Table, Thread, UserData, Value};
 
 #[derive(Clone)]
 pub struct StaticTable(pub DynamicRoot<Rootable![Table<'gc>]>);
@@ -39,7 +39,7 @@ impl PartialEq for StaticClosure {
 }
 
 #[derive(Clone)]
-pub struct StaticCallback(pub DynamicRoot<Rootable![Callback<'gc>]>);
+pub struct StaticCallback(pub DynamicRoot<Rootable![AnyCallback<'gc>]>);
 
 impl fmt::Debug for StaticCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -309,7 +309,7 @@ macro_rules! reg_type {
 
 reg_type!(Table, StaticTable);
 reg_type!(Closure, StaticClosure);
-reg_type!(Callback, StaticCallback);
+reg_type!(AnyCallback, StaticCallback);
 reg_type!(Thread, StaticThread);
 reg_type!(UserData, StaticUserData);
 
@@ -327,7 +327,7 @@ macro_rules! fetch_type {
 
 fetch_type!(StaticTable, Table);
 fetch_type!(StaticClosure, Closure);
-fetch_type!(StaticCallback, Callback);
+fetch_type!(StaticCallback, AnyCallback);
 fetch_type!(StaticThread, Thread);
 fetch_type!(StaticUserData, UserData);
 

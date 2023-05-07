@@ -4,14 +4,14 @@ use gc_arena::{Collect, Gc, MutationContext};
 
 use crate::{
     lexer::{read_float, read_hex_float},
-    Callback, Closure, String, Table, Thread, UserData,
+    AnyCallback, Closure, String, Table, Thread, UserData,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
 pub enum Function<'gc> {
     Closure(Closure<'gc>),
-    Callback(Callback<'gc>),
+    Callback(AnyCallback<'gc>),
 }
 
 impl<'gc> From<Closure<'gc>> for Function<'gc> {
@@ -20,8 +20,8 @@ impl<'gc> From<Closure<'gc>> for Function<'gc> {
     }
 }
 
-impl<'gc> From<Callback<'gc>> for Function<'gc> {
-    fn from(callback: Callback<'gc>) -> Self {
+impl<'gc> From<AnyCallback<'gc>> for Function<'gc> {
+    fn from(callback: AnyCallback<'gc>) -> Self {
         Self::Callback(callback)
     }
 }
@@ -221,9 +221,15 @@ impl<'gc> From<Closure<'gc>> for Value<'gc> {
     }
 }
 
-impl<'gc> From<Callback<'gc>> for Value<'gc> {
-    fn from(v: Callback<'gc>) -> Value<'gc> {
+impl<'gc> From<AnyCallback<'gc>> for Value<'gc> {
+    fn from(v: AnyCallback<'gc>) -> Value<'gc> {
         Value::Function(Function::Callback(v))
+    }
+}
+
+impl<'gc> From<Thread<'gc>> for Value<'gc> {
+    fn from(v: Thread<'gc>) -> Value<'gc> {
+        Value::Thread(v)
     }
 }
 

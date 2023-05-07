@@ -1,5 +1,5 @@
 use deimos::{
-    compile, Callback, CallbackReturn, Closure, Continuation, Function, Lua, StaticError,
+    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Function, Lua, StaticError,
     StaticValue, Value,
 };
 
@@ -8,10 +8,9 @@ fn callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |_, args| {
-            let mut ret = args;
-            ret.push(Value::Integer(42));
-            Ok(CallbackReturn::Return(ret))
+        let callback = AnyCallback::from_fn(mc, |_, stack| {
+            stack.push(Value::Integer(42));
+            Ok(CallbackReturn::Return.into())
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -46,10 +45,9 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |_, args| {
-            let mut ret = args.to_vec();
-            ret.push(Value::Integer(3));
-            Ok(CallbackReturn::Return(ret))
+        let callback = AnyCallback::from_fn(mc, |_, stack| {
+            stack.push(Value::Integer(3));
+            Ok(CallbackReturn::Return.into())
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -87,39 +85,38 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let callback = Callback::new_immediate(mc, |mc, args| {
+        let callback = AnyCallback::from_fn(mc, |mc, _| {
             Ok(CallbackReturn::TailCall {
-                function: Callback::new_immediate(mc, |_, mut args| {
-                    args.push(3.into());
-                    Ok(CallbackReturn::Yield(args))
+                function: AnyCallback::from_fn(mc, |_, stack| {
+                    stack.push(3.into());
+                    Ok(CallbackReturn::Yield.into())
                 })
                 .into(),
-                args,
-                continuation: Some(Continuation::new_immediate(|mc, args| {
-                    let mut args = args?;
-                    args.push(4.into());
+                continuation: Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
+                    stack.push(4.into());
                     Ok(CallbackReturn::TailCall {
-                        function: Callback::new_immediate(mc, |_, args| {
-                            Ok(CallbackReturn::Return(args))
-                        })
+                        function: AnyCallback::from_fn(
+                            mc,
+                            |_, _| Ok(CallbackReturn::Return.into()),
+                        )
                         .into(),
-                        args,
-                        continuation: Some(Continuation::new_immediate(|mc, args| {
-                            let mut args = args?;
-                            args.push(5.into());
+                        continuation: Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
+                            stack.push(5.into());
                             Ok(CallbackReturn::TailCall {
-                                function: Callback::new_immediate(mc, |_, mut args| {
-                                    args.push(6.into());
-                                    Ok(CallbackReturn::Return(args))
+                                function: AnyCallback::from_fn(mc, |_, stack| {
+                                    stack.push(6.into());
+                                    Ok(CallbackReturn::Return.into())
                                 })
                                 .into(),
-                                args,
                                 continuation: None,
-                            })
+                            }
+                            .into())
                         })),
-                    })
+                    }
+                    .into())
                 })),
-            })
+            }
+            .into())
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())

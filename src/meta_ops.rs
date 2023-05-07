@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::{Callback, CallbackReturn, Function, TypeError, Value};
+use crate::{AnyCallback, CallbackReturn, Function, TypeError, Value};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
@@ -29,17 +29,17 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
     })?;
 
     match metatable.get(MetaMethod::Call.name()) {
-        f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            Callback::new_immediate_with(mc, (v, f), |&(v, f), mc, mut args| {
-                args.insert(0, v);
+        f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
+            Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
+                stack.insert(0, v);
                 Ok(CallbackReturn::TailCall {
                     function: call(mc, f)?,
-                    args,
                     continuation: None,
-                })
+                }
+                .into())
             })
-            .into(),
-        ),
+            .into())
+        }
         f => Err(TypeError {
             expected: "function",
             found: f.type_name(),

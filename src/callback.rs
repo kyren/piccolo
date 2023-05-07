@@ -3,125 +3,156 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{Collect, Gc, MutationContext, StaticCollect};
+use gc_arena::{unsize, Collect, Gc, MutationContext};
 
-use crate::{Error, Function, Sequence, SequenceExt, Value};
+use crate::{Error, Function, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
-    Return(Vec<Value<'gc>>),
-    Yield(Vec<Value<'gc>>),
+    Return,
+    Yield,
     TailCall {
         function: Function<'gc>,
-        args: Vec<Value<'gc>>,
-        continuation: Option<Continuation<'gc>>,
+        continuation: Option<AnyContinuation<'gc>>,
     },
 }
 
-pub enum CallbackSequence<'gc> {
-    Immediate(Result<CallbackReturn<'gc>, Error<'gc>>),
-    Sequence(Box<dyn Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>> + 'gc>),
+pub type CallbackResult<'gc> = Result<CallbackReturn<'gc>, Error<'gc>>;
+
+pub trait Sequence<'gc>: Collect {
+    fn step(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>>;
 }
 
-pub trait CallbackFn<'gc>: Collect {
-    fn call(&self, mc: MutationContext<'gc, '_>, args: Vec<Value<'gc>>) -> CallbackSequence<'gc>;
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct AnySequence<'gc>(pub Box<dyn Sequence<'gc> + 'gc>);
+
+impl<'gc, S> From<S> for AnySequence<'gc>
+where
+    S: Sequence<'gc> + 'gc,
+{
+    fn from(v: S) -> Self {
+        Self(Box::new(v))
+    }
+}
+
+impl<'gc> AnySequence<'gc> {
+    pub fn new(sequence: impl Sequence<'gc> + 'gc) -> Self {
+        Self(Box::new(sequence))
+    }
+
+    pub fn step(
+        &mut self,
+        mc: MutationContext<'gc, '_>,
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>> {
+        self.0.step(mc, stack)
+    }
+}
+
+pub enum CallbackMode<'gc> {
+    Immediate(CallbackReturn<'gc>),
+    Sequence(AnySequence<'gc>),
+}
+
+impl<'gc> From<CallbackReturn<'gc>> for CallbackMode<'gc> {
+    fn from(v: CallbackReturn<'gc>) -> Self {
+        Self::Immediate(v)
+    }
+}
+
+impl<'gc> From<AnySequence<'gc>> for CallbackMode<'gc> {
+    fn from(v: AnySequence<'gc>) -> Self {
+        Self::Sequence(v)
+    }
+}
+
+pub trait Callback<'gc>: Collect {
+    fn call(
+        &self,
+        mc: MutationContext<'gc, '_>,
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>>;
 }
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct Callback<'gc>(pub Gc<'gc, Box<dyn CallbackFn<'gc> + 'gc>>);
+pub struct AnyCallback<'gc>(pub Gc<'gc, dyn Callback<'gc>>);
 
-impl<'gc> Callback<'gc> {
-    pub fn new<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
-    where
-        F: 'static + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
-    {
-        Self::new_with(mc, (), move |_, mc, args| f(mc, args))
+impl<'gc> AnyCallback<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>, callback: impl Callback<'gc> + 'gc) -> Self {
+        Self(unsize!(Gc::allocate(mc, callback) => dyn Callback<'gc>))
     }
 
-    pub fn new_with<C, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
-    where
-        C: 'gc + Collect,
-        F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
-    {
-        #[derive(Collect)]
-        #[collect(no_drop, bound = "where C: Collect, F: 'static")]
-        struct ContextCallbackFn<C, F>(C, StaticCollect<F>);
-
-        impl<'gc, C, F> CallbackFn<'gc> for ContextCallbackFn<C, F>
-        where
-            C: 'gc + Collect,
-            F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> CallbackSequence<'gc>,
-        {
-            fn call(
-                &self,
-                mc: MutationContext<'gc, '_>,
-                args: Vec<Value<'gc>>,
-            ) -> CallbackSequence<'gc> {
-                (self.1).0(&self.0, mc, args)
-            }
-        }
-
-        Callback(Gc::allocate(
-            mc,
-            Box::new(ContextCallbackFn(c, StaticCollect(f))),
-        ))
-    }
-
-    pub fn new_immediate<F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
+    pub fn from_fn<F>(mc: MutationContext<'gc, '_>, call: F) -> AnyCallback<'gc>
     where
         F: 'static
-            + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
     {
-        Self::new(mc, move |mc, res| CallbackSequence::Immediate(f(mc, res)))
+        Self::from_fn_with(mc, (), move |_, mc, stack| call(mc, stack))
     }
 
-    pub fn new_immediate_with<C, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
+    pub fn from_fn_with<C, F>(mc: MutationContext<'gc, '_>, context: C, call: F) -> AnyCallback<'gc>
     where
         C: 'gc + Collect,
         F: 'static
             + Fn(
                 &C,
                 MutationContext<'gc, '_>,
-                Vec<Value<'gc>>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
     {
-        Self::new_with(mc, c, move |c, mc, res| {
-            CallbackSequence::Immediate(f(c, mc, res))
-        })
-    }
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct ContextCallback<C, F> {
+            context: C,
+            #[collect(require_static)]
+            call: F,
+        }
 
-    pub fn new_sequence<S, F>(mc: MutationContext<'gc, '_>, f: F) -> Callback<'gc>
-    where
-        S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static + Fn(MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
-    {
-        Self::new_sequence_with(mc, (), move |(), mc, res| f(mc, res))
-    }
+        impl<'gc, C, F> Callback<'gc> for ContextCallback<C, F>
+        where
+            C: 'gc + Collect,
+            F: 'static
+                + Fn(
+                    &C,
+                    MutationContext<'gc, '_>,
+                    &mut Vec<Value<'gc>>,
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+        {
+            fn call(
+                &self,
+                mc: MutationContext<'gc, '_>,
+                stack: &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+                (self.call)(&self.context, mc, stack)
+            }
+        }
 
-    pub fn new_sequence_with<C, S, F>(mc: MutationContext<'gc, '_>, c: C, f: F) -> Callback<'gc>
-    where
-        C: 'gc + Collect,
-        S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static + Fn(&C, MutationContext<'gc, '_>, Vec<Value<'gc>>) -> Result<S, Error<'gc>>,
-    {
-        Self::new_with(mc, c, move |c, mc, res| match f(c, mc, res) {
-            Ok(seq) => CallbackSequence::Sequence(seq.boxed()),
-            Err(err) => CallbackSequence::Immediate(Err(err)),
-        })
+        AnyCallback(unsize!(Gc::allocate(
+            mc,
+            ContextCallback { context, call },
+        ) => dyn Callback<'gc>))
     }
 
     pub fn call(
         &self,
         mc: MutationContext<'gc, '_>,
-        args: Vec<Value<'gc>>,
-    ) -> CallbackSequence<'gc> {
-        self.0.call(mc, args)
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+        self.0.call(mc, stack)
     }
 }
 
-impl<'gc> Debug for Callback<'gc> {
+impl<'gc> Debug for AnyCallback<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("Callback")
             .field(&Gc::as_ptr(self.0))
@@ -129,145 +160,199 @@ impl<'gc> Debug for Callback<'gc> {
     }
 }
 
-impl<'gc> PartialEq for Callback<'gc> {
-    fn eq(&self, other: &Callback<'gc>) -> bool {
+impl<'gc> PartialEq for AnyCallback<'gc> {
+    fn eq(&self, other: &AnyCallback<'gc>) -> bool {
         Gc::ptr_eq(self.0, other.0)
     }
 }
 
-impl<'gc> Eq for Callback<'gc> {}
+impl<'gc> Eq for AnyCallback<'gc> {}
 
-impl<'gc> Hash for Callback<'gc> {
+impl<'gc> Hash for AnyCallback<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Gc::as_ptr(self.0).hash(state)
     }
 }
 
-pub trait ContinuationFn<'gc>: Collect {
-    fn call(
-        self: Box<Self>,
+pub trait Continuation<'gc>: Collect {
+    fn continue_ok(
+        &self,
         mc: MutationContext<'gc, '_>,
-        res: Result<Vec<Value<'gc>>, Error<'gc>>,
-    ) -> CallbackSequence<'gc>;
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>>;
+
+    fn continue_err(
+        &self,
+        mc: MutationContext<'gc, '_>,
+        stack: &mut Vec<Value<'gc>>,
+        error: Error<'gc>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>>;
 }
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct Continuation<'gc>(Box<dyn ContinuationFn<'gc> + 'gc>);
+pub struct AnyContinuation<'gc>(pub Gc<'gc, dyn Continuation<'gc>>);
 
-impl<'gc> Continuation<'gc> {
-    pub fn new<F>(cont: F) -> Continuation<'gc>
-    where
-        F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> CallbackSequence<'gc>,
-    {
-        Self::new_with((), move |_, mc, res| cont(mc, res))
+impl<'gc> AnyContinuation<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>, continuation: impl Continuation<'gc> + 'gc) -> Self {
+        Self(unsize!(Gc::allocate(mc, continuation) => dyn Continuation<'gc>))
     }
 
-    pub fn new_with<C, F>(context: C, continuation: F) -> Continuation<'gc>
+    pub fn from_ok_fn<F>(mc: MutationContext<'gc, '_>, continue_ok: F) -> AnyContinuation<'gc>
+    where
+        F: 'static
+            + Fn(
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+    {
+        Self::from_fns_with(
+            mc,
+            (),
+            move |_, mc, stack| continue_ok(mc, stack),
+            move |_, _, _, error| Err(error),
+        )
+    }
+
+    pub fn from_ok_fn_with<C, F>(
+        mc: MutationContext<'gc, '_>,
+        context: C,
+        continue_ok: F,
+    ) -> AnyContinuation<'gc>
+    where
+        C: Collect + 'gc,
+        F: 'static
+            + Fn(
+                &C,
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+    {
+        Self::from_fns_with(
+            mc,
+            context,
+            move |context, mc, stack| continue_ok(context, mc, stack),
+            move |_, _, _, error| Err(error),
+        )
+    }
+
+    pub fn from_fns<FO, FE>(
+        mc: MutationContext<'gc, '_>,
+        continue_ok: FO,
+        continue_err: FE,
+    ) -> AnyContinuation<'gc>
+    where
+        FO: 'static
+            + Fn(
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+        FE: 'static
+            + Fn(
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+                Error<'gc>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+    {
+        Self::from_fns_with(
+            mc,
+            (),
+            move |_, mc, stack| continue_ok(mc, stack),
+            move |_, mc, stack, error| continue_err(mc, stack, error),
+        )
+    }
+
+    pub fn from_fns_with<C, FO, FE>(
+        mc: MutationContext<'gc, '_>,
+        context: C,
+        continue_ok: FO,
+        continue_err: FE,
+    ) -> AnyContinuation<'gc>
     where
         C: 'gc + Collect,
-        F: 'static
-            + FnOnce(
-                C,
+        FO: 'static
+            + Fn(
+                &C,
                 MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> CallbackSequence<'gc>,
+                &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+        FE: 'static
+            + Fn(
+                &C,
+                MutationContext<'gc, '_>,
+                &mut Vec<Value<'gc>>,
+                Error<'gc>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
     {
         #[derive(Collect)]
-        #[collect(no_drop, bound = "where C: Collect, F: 'static")]
-        struct ContextContinuationFn<C, F>(C, StaticCollect<F>);
+        #[collect(no_drop)]
+        struct ContextContinuation<C, FO, FE> {
+            context: C,
+            #[collect(require_static)]
+            continue_ok: FO,
+            #[collect(require_static)]
+            continue_err: FE,
+        }
 
-        impl<'gc, C, F> ContinuationFn<'gc> for ContextContinuationFn<C, F>
+        impl<'gc, C, FO, FE> Continuation<'gc> for ContextContinuation<C, FO, FE>
         where
             C: 'gc + Collect,
-            F: 'static
-                + FnOnce(
-                    C,
+            FO: 'static
+                + Fn(
+                    &C,
                     MutationContext<'gc, '_>,
-                    Result<Vec<Value<'gc>>, Error<'gc>>,
-                ) -> CallbackSequence<'gc>,
+                    &mut Vec<Value<'gc>>,
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+            FE: 'static
+                + Fn(
+                    &C,
+                    MutationContext<'gc, '_>,
+                    &mut Vec<Value<'gc>>,
+                    Error<'gc>,
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
         {
-            fn call(
-                self: Box<Self>,
+            fn continue_ok(
+                &self,
                 mc: MutationContext<'gc, '_>,
-                res: Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> CallbackSequence<'gc> {
-                (self.1).0(self.0, mc, res)
+                stack: &mut Vec<Value<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+                (self.continue_ok)(&self.context, mc, stack)
+            }
+
+            fn continue_err(
+                &self,
+                mc: MutationContext<'gc, '_>,
+                stack: &mut Vec<Value<'gc>>,
+                error: Error<'gc>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+                (self.continue_err)(&self.context, mc, stack, error)
             }
         }
 
-        Continuation(Box::new(ContextContinuationFn(
-            context,
-            StaticCollect(continuation),
-        )))
-    }
-
-    pub fn new_immediate<F>(cont: F) -> Continuation<'gc>
-    where
-        F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        Self::new(move |mc, res| CallbackSequence::Immediate(cont(mc, res)))
-    }
-
-    pub fn new_immediate_with<C, F>(context: C, continuation: F) -> Continuation<'gc>
-    where
-        C: 'gc + Collect,
-        F: 'static
-            + FnOnce(
-                C,
-                MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        Self::new_with(context, move |context, mc, res| {
-            CallbackSequence::Immediate(continuation(context, mc, res))
-        })
-    }
-
-    pub fn new_sequence<S, F>(cont: F) -> Continuation<'gc>
-    where
-        S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static
-            + FnOnce(
-                MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> Result<S, Error<'gc>>,
-    {
-        Self::new_sequence_with((), move |(), mc, res| cont(mc, res))
-    }
-
-    pub fn new_sequence_with<C, S, F>(context: C, continuation: F) -> Continuation<'gc>
-    where
-        C: 'gc + Collect,
-        S: 'gc + Sequence<'gc, Output = Result<CallbackReturn<'gc>, Error<'gc>>>,
-        F: 'static
-            + FnOnce(
-                C,
-                MutationContext<'gc, '_>,
-                Result<Vec<Value<'gc>>, Error<'gc>>,
-            ) -> Result<S, Error<'gc>>,
-    {
-        Self::new_with(context, move |context, mc, res| {
-            match continuation(context, mc, res) {
-                Ok(seq) => CallbackSequence::Sequence(seq.boxed()),
-                Err(err) => CallbackSequence::Immediate(Err(err)),
+        AnyContinuation(unsize!(Gc::allocate(
+            mc,
+            ContextContinuation {
+                context,
+                continue_ok,
+                continue_err,
             }
-        })
+        ) => dyn Continuation<'gc>))
     }
 
-    pub fn call(
-        self,
+    pub fn continue_ok(
+        &self,
         mc: MutationContext<'gc, '_>,
-        res: Result<Vec<Value<'gc>>, Error<'gc>>,
-    ) -> CallbackSequence<'gc> {
-        self.0.call(mc, res)
+        stack: &mut Vec<Value<'gc>>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+        self.0.continue_ok(mc, stack)
+    }
+
+    pub fn continue_err(
+        &self,
+        mc: MutationContext<'gc, '_>,
+        stack: &mut Vec<Value<'gc>>,
+        error: Error<'gc>,
+    ) -> Result<CallbackMode<'gc>, Error<'gc>> {
+        self.0.continue_err(mc, stack, error)
     }
 }
