@@ -91,7 +91,7 @@ impl fmt::Display for ThreadError {
                 write!(fmt, "unexpected variable stack in operation")
             }
             ThreadError::BadCall(type_error) => fmt::Display::fmt(type_error, fmt),
-            ThreadError::BadYield => write!(fmt, "cannot yield from main thread"),
+            ThreadError::BadYield => write!(fmt, "attempted to yield outside of coroutine"),
         }
     }
 }
