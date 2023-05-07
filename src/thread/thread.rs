@@ -200,7 +200,6 @@ impl<'gc> Thread<'gc> {
         let mut state = self.0.write(mc);
         match state.frames.pop() {
             Some(Frame::StartCoroutine(function)) => {
-                state.frames.pop();
                 assert!(
                     state.values.is_empty()
                         && state.open_upvalues.is_empty()
