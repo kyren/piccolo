@@ -88,7 +88,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     // TODO: When the current thread is available again for callbacks, whether or
                     // not the active thread matches will determine 'normal' from 'running'.
                     Value::from(match thread.mode() {
-                        ThreadMode::Stopped | ThreadMode::Results => "dead",
+                        ThreadMode::Stopped | ThreadMode::Return => "dead",
                         ThreadMode::Running => "running",
                         ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",

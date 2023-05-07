@@ -92,7 +92,7 @@ impl Lua {
         self.try_run(|mc, root| {
             Ok(root
                 .main_thread
-                .take_results(mc)
+                .take_return(mc)
                 .unwrap()?
                 .into_iter()
                 .map(|v| root.registry.stash(mc, v))

@@ -1,4 +1,5 @@
 use std::{
+    cell::RefMut,
     collections::{btree_map::Entry as BTreeEntry, BTreeMap},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
@@ -38,15 +39,16 @@ impl<'gc> Hash for Thread<'gc> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
-    // No frames are on the thread and there are no available results
+    // No frames are on the thread and there are no available results, the thread can be started.
     Stopped,
-    // Thread has available results
-    Results,
-    // Thread has an active Lua frame or is waiting on the results of a callback or continuation.
+    // The thread has returned (or yielded) values that must be taken to move the thread back to the
+    // `Stopped` (or `Suspended`) state.
+    Return,
+    // Thread has an active Lua frame or is waiting for a callback or continuation to finish.
     Normal,
     // Thread is currently inside its own `Thread::step` function.
     Running,
-    // Thread has yielded and is waiting on being resumed
+    // Thread has yielded and is waiting on being resumed.
     Suspended,
 }
 
@@ -60,8 +62,35 @@ pub(crate) struct ThreadState<'gc> {
     values: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
-    result: Option<Result<Vec<Value<'gc>>, Error<'gc>>>,
+    returned: Option<Result<Vec<Value<'gc>>, Error<'gc>>>,
     allow_yield: bool,
+}
+
+impl<'gc> ThreadState<'gc> {
+    fn mode(&self) -> ThreadMode {
+        if self.returned.is_some() {
+            ThreadMode::Return
+        } else {
+            match self.frames.last() {
+                None => {
+                    assert!(
+                        self.values.is_empty()
+                            && self.open_upvalues.is_empty()
+                            && self.returned.is_none(),
+                    );
+                    ThreadMode::Stopped
+                }
+                Some(frame) => match frame {
+                    Frame::Lua { .. }
+                    | Frame::Callback { .. }
+                    | Frame::Continuation { .. }
+                    | Frame::Sequence(_) => ThreadMode::Normal,
+                    Frame::Running => ThreadMode::Running,
+                    Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+                },
+            }
+        }
+    }
 }
 
 pub(crate) struct LuaFrame<'gc, 'a> {
@@ -96,13 +125,13 @@ impl<'gc> Sequence<'gc> for ThreadSequence<'gc> {
 
     fn step(&mut self, mc: MutationContext<'gc, '_>) -> Option<Self::Output> {
         match self.0.mode() {
-            ThreadMode::Results => self.0.take_results(mc),
+            ThreadMode::Return => Some(self.0.take_return(mc).unwrap()),
             ThreadMode::Normal => {
                 self.0.step(mc).unwrap();
                 None
             }
             mode => Some(Err(BadThreadMode {
-                expected: None,
+                expected: ThreadMode::Normal,
                 found: mode,
             }
             .into())),
@@ -118,7 +147,7 @@ impl<'gc> Thread<'gc> {
                 values: Vec::new(),
                 frames: Vec::new(),
                 open_upvalues: BTreeMap::new(),
-                result: None,
+                returned: None,
                 allow_yield,
             },
         ))
@@ -126,28 +155,7 @@ impl<'gc> Thread<'gc> {
 
     pub fn mode(self) -> ThreadMode {
         if let Ok(state) = self.0.try_read() {
-            if state.result.is_some() {
-                ThreadMode::Results
-            } else {
-                match state.frames.last() {
-                    None => {
-                        assert!(
-                            state.values.is_empty()
-                                && state.open_upvalues.is_empty()
-                                && state.result.is_none(),
-                        );
-                        ThreadMode::Stopped
-                    }
-                    Some(frame) => match frame {
-                        Frame::Lua { .. }
-                        | Frame::Callback { .. }
-                        | Frame::Continuation { .. }
-                        | Frame::Sequence(_) => ThreadMode::Normal,
-                        Frame::Running => ThreadMode::Running,
-                        Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
-                    },
-                }
-            }
+            state.mode()
         } else {
             ThreadMode::Running
         }
@@ -160,8 +168,7 @@ impl<'gc> Thread<'gc> {
         function: Function<'gc>,
         args: &[Value<'gc>],
     ) -> Result<(), BadThreadMode> {
-        self.check_mode(ThreadMode::Stopped)?;
-        let mut state = self.0.write(mc);
+        let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
         ext_call_function(&mut state, function, args);
         Ok(())
     }
@@ -172,22 +179,19 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
-        self.check_mode(ThreadMode::Stopped)?;
-        let mut state = self.0.write(mc);
+        let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
         state.frames.push(Frame::StartCoroutine(function));
         Ok(())
     }
 
-    /// Take any results if they are available
-    pub fn take_results(
+    /// If the thread is in the `Return` state, take the returned (or yielded) values. Moves the
+    /// thread back to the `Stopped` (or `Suspended`) state.
+    pub fn take_return(
         self,
         mc: MutationContext<'gc, '_>,
-    ) -> Option<Result<Vec<Value<'gc>>, Error<'gc>>> {
-        if let Ok(mut write) = self.0.try_write(mc) {
-            write.result.take()
-        } else {
-            None
-        }
+    ) -> Result<Result<Vec<Value<'gc>>, Error<'gc>>, BadThreadMode> {
+        let mut state = self.check_mode(mc, ThreadMode::Return)?;
+        Ok(state.returned.take().unwrap())
     }
 
     /// If the thread is in `Suspended` mode, resume it.
@@ -196,15 +200,14 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
         args: &[Value<'gc>],
     ) -> Result<(), BadThreadMode> {
-        self.check_mode(ThreadMode::Suspended)?;
-        let mut state = self.0.write(mc);
+        let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
         match state.frames.pop() {
             Some(Frame::StartCoroutine(function)) => {
                 assert!(
                     state.values.is_empty()
                         && state.open_upvalues.is_empty()
                         && state.frames.is_empty()
-                        && state.result.is_none()
+                        && state.returned.is_none()
                 );
                 ext_call_function(&mut state, function, args);
             }
@@ -216,7 +219,7 @@ impl<'gc> Thread<'gc> {
                     return_to_lua(&mut state, args);
                 }
                 None => {
-                    state.result = Some(Ok(args.to_vec()));
+                    state.returned = Some(Ok(args.to_vec()));
                 }
                 _ => panic!("resume coroutine frame must be above a continuation or lua frame"),
             },
@@ -228,8 +231,7 @@ impl<'gc> Thread<'gc> {
     /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
     pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
-        self.check_mode(ThreadMode::Normal)?;
-        let mut state = self.0.write(mc);
+        let mut state = self.check_mode(mc, ThreadMode::Normal)?;
         match state.frames.last_mut().expect("no frame to step") {
             Frame::Callback { .. } => {
                 let (callback, args) = match state.frames.pop() {
@@ -333,15 +335,22 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    fn check_mode(&self, expected: ThreadMode) -> Result<(), BadThreadMode> {
-        let found = self.mode();
+    fn check_mode<'a>(
+        &'a self,
+        mc: MutationContext<'gc, '_>,
+        expected: ThreadMode,
+    ) -> Result<RefMut<'a, ThreadState<'gc>>, BadThreadMode> {
+        assert!(expected != ThreadMode::Running);
+        let state = self.0.try_write(mc).map_err(|_| BadThreadMode {
+            expected,
+            found: ThreadMode::Running,
+        })?;
+
+        let found = state.mode();
         if found != expected {
-            Err(BadThreadMode {
-                expected: Some(expected),
-                found,
-            })
+            Err(BadThreadMode { expected, found })
         } else {
-            Ok(())
+            Ok(state)
         }
     }
 }
@@ -700,7 +709,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     }
                     None => {
                         let ret_vals = self.state.values[start..start + count].to_vec();
-                        self.state.result = Some(Ok(ret_vals));
+                        self.state.returned = Some(Ok(ret_vals));
                         self.state.values.clear();
                     }
                     _ => panic!("lua frame must be above a continuation or lua frame"),
@@ -916,7 +925,7 @@ fn unwind<'gc>(
     }
     close_upvalues(thread, state, mc, 0);
     state.values.clear();
-    state.result = Some(Err(error));
+    state.returned = Some(Err(error));
 }
 
 fn return_ext<'gc>(
@@ -932,7 +941,7 @@ fn return_ext<'gc>(
         Ok(CallbackReturn::Yield(res)) => {
             if state.allow_yield {
                 state.frames.push(Frame::ResumeCoroutine);
-                state.result = Some(Ok(res));
+                state.returned = Some(Ok(res));
             } else {
                 unwind(thread, state, mc, ThreadError::BadYield.into());
             }
@@ -945,7 +954,7 @@ fn return_ext<'gc>(
                 return_to_lua(state, &res);
             }
             None => {
-                state.result = Some(Ok(res));
+                state.returned = Some(Ok(res));
             }
             _ => panic!("frame above callback must be continuation or lua frame"),
         },

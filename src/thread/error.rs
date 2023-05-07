@@ -54,7 +54,7 @@ impl fmt::Display for BinaryOperatorError {
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
 pub struct BadThreadMode {
-    pub expected: Option<ThreadMode>,
+    pub expected: ThreadMode,
     pub found: ThreadMode,
 }
 
@@ -62,10 +62,11 @@ impl StdError for BadThreadMode {}
 
 impl fmt::Display for BadThreadMode {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "bad thread mode: {:?}", self.found)?;
-        if let Some(expected) = self.expected {
-            write!(fmt, " expected: {:?}", expected)?;
-        }
+        write!(
+            fmt,
+            "bad thread mode: was {:?} expected {:?}",
+            self.found, self.expected
+        )?;
         Ok(())
     }
 }
