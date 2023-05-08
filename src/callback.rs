@@ -189,7 +189,7 @@ pub trait Continuation<'gc>: Collect {
     ) -> Result<CallbackMode<'gc>, Error<'gc>>;
 }
 
-#[derive(Collect)]
+#[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
 pub struct AnyContinuation<'gc>(pub Gc<'gc, dyn Continuation<'gc>>);
 

@@ -52,26 +52,28 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     )
     .unwrap();
 
+    let pcall_cont = AnyContinuation::from_fns(
+        mc,
+        move |_, stack| {
+            stack.insert(0, Value::Boolean(true));
+            Ok(CallbackReturn::Return.into())
+        },
+        move |mc, stack, error| {
+            stack.clear();
+            stack.extend([Value::Boolean(false), error.to_value(mc)]);
+            Ok(CallbackReturn::Return.into())
+        },
+    );
+
     env.set(
         mc,
         "pcall",
-        AnyCallback::from_fn(mc, |mc, stack| {
+        AnyCallback::from_fn_with(mc, pcall_cont, move |pcall_cont, mc, stack| {
             let function = meta_ops::call(mc, stack.get(0).copied().unwrap_or(Value::Nil))?;
             stack.remove(0);
             Ok(CallbackReturn::TailCall {
                 function,
-                continuation: Some(AnyContinuation::from_fns(
-                    mc,
-                    move |_, stack| {
-                        stack.insert(0, Value::Boolean(true));
-                        Ok(CallbackReturn::Return.into())
-                    },
-                    move |mc, stack, error| {
-                        stack.clear();
-                        stack.extend([Value::Boolean(false), error.to_value(mc)]);
-                        Ok(CallbackReturn::Return.into())
-                    },
-                )),
+                continuation: Some(*pcall_cont),
             }
             .into())
         }),
