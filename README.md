@@ -127,18 +127,21 @@ it is no longer worth it.
 * Almost all of the core Lua language works. Some tricky Lua features that
   currently actually work:
   * Real closures with proper upvalue handling
-  * Tail calls
+  * Proper tail calls
   * Variable arguments and returns
-  * Coroutines, including yielding through Rust callbacks (like through `pcall`)
+  * Coroutines, including yielding that is transparent to Rust callbacks
   * Gotos with label handling that matches Lua 5.3
   * Proper _ENV handling
   * Metatables and metamethods (only `__call` and `__index` right now, but the
-    infrastructure exists, metamethods can even (safely!) be fully recursive.
-    `__gc` is an entire separate can of worms and doesn't count.)
+    infrastructure exists, metamethods can even (safely!) be fully recursive,
+    triggering any number of other metamethods. `__gc` is an entire separate can
+    of worms and doesn't count.)
+* A robust Rust callback system that allows for sequencing callbacks that don't
+  block the interpreter and reduced stack usage by safely tail calling back
+  into Lua.
+* Garbage collected "userdata" with safe downcasting.
 * A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
   from `coroutine`)
-* A robust Rust callback system.
-* Garbage collected "userdata" with safe downcasting.
 * A simple REPL (try it with `cargo run deimos`)
 
 ## What currently doesn't work ##
@@ -160,6 +163,7 @@ it is no longer worth it.
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
+* Optimized `Value` type that is a reasonable size.
 * Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more I've forgotten about
 
