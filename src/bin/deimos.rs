@@ -5,14 +5,13 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use deimos::{compile, io, Closure, Error, Function, Lua, ParserError, StaticError};
+use deimos::{compile, io, Closure, Function, Lua, ParserError, StaticError};
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     let function = lua.try_run(|mc, root| {
         let result = compile(mc, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
-            err @ Err(Error::ParserError(ParserError::EndOfStream { expected: _ })) => err,
             Err(_) => compile(mc, code.as_bytes()),
         };
         let closure = Closure::new(mc, result?, Some(root.globals))?;
@@ -26,7 +25,7 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
         Ok(res
             .iter()
             .map(|v| root.registry.fetch(v))
-            .map(|v| format!("{v:?}"))
+            .map(|v| format!("{v}"))
             .collect::<Vec<_>>()
             .join("\t"))
     })

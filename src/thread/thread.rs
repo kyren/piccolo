@@ -160,7 +160,7 @@ impl<'gc> Thread<'gc> {
         let mut state = self.check_mode(mc, ThreadMode::Normal)?;
         match state.frames.pop().expect("no frame to step") {
             Frame::Callback(callback) => {
-                state.frames.push(Frame::Running);
+                state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
@@ -169,7 +169,7 @@ impl<'gc> Thread<'gc> {
                 state.external_stack = stack;
 
                 assert!(
-                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    matches!(state.frames.pop(), Some(Frame::Calling)),
                     "thread state has changed while callback was run"
                 );
 
@@ -180,7 +180,7 @@ impl<'gc> Thread<'gc> {
                 }
             }
             Frame::ContinueOk(continuation) => {
-                state.frames.push(Frame::Running);
+                state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
@@ -189,7 +189,7 @@ impl<'gc> Thread<'gc> {
                 state.external_stack = stack;
 
                 assert!(
-                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    matches!(state.frames.pop(), Some(Frame::Calling)),
                     "thread state has changed while callback was run"
                 );
 
@@ -200,7 +200,7 @@ impl<'gc> Thread<'gc> {
                 }
             }
             Frame::ContinueErr(continuation, error) => {
-                state.frames.push(Frame::Running);
+                state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
@@ -209,7 +209,7 @@ impl<'gc> Thread<'gc> {
                 state.external_stack = stack;
 
                 assert!(
-                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    matches!(state.frames.pop(), Some(Frame::Calling)),
                     "thread state has changed while callback was run"
                 );
 
@@ -220,7 +220,7 @@ impl<'gc> Thread<'gc> {
                 }
             }
             Frame::Sequence(mut sequence) => {
-                state.frames.push(Frame::Running);
+                state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
@@ -229,7 +229,7 @@ impl<'gc> Thread<'gc> {
                 state.external_stack = stack;
 
                 assert!(
-                    matches!(state.frames.pop(), Some(Frame::Running)),
+                    matches!(state.frames.pop(), Some(Frame::Calling)),
                     "thread state has changed while callback was run"
                 );
 
@@ -321,27 +321,57 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
 }
 
 #[derive(Collect)]
+#[collect(require_static)]
+enum LuaReturn {
+    // Normal function call, place return values at the bottom of the returning function's stack,
+    // as normal.
+    Normal(VarCount),
+    // Synthetic metamethod call, place a single return value at an index relative to the returned
+    // to function's bottom.
+    Meta(RegisterIndex),
+}
+
+#[derive(Collect)]
 #[collect(no_drop)]
 enum Frame<'gc> {
+    // An running Lua frame.
     Lua {
         bottom: usize,
         base: usize,
         is_variable: bool,
         pc: usize,
         stack_size: usize,
-        expected_returns: Option<VarCount>,
+        expected_return: Option<LuaReturn>,
     },
+    // A suspended coroutine that has not yet been run.
     StartCoroutine(Function<'gc>),
+    // A coroutine that has yielded and is waiting resume.
     ResumeCoroutine,
+    // A callback that has been queued but not called yet. Arguments will be in the external stack.
     Callback(AnyCallback<'gc>),
+    // A marker frame for running a continuation. Cannot be the top frame, when the frame above this
+    // returns, this will trigger the continuation to run.
     PendingContinuation {
         bottom: usize,
         continuation: AnyContinuation<'gc>,
     },
+    // A frame above a continuation has returned, and this continuation has been queued but not
+    // called yet. The returns from the frame above this will be in the external stack.
     ContinueOk(AnyContinuation<'gc>),
+    // A frame above a continuation has errored, and this continuation has caught the error and is
+    // queued to be run.
     ContinueErr(AnyContinuation<'gc>, Error<'gc>),
+    // A callback or continuation is long running, and should be sequenced by this thread's step
+    // function until they are finished.
     Sequence(AnySequence<'gc>),
-    Running,
+    // A marker frame that marks the thread as *actively* calling some external function, a
+    // callback, continuation, or sequence.
+    //
+    // The thread must be unlocked during external calls to permit cross-thread upvalue handling,
+    // but this presents a danger if methods on this thread were to be recursively called at this
+    // time. This frame keeps the thread in the `Running` mode during external calls, ensuring the
+    // thread cannot be mutated.
+    Calling,
 }
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
@@ -426,7 +456,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     ) -> Result<(), ThreadError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
-                expected_returns,
+                expected_return,
                 is_variable,
                 base,
                 ..
@@ -435,7 +465,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     return Err(ThreadError::ExpectedVariable(*is_variable));
                 }
 
-                *expected_returns = Some(returns);
+                *expected_return = Some(LuaReturn::Normal(returns));
                 let function_index = *base + func.0 as usize;
                 let arg_count = args
                     .to_constant()
@@ -464,7 +494,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             is_variable: false,
                             pc: 0,
                             stack_size,
-                            expected_returns: None,
+                            expected_return: None,
                         });
                         Ok(())
                     }
@@ -496,7 +526,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     ) -> Result<(), ThreadError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
-                expected_returns,
+                expected_return,
                 is_variable,
                 base,
                 ..
@@ -506,49 +536,115 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 }
 
                 let arg_count = arg_count as usize;
-                *expected_returns = Some(returns);
-                let given_function_index = *base + func.0 as usize;
-                let function_index = given_function_index + 1 + arg_count;
-                self.state
-                    .stack
-                    .resize(function_index + 1 + arg_count, Value::Nil);
-                for i in 0..arg_count + 1 {
-                    self.state.stack[function_index + i] =
-                        self.state.stack[given_function_index + i];
-                }
+                *expected_return = Some(LuaReturn::Normal(returns));
+                let function_index = *base + func.0 as usize;
+                let top = function_index + 1 + arg_count;
 
                 match meta_ops::call(mc, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
-                        self.state.stack[function_index] = closure.into();
+                        self.state.stack.resize(top + 1 + arg_count, Value::Nil);
+                        for i in 1..arg_count + 1 {
+                            self.state.stack[top + i] = self.state.stack[function_index + i];
+                        }
+
+                        self.state.stack[top] = closure.into();
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            self.state.stack[function_index + 1..].rotate_left(fixed_params);
-                            function_index + 1 + (arg_count - fixed_params)
+                            self.state.stack[top + 1..].rotate_left(fixed_params);
+                            top + 1 + (arg_count - fixed_params)
                         } else {
-                            function_index + 1
+                            top + 1
                         };
 
                         self.state.stack.resize(base + stack_size, Value::Nil);
 
                         self.state.frames.push(Frame::Lua {
-                            bottom: function_index,
+                            bottom: top,
                             base,
                             is_variable: false,
                             pc: 0,
                             stack_size,
-                            expected_returns: None,
+                            expected_return: None,
                         });
                         Ok(())
                     }
                     Ok(Function::Callback(callback)) => {
                         assert!(self.state.external_stack.is_empty());
-                        self.state.external_stack.extend(
-                            &self.state.stack[function_index + 1..function_index + 1 + arg_count],
-                        );
+                        self.state
+                            .external_stack
+                            .extend(&self.state.stack[function_index + 1..top]);
+                        self.state.stack.resize(top, Value::Nil);
                         self.state.frames.push(Frame::Callback(callback));
-                        self.state.stack.resize(function_index, Value::Nil);
+                        Ok(())
+                    }
+                    Err(err) => Err(ThreadError::BadCall(err)),
+                }
+            }
+            _ => panic!("top frame is not lua frame"),
+        }
+    }
+
+    // Calls an externally defined function in a completely non-destructive way in a new frame, and
+    // places the single result of this function call at the given register.
+    //
+    // Nothing at all in the frame is invalidated, other than placing the return value.
+    pub(crate) fn call_meta_function(
+        self,
+        mc: MutationContext<'gc, '_>,
+        func: Function<'gc>,
+        args: &[Value<'gc>],
+        ret_index: RegisterIndex,
+    ) -> Result<(), ThreadError> {
+        match self.state.frames.last_mut() {
+            Some(Frame::Lua {
+                expected_return,
+                is_variable,
+                base,
+                stack_size,
+                ..
+            }) => {
+                if *is_variable {
+                    return Err(ThreadError::ExpectedVariable(false));
+                }
+
+                *expected_return = Some(LuaReturn::Meta(ret_index));
+                let top = *base + *stack_size;
+
+                match meta_ops::call(mc, func.into()) {
+                    Ok(Function::Closure(closure)) => {
+                        self.state.stack.resize(top + 1 + args.len(), Value::Nil);
+                        self.state.stack[top] = closure.into();
+                        self.state.stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
+
+                        let fixed_params = closure.0.proto.fixed_params as usize;
+                        let stack_size = closure.0.proto.stack_size as usize;
+
+                        let base = if args.len() > fixed_params {
+                            self.state.stack[top + 1..].rotate_left(fixed_params);
+                            top + 1 + (args.len() - fixed_params)
+                        } else {
+                            top + 1
+                        };
+
+                        self.state.stack.resize(base + stack_size, Value::Nil);
+
+                        self.state.frames.push(Frame::Lua {
+                            bottom: top,
+                            base,
+                            is_variable: false,
+                            pc: 0,
+                            stack_size,
+                            expected_return: None,
+                        });
+                        Ok(())
+                    }
+                    Ok(Function::Callback(callback)) => {
+                        assert!(self.state.external_stack.is_empty());
+                        self.state.external_stack.extend(args);
+                        self.state.stack.resize(top, Value::Nil);
+                        self.state.frames.push(Frame::Callback(callback));
                         Ok(())
                     }
                     Err(err) => Err(ThreadError::BadCall(err)),
@@ -612,7 +708,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             is_variable: false,
                             pc: 0,
                             stack_size,
-                            expected_returns: None,
+                            expected_return: None,
                         });
                         Ok(())
                     }
@@ -671,35 +767,48 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.stack.truncate(bottom);
                     }
                     Some(Frame::Lua {
-                        expected_returns,
+                        expected_return,
                         is_variable,
                         base,
                         stack_size,
                         ..
-                    }) => {
-                        let expected_returns =
-                            expected_returns.expect("no expected returns for upper lua frame");
-                        let returning = expected_returns
-                            .to_constant()
-                            .map(|c| c as usize)
-                            .unwrap_or(count);
+                    }) => match expected_return {
+                        Some(LuaReturn::Normal(expected_return)) => {
+                            let returning = expected_return
+                                .to_constant()
+                                .map(|c| c as usize)
+                                .unwrap_or(count);
 
-                        for i in 0..returning.min(count) {
-                            self.state.stack[bottom + i] = self.state.stack[start + i]
+                            for i in 0..returning.min(count) {
+                                self.state.stack[bottom + i] = self.state.stack[start + i]
+                            }
+
+                            for i in count..returning {
+                                self.state.stack[bottom + i] = Value::Nil;
+                            }
+
+                            if expected_return.is_variable() {
+                                self.state.stack.truncate(bottom + returning);
+                                *is_variable = true;
+                            } else {
+                                self.state.stack.resize(*base + *stack_size, Value::Nil);
+                                *is_variable = false;
+                            }
                         }
-
-                        for i in count..returning {
-                            self.state.stack[bottom + i] = Value::Nil;
-                        }
-
-                        if expected_returns.is_variable() {
-                            self.state.stack.truncate(bottom + returning);
-                            *is_variable = true;
-                        } else {
+                        Some(LuaReturn::Meta(meta_ind)) => {
+                            let meta_ret = if count > 0 {
+                                self.state.stack[start]
+                            } else {
+                                Value::Nil
+                            };
                             self.state.stack.resize(*base + *stack_size, Value::Nil);
                             *is_variable = false;
+                            self.state.stack[*base + meta_ind.0 as usize] = meta_ret;
                         }
-                    }
+                        None => {
+                            panic!("no expected returns set for returned to lua frame")
+                        }
+                    },
                     None => {
                         assert!(self.state.external_stack.is_empty());
                         self.state
@@ -812,7 +921,7 @@ impl<'gc> ThreadState<'gc> {
                     | Frame::ContinueOk(_)
                     | Frame::ContinueErr(_, _)
                     | Frame::Sequence(_) => ThreadMode::Normal,
-                    Frame::Running => ThreadMode::Running,
+                    Frame::Calling => ThreadMode::Running,
                     Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
                     Frame::PendingContinuation { .. } => {
                         panic!("pending continuation cannot be top frame")
@@ -855,7 +964,7 @@ impl<'gc> ThreadState<'gc> {
                     is_variable: false,
                     pc: 0,
                     stack_size,
-                    expected_returns: None,
+                    expected_return: None,
                 });
             }
             Function::Callback(callback) => {
@@ -867,34 +976,41 @@ impl<'gc> ThreadState<'gc> {
     fn return_to_lua(&mut self) {
         match self.frames.last_mut() {
             Some(Frame::Lua {
-                expected_returns,
+                expected_return,
                 is_variable,
                 base,
                 stack_size,
                 ..
-            }) => {
-                let ret_count = expected_returns
-                    .take()
-                    .expect("no expected returns for lua frame");
-                let return_len = ret_count
-                    .to_constant()
-                    .map(|c| c as usize)
-                    .unwrap_or(self.external_stack.len());
+            }) => match expected_return {
+                Some(LuaReturn::Normal(ret_count)) => {
+                    let return_len = ret_count
+                        .to_constant()
+                        .map(|c| c as usize)
+                        .unwrap_or(self.external_stack.len());
 
-                let bottom = self.stack.len();
-                self.stack.resize(bottom + return_len, Value::Nil);
+                    let bottom = self.stack.len();
+                    self.stack.resize(bottom + return_len, Value::Nil);
 
-                for i in 0..return_len.min(self.external_stack.len()) {
-                    self.stack[bottom + i] = self.external_stack[i];
+                    for i in 0..return_len.min(self.external_stack.len()) {
+                        self.stack[bottom + i] = self.external_stack[i];
+                    }
+
+                    self.external_stack.clear();
+
+                    *is_variable = ret_count.is_variable();
+                    if !ret_count.is_variable() {
+                        self.stack.resize(*base + *stack_size, Value::Nil);
+                    }
                 }
-
-                self.external_stack.clear();
-
-                *is_variable = ret_count.is_variable();
-                if !ret_count.is_variable() {
+                Some(LuaReturn::Meta(meta_ind)) => {
+                    let meta_ret = self.external_stack.get(0).copied().unwrap_or(Value::Nil);
+                    self.external_stack.clear();
                     self.stack.resize(*base + *stack_size, Value::Nil);
+                    *is_variable = false;
+                    self.stack[*base + meta_ind.0 as usize] = meta_ret;
                 }
-            }
+                None => panic!("no expected return set for returned to lua frame"),
+            },
             _ => panic!("no lua frame to return to"),
         };
     }

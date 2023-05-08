@@ -54,7 +54,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
             assert_eq!(*data.0.read(), 23);
 
             #[derive(Collect)]
-            #[collect(no_drop)]
+            #[collect(require_static)]
             struct MyUserData2;
 
             assert!(matches!(

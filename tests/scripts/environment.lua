@@ -11,7 +11,7 @@ end
 
 local function test2()
     _ENV.i = 3
-    return _ENV.i == 3
+    return _ENV.i == 3 and i == 3
 end
 
 return

@@ -34,10 +34,7 @@ impl<'gc> StdError for RuntimeError<'gc> {}
 
 impl<'gc> fmt::Display for RuntimeError<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let mut buf = Vec::new();
-        self.0.display(&mut buf).unwrap();
-        let s = StdString::from_utf8_lossy(&buf);
-        write!(fmt, "{}", s)
+        self.0.fmt(fmt)
     }
 }
 

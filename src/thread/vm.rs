@@ -1,8 +1,11 @@
 use gc_arena::{Gc, MutationContext};
 
 use crate::{
-    raw_ops, thread::LuaFrame, BinaryOperatorError, Closure, ClosureState, Error, Function, OpCode,
-    RegisterIndex, String, Table, TypeError, UpValueDescriptor, Value, VarCount,
+    meta_ops::{self, MetaResult},
+    raw_ops,
+    thread::LuaFrame,
+    BinaryOperatorError, Closure, ClosureState, Error, Function, OpCode, RegisterIndex, String,
+    Table, TypeError, UpValueDescriptor, Value, VarCount,
 };
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
@@ -54,15 +57,31 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::GetTableR { dest, table, key } => {
-                registers.stack_frame[dest.0 as usize] =
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .get(registers.stack_frame[key.0 as usize]);
+                let table = registers.stack_frame[table.0 as usize];
+                let key = registers.stack_frame[key.0 as usize];
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::GetTableC { dest, table, key } => {
-                registers.stack_frame[dest.0 as usize] =
-                    get_table(registers.stack_frame[table.0 as usize])?
-                        .get(current_function.0.proto.constants[key.0 as usize].to_value())
+                let table = registers.stack_frame[table.0 as usize];
+                let key = current_function.0.proto.constants[key.0 as usize].to_value();
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::SetTableRR { table, key, value } => {

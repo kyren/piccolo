@@ -54,7 +54,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     .map_err(|_| RuntimeError("cannot resume thread".into()))?;
 
                 #[derive(Collect)]
-                #[collect(no_drop)]
+                #[collect(require_static)]
                 struct ThreadSequence;
 
                 impl<'gc> Sequence<'gc> for ThreadSequence {

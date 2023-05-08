@@ -1,4 +1,4 @@
-use std::{f64, i64, io};
+use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::{Collect, Gc, MutationContext};
 
@@ -38,6 +38,12 @@ pub enum Value<'gc> {
     Function(Function<'gc>),
     Thread(Thread<'gc>),
     UserData(UserData<'gc>),
+}
+
+impl<'gc> Default for Value<'gc> {
+    fn default() -> Self {
+        Value::Nil
+    }
 }
 
 impl<'gc> PartialEq for Value<'gc> {
@@ -170,6 +176,15 @@ impl<'gc> Value<'gc> {
 
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
+    }
+}
+
+impl<'gc> fmt::Display for Value<'gc> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buf = Vec::new();
+        self.display(&mut buf).unwrap();
+        let s = StdString::from_utf8_lossy(&buf);
+        write!(fmt, "{}", s)
     }
 }
 
