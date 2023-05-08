@@ -146,9 +146,8 @@ it is no longer worth it.
 
 ## What currently doesn't work ##
 
-* Most of the stdlib is not implemented (`debug` which will probably never be
-  implemented), `io`, `os`, `package`, `string`, `table`, `utf8`, most top-level
-  functions are unimplemented.
+* Most of the stdlib is not implemented, `io`, `os`, `package`, `string`,
+  `table`, `utf8`, `debug`, and most top-level functions are unimplemented.
 * Garbage collector finalization. Being compatible with PUC-Rio Lua would
   require object finalization *with failure*, and even having finalization, let
   alone finalization with some kind of failure story is extremely low priority.
@@ -186,7 +185,7 @@ consider *almost definite* non-goals.
     length operator (the length operator currently functions correctly and will
     always return a table "border", but for tables that are not sequences,
     the choice of border that is returned may differ).
-* Anything in the `debug` library.
+* Probably many things in the `debug` library.
 * Compatibility with PUC-Rio Lua bytecode
 * `os.setlocale` and other weirdness inherited from C
 * `package.loadlib` and all functionality which allows loading C libraries.
