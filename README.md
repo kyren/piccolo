@@ -77,10 +77,10 @@ nesting, instead callbacks can do one of three things:
 For example, it is of course possible for Lua to call a Rust callback, which
 then in turn creates a new Lua coroutine and runs it. In order to do so, a
 callback would take a Lua function as a parameter, then create a new coroutine
-thread and return a `Sequence` impl that will run it. The outer main Lua
-thread will step the created `Sequence`, which will in turn step the inner Lua
-coroutine thread. This is exactly how the `coroutine.resume` Lua stdlib function
-is implemented.
+Lua thread and return a `Sequence` impl that will run it. The outer main Lua
+thread will step the created `Sequence`, which will in turn step the inner
+Lua thread. This is exactly how the `coroutine.resume` Lua stdlib function is
+implemented.
 
 As another example, `pcall` is easy to implement here, a callback can call the
 provided function as a tail call with a continuation, and the continuation can
@@ -95,12 +95,12 @@ will look something like this:
 ```
 
 This is no problem with this VM style, the inner Rust callback must be a
-pausable `Sequence`, so the inner yield will yield the value all the way to
+pausable `Sequence`, so the inner yield will return the value all the way to
 the top level Rust code, and when the coroutine thread is resumed, the running
 `Sequence` will also be resumed.
 
 With any number of nested Lua threads and `Sequence`s, control will always
-continuously return outside the GC arena, and to the outer Rust code driving
+continuously return outside the GC arena and to the outer Rust code driving
 everything. This is the "trampoline" here, when using this interpreter,
 somewhere there is a loop that is continuously calling `Arena::mutate` and
 `Thread::step`, and it can stop or pause or change tasks at any time, not
@@ -137,7 +137,7 @@ it is no longer worth it.
     `__gc` is an entire separate can of worms and doesn't count.)
 * A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
   from `coroutine`)
-* A robust rust callback system.
+* A robust Rust callback system.
 * Garbage collected "userdata" with safe downcasting.
 * A simple REPL (try it with `cargo run deimos`)
 
