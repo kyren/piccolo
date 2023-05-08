@@ -42,7 +42,7 @@ README in the linked repo for more detail about the GC design.*
 
 `deimos` has a real, cycle detecting, incremental garbage collector with zero-
 cost `Gc` pointers (they are machine pointer sized and implement `Copy`) that
-are usable from safe Rust. It achieves this by combining three techniques:
+are usable from safe Rust. It achieves this by combining two things:
 
 1) An unsafe `Collect` trait which allows tracing through garbage collected
    types that, despite being unsafe, can be implemented safely using procedural
@@ -51,33 +51,71 @@ are usable from safe Rust. It achieves this by combining three techniques:
    that such pointers are isolated to a single root object, and to guarantee
    that, outside an active call to `mutate`, all such pointers are either
    reachable from the root object or are safe to collect.
-3) The mutation API, while being safe via "generativity", does not make it easy
-   to allow garbage collection to take place continuously. Since no garbage
-   collection at all can take place during a call to `mutate`, long running
-   mutations are problematic. By using a `futures`-like combinator based
-   "sequencing" system, we can recover the ability for garbage collect to take
-   place with as fine of a granularity as necessary, with garbage collection
-   taking place in-between the "sequence" steps.
    
-The last point has benefits beyond safe garbage collection: it means that the
-entire VM *including* sequences of Lua -> Rust and Rust -> Lua callbacks is
-expressed in a sort of "stackless" or what is sometimes called "trampoline"
-style. Rather than implementing the VM or callbacks with recursion and the Rust
-stack, VM executions and callbacks are constructed as `Sequence` state machines
-via combinators. The interpreter receives this `Sequence` to execute and simply
-loops, calling `Sequence::step` until the operation is finished (and garbage
-collecting in-between the `step` calls).
+## Stackless VM ##
+
+The `mutate` based GC api means that long running calls to `mutate` can be
+problematic. No garbage collection can take place during a call to `mutate`, so
+we have to make sure to regularly return from the `mutate` call to allow garbage
+collection to take place.
+
+The VM in `deimos` is thus written in what is called "stackless" or "trampoline"
+style. It does not rely on the rust stack for Lua -> Rust and Rust -> Lua
+nesting, instead callbacks can do one of three things:
+
+  * Return results immediately as a fast path.
+  * Return a type implementing a trait called `Sequence`, which the VM
+    will drive to completion, similar to how `Future` works. In between
+    `Sequence::step` calls, the VM can return from `mutate` and drive garbage
+    collection.
+  * Return a function (either Rust or Lua) to tail call, and a continuation. The
+    function will be called as normal, and after finishing, the results of this
+    function (either success or failure) will be passed to the continuation,
+    which can then itself do any of the three things that any callback can do,
+    return immediately, schedule a sequence, or do yet another tail call.
+
+For example, it is of course possible for Lua to call a Rust callback, which
+then in turn creates a new Lua coroutine and runs it. In order to do so, a
+callback would take a Lua function as a parameter, then create a new coroutine
+thread and return a `Sequence` impl that will run it. The outer main Lua
+thread will step the created `Sequence`, which will in turn step the inner Lua
+coroutine thread. This is exactly how the `coroutine.resume` Lua stdlib function
+is implemented.
+
+As another example, `pcall` is easy to implement here, a callback can call the
+provided function as a tail call with a continuation, and the continuation can
+catch the error and return the error status.
+
+Yet another example, imagine Rust code calling a Lua coroutine thread which
+calls more Rust code which calls yet more Lua code which then yields. Our stack
+will look something like this:
+
+```
+[Rust] -> [Lua Coroutine] -> [Rust Sequence callback] -> [Lua code that yields]
+```
+
+This is no problem with this VM style, the inner Rust callback must be a
+pausable `Sequence`, so the inner yield will yield the value all the way to
+the top level Rust code, and when the coroutine thread is resumed, the running
+`Sequence` will also be resumed.
+
+With any number of nested Lua threads and `Sequence`s, control will always
+continuously return outside the GC arena, and to the outer Rust code driving
+everything. This is the "trampoline" here, when using this interpreter,
+somewhere there is a loop that is continuously calling `Arena::mutate` and
+`Thread::step`, and it can stop or pause or change tasks at any time, not
+requiring unwinding the Rust stack.
 
 This "stackless" style has many benefits, it allows for concurrency patterns
-that are difficult or impossible in other Lua interpreters (like tasklets), and
-will also hopefully make the VM much more resilient against untrusted script
-DoS.
+that are difficult in some other VMs (like tasklets), and makes the VM much more
+resilient against untrusted script DoS.
 
 The downside of the "stackless" style is that sometimes writing things as a
-`Sequence` is much more difficult than writing in normal, straight control flow.
-It would be great if async Rust / generators could help here someday, but there
-are *several* current compiler limitations that make this currently infeasible,
-so for now `Sequence` combinators are what I have.
+`Sequence` is much more difficult than writing in normal, straight control
+flow. It would be great if async Rust / generators could help here someday, to
+allow for painlessly implementing `Sequence`, but there are *several* current
+compiler limitations that make this currently infeasible or so unergonomic that
+it is no longer worth it.
 
 ## What currently works ##
 
@@ -86,17 +124,20 @@ so for now `Sequence` combinators are what I have.
 * A basic Lua bytecode compiler
 * Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
   there are a complete set of VM instructions implemented
-* Almost all of the core Lua language (minus metatables) works. Some tricky Lua
-  features that currently actually work:
+* Almost all of the core Lua language works. Some tricky Lua features that
+  currently actually work:
   * Real closures with proper upvalue handling
   * Tail calls
   * Variable arguments and returns
   * Coroutines, including yielding through Rust callbacks (like through `pcall`)
   * Gotos with label handling that matches Lua 5.3
   * Proper _ENV handling
+  * Metatables and metamethods (only `__call` and `__index` right now, but the
+    infrastructure exists, metamethods can even (safely!) be fully recursive.
+    `__gc` is an entire separate can of worms and doesn't count.)
 * A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
   from `coroutine`)
-* Basic support for Rust callbacks
+* A robust rust callback system.
 * Garbage collected "userdata" with safe downcasting.
 * A simple REPL (try it with `cargo run deimos`)
 
@@ -105,11 +146,8 @@ so for now `Sequence` combinators are what I have.
 * Most of the stdlib is not implemented (`debug` which will probably never be
   implemented), `io`, `os`, `package`, `string`, `table`, `utf8`, most top-level
   functions are unimplemented.
-* Metatables and metamethods. Most of this should not be terribly hard to
-  implement, and this is the highest priority on the TODO list (*not including*
-  `__gc`, that will be separate and is extremely low priority).
 * Garbage collector finalization. Being compatible with PUC-Rio Lua would
-  require object finalization *with failure*, and even having finalization let
+  require object finalization *with failure*, and even having finalization, let
   alone finalization with some kind of failure story is extremely low priority.
   Userdata types can currently implement `Drop` (just like any other rust type)
   to get something equivalent to finaliazation for userdata.
@@ -125,7 +163,7 @@ so for now `Sequence` combinators are what I have.
 * Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more I've forgotten about
 
-## What may never be implemented ##
+## What will probably never be implemented ##
 
 This is not an exhaustive list, but these are some things which I currently
 consider *almost definite* non-goals.
