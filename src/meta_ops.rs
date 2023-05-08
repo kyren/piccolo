@@ -18,6 +18,12 @@ impl MetaMethod {
     }
 }
 
+impl<'gc> Into<Value<'gc>> for MetaMethod {
+    fn into(self) -> Value<'gc> {
+        self.name().into()
+    }
+}
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum MetaResult<'gc, const N: usize> {
@@ -38,7 +44,7 @@ pub fn index<'gc>(
             }
 
             let idx = if let Some(mt) = table.metatable() {
-                mt.get(MetaMethod::Index.name())
+                mt.get(MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -51,7 +57,7 @@ pub fn index<'gc>(
         }
         Value::UserData(u) if u.metatable().is_some() => {
             let idx = if let Some(mt) = u.metatable() {
-                mt.get(MetaMethod::Index.name())
+                mt.get(MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -113,7 +119,7 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
         found: v.type_name(),
     })?;
 
-    match metatable.get(MetaMethod::Call.name()) {
+    match metatable.get(MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
             Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
                 stack.insert(0, v);

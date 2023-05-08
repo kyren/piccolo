@@ -1,17 +1,19 @@
 use std::{
     any::TypeId,
-    cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut},
+    cell::{BorrowError, BorrowMutError, Ref, RefMut},
     fmt,
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{unsize, Collect, Gc, MutationContext, Rootable};
+use gc_arena::{unsize, Collect, CollectRefCell, Gc, MutationContext, Root, Rootable};
 
 // Garbage collected `Any` type that can be downcast.
 
 #[derive(Collect)]
 #[collect(no_drop, bound = "")]
-pub struct AnyCell<'gc, M>(Gc<'gc, dyn AnyValue<'gc, Rootable!['gc_ => UnsafeCell<'gc_, M>]>>)
+pub struct AnyCell<'gc, M>(
+    Gc<'gc, dyn AnyValue<'gc, Rootable!['gc_ => CollectRefCell<Root<'gc_, M>>]>>,
+)
 where
     M: for<'a> Rootable<'a> + ?Sized + 'static;
 
@@ -29,11 +31,11 @@ where
 impl<'gc, M> fmt::Debug for AnyCell<'gc, M>
 where
     M: for<'a> Rootable<'a> + ?Sized,
-    <M as Rootable<'gc>>::Root: fmt::Debug,
+    Root<'gc, M>: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("AnyGcCell")
-            .field("metadata", &self.0.metadata().0)
+            .field("metadata", self.0.metadata())
             .field("data", &(self.0.data().1 as *const _))
             .finish()
     }
@@ -63,21 +65,17 @@ impl<'gc, M> AnyCell<'gc, M>
 where
     M: for<'a> Rootable<'a> + ?Sized,
 {
-    pub fn new<R>(
-        mc: MutationContext<'gc, '_>,
-        metadata: <M as Rootable<'gc>>::Root,
-        data: <R as Rootable<'gc>>::Root,
-    ) -> Self
+    pub fn new<R>(mc: MutationContext<'gc, '_>, metadata: Root<'gc, M>, data: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a> + ?Sized + 'static,
     {
         Self(new_any::<
-            Rootable!['gc_ => UnsafeCell<'gc_, M>],
-            Rootable!['gc_ => UnsafeCell<'gc_, R>],
+            Rootable!['gc_ => CollectRefCell<Root<'gc_, M>>],
+            Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>],
         >(
             mc,
-            UnsafeCell(RefCell::new(metadata)),
-            UnsafeCell(RefCell::new(data)),
+            CollectRefCell::new(metadata),
+            CollectRefCell::new(data),
         ))
     }
 
@@ -86,66 +84,44 @@ where
         Gc::as_ptr(self.0) as *const ()
     }
 
-    pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, <M as Rootable<'gc>>::Root>, BorrowError> {
-        self.0.metadata().0.try_borrow()
+    pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, Root<'gc, M>>, BorrowError> {
+        self.0.metadata().try_borrow()
     }
 
     pub fn write_metadata<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<RefMut<'a, <M as Rootable<'gc>>::Root>, BorrowMutError> {
-        let res = self.0.metadata().0.try_borrow_mut();
+    ) -> Result<RefMut<'a, Root<'gc, M>>, BorrowMutError> {
+        // SAFETY: We make sure to call the write barrier on successful borrowing.
+        let res = unsafe { self.0.metadata().try_borrow_mut() };
         if res.is_ok() {
             Gc::write_barrier(mc, self.0);
         }
         res
     }
 
-    pub fn read_data<'a, R>(
-        &'a self,
-    ) -> Option<Result<Ref<'a, <R as Rootable<'gc>>::Root>, BorrowError>>
+    pub fn read_data<'a, R>(&'a self) -> Option<Result<Ref<'a, Root<'gc, R>>, BorrowError>>
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => UnsafeCell<'gc_, R>]>(&self.0)?;
-        Some(cell.0.try_borrow())
+        let cell = get_data::<_, Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>]>(&self.0)?;
+        Some(cell.try_borrow())
     }
 
     pub fn write_data<'a, R>(
         &'a self,
         mc: MutationContext<'gc, '_>,
-    ) -> Option<Result<RefMut<'a, <R as Rootable<'gc>>::Root>, BorrowMutError>>
+    ) -> Option<Result<RefMut<'a, Root<'gc, R>>, BorrowMutError>>
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => UnsafeCell<'gc_, R>]>(&self.0)?;
-        let res = cell.0.try_borrow_mut();
+        let cell = get_data::<_, Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>]>(&self.0)?;
+        // SAFETY: We make sure to call the write barrier on successful borrowing.
+        let res = unsafe { cell.try_borrow_mut() };
         if res.is_ok() {
             Gc::write_barrier(mc, self.0);
         }
         Some(res)
-    }
-}
-
-// SAFETY: Must call write barrier before writing
-struct UnsafeCell<'gc, T>(RefCell<<T as Rootable<'gc>>::Root>)
-where
-    T: for<'a> Rootable<'a> + ?Sized;
-
-unsafe impl<'gc, T> Collect for UnsafeCell<'gc, T>
-where
-    T: for<'a> Rootable<'a> + ?Sized,
-    <T as Rootable<'gc>>::Root: Collect,
-{
-    fn needs_trace() -> bool
-    where
-        Self: Sized,
-    {
-        <T as Rootable<'gc>>::Root::needs_trace()
-    }
-
-    fn trace(&self, cc: gc_arena::CollectionContext) {
-        self.0.borrow().trace(cc)
     }
 }
 
@@ -179,14 +155,14 @@ unsafe trait AnyValue<'gc, M>
 where
     M: for<'a> Rootable<'a> + ?Sized,
 {
-    fn metadata(&self) -> &<M as Rootable<'gc>>::Root;
+    fn metadata(&self) -> &Root<'gc, M>;
     fn data(&self) -> (TypeId, *const ());
 }
 
 fn new_any<'gc, M, R>(
     mc: MutationContext<'gc, '_>,
-    metadata: <M as Rootable<'gc>>::Root,
-    data: <R as Rootable<'gc>>::Root,
+    metadata: Root<'gc, M>,
+    data: Root<'gc, R>,
 ) -> Gc<'gc, dyn AnyValue<'gc, M>>
 where
     M: for<'a> Rootable<'a> + ?Sized,
@@ -196,16 +172,14 @@ where
     unsize!(ptr => dyn AnyValue<'gc, M>)
 }
 
-fn get_data<'gc, 'a, M, R>(
-    v: &'a Gc<'gc, dyn AnyValue<'gc, M>>,
-) -> Option<&'a <R as Rootable<'gc>>::Root>
+fn get_data<'gc, 'a, M, R>(v: &'a Gc<'gc, dyn AnyValue<'gc, M>>) -> Option<&'a Root<'gc, R>>
 where
     M: for<'b> Rootable<'b> + ?Sized,
     R: for<'b> Rootable<'b> + ?Sized + 'static,
 {
     let (type_id, ptr) = v.data();
     if type_id == TypeId::of::<R>() {
-        let ptr = ptr as *const <R as Rootable<'gc>>::Root;
+        let ptr = ptr as *const Root<'gc, R>;
         Some(unsafe { &*ptr })
     } else {
         None
@@ -218,10 +192,10 @@ struct Value<'gc, M, R>
 where
     M: for<'a> Rootable<'a> + ?Sized,
     R: for<'a> Rootable<'a> + ?Sized + 'static,
-    <R as Rootable<'gc>>::Root: Collect,
+    Root<'gc, R>: Collect,
 {
-    metadata: <M as Rootable<'gc>>::Root,
-    data: <R as Rootable<'gc>>::Root,
+    metadata: Root<'gc, M>,
+    data: Root<'gc, R>,
 }
 
 unsafe impl<'gc, M, R> AnyValue<'gc, M> for Value<'gc, M, R>
@@ -229,14 +203,14 @@ where
     M: for<'a> Rootable<'a> + ?Sized,
     R: for<'a> Rootable<'a> + ?Sized + 'static,
 {
-    fn metadata(&self) -> &<M as Rootable<'gc>>::Root {
+    fn metadata(&self) -> &Root<'gc, M> {
         &self.metadata
     }
 
     fn data(&self) -> (TypeId, *const ()) {
         (
             TypeId::of::<R>(),
-            &self.data as *const <R as Rootable<'gc>>::Root as *const (),
+            &self.data as *const Root<'gc, R> as *const (),
         )
     }
 }
