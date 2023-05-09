@@ -2,11 +2,11 @@ use deimos::{
     compile, AnyCallback, CallbackReturn, Closure, Function, Lua, StaticError, StaticValue,
     UserData, UserDataError, Value,
 };
-use gc_arena::{Collect, GcCell, Rootable};
+use gc_arena::{Collect, Gc, Lock, Rootable};
 
 #[derive(Collect)]
 #[collect(no_drop)]
-struct MyUserData<'gc>(GcCell<'gc, i32>);
+struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
 fn userdata() -> Result<(), Box<StaticError>> {
@@ -14,14 +14,14 @@ fn userdata() -> Result<(), Box<StaticError>> {
 
     lua.try_run(|mc, root| {
         let userdata =
-            UserData::new::<Rootable![MyUserData<'gc>]>(mc, MyUserData(GcCell::allocate(mc, 17)));
+            UserData::new::<Rootable![MyUserData<'gc>]>(mc, MyUserData(Gc::new(mc, Lock::new(17))));
         root.globals.set(mc, "userdata", userdata)?;
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
                     let ud = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
-                    assert_eq!(*ud.0.read(), 17);
-                    *ud.0.write(mc) = 23;
+                    assert_eq!(ud.0.get(), 17);
+                    ud.0.set(mc, 23);
                 }
                 _ => panic!(),
             };
@@ -51,7 +51,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
         [StaticValue::UserData(ud), StaticValue::Boolean(true)] => lua.run(|_, root| {
             let ud = root.registry.fetch(ud);
             let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
-            assert_eq!(*data.0.read(), 23);
+            assert_eq!(data.0.get(), 23);
 
             #[derive(Collect)]
             #[collect(require_static)]

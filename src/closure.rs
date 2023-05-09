@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{Collect, Gc, GcCell, MutationContext};
+use gc_arena::{Collect, Gc, Lock, MutationContext};
 
 use crate::{Constant, OpCode, RegisterIndex, Table, Thread, UpValueIndex, Value};
 
@@ -37,7 +37,7 @@ pub enum UpValueState<'gc> {
 
 #[derive(Debug, Collect, Copy, Clone)]
 #[collect(no_drop)]
-pub struct UpValue<'gc>(pub GcCell<'gc, UpValueState<'gc>>);
+pub struct UpValue<'gc>(pub Gc<'gc, Lock<UpValueState<'gc>>>);
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
@@ -95,22 +95,22 @@ impl<'gc> Closure<'gc> {
         proto: FunctionProto<'gc>,
         environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, ClosureError> {
-        let proto = Gc::allocate(mc, proto);
+        let proto = Gc::new(mc, proto);
         let mut upvalues = Vec::new();
 
         if !proto.upvalues.is_empty() {
             if proto.upvalues.len() > 1 || proto.upvalues[0] != UpValueDescriptor::Environment {
                 return Err(ClosureError::HasUpValues);
             } else if let Some(environment) = environment {
-                upvalues.push(UpValue(GcCell::allocate(
+                upvalues.push(UpValue(Gc::new(
                     mc,
-                    UpValueState::Closed(Value::Table(environment)),
+                    Lock::new(UpValueState::Closed(Value::Table(environment))),
                 )));
             } else {
                 return Err(ClosureError::RequiresEnv);
             }
         }
 
-        Ok(Closure(Gc::allocate(mc, ClosureState { proto, upvalues })))
+        Ok(Closure(Gc::new(mc, ClosureState { proto, upvalues })))
     }
 }

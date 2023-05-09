@@ -6,7 +6,7 @@ use std::{
     mem,
 };
 
-use gc_arena::{Collect, GcCell, MutationContext};
+use gc_arena::{Collect, Gc, Lock, MutationContext, RefLock};
 
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
@@ -16,7 +16,7 @@ use crate::{
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct Thread<'gc>(pub(crate) GcCell<'gc, ThreadState<'gc>>);
+pub struct Thread<'gc>(pub(crate) Gc<'gc, RefLock<ThreadState<'gc>>>);
 
 impl<'gc> Debug for Thread<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -28,7 +28,7 @@ impl<'gc> Debug for Thread<'gc> {
 
 impl<'gc> PartialEq for Thread<'gc> {
     fn eq(&self, other: &Thread<'gc>) -> bool {
-        GcCell::ptr_eq(self.0, other.0)
+        Gc::ptr_eq(self.0, other.0)
     }
 }
 
@@ -55,21 +55,21 @@ pub enum ThreadMode {
 
 impl<'gc> Thread<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, allow_yield: bool) -> Thread<'gc> {
-        Thread(GcCell::allocate(
+        Thread(Gc::new(
             mc,
-            ThreadState {
+            RefLock::new(ThreadState {
                 stack: Vec::new(),
                 frames: Vec::new(),
                 open_upvalues: BTreeMap::new(),
                 external_stack: Vec::new(),
                 returned: None,
                 allow_yield,
-            },
+            }),
         ))
     }
 
     pub fn mode(self) -> ThreadMode {
-        if let Ok(state) = self.0.try_read() {
+        if let Ok(state) = self.0.try_borrow() {
             state.mode()
         } else {
             ThreadMode::Running
@@ -165,7 +165,7 @@ impl<'gc> Thread<'gc> {
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
                 let seq = callback.call(mc, &mut stack);
-                let mut state = self.0.write(mc);
+                let mut state = self.0.borrow_mut(mc);
                 state.external_stack = stack;
 
                 assert!(
@@ -185,7 +185,7 @@ impl<'gc> Thread<'gc> {
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
                 let seq = continuation.continue_ok(mc, &mut stack);
-                let mut state = self.0.write(mc);
+                let mut state = self.0.borrow_mut(mc);
                 state.external_stack = stack;
 
                 assert!(
@@ -205,7 +205,7 @@ impl<'gc> Thread<'gc> {
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
                 let seq = continuation.continue_err(mc, &mut stack, error);
-                let mut state = self.0.write(mc);
+                let mut state = self.0.borrow_mut(mc);
                 state.external_stack = stack;
 
                 assert!(
@@ -225,7 +225,7 @@ impl<'gc> Thread<'gc> {
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
                 let fin = sequence.step(mc, &mut stack);
-                let mut state = self.0.write(mc);
+                let mut state = self.0.borrow_mut(mc);
                 state.external_stack = stack;
 
                 assert!(
@@ -281,7 +281,7 @@ impl<'gc> Thread<'gc> {
         expected: ThreadMode,
     ) -> Result<RefMut<'a, ThreadState<'gc>>, BadThreadMode> {
         assert!(expected != ThreadMode::Running);
-        let state = self.0.try_write(mc).map_err(|_| BadThreadMode {
+        let state = self.0.try_borrow_mut(mc).map_err(|_| BadThreadMode {
             expected,
             found: ThreadMode::Running,
         })?;
@@ -836,7 +836,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         match self.open_upvalues.entry(ind) {
             BTreeEntry::Occupied(occupied) => *occupied.get(),
             BTreeEntry::Vacant(vacant) => {
-                let uv = UpValue(GcCell::allocate(mc, UpValueState::Open(self.thread, ind)));
+                let uv = UpValue(Gc::new(mc, Lock::new(UpValueState::Open(self.thread, ind))));
                 vacant.insert(uv);
                 uv
             }
@@ -844,7 +844,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
     }
 
     pub(crate) fn get_upvalue(&self, upvalue: UpValue<'gc>) -> Value<'gc> {
-        match *upvalue.0.read() {
+        match upvalue.0.get() {
             UpValueState::Open(upvalue_thread, ind) => {
                 if upvalue_thread == self.thread {
                     if ind < self.base {
@@ -853,7 +853,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
                         self.stack_frame[ind - self.base]
                     }
                 } else {
-                    upvalue_thread.0.read().stack[ind]
+                    upvalue_thread.0.borrow().stack[ind]
                 }
             }
             UpValueState::Closed(v) => v,
@@ -866,20 +866,21 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         upvalue: UpValue<'gc>,
         value: Value<'gc>,
     ) {
-        let mut uv = upvalue.0.write(mc);
-        match &mut *uv {
+        match upvalue.0.get() {
             UpValueState::Open(upvalue_thread, ind) => {
-                if *upvalue_thread == self.thread {
-                    if *ind < self.base {
-                        self.upper_stack[*ind] = value;
+                if upvalue_thread == self.thread {
+                    if ind < self.base {
+                        self.upper_stack[ind] = value;
                     } else {
-                        self.stack_frame[*ind - self.base] = value;
+                        self.stack_frame[ind - self.base] = value;
                     }
                 } else {
-                    upvalue_thread.0.write(mc).stack[*ind] = value;
+                    upvalue_thread.0.borrow_mut(mc).stack[ind] = value;
                 }
             }
-            UpValueState::Closed(v) => *v = value,
+            UpValueState::Closed(v) => {
+                upvalue.0.set(mc, UpValueState::Closed(v));
+            }
         }
     }
 
@@ -888,14 +889,16 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
             .open_upvalues
             .split_off(&(self.base + register.0 as usize))
         {
-            let mut upval = upval.0.write(mc);
-            if let UpValueState::Open(upvalue_thread, ind) = *upval {
+            if let UpValueState::Open(upvalue_thread, ind) = upval.0.get() {
                 assert!(upvalue_thread == self.thread);
-                *upval = UpValueState::Closed(if ind < self.base {
-                    self.upper_stack[ind]
-                } else {
-                    self.stack_frame[ind - self.base]
-                });
+                upval.0.set(
+                    mc,
+                    UpValueState::Closed(if ind < self.base {
+                        self.upper_stack[ind]
+                    } else {
+                        self.stack_frame[ind - self.base]
+                    }),
+                );
             }
         }
     }
@@ -1074,10 +1077,9 @@ impl<'gc> ThreadState<'gc> {
 
     fn close_upvalues(&mut self, mc: MutationContext<'gc, '_>, bottom: usize) {
         for (_, upval) in self.open_upvalues.split_off(&bottom) {
-            let mut upval = upval.0.write(mc);
-            if let UpValueState::Open(upvalue_thread, ind) = *upval {
+            if let UpValueState::Open(upvalue_thread, ind) = upval.0.get() {
                 assert!(upvalue_thread.0.as_ptr() == self);
-                *upval = UpValueState::Closed(self.stack[ind]);
+                upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
             }
         }
     }

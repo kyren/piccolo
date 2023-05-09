@@ -5,7 +5,7 @@ use std::{
     i64, mem,
 };
 
-use gc_arena::{Collect, GcCell, MutationContext};
+use gc_arena::{Collect, Gc, MutationContext, RefLock};
 use num_traits::cast;
 use rustc_hash::FxHashMap;
 
@@ -13,7 +13,7 @@ use crate::Value;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Table<'gc>(pub GcCell<'gc, TableState<'gc>>);
+pub struct Table<'gc>(pub Gc<'gc, RefLock<TableState<'gc>>>);
 
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(require_static)]
@@ -35,7 +35,7 @@ impl fmt::Display for InvalidTableKey {
 
 impl<'gc> PartialEq for Table<'gc> {
     fn eq(&self, other: &Table<'gc>) -> bool {
-        GcCell::ptr_eq(self.0, other.0)
+        Gc::ptr_eq(self.0, other.0)
     }
 }
 
@@ -49,11 +49,11 @@ impl<'gc> Hash for Table<'gc> {
 
 impl<'gc> Table<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Table<'gc> {
-        Table(GcCell::allocate(mc, TableState::default()))
+        Table(Gc::new(mc, RefLock::new(TableState::default())))
     }
 
     pub fn get<K: Into<Value<'gc>>>(&self, key: K) -> Value<'gc> {
-        self.0.read().entries.get(key.into())
+        self.0.borrow().entries.get(key.into())
     }
 
     pub fn set<K: Into<Value<'gc>>, V: Into<Value<'gc>>>(
@@ -62,15 +62,15 @@ impl<'gc> Table<'gc> {
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0.write(mc).entries.set(key.into(), value.into())
+        self.0.borrow_mut(mc).entries.set(key.into(), value.into())
     }
 
     pub fn length(&self) -> i64 {
-        self.0.read().entries.length()
+        self.0.borrow().entries.length()
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {
-        self.0.read().metatable
+        self.0.borrow().metatable
     }
 
     pub fn set_metatable(
@@ -78,7 +78,7 @@ impl<'gc> Table<'gc> {
         mc: MutationContext<'gc, '_>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
-        mem::replace(&mut self.0.write(mc).metatable, metatable)
+        mem::replace(&mut self.0.borrow_mut(mc).metatable, metatable)
     }
 }
 

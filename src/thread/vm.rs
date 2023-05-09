@@ -236,7 +236,7 @@ pub(crate) fn run_vm<'gc>(
                     }
                 }
 
-                let closure = Closure(Gc::allocate(mc, ClosureState { proto, upvalues }));
+                let closure = Closure(Gc::new(mc, ClosureState { proto, upvalues }));
                 registers.stack_frame[dest.0 as usize] =
                     Value::Function(Function::Closure(closure));
             }
