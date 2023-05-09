@@ -8,7 +8,8 @@ use std::{
     str,
 };
 
-use gc_arena::{unsize, Collect, Gc, MutationContext};
+use gc_arena::{unsize, Collect, Gc, GcCell, MutationContext};
+use rustc_hash::FxHashSet;
 
 use crate::Value;
 
@@ -177,5 +178,25 @@ impl<'gc> Eq for String<'gc> {}
 impl<'gc> Hash for String<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_bytes().hash(state);
+    }
+}
+
+#[derive(Collect, Clone, Copy)]
+#[collect(no_drop)]
+pub struct InternedStringSet<'gc>(GcCell<'gc, FxHashSet<String<'gc>>>);
+
+impl<'gc> InternedStringSet<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
+        InternedStringSet(GcCell::allocate(mc, FxHashSet::default()))
+    }
+
+    pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+        if let Some(found) = self.0.read().get(s) {
+            return *found;
+        }
+
+        let s = String::from_slice(mc, s);
+        self.0.write(mc).insert(s);
+        s
     }
 }
