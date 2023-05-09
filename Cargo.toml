@@ -12,7 +12,7 @@ codegen-units = 1
 
 [dependencies]
 clap = { version = "4.2", features = ["cargo"] }
-gc-arena = { git = "https://github.com/kyren/gc-arena", branch = "deimos" }
+gc-arena = { git = "https://github.com/kyren/gc-arena" }
 num-traits = "0.2"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
