@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena?branch=deimos#48f5fda617f81ddf8fda10a1e2a542e9eba336bf"
+source = "git+https://github.com/kyren/gc-arena?branch=deimos#3e017e719c56b226338b1f99823075017d8a6d34"
 dependencies = [
  "gc-arena-derive",
  "sptr",
@@ -214,7 +214,7 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena?branch=deimos#48f5fda617f81ddf8fda10a1e2a542e9eba336bf"
+source = "git+https://github.com/kyren/gc-arena?branch=deimos#3e017e719c56b226338b1f99823075017d8a6d34"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -264,9 +264,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.143"
+version = "0.2.144"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edc207893e85c5d6be840e969b496b53d94cec8be2d501b214f50daa97fa8024"
+checksum = "2b00cc1c228a6782d0f076e7b232802e0c5689d41bb5df366f2a6b6621cfdfe1"
 
 [[package]]
 name = "linux-raw-sys"
@@ -342,9 +342,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.26"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4424af4bf778aae2051a77b60283332f386554255d722233d09fbfc7e30da2fc"
+checksum = "8f4f29d145265ec1c483c7c654450edde0bfe043d3938d6972630663356d9500"
 dependencies = [
  "proc-macro2",
 ]

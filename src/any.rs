@@ -5,15 +5,13 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{unsize, Collect, CollectRefCell, Gc, MutationContext, Root, Rootable};
+use gc_arena::{unsize, Collect, Gc, MutationContext, RefLock, Root, Rootable};
 
 // Garbage collected `Any` type that can be downcast.
 
 #[derive(Collect)]
 #[collect(no_drop, bound = "")]
-pub struct AnyCell<'gc, M>(
-    Gc<'gc, dyn AnyValue<'gc, Rootable!['gc_ => CollectRefCell<Root<'gc_, M>>]>>,
-)
+pub struct AnyCell<'gc, M>(Gc<'gc, dyn AnyValue<'gc, Rootable!['gc_ => RefLock<Root<'gc_, M>>]>>)
 where
     M: for<'a> Rootable<'a> + ?Sized + 'static;
 
@@ -70,13 +68,9 @@ where
         R: for<'a> Rootable<'a> + ?Sized + 'static,
     {
         Self(new_any::<
-            Rootable!['gc_ => CollectRefCell<Root<'gc_, M>>],
-            Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>],
-        >(
-            mc,
-            CollectRefCell::new(metadata),
-            CollectRefCell::new(data),
-        ))
+            Rootable!['gc_ => RefLock<Root<'gc_, M>>],
+            Rootable!['gc_ => RefLock<Root<'gc_, R>>],
+        >(mc, RefLock::new(metadata), RefLock::new(data)))
     }
 
     // Only used for display, internal pointer type is private.
@@ -93,7 +87,7 @@ where
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, Root<'gc, M>>, BorrowMutError> {
         // SAFETY: We make sure to call the write barrier on successful borrowing.
-        let res = unsafe { self.0.metadata().try_borrow_mut() };
+        let res = unsafe { self.0.metadata().as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
             Gc::write_barrier(mc, self.0);
         }
@@ -104,7 +98,7 @@ where
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>]>(&self.0)?;
+        let cell = get_data::<_, Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(&self.0)?;
         Some(cell.try_borrow())
     }
 
@@ -115,9 +109,9 @@ where
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => CollectRefCell<Root<'gc_, R>>]>(&self.0)?;
+        let cell = get_data::<_, Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(&self.0)?;
         // SAFETY: We make sure to call the write barrier on successful borrowing.
-        let res = unsafe { cell.try_borrow_mut() };
+        let res = unsafe { cell.as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
             Gc::write_barrier(mc, self.0);
         }
@@ -168,7 +162,7 @@ where
     M: for<'a> Rootable<'a> + ?Sized,
     R: for<'a> Rootable<'a> + ?Sized + 'static,
 {
-    let ptr = Gc::allocate(mc, Value::<M, R> { metadata, data });
+    let ptr = Gc::new(mc, Value::<M, R> { metadata, data });
     unsize!(ptr => dyn AnyValue<'gc, M>)
 }
 

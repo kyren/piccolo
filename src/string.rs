@@ -8,7 +8,7 @@ use std::{
     str,
 };
 
-use gc_arena::{unsize, Collect, Gc, GcCell, MutationContext};
+use gc_arena::{unsize, Collect, Gc, MutationContext, RefLock};
 use rustc_hash::FxHashSet;
 
 use crate::Value;
@@ -57,7 +57,7 @@ impl<'gc> Debug for String<'gc> {
 
 impl<'gc> String<'gc> {
     pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Vec<u8>) -> String<'gc> {
-        String::Buffer(Gc::allocate(mc, s))
+        String::Buffer(Gc::new(mc, s))
     }
 
     pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
@@ -65,9 +65,9 @@ impl<'gc> String<'gc> {
             ($($i:expr),*) => {
                 match s.len() {
                     $($i => String::Inline(
-                        unsize!(Gc::allocate(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
+                        unsize!(Gc::new(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
                     ),)*
-                    _ => String::Buffer(Gc::allocate(mc, s.to_vec())),
+                    _ => String::Buffer(Gc::new(mc, s.to_vec())),
                 }
             };
         }
@@ -183,20 +183,20 @@ impl<'gc> Hash for String<'gc> {
 
 #[derive(Collect, Clone, Copy)]
 #[collect(no_drop)]
-pub struct InternedStringSet<'gc>(GcCell<'gc, FxHashSet<String<'gc>>>);
+pub struct InternedStringSet<'gc>(Gc<'gc, RefLock<FxHashSet<String<'gc>>>>);
 
 impl<'gc> InternedStringSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
-        InternedStringSet(GcCell::allocate(mc, FxHashSet::default()))
+        InternedStringSet(Gc::new(mc, RefLock::new(FxHashSet::default())))
     }
 
     pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
-        if let Some(found) = self.0.read().get(s) {
+        if let Some(found) = self.0.borrow().get(s) {
             return *found;
         }
 
         let s = String::from_slice(mc, s);
-        self.0.write(mc).insert(s);
+        self.0.write_ref_cell(mc).borrow_mut().insert(s);
         s
     }
 }

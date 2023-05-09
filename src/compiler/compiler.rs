@@ -2073,7 +2073,7 @@ impl<'gc> CompilerFunction<'gc> {
             prototypes: self
                 .prototypes
                 .into_iter()
-                .map(|f| Gc::allocate(mc, f))
+                .map(|f| Gc::new(mc, f))
                 .collect(),
         })
     }

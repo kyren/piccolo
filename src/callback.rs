@@ -86,7 +86,7 @@ pub struct AnyCallback<'gc>(pub Gc<'gc, dyn Callback<'gc>>);
 
 impl<'gc> AnyCallback<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, callback: impl Callback<'gc> + 'gc) -> Self {
-        Self(unsize!(Gc::allocate(mc, callback) => dyn Callback<'gc>))
+        Self(unsize!(Gc::new(mc, callback) => dyn Callback<'gc>))
     }
 
     pub fn from_fn<F>(mc: MutationContext<'gc, '_>, call: F) -> AnyCallback<'gc>
@@ -137,7 +137,7 @@ impl<'gc> AnyCallback<'gc> {
             }
         }
 
-        AnyCallback(unsize!(Gc::allocate(
+        AnyCallback(unsize!(Gc::new(
             mc,
             ContextCallback { context, call },
         ) => dyn Callback<'gc>))
@@ -195,7 +195,7 @@ pub struct AnyContinuation<'gc>(pub Gc<'gc, dyn Continuation<'gc>>);
 
 impl<'gc> AnyContinuation<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>, continuation: impl Continuation<'gc> + 'gc) -> Self {
-        Self(unsize!(Gc::allocate(mc, continuation) => dyn Continuation<'gc>))
+        Self(unsize!(Gc::new(mc, continuation) => dyn Continuation<'gc>))
     }
 
     pub fn from_ok_fn<F>(mc: MutationContext<'gc, '_>, continue_ok: F) -> AnyContinuation<'gc>
@@ -329,7 +329,7 @@ impl<'gc> AnyContinuation<'gc> {
             }
         }
 
-        AnyContinuation(unsize!(Gc::allocate(
+        AnyContinuation(unsize!(Gc::new(
             mc,
             ContextContinuation {
                 context,
