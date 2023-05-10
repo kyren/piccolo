@@ -1,4 +1,4 @@
-use deimos::{compile, Closure, Function, Lua, StaticError};
+use piccolo::{compile, Closure, Function, Lua, StaticError};
 
 #[test]
 fn error_unwind() -> Result<(), Box<StaticError>> {

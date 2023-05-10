@@ -1,8 +1,8 @@
-use deimos::{
+use gc_arena::{Collect, Gc, Lock, Rootable};
+use piccolo::{
     compile, AnyCallback, CallbackReturn, Closure, Function, Lua, StaticError, StaticValue,
     UserData, UserDataError, Value,
 };
-use gc_arena::{Collect, Gc, Lock, Rootable};
 
 #[derive(Collect)]
 #[collect(no_drop)]

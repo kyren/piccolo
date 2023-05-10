@@ -509,7 +509,7 @@ where
     }
 
     // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
-    // number.  If `append_buffer` is true, then appends the read newline to the string buffer.
+    // number. If `append_buffer` is true, then appends the read newline to the string buffer.
     fn read_line_end(&mut self, append_string: bool) -> Result<(), LexerError> {
         let newline = self.peek(0).unwrap().unwrap();
         assert!(is_newline(newline));
@@ -532,7 +532,7 @@ where
     }
 
     // Read a string on a single line delimited by ' or " that allows for \ escaping of certain
-    // characters.  Always reads the contained string into the string buffer.
+    // characters. Always reads the contained string into the string buffer.
     fn read_short_string(&mut self) -> Result<(), LexerError> {
         let start_quote = self.peek(0).unwrap().unwrap();
         assert!(start_quote == b'\'' || start_quote == b'"');
@@ -699,7 +699,7 @@ where
         Ok(())
     }
 
-    // Read a [=*[...]=*] sequence with matching numbers of '='.  If `into_string` is true, writes
+    // Read a [=*[...]=*] sequence with matching numbers of '='. If `into_string` is true, writes
     // the contained string into the string buffer.
     fn read_long_string(&mut self, into_string: bool) -> Result<(), LexerError> {
         assert_eq!(self.peek(0).unwrap().unwrap(), b'[');
@@ -767,7 +767,7 @@ where
         Ok(())
     }
 
-    // Reads a hex or decimal integer or floating point identifier.  Allows decimal integers (123),
+    // Reads a hex or decimal integer or floating point identifier. Allows decimal integers (123),
     // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
     fn read_numeral(&mut self) -> Result<Token<S::String>, LexerError> {

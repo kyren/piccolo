@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use deimos::{compile, io, Closure, Function, Lua};
+use piccolo::{compile, io, Closure, Function, Lua};
 
 #[test]
 fn test_scripts() {

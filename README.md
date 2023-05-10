@@ -1,8 +1,6 @@
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/deimos.svg)](https://circleci.com/gh/kyren/deimos)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/piccolo.svg)](https://circleci.com/gh/kyren/piccolo)
 
-## deimos - An experimental Lua VM implemented in pure Rust ##
-
-(formerly known as `luster`)
+## piccolo - An experimental Lua VM implemented in pure Rust ##
 
 **(After *four* years, now UN-paused!)**
 
@@ -19,28 +17,28 @@ Project Goals:
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
 
-Since the focus here is so much on resiliency and safety, `deimos` is written in
-(almost) entirely *safe* Rust. This is a *slight* copout as much of the unsafe
-code that normally is involved in a language runtime actually lives in `gc-arena`,
-but since we have a safe garbage collection abstraction, (almost) the
-entire VM can be written in safe code.
+Since the focus here is so much on resiliency and safety, `piccolo` is written
+in (almost) entirely *safe* Rust. This is a *slight* copout as much of the
+unsafe code that normally is involved in a language runtime actually lives in
+`gc-arena`, but since we have a safe garbage collection abstraction, (almost)
+the entire VM can be written in safe code.
 
-*(`deimos` makes no attempt yet to guard against side channel attacks like
+*(`piccolo` makes no attempt yet to guard against side channel attacks like
 spectre, so even *if* the VM is memory safe, running untrusted scripts has
 additional risk)*.
 
-**This project is currently very WIP** Right now, the short term goal is to get
-some usable subset of Lua working, and to have a robust bindings story. `deimos`
-is being worked on again to use in a separate game project, and my immediate
-goals are going to be whatever that project requires.
+**This project is currently very WIP** Right now, the short term goal is to
+get some usable subset of Lua working, and to have a robust bindings story.
+`piccolo` is being worked on again to use in a separate game project, and my
+immediate goals are going to be whatever that project requires.
 
 ## A unique system for Rust <-> GC interaction ##
 
-*The garbage collector system for `deimos` is now in its [own repo](
+*The garbage collector system for `piccolo` is now in its [own repo](
 https://github.com/kyren/gc-arena), and also on crates.io. See the
 README in the linked repo for more detail about the GC design.*
 
-`deimos` has a real, cycle detecting, incremental garbage collector with zero-
+`piccolo` has a real, cycle detecting, incremental garbage collector with zero-
 cost `Gc` pointers (they are machine pointer sized and implement `Copy`) that
 are usable from safe Rust. It achieves this by combining two things:
 
@@ -59,9 +57,9 @@ problematic. No garbage collection can take place during a call to `mutate`, so
 we have to make sure to regularly return from the `mutate` call to allow garbage
 collection to take place.
 
-The VM in `deimos` is thus written in what is called "stackless" or "trampoline"
-style. It does not rely on the rust stack for Lua -> Rust and Rust -> Lua
-nesting, instead callbacks can do one of the following things
+The VM in `piccolo` is thus written in what is called "stackless" or
+"trampoline" style. It does not rely on the rust stack for Lua -> Rust and Rust
+-> Lua nesting, instead callbacks can do one of the following things
 
   * Return results immediately as a fast path.
   * Return a function (either Rust or Lua) to tail call, and an optional
@@ -179,9 +177,9 @@ consider *almost definite* non-goals.
   impossible (longjmp error handling and adjacent behavior).
 * Perfect compatibility with certain classes of behavior in PUC-Rio Lua:
   * PUC-Rio Lua behaves differently on systems depending on the OS, environment,
-    compilation settings, system locale (lexing numbers changes depending on the
-    system locale!), etc.  `deimos` is more or less aiming to emulate PUC-Rio
-    Lua behavior with the "C" locale set with the default settings in
+    compilation settings, system locale (lexing numbers changes depending on
+    the system locale!), etc. `piccolo` is more or less aiming to emulate PUC-
+    Rio Lua behavior with the "C" locale set with the default settings in
     `luaconf.h` on 64-bit Linux.
   * The specific format of error messages.
   * The specific iteration order of tables, and the specific behavior of the
@@ -195,16 +193,22 @@ consider *almost definite* non-goals.
 * Perfectly matching all of the (sometimes exotic and weird!) garbage collector
   behavior in PUC-Rio Lua.
 
-## Why is it called 'deimos'? ##
+## Why is it called 'piccolo'? ##
 
-Lua is the portugese word for "moon", Deimos is the smallest moon of Mars.
+It's a cute little "pico" Lua, get it?
 
-Deimos is also the greek god of dread and terror, both of which contribute
-highly to this project's existence.
+It's not really all that "pico", but it's still a cute little instrument you can
+safely carry with you anywhere!
+
+## Wasn't this project called something else? Luster? Deimos? ##
+
+There was an embarassing naming kerfluffle where I somehow ended up with other
+people's project names *twice*. They're all the same project. I *promise* I'm
+done renaming it.
 
 ## License ##
 
-`deimos` is licensed under either of:
+`piccolo` is licensed under either of:
 
 * MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
 * Creative Commons CC0 1.0 Universal Public Domain Dedication

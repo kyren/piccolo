@@ -1,11 +1,8 @@
-extern crate deimos;
-extern crate gc_arena;
-
 use std::{error::Error as StdError, fs::File};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
-use deimos::{
+use piccolo::{
     compiler::{self, interning::BasicInterner},
     io, CompiledPrototype,
 };

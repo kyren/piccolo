@@ -998,7 +998,7 @@ where
         Ok(self.read_buffer.get(n))
     }
 
-    // Return true if the nth token ahead in the stream matches the given token.  If this would read
+    // Return true if the nth token ahead in the stream matches the given token. If this would read
     // past the end of the stream, this will simply return false.
     fn check_ahead(&mut self, n: usize, token: Token<S::String>) -> Result<bool, ParserError> {
         self.read_ahead(n)?;

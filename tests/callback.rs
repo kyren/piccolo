@@ -1,4 +1,4 @@
-use deimos::{
+use piccolo::{
     compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, Lua,
     RuntimeError, StaticError, StaticValue, Thread, ThreadMode, Value,
 };

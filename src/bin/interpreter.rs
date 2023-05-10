@@ -5,7 +5,7 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use deimos::{compile, compiler::ParserError, io, Closure, Function, Lua, StaticError};
+use piccolo::{compile, compiler::ParserError, io, Closure, Function, Lua, StaticError};
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     let function = lua.try_run(|mc, root| {
