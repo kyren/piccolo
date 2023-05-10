@@ -66,20 +66,20 @@ impl fmt::Display for CompilerError {
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub struct CompiledFunction<S> {
+pub struct CompiledPrototype<S> {
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
     pub constants: Vec<Constant<S>>,
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,
-    pub functions: Vec<Box<CompiledFunction<S>>>,
+    pub prototypes: Vec<Box<CompiledPrototype<S>>>,
 }
 
 pub fn compile_chunk<S: StringInterner>(
     chunk: &Chunk<S::String>,
     create_string: S,
-) -> Result<CompiledFunction<S::String>, CompilerError> {
+) -> Result<CompiledPrototype<S::String>, CompilerError> {
     let mut compiler = Compiler {
         string_interner: create_string,
         current_function: CompilerFunction::start(&[], true)?,
@@ -100,7 +100,7 @@ struct CompilerFunction<S> {
     constant_table: HashMap<IdenticalConstant<S>, ConstantIndex16>,
 
     upvalues: Vec<(S, UpValueDescriptor)>,
-    functions: Vec<CompiledFunction<S>>,
+    functions: Vec<CompiledPrototype<S>>,
 
     register_allocator: RegisterAllocator,
 
@@ -2106,7 +2106,7 @@ impl<S: Clone> CompilerFunction<S> {
         Ok(function)
     }
 
-    fn finish(mut self) -> Result<CompiledFunction<S>, CompilerError> {
+    fn finish(mut self) -> Result<CompiledPrototype<S>, CompilerError> {
         self.opcodes.push(OpCode::Return {
             start: RegisterIndex(0),
             count: VarCount::constant(0),
@@ -2125,14 +2125,14 @@ impl<S: Clone> CompilerFunction<S> {
             return Err(CompilerError::GotoInvalid);
         }
 
-        Ok(CompiledFunction {
+        Ok(CompiledPrototype {
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
             stack_size: self.register_allocator.stack_size(),
             constants: self.constants,
             opcodes: self.opcodes,
             upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
-            functions: self.functions.into_iter().map(|f| Box::new(f)).collect(),
+            prototypes: self.functions.into_iter().map(|f| Box::new(f)).collect(),
         })
     }
 }

@@ -1,23 +1,22 @@
 extern crate deimos;
 extern crate gc_arena;
 
-use std::{error::Error as StdError, fs::File, path::PathBuf};
+use std::{error::Error as StdError, fs::File};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
 use deimos::{
-    compile,
-    compiler::{self, StringInterner},
-    io, FunctionProto, Lua,
+    compiler::{self, interning::BoxInterner},
+    io, CompiledPrototype,
 };
 
-fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
+fn print_function(function: &CompiledPrototype<Box<[u8]>>) {
     println!("=============");
     println!("FunctionProto({:p})", function);
     println!("=============");
     println!(
-        "fixed_params: {}, stack_size: {}",
-        function.fixed_params, function.stack_size
+        "fixed_params: {}, has_varargs: {}, stack_size: {}",
+        function.fixed_params, function.has_varargs, function.stack_size
     );
     if function.constants.len() > 0 {
         println!("constants:");
@@ -40,7 +39,7 @@ fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     if function.prototypes.len() > 0 {
         println!("prototypes:");
         for p in &function.prototypes {
-            print_function_proto(p);
+            print_function(p);
         }
     }
 }
@@ -64,28 +63,15 @@ fn main() -> Result<(), Box<dyn StdError>> {
         )
         .get_matches();
 
-    let file = io::buffered_read(File::open(matches.get_one::<PathBuf>("file").unwrap())?)?;
+    let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
     if matches.contains_id("parse") {
-        struct Interner;
-
-        impl StringInterner for Interner {
-            type String = Box<[u8]>;
-
-            fn intern(&self, s: &[u8]) -> Self::String {
-                Box::from(s)
-            }
-        }
-
-        let chunk = compiler::parse_chunk(file, Interner)?;
+        let chunk = compiler::parse_chunk(file, BoxInterner)?;
         println!("{:#?}", chunk);
     } else {
-        let mut lua = Lua::new();
-        lua.try_run(|mc, _| {
-            let function = compile(mc, file)?;
-            print_function_proto(&function);
-            Ok(())
-        })?;
+        let chunk = compiler::parse_chunk(file, BoxInterner)?;
+        let prototype = compiler::compile_chunk(&chunk, BoxInterner)?;
+        print_function(&prototype);
     }
 
     Ok(())

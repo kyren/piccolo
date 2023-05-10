@@ -7,7 +7,7 @@ use std::{
 use gc_arena::{Collect, Gc, Lock, MutationContext};
 
 use crate::{
-    CompiledFunction, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
+    CompiledPrototype, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
 };
 
 #[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub struct FunctionProto<'gc> {
 impl<'gc> FunctionProto<'gc> {
     pub fn from_compiled(
         mc: MutationContext<'gc, '_>,
-        compiled_function: CompiledFunction<String<'gc>>,
+        compiled_function: CompiledPrototype<String<'gc>>,
     ) -> Self {
         Self {
             fixed_params: compiled_function.fixed_params,
@@ -41,7 +41,7 @@ impl<'gc> FunctionProto<'gc> {
             opcodes: compiled_function.opcodes,
             upvalues: compiled_function.upvalues,
             prototypes: compiled_function
-                .functions
+                .prototypes
                 .into_iter()
                 .map(|cf| Gc::new(mc, FunctionProto::from_compiled(mc, *cf)))
                 .collect(),

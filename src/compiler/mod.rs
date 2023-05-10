@@ -1,4 +1,5 @@
 mod compiler;
+pub mod interning;
 pub mod lexer;
 mod operators;
 pub mod parser;
@@ -11,28 +12,23 @@ use gc_arena::MutationContext;
 use crate::{string::InternedStringSet, Error, FunctionProto, String};
 
 pub use self::{
-    compiler::{compile_chunk, CompiledFunction, CompilerError},
+    compiler::{compile_chunk, CompiledPrototype, CompilerError},
+    interning::StringInterner,
     parser::parse_chunk,
     parser::ParserError,
 };
-
-pub trait StringInterner {
-    type String: AsRef<[u8]> + Clone;
-
-    fn intern(&self, s: &[u8]) -> Self::String;
-}
 
 pub fn compile<'gc, R: Read>(
     mc: MutationContext<'gc, '_>,
     source: R,
 ) -> Result<FunctionProto<'gc>, Error<'gc>> {
     #[derive(Copy, Clone)]
-    struct ISS<'gc, 'a> {
+    struct Interner<'gc, 'a> {
         string_set: InternedStringSet<'gc>,
         mc: MutationContext<'gc, 'a>,
     }
 
-    impl<'gc, 'a> StringInterner for ISS<'gc, 'a> {
+    impl<'gc, 'a> StringInterner for Interner<'gc, 'a> {
         type String = String<'gc>;
 
         fn intern(&self, s: &[u8]) -> Self::String {
@@ -40,7 +36,7 @@ pub fn compile<'gc, R: Read>(
         }
     }
 
-    let interner = ISS {
+    let interner = Interner {
         string_set: InternedStringSet::new(mc),
         mc,
     };

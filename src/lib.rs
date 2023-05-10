@@ -28,7 +28,7 @@ pub use self::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
         UpValueState,
     },
-    compiler::{compile, CompiledFunction, CompilerError},
+    compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Lua, Root},
