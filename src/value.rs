@@ -2,10 +2,7 @@ use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::{Collect, MutationContext};
 
-use crate::{
-    lexer::{read_float, read_hex_float},
-    AnyCallback, Closure, String, Table, Thread, UserData,
-};
+use crate::{AnyCallback, Closure, Constant, String, Table, Thread, UserData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
@@ -121,47 +118,12 @@ impl<'gc> Value<'gc> {
 
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
     pub fn to_number(self) -> Option<f64> {
-        match self {
-            Value::Integer(a) => Some(a as f64),
-            Value::Number(a) => Some(a),
-            Value::String(a) => {
-                if let Some(f) = read_hex_float(&a) {
-                    Some(f)
-                } else {
-                    read_float(&a)
-                }
-            }
-            _ => None,
-        }
+        self.to_constant().and_then(|c| c.to_number())
     }
 
     /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
     pub fn to_integer(self) -> Option<i64> {
-        match self {
-            Value::Integer(a) => Some(a),
-            Value::Number(a) => {
-                if ((a as i64) as f64) == a {
-                    Some(a as i64)
-                } else {
-                    None
-                }
-            }
-            Value::String(a) => match if let Some(f) = read_hex_float(&a) {
-                Some(f)
-            } else {
-                read_float(&a)
-            } {
-                Some(f) => {
-                    if ((f as i64) as f64) == f {
-                        Some(f as i64)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        self.to_constant().and_then(|c| c.to_integer())
     }
 
     /// Interprets Numbers, Integers, and Strings as a String, if possible.
@@ -176,6 +138,17 @@ impl<'gc> Value<'gc> {
 
     pub fn not(self) -> Value<'gc> {
         Value::Boolean(!self.to_bool())
+    }
+
+    pub fn to_constant(self) -> Option<Constant<String<'gc>>> {
+        match self {
+            Value::Nil => Some(Constant::Nil),
+            Value::Boolean(b) => Some(Constant::Boolean(b)),
+            Value::Integer(i) => Some(Constant::Integer(i)),
+            Value::Number(n) => Some(Constant::Number(n)),
+            Value::String(s) => Some(Constant::String(s)),
+            _ => None,
+        }
     }
 }
 
@@ -203,6 +176,21 @@ impl<'gc> From<i64> for Value<'gc> {
 impl<'gc> From<f64> for Value<'gc> {
     fn from(v: f64) -> Value<'gc> {
         Value::Number(v)
+    }
+}
+
+impl<'gc, S> From<Constant<S>> for Value<'gc>
+where
+    String<'gc>: From<S>,
+{
+    fn from(constant: Constant<S>) -> Self {
+        match constant {
+            Constant::Nil => Value::Nil,
+            Constant::Boolean(b) => Value::Boolean(b),
+            Constant::Integer(i) => Value::Integer(i),
+            Constant::Number(n) => Value::Number(n),
+            Constant::String(s) => Value::String(s.into()),
+        }
     }
 }
 

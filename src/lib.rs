@@ -30,7 +30,7 @@ pub use self::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
         UpValueState,
     },
-    compiler::{compile, compile_chunk, CompilerError},
+    compiler::{compile, compile_chunk, CompiledFunction, CompilerError},
     constant::Constant,
     error::{Error, RuntimeError, StaticError, TypeError},
     lexer::{Lexer, LexerError, Token},

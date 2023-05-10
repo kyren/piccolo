@@ -12,8 +12,8 @@ fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     println!("FunctionProto({:p})", function);
     println!("=============");
     println!(
-        "fixed_params: {}, has_varargs: {}, stack_size: {}",
-        function.fixed_params, function.has_varargs, function.stack_size
+        "fixed_params: {}, stack_size: {}",
+        function.fixed_params, function.stack_size
     );
     if function.constants.len() > 0 {
         println!("constants:");

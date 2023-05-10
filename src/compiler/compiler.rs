@@ -1,11 +1,14 @@
-use std::collections::{HashMap, VecDeque};
-use std::error::Error as StdError;
-use std::{fmt, iter, mem};
+use std::{
+    collections::{hash_map, HashMap, VecDeque},
+    error::Error as StdError,
+    fmt, iter, mem,
+};
 
-use gc_arena::{Collect, Gc, MutationContext};
+use gc_arena::Collect;
 use num_traits::cast;
 
 use crate::{
+    constant::IdenticalConstant,
     parser::{
         AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
         ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
@@ -14,8 +17,8 @@ use crate::{
         SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
         UnaryOperator, WhileStatement,
     },
-    Constant, ConstantIndex16, ConstantIndex8, FunctionProto, OpCode, Opt254, PrototypeIndex,
-    RegisterIndex, String, UpValueDescriptor, UpValueIndex, VarCount,
+    Constant, ConstantIndex16, ConstantIndex8, OpCode, Opt254, PrototypeIndex, RegisterIndex,
+    UpValueDescriptor, UpValueIndex, VarCount,
 };
 
 use super::{
@@ -61,94 +64,129 @@ impl fmt::Display for CompilerError {
     }
 }
 
-pub fn compile_chunk<'gc>(
-    mc: MutationContext<'gc, '_>,
-    chunk: &Chunk<String<'gc>>,
-) -> Result<FunctionProto<'gc>, CompilerError> {
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+pub struct CompiledFunction<S> {
+    pub fixed_params: u8,
+    pub has_varargs: bool,
+    pub stack_size: u16,
+    pub constants: Vec<Constant<S>>,
+    pub opcodes: Vec<OpCode>,
+    pub upvalues: Vec<UpValueDescriptor>,
+    pub functions: Vec<Box<CompiledFunction<S>>>,
+}
+
+pub fn compile_chunk<S, CS>(
+    chunk: &Chunk<S>,
+    create_string: CS,
+) -> Result<CompiledFunction<S>, CompilerError>
+where
+    S: Clone + AsRef<[u8]>,
+    CS: FnMut(&[u8]) -> S,
+{
     let mut compiler = Compiler {
-        mutation_context: mc,
+        create_string,
         current_function: CompilerFunction::start(&[], true)?,
         upper_functions: Vec::new(),
     };
     compiler.block(&chunk.block)?;
-    compiler.current_function.finish(mc)
+    compiler.current_function.finish()
 }
 
-struct Compiler<'gc, 'a> {
-    mutation_context: MutationContext<'gc, 'a>,
-    current_function: CompilerFunction<'gc>,
-    upper_functions: Vec<CompilerFunction<'gc>>,
+struct Compiler<S, CS> {
+    create_string: CS,
+    current_function: CompilerFunction<S>,
+    upper_functions: Vec<CompilerFunction<S>>,
 }
 
-#[derive(Default)]
-struct CompilerFunction<'gc> {
-    constants: Vec<Constant<'gc>>,
-    constant_table: HashMap<Constant<'gc>, ConstantIndex16>,
+struct CompilerFunction<S> {
+    constants: Vec<Constant<S>>,
+    constant_table: HashMap<IdenticalConstant<S>, ConstantIndex16>,
 
-    upvalues: Vec<(String<'gc>, UpValueDescriptor)>,
-    prototypes: Vec<FunctionProto<'gc>>,
+    upvalues: Vec<(S, UpValueDescriptor)>,
+    functions: Vec<CompiledFunction<S>>,
 
     register_allocator: RegisterAllocator,
 
     has_varargs: bool,
     fixed_params: u8,
-    locals: Vec<(String<'gc>, RegisterIndex)>,
+    locals: Vec<(S, RegisterIndex)>,
 
     blocks: Vec<BlockDescriptor>,
     unique_jump_id: u64,
-    jump_targets: Vec<JumpTarget<'gc>>,
-    pending_jumps: Vec<PendingJump<'gc>>,
+    jump_targets: Vec<JumpTarget<S>>,
+    pending_jumps: Vec<PendingJump<S>>,
 
     opcodes: Vec<OpCode>,
 }
 
-#[derive(Debug)]
-enum ExprDescriptor<'gc> {
-    Variable(VariableDescriptor<'gc>),
-    Constant(Constant<'gc>),
-    VarArgs,
-    UnaryOperator {
-        op: UnaryOperator,
-        expr: Box<ExprDescriptor<'gc>>,
-    },
-    SimpleBinaryOperator {
-        left: Box<ExprDescriptor<'gc>>,
-        op: SimpleBinOp,
-        right: Box<ExprDescriptor<'gc>>,
-    },
-    Comparison {
-        left: Box<ExprDescriptor<'gc>>,
-        op: ComparisonBinOp,
-        right: Box<ExprDescriptor<'gc>>,
-    },
-    ShortCircuitBinOp {
-        left: Box<ExprDescriptor<'gc>>,
-        op: ShortCircuitBinOp,
-        right: Box<ExprDescriptor<'gc>>,
-    },
-    TableConstructor(Vec<(ExprDescriptor<'gc>, ExprDescriptor<'gc>)>),
-    TableField {
-        table: Box<ExprDescriptor<'gc>>,
-        key: Box<ExprDescriptor<'gc>>,
-    },
-    Closure(PrototypeIndex),
-    FunctionCall {
-        func: Box<ExprDescriptor<'gc>>,
-        args: Vec<ExprDescriptor<'gc>>,
-    },
-    MethodCall {
-        table: Box<ExprDescriptor<'gc>>,
-        method: Box<ExprDescriptor<'gc>>,
-        args: Vec<ExprDescriptor<'gc>>,
-    },
-    Concat(VecDeque<ExprDescriptor<'gc>>),
+impl<S> Default for CompilerFunction<S> {
+    fn default() -> Self {
+        Self {
+            constants: Vec::new(),
+            constant_table: HashMap::new(),
+            upvalues: Vec::new(),
+            functions: Vec::new(),
+            register_allocator: RegisterAllocator::default(),
+            has_varargs: false,
+            fixed_params: 0,
+            locals: Vec::new(),
+            blocks: Vec::new(),
+            unique_jump_id: 0,
+            jump_targets: Vec::new(),
+            pending_jumps: Vec::new(),
+            opcodes: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
-enum VariableDescriptor<'gc> {
+enum ExprDescriptor<S> {
+    Variable(VariableDescriptor<S>),
+    Constant(Constant<S>),
+    VarArgs,
+    UnaryOperator {
+        op: UnaryOperator,
+        expr: Box<ExprDescriptor<S>>,
+    },
+    SimpleBinaryOperator {
+        left: Box<ExprDescriptor<S>>,
+        op: SimpleBinOp,
+        right: Box<ExprDescriptor<S>>,
+    },
+    Comparison {
+        left: Box<ExprDescriptor<S>>,
+        op: ComparisonBinOp,
+        right: Box<ExprDescriptor<S>>,
+    },
+    ShortCircuitBinOp {
+        left: Box<ExprDescriptor<S>>,
+        op: ShortCircuitBinOp,
+        right: Box<ExprDescriptor<S>>,
+    },
+    TableConstructor(Vec<(ExprDescriptor<S>, ExprDescriptor<S>)>),
+    TableField {
+        table: Box<ExprDescriptor<S>>,
+        key: Box<ExprDescriptor<S>>,
+    },
+    Closure(PrototypeIndex),
+    FunctionCall {
+        func: Box<ExprDescriptor<S>>,
+        args: Vec<ExprDescriptor<S>>,
+    },
+    MethodCall {
+        table: Box<ExprDescriptor<S>>,
+        method: Box<ExprDescriptor<S>>,
+        args: Vec<ExprDescriptor<S>>,
+    },
+    Concat(VecDeque<ExprDescriptor<S>>),
+}
+
+#[derive(Debug)]
+enum VariableDescriptor<S> {
     Local(RegisterIndex),
     UpValue(UpValueIndex),
-    Global(String<'gc>),
+    Global(S),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -161,12 +199,28 @@ enum ExprDestination {
     PushNew,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum JumpLabel<'gc> {
+#[derive(Debug, Copy, Clone)]
+enum JumpLabel<S> {
     Unique(u64),
-    Named(String<'gc>),
+    Named(S),
     Break,
 }
+
+impl<S> PartialEq for JumpLabel<S>
+where
+    S: AsRef<[u8]>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (JumpLabel::Unique(a), JumpLabel::Unique(b)) => a == b,
+            (JumpLabel::Named(a), JumpLabel::Named(b)) => a.as_ref() == b.as_ref(),
+            (JumpLabel::Break, JumpLabel::Break) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<S> Eq for JumpLabel<S> where S: AsRef<[u8]> {}
 
 #[derive(Debug)]
 struct BlockDescriptor {
@@ -181,8 +235,8 @@ struct BlockDescriptor {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct JumpTarget<'gc> {
-    label: JumpLabel<'gc>,
+struct JumpTarget<S> {
+    label: JumpLabel<S>,
     // The target instruction that will be jumped to
     instruction: usize,
     // The number of stack slots in use at the target location
@@ -192,8 +246,8 @@ struct JumpTarget<'gc> {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct PendingJump<'gc> {
-    target: JumpLabel<'gc>,
+struct PendingJump<S> {
+    target: JumpLabel<S>,
     // The index of the placeholder jump instruction
     instruction: usize,
     // These are the expected block index and stack top *after* the jump takes place. These start as
@@ -205,8 +259,12 @@ struct PendingJump<'gc> {
     close_upvalues: bool,
 }
 
-impl<'gc, 'a> Compiler<'gc, 'a> {
-    fn block(&mut self, block: &Block<String<'gc>>) -> Result<(), CompilerError> {
+impl<S, CS> Compiler<S, CS>
+where
+    S: Clone + AsRef<[u8]>,
+    CS: FnMut(&[u8]) -> S,
+{
+    fn block(&mut self, block: &Block<S>) -> Result<(), CompilerError> {
         self.enter_block();
         self.block_statements(block)?;
         self.exit_block()
@@ -268,7 +326,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // though they are in a separate scope from the rest of the block, to make it legal to jump to
     // the end of the block over local variable scope. This is logically equivalent to an extra `do
     // end` around the inside of the block not including the trailing labels.
-    fn block_statements(&mut self, block: &Block<String<'gc>>) -> Result<(), CompilerError> {
+    fn block_statements(&mut self, block: &Block<S>) -> Result<(), CompilerError> {
         if let Some(return_statement) = &block.return_statement {
             for statement in &block.statements {
                 self.statement(statement)?;
@@ -298,7 +356,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn statement(&mut self, statement: &Statement<String<'gc>>) -> Result<(), CompilerError> {
+    fn statement(&mut self, statement: &Statement<S>) -> Result<(), CompilerError> {
         match statement {
             Statement::If(if_statement) => self.if_statement(if_statement),
             Statement::While(while_statement) => self.while_statement(while_statement),
@@ -311,10 +369,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
             Statement::LocalStatement(local_statement) => self.local_statement(local_statement),
             Statement::Label(label_statement) => {
-                self.jump_target(JumpLabel::Named(label_statement.name))
+                self.jump_target(JumpLabel::Named(label_statement.name.clone()))
             }
             Statement::Break => self.jump(JumpLabel::Break),
-            Statement::Goto(goto_statement) => self.jump(JumpLabel::Named(goto_statement.name)),
+            Statement::Goto(goto_statement) => {
+                self.jump(JumpLabel::Named(goto_statement.name.clone()))
+            }
             Statement::FunctionCall(function_call) => self.function_call_statement(function_call),
             Statement::Assignment(assignment) => self.assignment_statement(assignment),
         }
@@ -322,7 +382,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn return_statement(
         &mut self,
-        return_statement: &ReturnStatement<String<'gc>>,
+        return_statement: &ReturnStatement<S>,
     ) -> Result<(), CompilerError> {
         let mut returns = return_statement
             .returns
@@ -361,10 +421,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn if_statement(
-        &mut self,
-        if_statement: &IfStatement<String<'gc>>,
-    ) -> Result<(), CompilerError> {
+    fn if_statement(&mut self, if_statement: &IfStatement<S>) -> Result<(), CompilerError> {
         let end_label = self.unique_jump_label();
         let mut next_label = self.unique_jump_label();
 
@@ -372,17 +429,17 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .chain(&if_statement.else_if_parts)
             .enumerate()
         {
-            self.jump_target(next_label)?;
+            self.jump_target(next_label.clone())?;
             next_label = self.unique_jump_label();
 
             let if_expr = self.expression(if_expr)?;
             self.expr_test(if_expr, true)?;
-            self.jump(next_label)?;
+            self.jump(next_label.clone())?;
 
             self.enter_block();
             self.block_statements(block)?;
             if i != if_statement.else_if_parts.len() || if_statement.else_part.is_some() {
-                self.jump(end_label)?;
+                self.jump(end_label.clone())?;
             }
             self.exit_block()?;
         }
@@ -397,10 +454,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn for_statement(
-        &mut self,
-        for_statement: &ForStatement<String<'gc>>,
-    ) -> Result<(), CompilerError> {
+    fn for_statement(&mut self, for_statement: &ForStatement<S>) -> Result<(), CompilerError> {
         match for_statement {
             ForStatement::Numeric {
                 name,
@@ -435,7 +489,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .register_allocator
                     .push(1)
                     .ok_or(CompilerError::Registers)?;
-                self.current_function.locals.push((*name, loop_var));
+                self.current_function.locals.push((name.clone(), loop_var));
 
                 self.block_statements(body)?;
                 self.exit_block()?;
@@ -513,10 +567,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 for i in 0..name_count {
                     self.current_function
                         .locals
-                        .push((names[i as usize], RegisterIndex(names_reg.0 + i)));
+                        .push((names[i as usize].clone(), RegisterIndex(names_reg.0 + i)));
                 }
 
-                self.jump(loop_label)?;
+                self.jump(loop_label.clone())?;
 
                 let start_inst = self.current_function.opcodes.len();
                 self.block_statements(body)?;
@@ -546,15 +600,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn while_statement(
         &mut self,
-        while_statement: &WhileStatement<String<'gc>>,
+        while_statement: &WhileStatement<S>,
     ) -> Result<(), CompilerError> {
         let start_label = self.unique_jump_label();
         let end_label = self.unique_jump_label();
 
-        self.jump_target(start_label)?;
+        self.jump_target(start_label.clone())?;
         let condition = self.expression(&while_statement.condition)?;
         self.expr_test(condition, true)?;
-        self.jump(end_label)?;
+        self.jump(end_label.clone())?;
 
         self.enter_block();
 
@@ -570,14 +624,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn repeat_statement(
         &mut self,
-        repeat_statement: &RepeatStatement<String<'gc>>,
+        repeat_statement: &RepeatStatement<S>,
     ) -> Result<(), CompilerError> {
         let start_label = self.unique_jump_label();
 
         self.enter_block();
         self.enter_block();
 
-        self.jump_target(start_label)?;
+        self.jump_target(start_label.clone())?;
 
         // `repeat` statements do not follow the trailing label rule, because the variables inside
         // the block are in scope for the `until` condition at the end.
@@ -601,10 +655,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn function_statement(
         &mut self,
-        function_statement: &FunctionStatement<String<'gc>>,
+        function_statement: &FunctionStatement<S>,
     ) -> Result<(), CompilerError> {
         let mut table = None;
-        let mut name = function_statement.name;
+        let mut name = function_statement.name.clone();
 
         for field in function_statement
             .fields
@@ -619,7 +673,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             } else {
                 ExprDescriptor::Variable(self.find_variable(name)?)
             });
-            name = *field;
+            name = field.clone();
         }
 
         let table = if let Some(table) = table {
@@ -629,8 +683,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         };
 
         let proto = if function_statement.method.is_some() {
-            let mut parameters = vec![String::from("self")];
-            parameters.extend(&function_statement.definition.parameters);
+            let mut parameters = vec![(self.create_string)(b"self")];
+            parameters.extend_from_slice(&function_statement.definition.parameters);
 
             self.new_prototype(
                 &parameters,
@@ -656,7 +710,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn local_statement(
         &mut self,
-        local_statement: &LocalStatement<String<'gc>>,
+        local_statement: &LocalStatement<S>,
     ) -> Result<(), CompilerError> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
@@ -672,9 +726,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 .opcodes
                 .push(OpCode::LoadNil { dest, count });
             for i in 0..name_len {
-                self.current_function
-                    .locals
-                    .push((local_statement.names[i], RegisterIndex(dest.0 + i as u8)));
+                self.current_function.locals.push((
+                    local_statement.names[i].clone(),
+                    RegisterIndex(dest.0 + i as u8),
+                ));
             }
         } else {
             for i in 0..val_len {
@@ -690,7 +745,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                     for j in 0..names_left {
                         self.current_function.locals.push((
-                            local_statement.names[val_len - 1 + j as usize],
+                            local_statement.names[val_len - 1 + j as usize].clone(),
                             RegisterIndex(dest.0 + j),
                         ));
                     }
@@ -698,7 +753,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let reg = self.expr_discharge(expr, ExprDestination::PushNew)?;
                     self.current_function
                         .locals
-                        .push((local_statement.names[i], reg));
+                        .push((local_statement.names[i].clone(), reg));
                 }
             }
         }
@@ -708,7 +763,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn function_call_statement(
         &mut self,
-        function_call: &FunctionCallStatement<String<'gc>>,
+        function_call: &FunctionCallStatement<S>,
     ) -> Result<(), CompilerError> {
         let head_expr = self.suffixed_expression(&function_call.head)?;
         match &function_call.call {
@@ -726,7 +781,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     .collect::<Result<_, CompilerError>>()?;
                 self.call_method(
                     head_expr,
-                    ExprDescriptor::Constant(Constant::String(*method)),
+                    ExprDescriptor::Constant(Constant::String(method.clone())),
                     arg_exprs,
                     VarCount::constant(0),
                 )?;
@@ -737,19 +792,23 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn assignment_statement(
         &mut self,
-        assignment: &AssignmentStatement<String<'gc>>,
+        assignment: &AssignmentStatement<S>,
     ) -> Result<(), CompilerError> {
         let target_len = assignment.targets.len();
         let val_len = assignment.values.len();
         assert!(val_len != 0);
 
-        fn assign<'gc, 'a, 's>(
-            this: &'s mut Compiler<'gc, 'a>,
-            target: &AssignmentTarget<String<'gc>>,
-            expr: ExprDescriptor<'gc>,
-        ) -> Result<(), CompilerError> {
+        fn assign<'a, S, CS>(
+            this: &'a mut Compiler<S, CS>,
+            target: &AssignmentTarget<S>,
+            expr: ExprDescriptor<S>,
+        ) -> Result<(), CompilerError>
+        where
+            S: Clone + AsRef<[u8]>,
+            CS: FnMut(&[u8]) -> S,
+        {
             match target {
-                AssignmentTarget::Name(name) => match this.find_variable(*name)? {
+                AssignmentTarget::Name(name) => match this.find_variable(name.clone())? {
                     VariableDescriptor::Local(dest) => {
                         this.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
@@ -773,7 +832,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                     let table = this.suffixed_expression(table)?;
                     let key = match field {
                         FieldSuffix::Named(name) => {
-                            ExprDescriptor::Constant(Constant::String(*name))
+                            ExprDescriptor::Constant(Constant::String(name.clone()))
                         }
                         FieldSuffix::Indexed(idx) => this.expression(idx)?,
                     };
@@ -814,7 +873,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn local_function_statement(
         &mut self,
-        local_function: &LocalFunctionStatement<String<'gc>>,
+        local_function: &LocalFunctionStatement<S>,
     ) -> Result<(), CompilerError> {
         let proto = self.new_prototype(
             &local_function.definition.parameters,
@@ -832,15 +891,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             .push(OpCode::Closure { proto, dest });
         self.current_function
             .locals
-            .push((local_function.name, dest));
+            .push((local_function.name.clone(), dest));
 
         Ok(())
     }
 
     fn expression(
         &mut self,
-        expression: &Expression<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        expression: &Expression<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
             let right = self.expression(&right)?;
@@ -851,8 +910,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn head_expression(
         &mut self,
-        head_expression: &HeadExpression<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        head_expression: &HeadExpression<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(unop, expr) => {
@@ -864,12 +923,12 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn simple_expression(
         &mut self,
-        simple_expression: &SimpleExpression<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        simple_expression: &SimpleExpression<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         Ok(match simple_expression {
             SimpleExpression::Float(f) => ExprDescriptor::Constant(Constant::Number(*f)),
             SimpleExpression::Integer(i) => ExprDescriptor::Constant(Constant::Integer(*i)),
-            SimpleExpression::String(s) => ExprDescriptor::Constant(Constant::String(*s)),
+            SimpleExpression::String(s) => ExprDescriptor::Constant(Constant::String(s.clone())),
             SimpleExpression::Nil => ExprDescriptor::Constant(Constant::Nil),
             SimpleExpression::True => ExprDescriptor::Constant(Constant::Boolean(true)),
             SimpleExpression::False => ExprDescriptor::Constant(Constant::Boolean(false)),
@@ -884,8 +943,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn table_constructor_expression(
         &mut self,
-        table_constructor: &TableConstructor<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        table_constructor: &TableConstructor<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         let mut array_index = 0;
         let mut fields = Vec::new();
         for field in &table_constructor.fields {
@@ -899,7 +958,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 }
                 ConstructorField::Record(key, value) => (
                     match key {
-                        RecordKey::Named(key) => ExprDescriptor::Constant(Constant::String(*key)),
+                        RecordKey::Named(key) => {
+                            ExprDescriptor::Constant(Constant::String(key.clone()))
+                        }
                         RecordKey::Indexed(key) => self.expression(key)?,
                     },
                     self.expression(value)?,
@@ -911,8 +972,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn function_expression(
         &mut self,
-        function: &FunctionDefinition<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        function: &FunctionDefinition<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         let proto =
             self.new_prototype(&function.parameters, function.has_varargs, &function.body)?;
         Ok(ExprDescriptor::Closure(proto))
@@ -920,15 +981,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn suffixed_expression(
         &mut self,
-        suffixed_expression: &SuffixedExpression<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        suffixed_expression: &SuffixedExpression<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
                 SuffixPart::Field(field) => {
                     let key = match field {
                         FieldSuffix::Named(name) => {
-                            ExprDescriptor::Constant(Constant::String(*name))
+                            ExprDescriptor::Constant(Constant::String(name.clone()))
                         }
                         FieldSuffix::Indexed(idx) => self.expression(idx)?,
                     };
@@ -955,7 +1016,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                             .collect::<Result<_, CompilerError>>()?;
                         expr = ExprDescriptor::MethodCall {
                             table: Box::new(expr),
-                            method: Box::new(ExprDescriptor::Constant(Constant::String(*method))),
+                            method: Box::new(ExprDescriptor::Constant(Constant::String(
+                                method.clone(),
+                            ))),
                             args,
                         };
                     }
@@ -967,11 +1030,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn primary_expression(
         &mut self,
-        primary_expression: &PrimaryExpression<String<'gc>>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        primary_expression: &PrimaryExpression<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         match primary_expression {
             PrimaryExpression::Name(name) => {
-                Ok(ExprDescriptor::Variable(self.find_variable(*name)?))
+                Ok(ExprDescriptor::Variable(self.find_variable(name.clone())?))
             }
             PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
         }
@@ -980,9 +1043,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn unary_operator_expression(
         &mut self,
         unop: UnaryOperator,
-        expr: ExprDescriptor<'gc>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        if let ExprDescriptor::Constant(v) = expr {
+        expr: ExprDescriptor<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
+        if let ExprDescriptor::Constant(v) = &expr {
             if let Some(v) = unop_const_fold(unop, v) {
                 return Ok(ExprDescriptor::Constant(v));
             }
@@ -996,14 +1059,13 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn binary_operator_expression(
         &mut self,
-        left: ExprDescriptor<'gc>,
+        left: ExprDescriptor<S>,
         binop: BinaryOperator,
-        right: ExprDescriptor<'gc>,
-    ) -> Result<ExprDescriptor<'gc>, CompilerError> {
+        right: ExprDescriptor<S>,
+    ) -> Result<ExprDescriptor<S>, CompilerError> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
-                if let (&ExprDescriptor::Constant(a), &ExprDescriptor::Constant(b)) =
-                    (&left, &right)
+                if let (ExprDescriptor::Constant(a), ExprDescriptor::Constant(b)) = (&left, &right)
                 {
                     if let Some(v) = simple_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Constant(v));
@@ -1017,8 +1079,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             }
 
             BinOpCategory::Comparison(op) => {
-                if let (&ExprDescriptor::Constant(a), &ExprDescriptor::Constant(b)) =
-                    (&left, &right)
+                if let (ExprDescriptor::Constant(a), ExprDescriptor::Constant(b)) = (&left, &right)
                 {
                     if let Some(v) = comparison_binop_const_fold(op, a, b) {
                         return Ok(ExprDescriptor::Constant(v));
@@ -1062,9 +1123,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     fn new_prototype(
         &mut self,
-        parameters: &[String<'gc>],
+        parameters: &[S],
         has_varargs: bool,
-        body: &Block<String<'gc>>,
+        body: &Block<S>,
     ) -> Result<PrototypeIndex, CompilerError> {
         let old_current = mem::replace(
             &mut self.current_function,
@@ -1076,24 +1137,21 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             &mut self.current_function,
             self.upper_functions.pop().unwrap(),
         )
-        .finish(self.mutation_context)?;
-        self.current_function.prototypes.push(proto);
+        .finish()?;
+        self.current_function.functions.push(proto);
         Ok(PrototypeIndex(
-            cast(self.current_function.prototypes.len() - 1).ok_or(CompilerError::Functions)?,
+            cast(self.current_function.functions.len() - 1).ok_or(CompilerError::Functions)?,
         ))
     }
 
-    fn find_variable(
-        &mut self,
-        name: String<'gc>,
-    ) -> Result<VariableDescriptor<'gc>, CompilerError> {
+    fn find_variable(&mut self, name: S) -> Result<VariableDescriptor<S>, CompilerError> {
         // We need to be able to index functions from the top-level chunk function (index 0), up to
         // the current function
         let current_function = self.upper_functions.len();
-        fn get_function<'gc, 'a, 's>(
-            this: &'s mut Compiler<'gc, 'a>,
+        fn get_function<'a, S, CS>(
+            this: &'a mut Compiler<S, CS>,
             i: usize,
-        ) -> &'s mut CompilerFunction<'gc> {
+        ) -> &'a mut CompilerFunction<S> {
             if i == this.upper_functions.len() {
                 &mut this.current_function
             } else {
@@ -1103,8 +1161,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         for i in (0..=current_function).rev() {
             for j in (0..get_function(self, i).locals.len()).rev() {
-                let (local_name, register) = get_function(self, i).locals[j];
-                if name == local_name {
+                let (local_name, register) = get_function(self, i).locals[j].clone();
+                if name.as_ref() == local_name.as_ref() {
                     if i == current_function {
                         return Ok(VariableDescriptor::Local(register));
                     } else {
@@ -1120,7 +1178,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
                         get_function(self, i + 1)
                             .upvalues
-                            .push((name, UpValueDescriptor::ParentLocal(register)));
+                            .push((name.clone(), UpValueDescriptor::ParentLocal(register)));
                         let mut upvalue_index = UpValueIndex(
                             cast(get_function(self, i + 1).upvalues.len() - 1)
                                 .ok_or(CompilerError::UpValues)?,
@@ -1128,7 +1186,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         for k in i + 2..=current_function {
                             get_function(self, k)
                                 .upvalues
-                                .push((name, UpValueDescriptor::Outer(upvalue_index)));
+                                .push((name.clone(), UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
                                 cast(get_function(self, k).upvalues.len() - 1)
                                     .ok_or(CompilerError::UpValues)?,
@@ -1141,14 +1199,14 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
             // The top-level function has an implicit _ENV upvalue (this is the only upvalue it can
             // have), and we add it if it is ever referenced.
-            if i == 0 && name == b"_ENV" && get_function(self, i).upvalues.is_empty() {
+            if i == 0 && name.as_ref() == b"_ENV" && get_function(self, i).upvalues.is_empty() {
                 get_function(self, 0)
                     .upvalues
-                    .push((name, UpValueDescriptor::Environment));
+                    .push((name.clone(), UpValueDescriptor::Environment));
             }
 
             for j in 0..get_function(self, i).upvalues.len() {
-                if name == get_function(self, i).upvalues[j].0 {
+                if name.as_ref() == get_function(self, i).upvalues[j].0.as_ref() {
                     let upvalue_index = UpValueIndex(cast(j).ok_or(CompilerError::UpValues)?);
                     if i == current_function {
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -1157,7 +1215,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                         for k in i + 1..=current_function {
                             get_function(self, k)
                                 .upvalues
-                                .push((name, UpValueDescriptor::Outer(upvalue_index)));
+                                .push((name.clone(), UpValueDescriptor::Outer(upvalue_index)));
                             upvalue_index = UpValueIndex(
                                 cast(get_function(self, k).upvalues.len() - 1)
                                     .ok_or(CompilerError::UpValues)?,
@@ -1174,18 +1232,19 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
     // _ENV.
-    fn get_environment(&mut self) -> Result<ExprDescriptor<'gc>, CompilerError> {
-        Ok(ExprDescriptor::Variable(self.find_variable("_ENV".into())?))
+    fn get_environment(&mut self) -> Result<ExprDescriptor<S>, CompilerError> {
+        let env = (self.create_string)(b"_ENV");
+        Ok(ExprDescriptor::Variable(self.find_variable(env)?))
     }
 
-    fn unique_jump_label(&mut self) -> JumpLabel<'gc> {
+    fn unique_jump_label(&mut self) -> JumpLabel<S> {
         let jl = JumpLabel::Unique(self.current_function.unique_jump_id);
         self.current_function.unique_jump_id =
             self.current_function.unique_jump_id.checked_add(1).unwrap();
         jl
     }
 
-    fn jump(&mut self, target: JumpLabel<'gc>) -> Result<(), CompilerError> {
+    fn jump(&mut self, target: JumpLabel<S>) -> Result<(), CompilerError> {
         let jmp_inst = self.current_function.opcodes.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
@@ -1235,7 +1294,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn jump_target(&mut self, jump_label: JumpLabel<'gc>) -> Result<(), CompilerError> {
+    fn jump_target(&mut self, jump_label: JumpLabel<S>) -> Result<(), CompilerError> {
         let target_instruction = self.current_function.opcodes.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
@@ -1249,7 +1308,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         }
 
         self.current_function.jump_targets.push(JumpTarget {
-            label: jump_label,
+            label: jump_label.clone(),
             instruction: target_instruction,
             stack_top: current_stack_top,
             block_index: current_block_index,
@@ -1262,7 +1321,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             // is from an outer block.
             if pending_jump.block_index == current_block_index && pending_jump.target == jump_label
             {
-                resolving_jumps.push(*pending_jump);
+                resolving_jumps.push(pending_jump.clone());
                 false
             } else {
                 true
@@ -1295,24 +1354,29 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
         Ok(())
     }
 
-    fn get_constant(&mut self, constant: Constant<'gc>) -> Result<ConstantIndex16, CompilerError> {
-        if let Some(constant) = self.current_function.constant_table.get(&constant).copied() {
-            Ok(constant)
-        } else {
-            let c = ConstantIndex16(
-                cast(self.current_function.constants.len()).ok_or(CompilerError::Constants)?,
-            );
-            self.current_function.constants.push(constant);
-            self.current_function.constant_table.insert(constant, c);
-            Ok(c)
+    fn get_constant(&mut self, constant: Constant<S>) -> Result<ConstantIndex16, CompilerError> {
+        match self
+            .current_function
+            .constant_table
+            .entry(IdenticalConstant(constant.clone()))
+        {
+            hash_map::Entry::Occupied(occupied) => Ok(*occupied.get()),
+            hash_map::Entry::Vacant(vacant) => {
+                let c = ConstantIndex16(
+                    cast(self.current_function.constants.len()).ok_or(CompilerError::Constants)?,
+                );
+                self.current_function.constants.push(constant);
+                vacant.insert(c);
+                Ok(c)
+            }
         }
     }
 
     fn set_table(
         &mut self,
-        table: ExprDescriptor<'gc>,
-        key: ExprDescriptor<'gc>,
-        value: ExprDescriptor<'gc>,
+        table: ExprDescriptor<S>,
+        key: ExprDescriptor<S>,
+        value: ExprDescriptor<S>,
     ) -> Result<(), CompilerError> {
         match table {
             ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
@@ -1332,8 +1396,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn set_uptable(
         &mut self,
         table: UpValueIndex,
-        key: ExprDescriptor<'gc>,
-        value: ExprDescriptor<'gc>,
+        key: ExprDescriptor<S>,
+        value: ExprDescriptor<S>,
     ) -> Result<(), CompilerError> {
         let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
         let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
@@ -1366,8 +1430,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     fn set_rtable(
         &mut self,
         table: RegisterIndex,
-        key: ExprDescriptor<'gc>,
-        value: ExprDescriptor<'gc>,
+        key: ExprDescriptor<S>,
+        value: ExprDescriptor<S>,
     ) -> Result<(), CompilerError> {
         let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
         let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
@@ -1403,8 +1467,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // always be the current register allocator top.
     fn call_function(
         &mut self,
-        func: ExprDescriptor<'gc>,
-        args: Vec<ExprDescriptor<'gc>>,
+        func: ExprDescriptor<S>,
+        args: Vec<ExprDescriptor<S>>,
         returns: VarCount,
     ) -> Result<RegisterIndex, CompilerError> {
         let func = self.expr_discharge(func, ExprDestination::PushNew)?;
@@ -1425,9 +1489,9 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // opcode that make them more efficient than executing them in a naive way.
     fn call_method(
         &mut self,
-        table: ExprDescriptor<'gc>,
-        method: ExprDescriptor<'gc>,
-        args: Vec<ExprDescriptor<'gc>>,
+        table: ExprDescriptor<S>,
+        method: ExprDescriptor<S>,
+        args: Vec<ExprDescriptor<S>>,
         returns: VarCount,
     ) -> Result<RegisterIndex, CompilerError> {
         let (table, table_is_temp) = self.expr_any_register(table)?;
@@ -1478,7 +1542,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // their arity.
     fn push_arguments(
         &mut self,
-        mut args: Vec<ExprDescriptor<'gc>>,
+        mut args: Vec<ExprDescriptor<S>>,
     ) -> Result<VarCount, CompilerError> {
         let top = self.current_function.register_allocator.stack_top();
         let args_len = args.len();
@@ -1522,7 +1586,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // flag indicating whether that register is temporary and must be freed.
     fn expr_any_register(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<S>,
     ) -> Result<(RegisterIndex, bool), CompilerError> {
         Ok(
             if let ExprDescriptor::Variable(VariableDescriptor::Local(register)) = expr {
@@ -1542,10 +1606,10 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // register as the second return value.
     fn expr_any_register_or_constant(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<S>,
     ) -> Result<(RegisterOrConstant, Option<RegisterIndex>), CompilerError> {
-        if let ExprDescriptor::Constant(cons) = expr {
-            if let Some(c8) = cast(self.get_constant(cons)?.0) {
+        if let ExprDescriptor::Constant(cons) = &expr {
+            if let Some(c8) = cast(self.get_constant(cons.clone())?.0) {
                 return Ok((RegisterOrConstant::Constant(ConstantIndex8(c8)), None));
             }
         }
@@ -1561,11 +1625,11 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // register.
     fn expr_discharge(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<S>,
         dest: ExprDestination,
     ) -> Result<RegisterIndex, CompilerError> {
-        fn new_destination<'gc, 'a>(
-            this: &mut Compiler<'gc, 'a>,
+        fn new_destination<S, CS>(
+            this: &mut Compiler<S, CS>,
             dest: ExprDestination,
         ) -> Result<RegisterIndex, CompilerError> {
             Ok(match dest {
@@ -1583,12 +1647,16 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             })
         }
 
-        fn get_table<'gc, 'a>(
-            this: &mut Compiler<'gc, 'a>,
-            table: ExprDescriptor<'gc>,
-            key: ExprDescriptor<'gc>,
+        fn get_table<S, CS>(
+            this: &mut Compiler<S, CS>,
+            table: ExprDescriptor<S>,
+            key: ExprDescriptor<S>,
             dest: ExprDestination,
-        ) -> Result<RegisterIndex, CompilerError> {
+        ) -> Result<RegisterIndex, CompilerError>
+        where
+            S: Clone + AsRef<[u8]>,
+            CS: FnMut(&[u8]) -> S,
+        {
             Ok(match table {
                 ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
                     let (key_reg_cons, key_to_free) = this.expr_any_register_or_constant(key)?;
@@ -1772,7 +1840,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
                 self.current_function.opcodes.push(test_op);
 
                 let skip = self.unique_jump_label();
-                self.jump(skip)?;
+                self.jump(skip.clone())?;
 
                 self.expr_discharge(*right, ExprDestination::Register(dest))?;
                 self.jump_target(skip)?;
@@ -1895,7 +1963,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     // the stack. For single value expressions this sets the rest of the values to Nil.
     fn expr_push_count(
         &mut self,
-        expr: ExprDescriptor<'gc>,
+        expr: ExprDescriptor<S>,
         count: u8,
     ) -> Result<RegisterIndex, CompilerError> {
         assert!(count != 0);
@@ -1955,14 +2023,18 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
     // Evaluates the given expression and tests it, skipping the following instruction if the boolean
     // result is equal to `skip_if`
-    fn expr_test(&mut self, expr: ExprDescriptor<'gc>, skip_if: bool) -> Result<(), CompilerError> {
-        fn gen_comparison<'gc, 'a>(
-            this: &mut Compiler<'gc, 'a>,
-            left: ExprDescriptor<'gc>,
+    fn expr_test(&mut self, expr: ExprDescriptor<S>, skip_if: bool) -> Result<(), CompilerError> {
+        fn gen_comparison<S, CS>(
+            this: &mut Compiler<S, CS>,
+            left: ExprDescriptor<S>,
             op: ComparisonBinOp,
-            right: ExprDescriptor<'gc>,
+            right: ExprDescriptor<S>,
             skip_if: bool,
-        ) -> Result<(), CompilerError> {
+        ) -> Result<(), CompilerError>
+        where
+            S: Clone + AsRef<[u8]>,
+            CS: FnMut(&[u8]) -> S,
+        {
             let (left_reg_cons, left_to_free) = this.expr_any_register_or_constant(left)?;
             let (right_reg_cons, right_to_free) = this.expr_any_register_or_constant(right)?;
             if let Some(to_free) = left_to_free {
@@ -1979,11 +2051,15 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
             Ok(())
         }
 
-        fn gen_test<'gc, 'a>(
-            this: &mut Compiler<'gc, 'a>,
-            expr: ExprDescriptor<'gc>,
+        fn gen_test<S, CS>(
+            this: &mut Compiler<S, CS>,
+            expr: ExprDescriptor<S>,
             is_true: bool,
-        ) -> Result<(), CompilerError> {
+        ) -> Result<(), CompilerError>
+        where
+            S: Clone + AsRef<[u8]>,
+            CS: FnMut(&[u8]) -> S,
+        {
             let (test_reg, test_is_temp) = this.expr_any_register(expr)?;
             if test_is_temp {
                 this.current_function.register_allocator.free(test_reg);
@@ -1998,7 +2074,7 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
 
         match expr {
             ExprDescriptor::Constant(cons) => {
-                if cons.to_value().to_bool() == skip_if {
+                if cons.to_bool() == skip_if {
                     self.current_function.opcodes.push(OpCode::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),
@@ -2024,11 +2100,8 @@ impl<'gc, 'a> Compiler<'gc, 'a> {
     }
 }
 
-impl<'gc> CompilerFunction<'gc> {
-    fn start(
-        parameters: &[String<'gc>],
-        has_varargs: bool,
-    ) -> Result<CompilerFunction<'gc>, CompilerError> {
+impl<S: Clone> CompilerFunction<S> {
+    fn start(parameters: &[S], has_varargs: bool) -> Result<CompilerFunction<S>, CompilerError> {
         let mut function = CompilerFunction::default();
         let fixed_params: u8 = cast(parameters.len()).ok_or(CompilerError::FixedParameters)?;
         if fixed_params != 0 {
@@ -2039,12 +2112,12 @@ impl<'gc> CompilerFunction<'gc> {
         for i in 0..fixed_params {
             function
                 .locals
-                .push((parameters[i as usize], RegisterIndex(i)));
+                .push((parameters[i as usize].clone(), RegisterIndex(i)));
         }
         Ok(function)
     }
 
-    fn finish(mut self, mc: MutationContext<'gc, '_>) -> Result<FunctionProto<'gc>, CompilerError> {
+    fn finish(mut self) -> Result<CompiledFunction<S>, CompilerError> {
         self.opcodes.push(OpCode::Return {
             start: RegisterIndex(0),
             count: VarCount::constant(0),
@@ -2063,18 +2136,14 @@ impl<'gc> CompilerFunction<'gc> {
             return Err(CompilerError::GotoInvalid);
         }
 
-        Ok(FunctionProto {
+        Ok(CompiledFunction {
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
             stack_size: self.register_allocator.stack_size(),
             constants: self.constants,
             opcodes: self.opcodes,
             upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
-            prototypes: self
-                .prototypes
-                .into_iter()
-                .map(|f| Gc::new(mc, f))
-                .collect(),
+            functions: self.functions.into_iter().map(|f| Box::new(f)).collect(),
         })
     }
 }

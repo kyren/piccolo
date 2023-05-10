@@ -6,7 +6,9 @@ use std::{
 
 use gc_arena::{Collect, Gc, Lock, MutationContext};
 
-use crate::{Constant, OpCode, RegisterIndex, Table, Thread, UpValueIndex, Value};
+use crate::{
+    CompiledFunction, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
+};
 
 #[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
 #[collect(require_static)]
@@ -20,12 +22,31 @@ pub enum UpValueDescriptor {
 #[collect(no_drop)]
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
-    pub has_varargs: bool,
     pub stack_size: u16,
-    pub constants: Vec<Constant<'gc>>,
+    pub constants: Vec<Constant<String<'gc>>>,
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,
     pub prototypes: Vec<Gc<'gc, FunctionProto<'gc>>>,
+}
+
+impl<'gc> FunctionProto<'gc> {
+    pub fn from_compiled(
+        mc: MutationContext<'gc, '_>,
+        compiled_function: CompiledFunction<String<'gc>>,
+    ) -> Self {
+        Self {
+            fixed_params: compiled_function.fixed_params,
+            stack_size: compiled_function.stack_size,
+            constants: compiled_function.constants,
+            opcodes: compiled_function.opcodes,
+            upvalues: compiled_function.upvalues,
+            prototypes: compiled_function
+                .functions
+                .into_iter()
+                .map(|cf| Gc::new(mc, FunctionProto::from_compiled(mc, *cf)))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Collect, Copy, Clone)]
