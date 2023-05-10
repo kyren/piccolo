@@ -2,6 +2,7 @@ use gc_arena::{Arena, ArenaParameters, Collect, MutationContext, Rootable};
 
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
+    string::InternedStringSet,
     Error, Registry, StaticError, StaticFunction, StaticValue, Table, Thread, ThreadMode,
 };
 
@@ -11,6 +12,7 @@ pub struct Root<'gc> {
     pub main_thread: Thread<'gc>,
     pub globals: Table<'gc>,
     pub registry: Registry<'gc>,
+    pub strings: InternedStringSet<'gc>,
 }
 
 impl<'gc> Root<'gc> {
@@ -19,6 +21,7 @@ impl<'gc> Root<'gc> {
             main_thread: Thread::new(mc),
             globals: Table::new(mc),
             registry: Registry::new(mc),
+            strings: InternedStringSet::new(mc),
         };
 
         load_base(mc, root, root.globals);

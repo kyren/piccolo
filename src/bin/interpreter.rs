@@ -9,10 +9,10 @@ use piccolo::{compile, compiler::ParserError, io, Closure, Function, Lua, Static
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     let function = lua.try_run(|mc, root| {
-        let result = compile(mc, ("return ".to_string() + code).as_bytes());
+        let result = compile(mc, root.strings, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
-            Err(_) => compile(mc, code.as_bytes()),
+            Err(_) => compile(mc, root.strings, code.as_bytes()),
         };
         let closure = Closure::new(mc, result?, Some(root.globals))?;
 
@@ -97,7 +97,11 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let function = lua.try_run(|mc, root| {
         Ok(root.registry.stash(
             mc,
-            Function::Closure(Closure::new(mc, compile(mc, file)?, Some(root.globals))?),
+            Function::Closure(Closure::new(
+                mc,
+                compile(mc, root.strings, file)?,
+                Some(root.globals),
+            )?),
         ))
     })?;
 

@@ -21,6 +21,7 @@ fn callback() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
+                root.strings,
                 &br#"
                     local a, b, c = callback(1, 2)
                     return a == 1 and b == 2 and c == 42
@@ -58,6 +59,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
+                root.strings,
                 &br#"
                     return callback(1, 2)
                 "#[..],
@@ -123,6 +125,7 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
+                root.strings,
                 &br#"
                     local function cotest()
                         return callback(1, 2)
@@ -193,6 +196,7 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
+                root.strings,
                 &br#"
                     local co = coroutine.create(callback)
 

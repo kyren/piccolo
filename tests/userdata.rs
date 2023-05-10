@@ -37,10 +37,11 @@ fn userdata() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
-                    &br#"
-                        callback(userdata)
-                        return userdata, type(userdata) == "userdata" and type(callback) == "function"
-                    "#[..],
+                root.strings,
+                &br#"
+                    callback(userdata)
+                    return userdata, type(userdata) == "userdata" and type(callback) == "function"
+                "#[..],
             )?,
             Some(root.globals),
         )?;

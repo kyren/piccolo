@@ -27,7 +27,7 @@ fn test_scripts() {
                             mc,
                             Function::Closure(Closure::new(
                                 mc,
-                                compile(mc, file)?,
+                                compile(mc, root.strings, file)?,
                                 Some(root.globals),
                             )?),
                         ))

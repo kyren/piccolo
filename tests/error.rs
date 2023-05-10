@@ -9,6 +9,7 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
             mc,
             compile(
                 mc,
+                root.strings,
                 &br#"
                     function do_error()
                         error('test error')

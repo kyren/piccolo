@@ -20,11 +20,12 @@ pub use self::{
 
 pub fn compile<'gc, R: Read>(
     mc: MutationContext<'gc, '_>,
+    strings: InternedStringSet<'gc>,
     source: R,
 ) -> Result<FunctionProto<'gc>, Error<'gc>> {
     #[derive(Copy, Clone)]
     struct Interner<'gc, 'a> {
-        string_set: InternedStringSet<'gc>,
+        strings: InternedStringSet<'gc>,
         mc: MutationContext<'gc, 'a>,
     }
 
@@ -32,14 +33,11 @@ pub fn compile<'gc, R: Read>(
         type String = String<'gc>;
 
         fn intern(&self, s: &[u8]) -> Self::String {
-            self.string_set.new_string(self.mc, s)
+            self.strings.new_string(self.mc, s)
         }
     }
 
-    let interner = Interner {
-        string_set: InternedStringSet::new(mc),
-        mc,
-    };
+    let interner = Interner { strings, mc };
 
     let chunk = parse_chunk(source, interner)?;
     let compiled_function = compile_chunk(&chunk, interner)?;
