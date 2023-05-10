@@ -164,7 +164,7 @@ impl<'gc> Error<'gc> {
     pub fn to_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
         match self {
             Error::RuntimeError(error) => error.0,
-            other => Value::String(String::from_buffer(mc, other.to_string().into_bytes())),
+            other => Value::String(String::from_slice(mc, other.to_string().as_bytes())),
         }
     }
 }

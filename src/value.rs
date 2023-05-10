@@ -1,6 +1,6 @@
 use std::{f64, fmt, i64, io, string::String as StdString};
 
-use gc_arena::{Collect, Gc, MutationContext};
+use gc_arena::{Collect, MutationContext};
 
 use crate::{
     lexer::{read_float, read_hex_float},
@@ -102,11 +102,11 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => write!(w, "{}", i),
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
-            Value::Table(t) => write!(w, "<table {:?}>", t.0.as_ptr()),
-            Value::Function(Function::Closure(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
-            Value::Function(Function::Callback(c)) => write!(w, "<function {:?}>", Gc::as_ptr(c.0)),
-            Value::Thread(t) => write!(w, "<thread {:?}>", t.0.as_ptr()),
-            Value::UserData(t) => write!(w, "<userdata {:?}>", t.0.as_ptr()),
+            Value::Table(t) => write!(w, "<table {:p}>", t.0),
+            Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.0),
+            Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.0),
+            Value::Thread(t) => write!(w, "<thread {:p}>", t.0),
+            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.as_ptr()),
         }
     }
 

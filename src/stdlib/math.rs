@@ -18,7 +18,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
                 Ok(CallbackReturn::Return.into())
             } else {
                 Err(RuntimeError(
-                    String::from_buffer(mc, format!("Bad argument to {name}").into_bytes()).into(),
+                    String::from_slice(mc, &format!("Bad argument to {name}").into_bytes()).into(),
                 )
                 .into())
             }

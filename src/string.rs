@@ -34,7 +34,7 @@ impl fmt::Display for StringError {
 pub enum String<'gc> {
     Static(&'static [u8]),
     Inline(Gc<'gc, [u8]>),
-    Buffer(Gc<'gc, Vec<u8>>),
+    Buffer(Gc<'gc, Box<[u8]>>),
 }
 
 impl<'gc> Debug for String<'gc> {
@@ -56,10 +56,6 @@ impl<'gc> Debug for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Vec<u8>) -> String<'gc> {
-        String::Buffer(Gc::new(mc, s))
-    }
-
     pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
         macro_rules! alloc_lens {
             ($($i:expr),*) => {
@@ -67,7 +63,7 @@ impl<'gc> String<'gc> {
                     $($i => String::Inline(
                         unsize!(Gc::new(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
                     ),)*
-                    _ => String::Buffer(Gc::new(mc, s.to_vec())),
+                    _ => String::Buffer(Gc::new(mc, Box::from(s))),
                 }
             };
         }
@@ -110,7 +106,7 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(String::from_buffer(mc, bytes))
+        Ok(String::from_slice(mc, &bytes))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
