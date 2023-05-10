@@ -1039,8 +1039,14 @@ impl<'gc> ThreadState<'gc> {
 
     fn return_ext(&mut self, mc: MutationContext<'gc, '_>, ret: CallbackReturn<'gc>) {
         match ret {
-            CallbackReturn::Yield => {
+            CallbackReturn::Yield(continuation) => {
                 if self.allow_yield {
+                    if let Some(continuation) = continuation {
+                        self.frames.push(Frame::PendingContinuation {
+                            continuation,
+                            bottom: self.stack.len(),
+                        });
+                    }
                     self.frames.push(Frame::ResumeCoroutine);
                     self.returned = Some(Ok(()));
                 } else {
@@ -1060,10 +1066,7 @@ impl<'gc> ThreadState<'gc> {
                 }
                 _ => panic!("frame above callback must be continuation or lua frame"),
             },
-            CallbackReturn::TailCall {
-                function,
-                continuation,
-            } => {
+            CallbackReturn::TailCall(function, continuation) => {
                 if let Some(continuation) = continuation {
                     self.frames.push(Frame::PendingContinuation {
                         continuation,

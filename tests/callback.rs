@@ -86,36 +86,32 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
 
     lua.try_run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |mc, _| {
-            Ok(CallbackReturn::TailCall {
-                function: AnyCallback::from_fn(mc, |_, stack| {
+            Ok(CallbackReturn::TailCall(
+                AnyCallback::from_fn(mc, |_, stack| {
                     stack.push(3.into());
-                    Ok(CallbackReturn::Yield.into())
+                    Ok(CallbackReturn::Yield(None).into())
                 })
                 .into(),
-                continuation: Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
+                Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
                     stack.push(4.into());
-                    Ok(CallbackReturn::TailCall {
-                        function: AnyCallback::from_fn(
-                            mc,
-                            |_, _| Ok(CallbackReturn::Return.into()),
-                        )
-                        .into(),
-                        continuation: Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
+                    Ok(CallbackReturn::TailCall(
+                        AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Return.into())).into(),
+                        Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
                             stack.push(5.into());
-                            Ok(CallbackReturn::TailCall {
-                                function: AnyCallback::from_fn(mc, |_, stack| {
+                            Ok(CallbackReturn::TailCall(
+                                AnyCallback::from_fn(mc, |_, stack| {
                                     stack.push(6.into());
                                     Ok(CallbackReturn::Return.into())
                                 })
                                 .into(),
-                                continuation: None,
-                            }
+                                None,
+                            )
                             .into())
                         })),
-                    }
+                    )
                     .into())
                 })),
-            }
+            )
             .into())
         });
         root.globals.set(mc, "callback", callback)?;
@@ -157,6 +153,68 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
         lua.run_function(&function, &[])?,
         vec![StaticValue::Boolean(true)],
     );
+
+    Ok(())
+}
+
+#[test]
+fn yield_continuation() -> Result<(), Box<StaticError>> {
+    let mut lua = Lua::new();
+
+    lua.try_run(|mc, root| {
+        let callback = AnyCallback::from_fn(mc, |mc, stack| {
+            assert_eq!(stack, &[Value::Integer(1), Value::Integer(2)]);
+            stack.clear();
+            stack.extend([Value::Integer(3), Value::Integer(4)]);
+            Ok(
+                CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
+                    assert_eq!(stack, &[Value::Integer(5), Value::Integer(6)]);
+                    stack.clear();
+                    stack.extend([Value::Integer(7), Value::Integer(8)]);
+                    Ok(
+                        CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |_, stack| {
+                            assert_eq!(stack, &[Value::Integer(9), Value::Integer(10)]);
+                            stack.clear();
+                            stack.extend([Value::Integer(11), Value::Integer(12)]);
+                            Ok(CallbackReturn::Return.into())
+                        })))
+                        .into(),
+                    )
+                })))
+                .into(),
+            )
+        });
+        root.globals.set(mc, "callback", callback)?;
+        Ok(())
+    })?;
+
+    let function = lua.try_run(|mc, root| {
+        let closure = Closure::new(
+            mc,
+            compile(
+                mc,
+                &br#"
+                    local co = coroutine.create(callback)
+
+                    local e, r1, r2 = coroutine.resume(co, 1, 2)
+                    assert(e == true and r1 == 3 and r2 == 4)
+                    assert(coroutine.status(co) == "suspended")
+
+                    local e, r1, r2 = coroutine.resume(co, 5, 6)
+                    assert(e == true and r1 == 7 and r2 == 8)
+                    assert(coroutine.status(co) == "suspended")
+
+                    local e, r1, r2 = coroutine.resume(co, 9, 10)
+                    assert(e == true and r1 == 11 and r2 == 12)
+                    assert(coroutine.status(co) == "dead")
+                "#[..],
+            )?,
+            Some(root.globals),
+        )?;
+        Ok(root.registry.stash(mc, Function::Closure(closure)))
+    })?;
+
+    lua.run_function(&function, &[])?;
 
     Ok(())
 }

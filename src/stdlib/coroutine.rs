@@ -136,7 +136,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "yield",
-            AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Yield.into())),
+            AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Yield(None).into())),
         )
         .unwrap();
 

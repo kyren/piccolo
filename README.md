@@ -61,18 +61,21 @@ collection to take place.
 
 The VM in `deimos` is thus written in what is called "stackless" or "trampoline"
 style. It does not rely on the rust stack for Lua -> Rust and Rust -> Lua
-nesting, instead callbacks can do one of three things:
+nesting, instead callbacks can do one of the following things
 
   * Return results immediately as a fast path.
+  * Return a function (either Rust or Lua) to tail call, and an optional
+    continuation function. The function will be called as normal, and after
+    finishing, the results of this function (either success or failure) will be
+    passed to the continuation, which can then itself do any of the three things
+    that any callback can do, return immediately, schedule a sequence, or do yet
+    another tail call.
+  * Yield results with an optional continuation function to call after the
+    coroutine is resumed.
   * Return a type implementing a trait called `Sequence`, which the VM
     will drive to completion, similar to how `Future` works. In between
     `Sequence::step` calls, the VM can return from `mutate` and drive garbage
     collection.
-  * Return a function (either Rust or Lua) to tail call, and a continuation. The
-    function will be called as normal, and after finishing, the results of this
-    function (either success or failure) will be passed to the continuation,
-    which can then itself do any of the three things that any callback can do,
-    return immediately, schedule a sequence, or do yet another tail call.
 
 For example, it is of course possible for Lua to call a Rust callback, which
 then in turn creates a new Lua coroutine and runs it. In order to do so, a

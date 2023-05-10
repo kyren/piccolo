@@ -92,11 +92,7 @@ pub fn index<'gc>(
                     }
                     MetaResult::Call(f, args) => {
                         stack.extend(args);
-                        Ok(CallbackReturn::TailCall {
-                            function: f,
-                            continuation: None,
-                        }
-                        .into())
+                        Ok(CallbackReturn::TailCall(f, None).into())
                     }
                 }
             })
@@ -123,11 +119,7 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
             Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
                 stack.insert(0, v);
-                Ok(CallbackReturn::TailCall {
-                    function: call(mc, f)?,
-                    continuation: None,
-                }
-                .into())
+                Ok(CallbackReturn::TailCall(call(mc, f)?, None).into())
             })
             .into())
         }

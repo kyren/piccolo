@@ -11,11 +11,8 @@ use crate::{Error, Function, Value};
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
     Return,
-    Yield,
-    TailCall {
-        function: Function<'gc>,
-        continuation: Option<AnyContinuation<'gc>>,
-    },
+    Yield(Option<AnyContinuation<'gc>>),
+    TailCall(Function<'gc>, Option<AnyContinuation<'gc>>),
 }
 
 pub type CallbackResult<'gc> = Result<CallbackReturn<'gc>, Error<'gc>>;
