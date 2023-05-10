@@ -89,11 +89,17 @@ pub enum OpCode {
         key: ConstantIndex8,
         value: ConstantIndex8,
     },
+    // Call the given function with arguments placed after it, invalidates the function register and
+    // all registers above it. When the function returns, the results are placed starting where the
+    // function was located.
     Call {
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
     },
+    // Effectively, call the given function with the arguments placed after it, and return the
+    // results of this function to the upper frame. Invalidates the entire current frame and
+    // replaces it with the called function.
     TailCall {
         func: RegisterIndex,
         args: VarCount,
@@ -102,6 +108,8 @@ pub enum OpCode {
         start: RegisterIndex,
         count: VarCount,
     },
+    // Places the contents of the "varargs" at the given register, expecting the given count. If the
+    // count is "variable", then the top of the stack indicates the number of available arguments.
     VarArgs {
         dest: RegisterIndex,
         count: VarCount,

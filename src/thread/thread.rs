@@ -54,7 +54,7 @@ pub enum ThreadMode {
 }
 
 impl<'gc> Thread<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>, allow_yield: bool) -> Thread<'gc> {
+    pub fn new(mc: MutationContext<'gc, '_>) -> Thread<'gc> {
         Thread(Gc::new(
             mc,
             RefLock::new(ThreadState {
@@ -63,7 +63,6 @@ impl<'gc> Thread<'gc> {
                 open_upvalues: BTreeMap::new(),
                 external_stack: Vec::new(),
                 returned: None,
-                allow_yield,
             }),
         ))
     }
@@ -154,6 +153,18 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
+    /// If the thread is in `Suspended` mode, cause an error wherever the thread was suspended.
+    pub fn resume_err(
+        self,
+        mc: MutationContext<'gc, '_>,
+        error: Error<'gc>,
+    ) -> Result<(), BadThreadMode> {
+        let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
+        assert!(state.external_stack.is_empty());
+        state.unwind(mc, error);
+        Ok(())
+    }
+
     /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
     pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
@@ -174,7 +185,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(mc, ret),
+                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
                     Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
                     Err(error) => state.unwind(mc, error),
                 }
@@ -194,7 +205,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(mc, ret),
+                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
                     Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
                     Err(error) => state.unwind(mc, error),
                 }
@@ -214,7 +225,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(mc, ret),
+                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
                     Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
                     Err(error) => state.unwind(mc, error),
                 }
@@ -234,7 +245,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match fin {
-                    Ok(Some(ret)) => state.return_ext(mc, ret),
+                    Ok(Some(ret)) => state.return_ext(ret),
                     Ok(None) => state.frames.push(Frame::Sequence(sequence)),
                     Err(error) => state.unwind(mc, error),
                 }
@@ -303,7 +314,6 @@ pub(crate) struct ThreadState<'gc> {
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
     external_stack: Vec<Value<'gc>>,
     returned: Option<Result<(), Error<'gc>>>,
-    allow_yield: bool,
 }
 
 pub(crate) struct LuaFrame<'gc, 'a> {
@@ -1037,21 +1047,17 @@ impl<'gc> ThreadState<'gc> {
         self.returned = Some(Err(error));
     }
 
-    fn return_ext(&mut self, mc: MutationContext<'gc, '_>, ret: CallbackReturn<'gc>) {
+    fn return_ext(&mut self, ret: CallbackReturn<'gc>) {
         match ret {
             CallbackReturn::Yield(continuation) => {
-                if self.allow_yield {
-                    if let Some(continuation) = continuation {
-                        self.frames.push(Frame::PendingContinuation {
-                            continuation,
-                            bottom: self.stack.len(),
-                        });
-                    }
-                    self.frames.push(Frame::ResumeCoroutine);
-                    self.returned = Some(Ok(()));
-                } else {
-                    self.unwind(mc, ThreadError::BadYield.into());
+                if let Some(continuation) = continuation {
+                    self.frames.push(Frame::PendingContinuation {
+                        continuation,
+                        bottom: self.stack.len(),
+                    });
                 }
+                self.frames.push(Frame::ResumeCoroutine);
+                self.returned = Some(Ok(()));
             }
             CallbackReturn::Return => match self.frames.pop() {
                 Some(Frame::PendingContinuation { continuation, .. }) => {

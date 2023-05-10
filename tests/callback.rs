@@ -1,6 +1,6 @@
 use deimos::{
-    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Function, Lua, StaticError,
-    StaticValue, Value,
+    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, Lua,
+    RuntimeError, StaticError, StaticValue, Thread, ThreadMode, Value,
 };
 
 #[test]
@@ -217,4 +217,55 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
     lua.run_function(&function, &[])?;
 
     Ok(())
+}
+
+#[test]
+fn resume_with_err() {
+    let mut lua = Lua::new();
+
+    lua.run(|mc, _| {
+        let callback = AnyCallback::from_fn(mc, |mc, stack| {
+            assert!(stack.len() == 1);
+            assert!(stack[0] == Value::from("resume"));
+            stack.clear();
+            stack.push("return".into());
+            Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
+                mc,
+                |_, _| panic!("did not error"),
+                |_, _, _| Err(RuntimeError("a different error".into()).into()),
+            )))
+            .into())
+        });
+
+        let thread = Thread::new(mc);
+        thread
+            .start_suspended(mc, Function::Callback(callback))
+            .unwrap();
+
+        thread.resume(mc, ["resume".into()]).unwrap();
+
+        while thread.mode() == ThreadMode::Normal {
+            thread.step(mc).unwrap();
+        }
+
+        assert_eq!(
+            thread.take_return(mc).unwrap().unwrap(),
+            vec![Value::from("return")]
+        );
+
+        thread
+            .resume_err(mc, RuntimeError("an error".into()).into())
+            .unwrap();
+
+        while thread.mode() == ThreadMode::Normal {
+            thread.step(mc).unwrap();
+        }
+
+        match thread.take_return(mc).unwrap() {
+            Err(Error::RuntimeError(RuntimeError(val))) => {
+                assert!(val == Value::from("a different error"))
+            }
+            _ => panic!(),
+        }
+    });
 }

@@ -16,7 +16,7 @@ pub struct Root<'gc> {
 impl<'gc> Root<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Root<'gc> {
         let root = Root {
-            main_thread: Thread::new(mc, false),
+            main_thread: Thread::new(mc),
             globals: Table::new(mc),
             registry: Registry::new(mc),
         };

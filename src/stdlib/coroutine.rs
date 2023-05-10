@@ -24,7 +24,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     }
                 };
 
-                let thread = Thread::new(mc, true);
+                let thread = Thread::new(mc);
                 thread.start_suspended(mc, function).unwrap();
                 stack.clear();
                 stack.push(thread.into());
