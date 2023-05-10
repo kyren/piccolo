@@ -14,6 +14,7 @@ function test2()
     return i == 1
 end
 
-return
+assert(
     test1() and
     test2()
+)

@@ -282,27 +282,29 @@ function test24()
                math.ult(1, 2)
 end
 
-return test1() and
-       test2() and
-       test3() and
-       test4() and
-       test5() and
-       test6() and
-       test7() and
-       test8() and
-       test9() and
-       test10() and
-       test11() and
-       test12() and
-       test13() and
-       test14() and
-       test15() and
-       test16() and
-       test17() and
-       test18() and
-       test19() and
-       test20() and
-       test21() and
-       test22() and
-       test23() and
-       test24()
+assert(
+    test1() and
+    test2() and
+    test3() and
+    test4() and
+    test5() and
+    test6() and
+    test7() and
+    test8() and
+    test9() and
+    test10() and
+    test11() and
+    test12() and
+    test13() and
+    test14() and
+    test15() and
+    test16() and
+    test17() and
+    test18() and
+    test19() and
+    test20() and
+    test21() and
+    test22() and
+    test23() and
+    test24()
+)

@@ -28,6 +28,7 @@ function test2()
     return closure() == 2
 end
 
-return
+assert(
     test1() and
     test2()
+)

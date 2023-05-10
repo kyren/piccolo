@@ -54,7 +54,7 @@ local function test_short_circuit_large()
     return (a + 2 + (a == 1 and (d or (c + (b + 2))))) == 10
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
@@ -62,3 +62,4 @@ return
     test5() and
     test6() and
     test_short_circuit_large()
+)

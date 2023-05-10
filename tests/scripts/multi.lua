@@ -57,10 +57,11 @@ local function test6()
     return a == 1 and b == 2 and c == 3
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
     test4() and
     test5() and
     test6()
+)

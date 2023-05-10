@@ -23,6 +23,7 @@ function test2()
     return t:method(42) == 42
 end
 
-return
+assert(
     test1() and
     test2()
+)

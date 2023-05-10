@@ -42,7 +42,8 @@ local function test3()
     return i == 12
 end
 
-return
+assert(
     test1() and
     test2() and
     test3()
+)

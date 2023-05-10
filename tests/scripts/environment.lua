@@ -14,6 +14,7 @@ local function test2()
     return _ENV.i == 3 and i == 3
 end
 
-return
+assert(
     test1() and
     test2()
+)

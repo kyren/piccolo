@@ -62,9 +62,10 @@ function test_break_scope()
     return true
 end
 
-return
+assert(
     test_sum() and
     test_break() and
     test_endlabel() and
     test_closure() and
     test_break_scope()
+)

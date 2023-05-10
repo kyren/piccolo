@@ -30,5 +30,3 @@ end
 
 test1()
 test2()
-
-return true

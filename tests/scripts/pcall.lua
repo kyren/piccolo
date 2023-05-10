@@ -41,6 +41,7 @@ function test2()
         e4 == true and r4 == nil and s4 == "dead"
 end
 
-return
+assert(
     test1() and
     test2()
+)

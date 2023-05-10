@@ -80,9 +80,10 @@ function test5()
     return inner_function() == 5
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
     test4() and
     test5()
+)

@@ -30,6 +30,7 @@ function test2()
     goto start
 end
 
-return
+assert(
     test1() and
     test2()
+)

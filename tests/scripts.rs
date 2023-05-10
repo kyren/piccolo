@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use deimos::{compile, io, Closure, Function, Lua, StaticValue};
+use deimos::{compile, io, Closure, Function, Lua};
 
 #[test]
 fn test_scripts() {
@@ -21,7 +21,7 @@ fn test_scripts() {
                 let _ = writeln!(stdout(), "running {:?}", path);
                 let mut lua = Lua::new();
 
-                match lua
+                if let Err(err) = lua
                     .try_run(|mc, root| {
                         Ok(root.registry.stash(
                             mc,
@@ -34,17 +34,8 @@ fn test_scripts() {
                     })
                     .and_then(|function| lua.run_function(&function, &[]))
                 {
-                    Ok(ret) => match &ret[..] {
-                        &[StaticValue::Boolean(true)] => {}
-                        v => {
-                            let _ = writeln!(stdout(), "error: unexpected return values: {:?}", v);
-                            file_failed = true;
-                        }
-                    },
-                    Err(err) => {
-                        let _ = writeln!(stdout(), "error encountered running: {:?}", err);
-                        file_failed = true;
-                    }
+                    let _ = writeln!(stdout(), "error encountered running: {:?}", err);
+                    file_failed = true;
                 }
             }
         } else {

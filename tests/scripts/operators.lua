@@ -142,7 +142,7 @@ function test17()
         "0x10" + "4" == 20
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
@@ -160,3 +160,4 @@ return
     test15() and
     test16() and
     test17()
+)

@@ -94,9 +94,10 @@ function test5()
     return t[1] == 1 and t[2] == 2 and t[3] == 3 and t.a == "a"
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
     test4() and
     test5()
+)

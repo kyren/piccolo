@@ -25,4 +25,7 @@ function test2()
   end
 end
 
-return test1() == 5 and test2() == 7
+assert(
+  test1() == 5 and
+  test2() == 7
+)

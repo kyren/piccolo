@@ -54,7 +54,7 @@ function test7()
            is_err(function() return 2.2 >> 3 end)
 end
 
-return
+assert(
     test1() and
     test2() and
     test3() and
@@ -62,3 +62,4 @@ return
     test5() and
     test6() and
     test7()
+)

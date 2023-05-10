@@ -29,6 +29,7 @@ function test2()
         test(true) == 2
 end
 
-return
+assert(
     test1() and
     test2()
+)

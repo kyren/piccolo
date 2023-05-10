@@ -81,9 +81,10 @@ function test_break_scope()
     return true
 end
 
-return
+assert(
     test_generic() and
     test_numeric() and
     test_numeric_closure() and
     test_generic_closure() and
     test_break_scope()
+)

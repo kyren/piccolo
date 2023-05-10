@@ -19,5 +19,6 @@ function test_param_order()
     return i == 14
 end
 
-return
+assert(
     test_param_order()
+)

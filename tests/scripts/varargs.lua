@@ -20,6 +20,7 @@ local function test2()
         varargs(0, 1, 1, 2, 3, 5) == 4
 end
 
-return
+assert(
     test1() and
     test2()
+)

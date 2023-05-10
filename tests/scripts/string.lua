@@ -35,5 +35,7 @@ function test_len()
         string.len(-2147483648) == 11
 end
 
-return test_concat() and
-       test_len()
+assert(
+    test_concat() and
+    test_len()
+)

@@ -24,6 +24,7 @@ function test2()
     return a == 1 and b == 2 and c == 3
 end
 
-return
+assert(
     test1() and
     test2()
+)

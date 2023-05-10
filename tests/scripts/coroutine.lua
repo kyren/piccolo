@@ -53,7 +53,8 @@ function test3()
     return e == true and s == "running"
 end
 
-return
+assert(
     test1() and
     test2() and
     test3()
+)
