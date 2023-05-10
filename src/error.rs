@@ -3,8 +3,8 @@ use std::{error::Error as StdError, fmt, io, string::String as StdString};
 use gc_arena::{Collect, MutationContext, StaticCollect};
 
 use crate::{
-    BadThreadMode, BinaryOperatorError, ClosureError, CompilerError, InvalidTableKey, ParserError,
-    String, StringError, ThreadError, Value,
+    compiler::ParserError, BadThreadMode, BinaryOperatorError, ClosureError, CompilerError,
+    InvalidTableKey, String, StringError, ThreadError, Value,
 };
 
 #[derive(Debug, Clone, Copy, Collect)]

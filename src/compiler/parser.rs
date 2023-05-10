@@ -2,7 +2,10 @@ use std::{error::Error as StdError, fmt, io::Read, rc::Rc};
 
 use gc_arena::Collect;
 
-use crate::{Lexer, LexerError, Token};
+use super::{
+    lexer::{Lexer, LexerError, Token},
+    StringInterner,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk<S> {
@@ -283,42 +286,39 @@ impl fmt::Display for ParserError {
     }
 }
 
-pub fn parse_chunk<R, S, CS>(source: R, create_string: CS) -> Result<Chunk<S>, ParserError>
+pub fn parse_chunk<R, S>(source: R, interner: S) -> Result<Chunk<S::String>, ParserError>
 where
     R: Read,
-    S: fmt::Debug + PartialEq,
-    CS: FnMut(&[u8]) -> S,
+    S: StringInterner,
 {
     Parser {
-        lexer: Lexer::new(source, create_string),
+        lexer: Lexer::new(source, interner),
         read_buffer: Vec::new(),
         recursion_guard: Rc::new(()),
     }
     .parse_chunk()
 }
 
-struct Parser<R, S, CS> {
-    lexer: Lexer<R, CS>,
-    read_buffer: Vec<Token<S>>,
+struct Parser<R, S: StringInterner> {
+    lexer: Lexer<R, S>,
+    read_buffer: Vec<Token<S::String>>,
     recursion_guard: Rc<()>,
 }
 
-impl<R, S, CS> Parser<R, S, CS>
+impl<R, S: StringInterner> Parser<R, S>
 where
     R: Read,
-    S: fmt::Debug + PartialEq,
-    CS: FnMut(&[u8]) -> S,
 {
-    fn parse_chunk(&mut self) -> Result<Chunk<S>, ParserError> {
+    fn parse_chunk(&mut self) -> Result<Chunk<S::String>, ParserError> {
         let block = self.parse_block()?;
-        if self.look_ahead(0)? != None {
+        if !self.look_ahead(0)?.is_none() {
             Err(ParserError::EndOfStream { expected: None })
         } else {
             Ok(Chunk { block })
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block<S>, ParserError> {
+    fn parse_block(&mut self) -> Result<Block<S::String>, ParserError> {
         let mut statements = Vec::new();
         let mut return_statement = None;
 
@@ -346,7 +346,7 @@ where
         })
     }
 
-    fn parse_statement(&mut self) -> Result<Statement<S>, ParserError> {
+    fn parse_statement(&mut self) -> Result<Statement<S::String>, ParserError> {
         let _recursion_guard = self.recursion_guard()?;
 
         Ok(match *self.get_next()? {
@@ -379,7 +379,7 @@ where
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<ReturnStatement<S>, ParserError> {
+    fn parse_return_statement(&mut self) -> Result<ReturnStatement<S::String>, ParserError> {
         self.expect_next(Token::Return)?;
         let returns = match self.look_ahead(0)? {
             None
@@ -396,7 +396,7 @@ where
         Ok(ReturnStatement { returns })
     }
 
-    fn parse_if_statement(&mut self) -> Result<IfStatement<S>, ParserError> {
+    fn parse_if_statement(&mut self) -> Result<IfStatement<S::String>, ParserError> {
         self.expect_next(Token::If)?;
         let if_cond = self.parse_expression()?;
         self.expect_next(Token::Then)?;
@@ -427,7 +427,7 @@ where
         })
     }
 
-    fn parse_while_statement(&mut self) -> Result<WhileStatement<S>, ParserError> {
+    fn parse_while_statement(&mut self) -> Result<WhileStatement<S::String>, ParserError> {
         self.expect_next(Token::While)?;
         let condition = self.parse_expression()?;
         self.expect_next(Token::Do)?;
@@ -437,7 +437,7 @@ where
         Ok(WhileStatement { condition, block })
     }
 
-    fn parse_for_statement(&mut self) -> Result<ForStatement<S>, ParserError> {
+    fn parse_for_statement(&mut self) -> Result<ForStatement<S::String>, ParserError> {
         self.expect_next(Token::For)?;
         let name = self.expect_name()?;
 
@@ -495,7 +495,7 @@ where
         }
     }
 
-    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S>, ParserError> {
+    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S::String>, ParserError> {
         self.expect_next(Token::Repeat)?;
         let body = self.parse_block()?;
         self.expect_next(Token::Until)?;
@@ -503,7 +503,7 @@ where
         Ok(RepeatStatement { body, until })
     }
 
-    fn parse_function_statement(&mut self) -> Result<FunctionStatement<S>, ParserError> {
+    fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParserError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?;
@@ -534,7 +534,9 @@ where
         })
     }
 
-    fn parse_local_function_statement(&mut self) -> Result<LocalFunctionStatement<S>, ParserError> {
+    fn parse_local_function_statement(
+        &mut self,
+    ) -> Result<LocalFunctionStatement<S::String>, ParserError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?;
@@ -543,7 +545,7 @@ where
         Ok(LocalFunctionStatement { name, definition })
     }
 
-    fn parse_local_statement(&mut self) -> Result<LocalStatement<S>, ParserError> {
+    fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParserError> {
         self.expect_next(Token::Local)?;
         let mut names = Vec::new();
         names.push(self.expect_name()?);
@@ -562,20 +564,20 @@ where
         Ok(LocalStatement { names, values })
     }
 
-    fn parse_label_statement(&mut self) -> Result<LabelStatement<S>, ParserError> {
+    fn parse_label_statement(&mut self) -> Result<LabelStatement<S::String>, ParserError> {
         self.expect_next(Token::DoubleColon)?;
         let name = self.expect_name()?;
         self.expect_next(Token::DoubleColon)?;
         Ok(LabelStatement { name })
     }
 
-    fn parse_goto_statement(&mut self) -> Result<GotoStatement<S>, ParserError> {
+    fn parse_goto_statement(&mut self) -> Result<GotoStatement<S::String>, ParserError> {
         self.expect_next(Token::Goto)?;
         let name = self.expect_name()?;
         Ok(GotoStatement { name })
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Statement<S>, ParserError> {
+    fn parse_expression_statement(&mut self) -> Result<Statement<S::String>, ParserError> {
         let mut suffixed_expression = self.parse_suffixed_expression()?;
         if self.check_ahead(0, Token::Assign)? || self.check_ahead(0, Token::Comma)? {
             let mut targets = Vec::new();
@@ -627,11 +629,11 @@ where
         }
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<S>, ParserError> {
+    fn parse_expression(&mut self) -> Result<Expression<S::String>, ParserError> {
         self.parse_sub_expression(MIN_PRIORITY)
     }
 
-    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S>>, ParserError> {
+    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S::String>>, ParserError> {
         let mut expressions = Vec::new();
         expressions.push(self.parse_expression()?);
         while self.check_ahead(0, Token::Comma)? {
@@ -641,7 +643,10 @@ where
         Ok(expressions)
     }
 
-    fn parse_sub_expression(&mut self, priority_limit: u8) -> Result<Expression<S>, ParserError> {
+    fn parse_sub_expression(
+        &mut self,
+        priority_limit: u8,
+    ) -> Result<Expression<S::String>, ParserError> {
         let _recursion_guard = self.recursion_guard()?;
 
         let head = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
@@ -669,7 +674,7 @@ where
         })
     }
 
-    fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S>, ParserError> {
+    fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S::String>, ParserError> {
         Ok(match *self.get_next()? {
             Token::Float(f) => {
                 self.take_next()?;
@@ -705,7 +710,7 @@ where
         })
     }
 
-    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S>, ParserError> {
+    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S::String>, ParserError> {
         match self.take_next()? {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
@@ -720,7 +725,7 @@ where
         }
     }
 
-    fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S>, ParserError> {
+    fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S::String>, ParserError> {
         match self.get_next()? {
             Token::Dot => {
                 self.take_next()?;
@@ -739,7 +744,7 @@ where
         }
     }
 
-    fn parse_call_suffix(&mut self) -> Result<CallSuffix<S>, ParserError> {
+    fn parse_call_suffix(&mut self) -> Result<CallSuffix<S::String>, ParserError> {
         let method_name = match *self.get_next()? {
             Token::Colon => {
                 self.take_next()?;
@@ -751,7 +756,7 @@ where
         let args = match self.get_next()? {
             Token::LeftParen => {
                 self.take_next()?;
-                let args = if *self.get_next()? != Token::RightParen {
+                let args = if !matches!(*self.get_next()?, Token::RightParen) {
                     self.parse_expression_list()?
                 } else {
                     Vec::new()
@@ -786,7 +791,7 @@ where
         })
     }
 
-    fn parse_suffix_part(&mut self) -> Result<SuffixPart<S>, ParserError> {
+    fn parse_suffix_part(&mut self) -> Result<SuffixPart<S::String>, ParserError> {
         match self.get_next()? {
             Token::Dot | Token::LeftBracket => Ok(SuffixPart::Field(self.parse_field_suffix()?)),
             Token::Colon | Token::LeftParen | Token::LeftBrace | Token::String(_) => {
@@ -799,7 +804,7 @@ where
         }
     }
 
-    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression<S>, ParserError> {
+    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression<S::String>, ParserError> {
         let primary = self.parse_primary_expression()?;
         let mut suffixes = Vec::new();
         loop {
@@ -819,7 +824,7 @@ where
         Ok(SuffixedExpression { primary, suffixes })
     }
 
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S>, ParserError> {
+    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S::String>, ParserError> {
         self.expect_next(Token::LeftParen)?;
 
         let mut parameters = Vec::new();
@@ -858,7 +863,7 @@ where
         })
     }
 
-    fn parse_table_constructor(&mut self) -> Result<TableConstructor<S>, ParserError> {
+    fn parse_table_constructor(&mut self) -> Result<TableConstructor<S::String>, ParserError> {
         self.expect_next(Token::LeftBrace)?;
         let mut fields = Vec::new();
         loop {
@@ -877,7 +882,7 @@ where
         Ok(TableConstructor { fields })
     }
 
-    fn parse_constructor_field(&mut self) -> Result<ConstructorField<S>, ParserError> {
+    fn parse_constructor_field(&mut self) -> Result<ConstructorField<S::String>, ParserError> {
         Ok(match *self.get_next()? {
             Token::Name(_) => {
                 if self.check_ahead(1, Token::Assign)? {
@@ -912,7 +917,7 @@ where
     }
 
     // Return a reference to the next token in the stream, erroring if we are at the end.
-    fn get_next(&mut self) -> Result<&Token<S>, ParserError> {
+    fn get_next(&mut self) -> Result<&Token<S::String>, ParserError> {
         self.read_ahead(1)?;
         if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
@@ -922,7 +927,7 @@ where
     }
 
     // Consumes the next token, returning an error if it does not match the given token.
-    fn expect_next(&mut self, token: Token<S>) -> Result<(), ParserError> {
+    fn expect_next(&mut self, token: Token<S::String>) -> Result<(), ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
@@ -942,7 +947,7 @@ where
     }
 
     // Consume the next token which should be a name, and return it, otherwise error.
-    fn expect_name(&mut self) -> Result<S, ParserError> {
+    fn expect_name(&mut self) -> Result<S::String, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
@@ -960,7 +965,7 @@ where
     }
 
     // Consume the next token which should be a string, and return it, otherwise error.
-    fn expect_string(&mut self) -> Result<S, ParserError> {
+    fn expect_string(&mut self) -> Result<S::String, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
@@ -978,7 +983,7 @@ where
     }
 
     // Take the next token in the stream by value, erroring if we are at the end.
-    fn take_next(&mut self) -> Result<Token<S>, ParserError> {
+    fn take_next(&mut self) -> Result<Token<S::String>, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream { expected: None })
@@ -988,14 +993,14 @@ where
     }
 
     // Return the nth token ahead in the stream, if it is not past the end.
-    fn look_ahead(&mut self, n: usize) -> Result<Option<&Token<S>>, ParserError> {
+    fn look_ahead(&mut self, n: usize) -> Result<Option<&Token<S::String>>, ParserError> {
         self.read_ahead(n + 1)?;
         Ok(self.read_buffer.get(n))
     }
 
     // Return true if the nth token ahead in the stream matches the given token.  If this would read
     // past the end of the stream, this will simply return false.
-    fn check_ahead(&mut self, n: usize, token: Token<S>) -> Result<bool, ParserError> {
+    fn check_ahead(&mut self, n: usize, token: Token<S::String>) -> Result<bool, ParserError> {
         self.read_ahead(n)?;
         Ok(if let Some(t) = self.read_buffer.get(n) {
             *t == token

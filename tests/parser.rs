@@ -1,15 +1,29 @@
-use deimos::parser::{
-    parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression, FunctionCallStatement,
-    HeadExpression, PrimaryExpression, SimpleExpression, Statement, SuffixedExpression,
-    TableConstructor,
+use deimos::compiler::{
+    parser::{
+        parse_chunk, Block, CallSuffix, Chunk, ConstructorField, Expression, FunctionCallStatement,
+        HeadExpression, PrimaryExpression, SimpleExpression, Statement, SuffixedExpression,
+        TableConstructor,
+    },
+    StringInterner,
 };
 
 #[test]
 fn test_function_call() {
+    struct BoxInterner;
+
+    impl StringInterner for BoxInterner {
+        type String = Box<[u8]>;
+
+        fn intern(&self, s: &[u8]) -> Self::String {
+            Box::from(s)
+        }
+    }
+
     assert_eq!(
-        parse_chunk("print(10, 20);print'foo';print{30.0}".as_bytes(), |s| s
-            .to_vec()
-            .into_boxed_slice())
+        parse_chunk(
+            "print(10, 20);print'foo';print{30.0}".as_bytes(),
+            BoxInterner
+        )
         .unwrap(),
         Chunk {
             block: Block {

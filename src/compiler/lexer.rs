@@ -6,7 +6,9 @@ use std::{
 
 use gc_arena::Collect;
 
-#[derive(Debug, Clone, PartialEq)]
+use super::StringInterner;
+
+#[derive(Clone)]
 pub enum Token<S> {
     Break,
     Do,
@@ -71,6 +73,139 @@ pub enum Token<S> {
     String(S),
 }
 
+impl<S: AsRef<[u8]>> PartialEq for Token<S> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Token::Break, Token::Break) => true,
+            (Token::Do, Token::Do) => true,
+            (Token::Else, Token::Else) => true,
+            (Token::ElseIf, Token::ElseIf) => true,
+            (Token::End, Token::End) => true,
+            (Token::Function, Token::Function) => true,
+            (Token::Goto, Token::Goto) => true,
+            (Token::If, Token::If) => true,
+            (Token::In, Token::In) => true,
+            (Token::Local, Token::Local) => true,
+            (Token::Nil, Token::Nil) => true,
+            (Token::For, Token::For) => true,
+            (Token::While, Token::While) => true,
+            (Token::Repeat, Token::Repeat) => true,
+            (Token::Until, Token::Until) => true,
+            (Token::Return, Token::Return) => true,
+            (Token::Then, Token::Then) => true,
+            (Token::True, Token::True) => true,
+            (Token::False, Token::False) => true,
+            (Token::Not, Token::Not) => true,
+            (Token::And, Token::And) => true,
+            (Token::Or, Token::Or) => true,
+            (Token::Minus, Token::Minus) => true,
+            (Token::Add, Token::Add) => true,
+            (Token::Mul, Token::Mul) => true,
+            (Token::Div, Token::Div) => true,
+            (Token::IDiv, Token::IDiv) => true,
+            (Token::Pow, Token::Pow) => true,
+            (Token::Mod, Token::Mod) => true,
+            (Token::Len, Token::Len) => true,
+            (Token::BitNotXor, Token::BitNotXor) => true,
+            (Token::BitAnd, Token::BitAnd) => true,
+            (Token::BitOr, Token::BitOr) => true,
+            (Token::ShiftRight, Token::ShiftRight) => true,
+            (Token::ShiftLeft, Token::ShiftLeft) => true,
+            (Token::Concat, Token::Concat) => true,
+            (Token::Dots, Token::Dots) => true,
+            (Token::Assign, Token::Assign) => true,
+            (Token::LessThan, Token::LessThan) => true,
+            (Token::LessEqual, Token::LessEqual) => true,
+            (Token::GreaterThan, Token::GreaterThan) => true,
+            (Token::GreaterEqual, Token::GreaterEqual) => true,
+            (Token::Equal, Token::Equal) => true,
+            (Token::NotEqual, Token::NotEqual) => true,
+            (Token::Dot, Token::Dot) => true,
+            (Token::SemiColon, Token::SemiColon) => true,
+            (Token::Colon, Token::Colon) => true,
+            (Token::DoubleColon, Token::DoubleColon) => true,
+            (Token::Comma, Token::Comma) => true,
+            (Token::LeftParen, Token::LeftParen) => true,
+            (Token::RightParen, Token::RightParen) => true,
+            (Token::LeftBracket, Token::LeftBracket) => true,
+            (Token::RightBracket, Token::RightBracket) => true,
+            (Token::LeftBrace, Token::LeftBrace) => true,
+            (Token::RightBrace, Token::RightBrace) => true,
+            (Token::Integer(a), Token::Integer(b)) => a == b,
+            (Token::Float(a), Token::Float(b)) => a.total_cmp(b).is_eq(),
+            (Token::Name(a), Token::Name(b)) => a.as_ref() == b.as_ref(),
+            (Token::String(a), Token::String(b)) => a.as_ref() == b.as_ref(),
+            _ => false,
+        }
+    }
+}
+
+impl<S: AsRef<[u8]>> fmt::Debug for Token<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Break => write!(f, "[Break]"),
+            Token::Do => write!(f, "[Do]"),
+            Token::Else => write!(f, "[Else]"),
+            Token::ElseIf => write!(f, "[ElseIf]"),
+            Token::End => write!(f, "[End]"),
+            Token::Function => write!(f, "[Function]"),
+            Token::Goto => write!(f, "[Goto]"),
+            Token::If => write!(f, "[If]"),
+            Token::In => write!(f, "[In]"),
+            Token::Local => write!(f, "[Local]"),
+            Token::Nil => write!(f, "[Nil]"),
+            Token::For => write!(f, "[For]"),
+            Token::While => write!(f, "[While]"),
+            Token::Repeat => write!(f, "[Repeat]"),
+            Token::Until => write!(f, "[Until]"),
+            Token::Return => write!(f, "[Return]"),
+            Token::Then => write!(f, "[Then]"),
+            Token::True => write!(f, "[True]"),
+            Token::False => write!(f, "[False]"),
+            Token::Not => write!(f, "[Not]"),
+            Token::And => write!(f, "[And]"),
+            Token::Or => write!(f, "[Or]"),
+            Token::Minus => write!(f, "[Minus]"),
+            Token::Add => write!(f, "[Add]"),
+            Token::Mul => write!(f, "[Mul]"),
+            Token::Div => write!(f, "[Div]"),
+            Token::IDiv => write!(f, "[IDiv]"),
+            Token::Pow => write!(f, "[Pow]"),
+            Token::Mod => write!(f, "[Mod]"),
+            Token::Len => write!(f, "[Len]"),
+            Token::BitNotXor => write!(f, "[BitNotXor]"),
+            Token::BitAnd => write!(f, "[BitAnd]"),
+            Token::BitOr => write!(f, "[BitOr]"),
+            Token::ShiftRight => write!(f, "[ShiftRight]"),
+            Token::ShiftLeft => write!(f, "[ShiftLeft]"),
+            Token::Concat => write!(f, "[Concat]"),
+            Token::Dots => write!(f, "[Dots]"),
+            Token::Assign => write!(f, "[Assign]"),
+            Token::LessThan => write!(f, "[LessThan]"),
+            Token::LessEqual => write!(f, "[LessEqual]"),
+            Token::GreaterThan => write!(f, "[GreaterThan]"),
+            Token::GreaterEqual => write!(f, "[GreaterEqual]"),
+            Token::Equal => write!(f, "[Equal]"),
+            Token::NotEqual => write!(f, "[NotEqual]"),
+            Token::Dot => write!(f, "[Dot]"),
+            Token::SemiColon => write!(f, "[SemiColon]"),
+            Token::Colon => write!(f, "[Colon]"),
+            Token::DoubleColon => write!(f, "[DoubleColon]"),
+            Token::Comma => write!(f, "[Comma]"),
+            Token::LeftParen => write!(f, "[LeftParen]"),
+            Token::RightParen => write!(f, "[RightParen]"),
+            Token::LeftBracket => write!(f, "[LeftBracket]"),
+            Token::RightBracket => write!(f, "[RightBracket]"),
+            Token::LeftBrace => write!(f, "[LeftBrace]"),
+            Token::RightBrace => write!(f, "[RightBrace]"),
+            Token::Integer(i) => write!(f, "[Integer {}]", *i),
+            Token::Float(d) => write!(f, "[Float {}]", *d),
+            Token::Name(n) => write!(f, "[Name {:?}]", String::from_utf8_lossy(n.as_ref())),
+            Token::String(s) => write!(f, "[String {:?}]", String::from_utf8_lossy(s.as_ref())),
+        }
+    }
+}
+
 #[derive(Debug, Collect)]
 #[collect(require_static)]
 pub enum LexerError {
@@ -119,23 +254,23 @@ impl fmt::Display for LexerError {
     }
 }
 
-pub struct Lexer<R, CS> {
+pub struct Lexer<R, S> {
     source: Option<R>,
-    create_string: CS,
+    interner: S,
     peek_buffer: Vec<u8>,
     string_buffer: Vec<u8>,
     line_number: u64,
 }
 
-impl<R, S, CS> Lexer<R, CS>
+impl<R, S> Lexer<R, S>
 where
     R: Read,
-    CS: FnMut(&[u8]) -> S,
+    S: StringInterner,
 {
-    pub fn new(source: R, create_string: CS) -> Lexer<R, CS> {
+    pub fn new(source: R, interner: S) -> Lexer<R, S> {
         Lexer {
             source: Some(source),
-            create_string,
+            interner,
             peek_buffer: Vec::new(),
             string_buffer: Vec::new(),
             line_number: 0,
@@ -201,7 +336,7 @@ where
     }
 
     /// Reads the next token, or None if the end of the source has been reached.
-    pub fn read_token(&mut self) -> Result<Option<Token<S>>, LexerError> {
+    pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexerError> {
         self.skip_whitespace()?;
 
         let mut do_read_token = || {
@@ -635,7 +770,7 @@ where
     // Reads a hex or decimal integer or floating point identifier.  Allows decimal integers (123),
     // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
-    fn read_numeral(&mut self) -> Result<Token<S>, LexerError> {
+    fn read_numeral(&mut self) -> Result<Token<S::String>, LexerError> {
         let p1 = self.peek(0).unwrap().unwrap();
         assert!(p1 == b'.' || is_digit(p1));
 
@@ -744,8 +879,8 @@ where
         self.peek_buffer.drain(0..n);
     }
 
-    fn take_string(&mut self) -> S {
-        let s = (self.create_string)(&self.string_buffer);
+    fn take_string(&mut self) -> S::String {
+        let s = self.interner.intern(&self.string_buffer);
         self.string_buffer.clear();
         s
     }

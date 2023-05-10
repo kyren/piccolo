@@ -1,15 +1,13 @@
 mod any;
 mod callback;
 mod closure;
-mod compiler;
+pub mod compiler;
 mod constant;
 mod error;
 pub mod io;
-mod lexer;
 mod lua;
 pub mod meta_ops;
 mod opcode;
-pub mod parser;
 pub mod raw_ops;
 mod registry;
 mod stdlib;
@@ -30,13 +28,11 @@ pub use self::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
         UpValueState,
     },
-    compiler::{compile, compile_chunk, CompiledFunction, CompilerError},
+    compiler::{compile, CompiledFunction, CompilerError},
     constant::Constant,
     error::{Error, RuntimeError, StaticError, TypeError},
-    lexer::{Lexer, LexerError, Token},
     lua::{Lua, Root},
     opcode::OpCode,
-    parser::{parse_chunk, ParserError},
     registry::{
         Registry, StaticCallback, StaticClosure, StaticFunction, StaticString, StaticTable,
         StaticThread, StaticUserData, StaticValue,

@@ -5,7 +5,11 @@ use std::{error::Error as StdError, fs::File, path::PathBuf};
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
-use deimos::{compile, io, parser, FunctionProto, Lua};
+use deimos::{
+    compile,
+    compiler::{self, StringInterner},
+    io, FunctionProto, Lua,
+};
 
 fn print_function_proto<'gc>(function: &FunctionProto<'gc>) {
     println!("=============");
@@ -63,7 +67,17 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let file = io::buffered_read(File::open(matches.get_one::<PathBuf>("file").unwrap())?)?;
 
     if matches.contains_id("parse") {
-        let chunk = parser::parse_chunk(file, |s| s.as_ref().to_vec().into_boxed_slice())?;
+        struct Interner;
+
+        impl StringInterner for Interner {
+            type String = Box<[u8]>;
+
+            fn intern(&self, s: &[u8]) -> Self::String {
+                Box::from(s)
+            }
+        }
+
+        let chunk = compiler::parse_chunk(file, Interner)?;
         println!("{:#?}", chunk);
     } else {
         let mut lua = Lua::new();

@@ -1,9 +1,22 @@
 use std::f64;
 
-use deimos::{Lexer, Token};
+use deimos::compiler::{
+    lexer::{Lexer, Token},
+    StringInterner,
+};
+
+struct BoxInterner;
+
+impl StringInterner for BoxInterner {
+    type String = Box<[u8]>;
+
+    fn intern(&self, s: &[u8]) -> Self::String {
+        Box::from(s)
+    }
+}
 
 fn test_tokens(source: &str, tokens: &[Token<Box<[u8]>>]) {
-    let mut lexer = Lexer::new(source.as_bytes(), |s| s.to_vec().into_boxed_slice());
+    let mut lexer = Lexer::new(source.as_bytes(), BoxInterner);
     let mut i = 0;
     while let Some(token) = lexer.read_token().unwrap() {
         assert!(i < tokens.len(), "too many tokens");
@@ -14,7 +27,7 @@ fn test_tokens(source: &str, tokens: &[Token<Box<[u8]>>]) {
 }
 
 fn test_tokens_lines(source: &str, tokens: &[(Token<Box<[u8]>>, u64)]) {
-    let mut lexer = Lexer::new(source.as_bytes(), |s| s.to_vec().into_boxed_slice());
+    let mut lexer = Lexer::new(source.as_bytes(), BoxInterner);
     let mut i = 0;
     loop {
         lexer.skip_whitespace().unwrap();
