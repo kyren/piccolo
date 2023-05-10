@@ -6,11 +6,11 @@ use std::{error::Error as StdError, fs::File};
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
 use deimos::{
-    compiler::{self, interning::BoxInterner},
+    compiler::{self, interning::BasicInterner},
     io, CompiledPrototype,
 };
 
-fn print_function(function: &CompiledPrototype<Box<[u8]>>) {
+fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>) {
     println!("=============");
     println!("FunctionProto({:p})", function);
     println!("=============");
@@ -21,7 +21,11 @@ fn print_function(function: &CompiledPrototype<Box<[u8]>>) {
     if function.constants.len() > 0 {
         println!("constants:");
         for (i, c) in function.constants.iter().enumerate() {
-            println!("{}: {:?}", i, c);
+            println!(
+                "{}: {:?}",
+                i,
+                c.map_string(|s| String::from_utf8_lossy(s.as_ref()).into_owned())
+            );
         }
     }
     if function.opcodes.len() > 0 {
@@ -65,12 +69,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
+    let interner = BasicInterner::default();
+
     if matches.contains_id("parse") {
-        let chunk = compiler::parse_chunk(file, BoxInterner)?;
+        let chunk = compiler::parse_chunk(file, &interner)?;
         println!("{:#?}", chunk);
     } else {
-        let chunk = compiler::parse_chunk(file, BoxInterner)?;
-        let prototype = compiler::compile_chunk(&chunk, BoxInterner)?;
+        let chunk = compiler::parse_chunk(file, &interner)?;
+        let prototype = compiler::compile_chunk(&chunk, &interner)?;
         print_function(&prototype);
     }
 

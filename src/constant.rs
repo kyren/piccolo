@@ -27,12 +27,12 @@ impl<S> Constant<S> {
         Constant::Boolean(!self.to_bool())
     }
 
-    pub fn map_string<S2>(self, f: impl FnOnce(S) -> S2) -> Constant<S2> {
+    pub fn map_string<S2>(&self, f: impl FnOnce(&S) -> S2) -> Constant<S2> {
         match self {
             Constant::Nil => Constant::Nil,
-            Constant::Boolean(b) => Constant::Boolean(b),
-            Constant::Integer(i) => Constant::Integer(i),
-            Constant::Number(n) => Constant::Number(n),
+            Constant::Boolean(b) => Constant::Boolean(*b),
+            Constant::Integer(i) => Constant::Integer(*i),
+            Constant::Number(n) => Constant::Number(*n),
             Constant::String(s) => Constant::String(f(s)),
         }
     }

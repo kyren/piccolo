@@ -1102,24 +1102,19 @@ mod tests {
 
     use super::*;
 
-    use crate::compiler::interning::BoxInterner;
+    use crate::compiler::interning::BasicInterner;
 
     #[test]
     fn test_function_call() {
+        let interner = BasicInterner::default();
         assert_eq!(
-            parse_chunk(
-                "print(10, 20);print'foo';print{30.0}".as_bytes(),
-                BoxInterner
-            )
-            .unwrap(),
+            parse_chunk("print(10, 20);print'foo';print{30.0}".as_bytes(), &interner,).unwrap(),
             Chunk {
                 block: Block {
                     statements: vec![
                         Statement::FunctionCall(FunctionCallStatement {
                             head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(
-                                    "print".as_bytes().to_vec().into_boxed_slice(),
-                                ),
+                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
                                 suffixes: vec![],
                             },
                             call: CallSuffix::Function(vec![
@@ -1139,23 +1134,19 @@ mod tests {
                         }),
                         Statement::FunctionCall(FunctionCallStatement {
                             head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(
-                                    "print".as_bytes().to_vec().into_boxed_slice(),
-                                ),
+                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
                                 suffixes: vec![],
                             },
                             call: CallSuffix::Function(vec![Expression {
                                 head: Box::new(HeadExpression::Simple(SimpleExpression::String(
-                                    "foo".as_bytes().to_vec().into_boxed_slice(),
+                                    interner.intern(b"foo"),
                                 ))),
                                 tail: vec![],
                             },]),
                         }),
                         Statement::FunctionCall(FunctionCallStatement {
                             head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(
-                                    "print".as_bytes().to_vec().into_boxed_slice(),
-                                ),
+                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
                                 suffixes: vec![],
                             },
                             call: CallSuffix::Function(vec![Expression {

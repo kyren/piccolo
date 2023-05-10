@@ -1121,10 +1121,12 @@ fn is_hex_digit(c: u8) -> bool {
 mod tests {
     use super::*;
 
-    use crate::compiler::interning::BoxInterner;
+    use std::rc::Rc;
 
-    fn test_tokens(source: &str, tokens: &[Token<Box<[u8]>>]) {
-        let mut lexer = Lexer::new(source.as_bytes(), BoxInterner);
+    use crate::compiler::interning::BasicInterner;
+
+    fn test_tokens(source: &str, tokens: &[Token<Rc<[u8]>>]) {
+        let mut lexer = Lexer::new(source.as_bytes(), BasicInterner::default());
         let mut i = 0;
         while let Some(token) = lexer.read_token().unwrap() {
             assert!(i < tokens.len(), "too many tokens");
@@ -1134,8 +1136,8 @@ mod tests {
         assert!(i == tokens.len(), "not enough tokens");
     }
 
-    fn test_tokens_lines(source: &str, tokens: &[(Token<Box<[u8]>>, u64)]) {
-        let mut lexer = Lexer::new(source.as_bytes(), BoxInterner);
+    fn test_tokens_lines(source: &str, tokens: &[(Token<Rc<[u8]>>, u64)]) {
+        let mut lexer = Lexer::new(source.as_bytes(), BasicInterner::default());
         let mut i = 0;
         loop {
             lexer.skip_whitespace().unwrap();
@@ -1152,12 +1154,12 @@ mod tests {
         assert!(i == tokens.len(), "not enough tokens");
     }
 
-    fn str_token(s: &str) -> Token<Box<[u8]>> {
-        Token::String(s.as_bytes().to_vec().into_boxed_slice())
+    fn str_token(s: &str) -> Token<Rc<[u8]>> {
+        Token::String(s.as_bytes().to_vec().into_boxed_slice().into())
     }
 
-    fn name_token(s: &str) -> Token<Box<[u8]>> {
-        Token::Name(s.as_bytes().to_vec().into_boxed_slice())
+    fn name_token(s: &str) -> Token<Rc<[u8]>> {
+        Token::Name(s.as_bytes().to_vec().into_boxed_slice().into())
     }
 
     #[test]
