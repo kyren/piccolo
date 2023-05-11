@@ -40,6 +40,6 @@ pub use self::{
         ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
         VarCount,
     },
-    userdata::{UserData, UserDataError},
+    userdata::{AnyUserData, UserDataError},
     value::{IntoValue, Value},
 };

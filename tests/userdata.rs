@@ -1,7 +1,7 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
 use piccolo::{
-    compile, AnyCallback, CallbackReturn, Closure, Function, Lua, StaticError, StaticValue,
-    UserData, UserDataError, Value,
+    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Function, Lua, StaticError,
+    StaticValue, UserDataError, Value,
 };
 
 #[derive(Collect)]
@@ -13,8 +13,10 @@ fn userdata() -> Result<(), Box<StaticError>> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
-        let userdata =
-            UserData::new::<Rootable![MyUserData<'gc>]>(mc, MyUserData(Gc::new(mc, Lock::new(17))));
+        let userdata = AnyUserData::new::<Rootable![MyUserData<'gc>]>(
+            mc,
+            MyUserData(Gc::new(mc, Lock::new(17))),
+        );
         root.globals.set(mc, "userdata", userdata)?;
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             match stack[0] {

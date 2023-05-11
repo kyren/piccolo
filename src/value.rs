@@ -2,7 +2,7 @@ use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::{Collect, MutationContext};
 
-use crate::{AnyCallback, Closure, Constant, Function, String, Table, Thread, UserData};
+use crate::{AnyCallback, AnyUserData, Closure, Constant, Function, String, Table, Thread};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -15,7 +15,7 @@ pub enum Value<'gc> {
     Table(Table<'gc>),
     Function(Function<'gc>),
     Thread(Thread<'gc>),
-    UserData(UserData<'gc>),
+    UserData(AnyUserData<'gc>),
 }
 
 impl<'gc> Default for Value<'gc> {
@@ -84,7 +84,7 @@ impl<'gc> Value<'gc> {
             Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.0),
             Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.as_ptr()),
             Value::Thread(t) => write!(w, "<thread {:p}>", t.0),
-            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.data_ptr()),
+            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.as_ptr()),
         }
     }
 
@@ -211,8 +211,8 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
     }
 }
 
-impl<'gc> From<UserData<'gc>> for Value<'gc> {
-    fn from(v: UserData<'gc>) -> Value<'gc> {
+impl<'gc> From<AnyUserData<'gc>> for Value<'gc> {
+    fn from(v: AnyUserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
     }
 }

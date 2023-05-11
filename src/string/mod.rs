@@ -1,6 +1,6 @@
-mod header;
+mod repr;
 
-pub use header::String;
+pub use repr::String;
 
 use std::{
     borrow::Borrow,

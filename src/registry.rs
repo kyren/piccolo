@@ -2,7 +2,7 @@ use std::fmt;
 
 use gc_arena::{Collect, DynamicRoot, DynamicRootSet, MutationContext, Rootable};
 
-use crate::{AnyCallback, Closure, Function, String, Table, Thread, UserData, Value};
+use crate::{AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, Value};
 
 #[derive(Clone)]
 pub struct StaticTable(pub DynamicRoot<Rootable![Table<'gc>]>);
@@ -49,7 +49,7 @@ impl fmt::Debug for StaticThread {
 }
 
 #[derive(Clone)]
-pub struct StaticUserData(pub DynamicRoot<Rootable![UserData<'gc>]>);
+pub struct StaticUserData(pub DynamicRoot<Rootable![AnyUserData<'gc>]>);
 
 impl fmt::Debug for StaticUserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,7 +234,7 @@ reg_type!(Table, StaticTable);
 reg_type!(Closure, StaticClosure);
 reg_type!(AnyCallback, StaticCallback);
 reg_type!(Thread, StaticThread);
-reg_type!(UserData, StaticUserData);
+reg_type!(AnyUserData, StaticUserData);
 
 macro_rules! fetch_type {
     ($r:ident, $t:ident) => {
@@ -253,7 +253,7 @@ fetch_type!(StaticTable, Table);
 fetch_type!(StaticClosure, Closure);
 fetch_type!(StaticCallback, AnyCallback);
 fetch_type!(StaticThread, Thread);
-fetch_type!(StaticUserData, UserData);
+fetch_type!(StaticUserData, AnyUserData);
 
 impl<'gc> Stashable<'gc> for Function<'gc> {
     type Stashed = StaticFunction;

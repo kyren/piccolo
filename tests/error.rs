@@ -1,3 +1,5 @@
+mod sizes;
+
 use piccolo::{compile, Closure, Function, Lua, StaticError};
 
 #[test]

@@ -2,8 +2,6 @@ use std::{
     any::TypeId,
     cell::{BorrowError, BorrowMutError, Ref, RefMut},
     fmt,
-    hash::{Hash, Hasher},
-    ptr,
 };
 
 use gc_arena::{lock::RefLock, Collect, Gc, MutationContext, Root, Rootable};
@@ -20,22 +18,8 @@ where
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("AnyGcCell")
             .field("metadata", self.0.metadata())
-            .field("data", &(self.0.data_ptr()))
+            .field("type_id", &(self.0.type_id()))
             .finish()
-    }
-}
-
-impl<'gc, M> PartialEq for AnyCell<'gc, M> {
-    fn eq(&self, other: &Self) -> bool {
-        self.data_ptr() == other.data_ptr()
-    }
-}
-
-impl<'gc, M> Eq for AnyCell<'gc, M> {}
-
-impl<'gc, M> Hash for AnyCell<'gc, M> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.data_ptr().hash(state)
     }
 }
 
@@ -52,8 +36,8 @@ impl<'gc, M> AnyCell<'gc, M> {
         ))
     }
 
-    pub fn data_ptr(&self) -> *const () {
-        self.0.data_ptr()
+    pub fn as_ptr(&self) -> *const () {
+        self.0.as_ptr()
     }
 
     pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, M>, BorrowError> {
@@ -132,8 +116,6 @@ impl<'gc, M> AnyCell<'gc, M> {
 struct Header<M> {
     metadata: M,
     type_id: TypeId,
-    #[collect(require_static)]
-    data_ptr: *const (),
 }
 
 #[derive(Collect)]
@@ -168,7 +150,6 @@ impl<'gc, M> AnyValue<'gc, M> {
                 header: Header {
                     metadata,
                     type_id: TypeId::of::<R>(),
-                    data_ptr: ptr::null(),
                 },
                 data,
             },
@@ -176,23 +157,19 @@ impl<'gc, M> AnyValue<'gc, M> {
 
         // SAFETY: We know we can cast to a `Header<M>` because `Value<M, Root<'gc, R>>` is
         // `#[repr(C)]` and `Header<M>` is the first field
-        //
-        // We know we can write to the pointer held by `Gc` because we know we are the only one
-        // accessing it, since we just allocated it.
-        Self(unsafe {
-            (*(Gc::as_ptr(val) as *mut Value<M, Root<'gc, R>>))
-                .header
-                .data_ptr = &val.data as *const Root<'gc, R> as *const ();
-            Gc::cast::<Header<M>>(val)
-        })
+        Self(unsafe { Gc::cast::<Header<M>>(val) })
     }
 
     pub fn metadata(&self) -> &M {
         &self.0.metadata
     }
 
-    pub fn data_ptr(&self) -> *const () {
-        self.0.data_ptr
+    pub fn as_ptr(&self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        self.0.type_id
     }
 
     pub fn is<R>(&self) -> bool
@@ -207,8 +184,8 @@ impl<'gc, M> AnyValue<'gc, M> {
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
         if TypeId::of::<R>() == self.0.type_id {
-            let ptr = self.0.data_ptr as *const Root<'gc, R>;
-            Some(unsafe { &*ptr })
+            let ptr = Gc::as_ptr(self.0) as *const Value<M, Root<'gc, R>>;
+            Some(unsafe { &(*ptr).data })
         } else {
             None
         }

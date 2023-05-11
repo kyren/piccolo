@@ -2,7 +2,7 @@ use std::{
     cell::{Ref, RefMut},
     error::Error as StdError,
     fmt,
-    hash::Hash,
+    hash::{Hash, Hasher},
     mem,
 };
 
@@ -27,17 +27,31 @@ impl fmt::Display for UserDataError {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct UserData<'gc>(pub AnyCell<'gc, UserMetadata<'gc>>);
+pub struct AnyUserData<'gc>(pub AnyCell<'gc, UserMetadata<'gc>>);
 
-impl<'gc> UserData<'gc> {
+impl<'gc> PartialEq for AnyUserData<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_ptr() == other.0.as_ptr()
+    }
+}
+
+impl<'gc> Eq for AnyUserData<'gc> {}
+
+impl<'gc> Hash for AnyUserData<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.as_ptr().hash(state)
+    }
+}
+
+impl<'gc> AnyUserData<'gc> {
     pub fn new<R>(mc: MutationContext<'gc, '_>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a> + ?Sized + 'static,
         Root<'gc, R>: Sized,
     {
-        UserData(AnyCell::<UserMetadata<'gc>>::new::<R>(
+        AnyUserData(AnyCell::<UserMetadata<'gc>>::new::<R>(
             mc,
             UserMetadata { metatable: None },
             val,

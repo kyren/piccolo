@@ -1,75 +1,64 @@
+use std::{alloc, slice};
+
 use gc_arena::{Collect, Gc, MutationContext};
 
-// Represents `String` as a single pointer with an inline VTable header.
+// Represents `String` as either a pointer to an external / owned slice pointer or a size prefixed
+// inline array.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, Header>);
 
-#[derive(Collect)]
-#[collect(no_drop)]
-#[repr(C)]
-struct HeaderString<T> {
-    header: Header,
-    value: T,
-}
-
-#[derive(Collect)]
+#[derive(Copy, Clone, Collect)]
 #[collect(require_static)]
-struct Header {
-    slice: *const [u8],
+enum Header {
+    Indirect(*const [u8]),
+    Inline(usize),
 }
 
 impl<'gc> String<'gc> {
     pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Box<[u8]>) -> String<'gc> {
-        // SAFETY: We convert the box into a raw pointer to avoid violating stacked borrows rules,
-        // and to make it explicit that we require that the pointer be stable.
         #[derive(Collect)]
         #[collect(require_static)]
-        struct Buffer(*mut [u8]);
+        #[repr(transparent)]
+        struct Owned(Header);
 
-        impl Drop for Buffer {
+        impl Drop for Owned {
             fn drop(&mut self) {
-                unsafe {
-                    drop(Box::from_raw(self.0));
+                match self.0 {
+                    Header::Indirect(ptr) => unsafe {
+                        drop(Box::from_raw(ptr as *mut [u8]));
+                    },
+                    Header::Inline(_) => unreachable!(),
                 }
             }
         }
 
-        type BufferString = HeaderString<Buffer>;
-        let buffer = Buffer(Box::into_raw(s));
-
-        String(unsafe {
-            Gc::cast::<Header>(Gc::new(
-                mc,
-                BufferString {
-                    header: Header { slice: buffer.0 },
-                    value: buffer,
-                },
-            ))
-        })
+        let owned = Owned(Header::Indirect(Box::into_raw(s)));
+        // SAFETY: We know we can cast to `InlineHeader` because `Owned` is `#[repr(transparent)]`
+        String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
 
     pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
-        type InlineString<const N: usize> = HeaderString<[u8; N]>;
-
         fn create<'gc, const N: usize>(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+            #[derive(Collect)]
+            #[collect(require_static)]
+            #[repr(C)]
+            struct InlineString<const N: usize> {
+                header: Header,
+                array: [u8; N],
+            }
+
             assert!(s.len() <= N);
             let mut string = InlineString {
-                header: Header { slice: &[] },
-                value: [0; N],
+                header: Header::Inline(s.len()),
+                array: [0; N],
             };
-            string.value[0..s.len()].copy_from_slice(s);
+            string.array[0..s.len()].copy_from_slice(s);
 
             let string = Gc::new(mc, string);
-            // SAFETY: We know we have unique access to the `InlineString` since we just allocated
-            // it. We know that the `slice` ptr in the header will not be invalidated because it
-            // is moved into the `Gc` allocation *before* the slice pointer is calculated, and `Gc`
-            // allocations are stable.
-            unsafe {
-                (*(Gc::as_ptr(string) as *mut InlineString<N>)).header.slice =
-                    &string.value[0..s.len()];
-                String(Gc::cast::<Header>(string))
-            }
+            // SAFETY: We know we can cast to `Header` because `InlineString` is `#[repr(C)]`
+            // and `header` is the first field.
+            unsafe { String(Gc::cast::<Header>(string)) }
         }
 
         macro_rules! try_sizes {
@@ -86,19 +75,27 @@ impl<'gc> String<'gc> {
     }
 
     pub fn from_static(mc: MutationContext<'gc, '_>, s: &'static [u8]) -> String<'gc> {
-        String(unsafe {
-            Gc::cast::<Header>(Gc::new(
-                mc,
-                HeaderString {
-                    header: Header { slice: s },
-                    value: (),
-                },
-            ))
-        })
+        String(Gc::new(mc, Header::Indirect(s)))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { &*(self.0.slice) }
+        unsafe {
+            match *self.0 {
+                Header::Indirect(p) => &(*p),
+                Header::Inline(len) => {
+                    // This is probably ridiculous overkill, since the offset I think should
+                    // always be 1, but precisely calculate the offset of the inline array using
+                    // `alloc::Layout`
+                    let layout = alloc::Layout::new::<Header>();
+                    let (_, offset) = layout
+                        .extend(alloc::Layout::array::<u8>(len).unwrap())
+                        .unwrap();
+                    let data =
+                        (Gc::as_ptr(self.0) as *const u8).offset(offset as isize) as *const u8;
+                    slice::from_raw_parts(data, len)
+                }
+            }
+        }
     }
 }
 
