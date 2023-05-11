@@ -3,8 +3,8 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, value::IntoValue, AnyCallback, AnyContinuation, CallbackReturn, Root, RuntimeError,
-    Table, Value,
+    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, RuntimeError, Table,
+    Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {

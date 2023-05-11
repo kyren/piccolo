@@ -2,7 +2,26 @@ use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::{Collect, MutationContext};
 
-use crate::{AnyCallback, AnyUserData, Closure, Constant, Function, String, Table, Thread};
+use crate::{AnyCallback, AnyUserData, Closure, Constant, String, Table, Thread};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
+#[collect(no_drop)]
+pub enum Function<'gc> {
+    Closure(Closure<'gc>),
+    Callback(AnyCallback<'gc>),
+}
+
+impl<'gc> From<Closure<'gc>> for Function<'gc> {
+    fn from(closure: Closure<'gc>) -> Self {
+        Self::Closure(closure)
+    }
+}
+
+impl<'gc> From<AnyCallback<'gc>> for Function<'gc> {
+    fn from(callback: AnyCallback<'gc>) -> Self {
+        Self::Callback(callback)
+    }
+}
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -183,24 +202,5 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
 impl<'gc> From<AnyUserData<'gc>> for Value<'gc> {
     fn from(v: AnyUserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
-    }
-}
-
-pub trait IntoValue<'gc> {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc>;
-}
-
-impl<'gc, T> IntoValue<'gc> for T
-where
-    T: Into<Value<'gc>>,
-{
-    fn into_value(self, _mc: MutationContext<'gc, '_>) -> Value<'gc> {
-        self.into()
-    }
-}
-
-impl<'gc> IntoValue<'gc> for &'static str {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
-        Value::String(String::from_static(mc, self.as_bytes()))
     }
 }

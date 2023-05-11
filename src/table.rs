@@ -6,10 +6,9 @@ use std::{
 };
 
 use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
-use num_traits::cast;
 use rustc_hash::FxHashMap;
 
-use crate::{value::IntoValue, Value};
+use crate::{IntoValue, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -242,7 +241,7 @@ impl<'gc> TableEntries<'gc> {
             min
         }
 
-        let array_len: i64 = cast(self.array.len()).unwrap();
+        let array_len: i64 = self.array.len().try_into().unwrap();
 
         if !self.array.is_empty() && self.array[array_len as usize - 1].is_nil() {
             // If the array part ends in a Nil, there must be a border inside it
@@ -365,7 +364,7 @@ impl<'gc> TableKey<'gc> {
 // Returns the closest i64 to a given f64 such that casting the i64 back to an f64 results in an
 // equal value, if such an integer exists.
 fn f64_to_i64(n: f64) -> Option<i64> {
-    let i = cast::<_, i64>(n)?;
+    let i = n as i64;
     if i as f64 == n {
         Some(i)
     } else {
@@ -388,17 +387,9 @@ fn canonical_float_bytes(f: f64) -> u64 {
 // usize::MAX), returns the associated array index.
 fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
     let i = match key {
-        Value::Integer(i) => cast::<_, i64>(i)?,
-        Value::Number(f) => {
-            if let Some(i) = f64_to_i64(f) {
-                i
-            } else {
-                return None;
-            }
-        }
-        _ => {
-            return None;
-        }
+        Value::Integer(i) => i,
+        Value::Number(f) => f64_to_i64(f)?,
+        _ => return None,
     };
 
     if i > 0 {

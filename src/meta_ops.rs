@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::{value::IntoValue, AnyCallback, CallbackReturn, Function, TypeError, Value};
+use crate::{AnyCallback, CallbackReturn, Function, IntoValue, TypeError, Value};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]

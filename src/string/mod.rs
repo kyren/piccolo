@@ -5,11 +5,12 @@ pub use repr::String;
 use std::{
     borrow::Borrow,
     error::Error as StdError,
-    fmt::{self, Debug},
+    fmt,
     hash::{Hash, Hasher},
     io::Write,
     ops::Deref,
     str,
+    string::String as StdString,
 };
 
 use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
@@ -33,16 +34,22 @@ impl fmt::Display for StringError {
     }
 }
 
-impl<'gc> Debug for String<'gc> {
+impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("String(")?;
         if let Ok(s) = str::from_utf8(self.as_bytes()) {
-            Debug::fmt(s, fmt)?;
+            fmt::Debug::fmt(s, fmt)?;
         } else {
-            Debug::fmt(self.as_bytes(), fmt)?;
+            fmt::Debug::fmt(self.as_bytes(), fmt)?;
         }
         fmt.write_str(")")?;
         Ok(())
+    }
+}
+
+impl<'gc> fmt::Display for String<'gc> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(StdString::from_utf8_lossy(self.as_bytes()).as_ref())
     }
 }
 

@@ -4,7 +4,6 @@ version = "0.1.0"
 authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
 license = "MIT"
-default-run = "interpreter"
 
 [profile.release]
 opt-level = 3
@@ -12,9 +11,10 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-clap = { version = "4.2", features = ["cargo"] }
 gc-arena = { git = "https://github.com/kyren/gc-arena" }
-num-traits = "0.2"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
+
+[dev-dependencies]
+clap = { version = "4.2", features = ["cargo"] }
 rustyline = "11.0"

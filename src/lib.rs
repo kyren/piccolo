@@ -1,8 +1,10 @@
 pub mod any;
+pub mod callback;
+pub mod closure;
 pub mod compiler;
 pub mod constant;
+pub mod conversion;
 pub mod error;
-pub mod function;
 pub mod io;
 pub mod lua;
 pub mod meta_ops;
@@ -19,14 +21,18 @@ pub mod value;
 
 pub use self::{
     any::AnyCell,
+    callback::{
+        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackReturn,
+        Continuation, Sequence,
+    },
+    closure::{
+        Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
+        UpValueState,
+    },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
+    conversion::IntoValue,
     error::{Error, RuntimeError, StaticError, TypeError},
-    function::{
-        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackReturn, Closure,
-        ClosureError, ClosureState, Continuation, Function, FunctionProto, Sequence, UpValue,
-        UpValueDescriptor, UpValueState,
-    },
     lua::{Lua, Root},
     opcode::OpCode,
     registry::{
@@ -41,5 +47,5 @@ pub use self::{
         VarCount,
     },
     userdata::{AnyUserData, UserDataError},
-    value::{IntoValue, Value},
+    value::{Function, Value},
 };

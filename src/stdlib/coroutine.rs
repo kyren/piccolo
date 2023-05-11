@@ -1,7 +1,7 @@
 use gc_arena::{Collect, MutationContext};
 
 use crate::{
-    value::IntoValue, AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Root, RuntimeError,
+    AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, IntoValue, Root, RuntimeError,
     Sequence, Table, Thread, ThreadMode, TypeError, Value,
 };
 

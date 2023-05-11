@@ -4,8 +4,7 @@ use gc_arena::MutationContext;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    raw_ops, value::IntoValue, AnyCallback, CallbackReturn, Root, RuntimeError, String, Table,
-    Value,
+    raw_ops, AnyCallback, CallbackReturn, IntoValue, Root, RuntimeError, String, Table, Value,
 };
 
 pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {

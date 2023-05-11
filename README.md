@@ -143,7 +143,7 @@ it is no longer worth it.
 * Garbage collected "userdata" with safe downcasting.
 * A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
   from `coroutine`)
-* A simple REPL (try it with `cargo run`!)
+* A simple REPL (try it with `cargo run --example interpreter`)
 
 ## What currently doesn't work ##
 
