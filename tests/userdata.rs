@@ -17,7 +17,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
             mc,
             MyUserData(Gc::new(mc, Lock::new(17))),
         );
-        root.globals.set(mc, "userdata", userdata)?;
+        root.globals.set(mc, "userdata", userdata.into())?;
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
@@ -30,7 +30,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
             stack.clear();
             Ok(CallbackReturn::Return.into())
         });
-        root.globals.set(mc, "callback", callback)?;
+        root.globals.set(mc, "callback", callback.into())?;
         Ok(())
     })?;
 

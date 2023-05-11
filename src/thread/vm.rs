@@ -96,14 +96,14 @@ pub(crate) fn run_vm<'gc>(
                 get_table(registers.stack_frame[table.0 as usize])?.set(
                     mc,
                     registers.stack_frame[key.0 as usize],
-                    current_function.0.proto.constants[value.0 as usize],
+                    current_function.0.proto.constants[value.0 as usize].into(),
                 )?;
             }
 
             OpCode::SetTableCR { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
                     mc,
-                    current_function.0.proto.constants[key.0 as usize],
+                    Value::from(current_function.0.proto.constants[key.0 as usize]),
                     registers.stack_frame[value.0 as usize],
                 )?;
             }
@@ -111,8 +111,8 @@ pub(crate) fn run_vm<'gc>(
             OpCode::SetTableCC { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
                     mc,
-                    current_function.0.proto.constants[key.0 as usize],
-                    current_function.0.proto.constants[value.0 as usize],
+                    Value::from(current_function.0.proto.constants[key.0 as usize]),
+                    current_function.0.proto.constants[value.0 as usize].into(),
                 )?;
             }
 
@@ -158,7 +158,7 @@ pub(crate) fn run_vm<'gc>(
                     .set(
                         mc,
                         registers.stack_frame[key.0 as usize],
-                        current_function.0.proto.constants[value.0 as usize],
+                        current_function.0.proto.constants[value.0 as usize].into(),
                     )?;
             }
 
@@ -166,7 +166,7 @@ pub(crate) fn run_vm<'gc>(
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
                         mc,
-                        current_function.0.proto.constants[key.0 as usize],
+                        Value::from(current_function.0.proto.constants[key.0 as usize]),
                         registers.stack_frame[value.0 as usize],
                     )?;
             }
@@ -175,8 +175,8 @@ pub(crate) fn run_vm<'gc>(
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
                         mc,
-                        current_function.0.proto.constants[key.0 as usize],
-                        current_function.0.proto.constants[value.0 as usize],
+                        Value::from(current_function.0.proto.constants[key.0 as usize]),
+                        current_function.0.proto.constants[value.0 as usize].into(),
                     )?;
             }
 
@@ -325,14 +325,14 @@ pub(crate) fn run_vm<'gc>(
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
+                registers.stack_frame[base.0 as usize] = get_table(table)?.get(key);
             }
 
             OpCode::SelfC { base, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
+                registers.stack_frame[base.0 as usize] = get_table(table)?.get(key);
             }
 
             OpCode::Concat {

@@ -8,7 +8,7 @@ use std::{
 use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
 use rustc_hash::FxHashMap;
 
-use crate::{IntoValue, Value};
+use crate::{AnyUserData, Function, String, Thread, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -51,20 +51,21 @@ impl<'gc> Table<'gc> {
         Table(Gc::new(mc, RefLock::new(TableState::default())))
     }
 
-    pub fn get<K: IntoValue<'gc>>(&self, mc: MutationContext<'gc, '_>, key: K) -> Value<'gc> {
-        self.0.borrow().entries.get(key.into_value(mc))
+    pub fn get<K: IntoTableKey<'gc>>(&self, key: K) -> Value<'gc> {
+        if let Ok(key) = key.into_key() {
+            self.0.borrow().entries.get(key)
+        } else {
+            Value::Nil
+        }
     }
 
-    pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
+    pub fn set<K: IntoTableKey<'gc>>(
         &self,
         mc: MutationContext<'gc, '_>,
         key: K,
-        value: V,
+        value: Value<'gc>,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0
-            .borrow_mut(mc)
-            .entries
-            .set(key.into_value(mc), value.into_value(mc))
+        Ok(self.0.borrow_mut(mc).entries.set(key.into_key()?, value))
     }
 
     pub fn length(&self) -> i64 {
@@ -99,37 +100,28 @@ pub struct TableEntries<'gc> {
 }
 
 impl<'gc> TableEntries<'gc> {
-    pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
+    pub fn get(&self, key: TableKey<'gc>) -> Value<'gc> {
         if let Some(index) = to_array_index(key) {
             if index < self.array.len() {
                 return self.array[index];
             }
         }
 
-        if let Ok(key) = TableKey::new(key) {
-            self.map.get(&key).copied().unwrap_or(Value::Nil)
-        } else {
-            Value::Nil
-        }
+        self.map.get(&key).copied().unwrap_or(Value::Nil)
     }
 
-    pub fn set(
-        &mut self,
-        key: Value<'gc>,
-        value: Value<'gc>,
-    ) -> Result<Value<'gc>, InvalidTableKey> {
+    pub fn set(&mut self, key: TableKey<'gc>, value: Value<'gc>) -> Value<'gc> {
         let index_key = to_array_index(key);
         if let Some(index) = index_key {
             if index < self.array.len() {
-                return Ok(mem::replace(&mut self.array[index], value));
+                return mem::replace(&mut self.array[index], value);
             }
         }
 
-        let hash_key = TableKey::new(key)?;
         if value.is_nil() {
-            Ok(self.map.remove(&hash_key).unwrap_or(Value::Nil))
+            self.map.remove(&key).unwrap_or(Value::Nil)
         } else if self.map.len() < self.map.capacity() {
-            Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
+            self.map.insert(key, value).unwrap_or(Value::Nil)
         } else {
             // If a new element does not fit in either the array or map part of the table, we need
             // to grow. First, we find the total count of array candidate elements across the array
@@ -149,8 +141,8 @@ impl<'gc> TableEntries<'gc> {
                 }
             }
 
-            for k in self.map.keys() {
-                if let Some(i) = to_array_index(k.0) {
+            for &k in self.map.keys() {
+                if let Some(i) = to_array_index(k) {
                     array_counts[highest_bit(i)] += 1;
                     array_total += 1;
                 }
@@ -191,7 +183,7 @@ impl<'gc> TableEntries<'gc> {
 
                 let array = &mut self.array;
                 self.map.retain(|k, v| {
-                    if let Some(i) = to_array_index(k.0) {
+                    if let Some(i) = to_array_index(*k) {
                         if i < array.len() {
                             array[i] = *v;
                             return false;
@@ -212,10 +204,10 @@ impl<'gc> TableEntries<'gc> {
             // Now we can insert the new key value pair
             if let Some(index) = index_key {
                 if index < self.array.len() {
-                    return Ok(mem::replace(&mut self.array[index], value));
+                    return mem::replace(&mut self.array[index], value);
                 }
             }
-            Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
+            self.map.insert(key, value).unwrap_or(Value::Nil)
         }
     }
 
@@ -255,7 +247,7 @@ impl<'gc> TableEntries<'gc> {
             // the map part as the max for a binary search.
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
-            while self.map.contains_key(&TableKey(Value::Integer(max))) {
+            while self.map.contains_key(&TableKey::Integer(max)) {
                 if max == i64::MAX {
                     // If we can't find a nil entry by doubling, then the table is pathalogical. We
                     // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
@@ -270,30 +262,40 @@ impl<'gc> TableEntries<'gc> {
             }
 
             // We have found a max where table[max] == nil, so we can now binary search
-            binary_search(min, max, |i| {
-                !self.map.contains_key(&TableKey(Value::Integer(i)))
-            })
+            binary_search(min, max, |i| !self.map.contains_key(&TableKey::Integer(i)))
         }
     }
 }
 
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
-#[derive(Debug, Collect)]
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-struct TableKey<'gc>(Value<'gc>);
+pub enum TableKey<'gc> {
+    Boolean(bool),
+    Integer(i64),
+    Number(f64),
+    StaticStr(&'static str),
+    String(String<'gc>),
+    Table(Table<'gc>),
+    Function(Function<'gc>),
+    Thread(Thread<'gc>),
+    UserData(AnyUserData<'gc>),
+}
 
 impl<'gc> PartialEq for TableKey<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        match (self.0, other.0) {
-            (Value::Nil, Value::Nil) => true,
-            (Value::Boolean(a), Value::Boolean(b)) => a == b,
-            (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::Table(a), Value::Table(b)) => a == b,
-            (Value::Function(a), Value::Function(b)) => a == b,
-            (Value::Thread(a), Value::Thread(b)) => a == b,
-            (Value::UserData(a), Value::UserData(b)) => a == b,
+        match (self, other) {
+            (TableKey::Boolean(a), TableKey::Boolean(b)) => a == b,
+            (TableKey::Integer(a), TableKey::Integer(b)) => a == b,
+            (TableKey::Number(a), TableKey::Number(b)) => a == b,
+            (TableKey::StaticStr(a), TableKey::StaticStr(b)) => a == b,
+            (TableKey::String(a), TableKey::String(b)) => a == b,
+            (TableKey::StaticStr(a), TableKey::String(b)) => b == a,
+            (TableKey::String(a), TableKey::StaticStr(b)) => a == b,
+            (TableKey::Table(a), TableKey::Table(b)) => a == b,
+            (TableKey::Function(a), TableKey::Function(b)) => a == b,
+            (TableKey::Thread(a), TableKey::Thread(b)) => a == b,
+            (TableKey::UserData(a), TableKey::UserData(b)) => a == b,
             _ => false,
         }
     }
@@ -303,37 +305,40 @@ impl<'gc> Eq for TableKey<'gc> {}
 
 impl<'gc> Hash for TableKey<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match &self.0 {
-            Value::Nil => unreachable!(),
-            Value::Boolean(b) => {
+        match &self {
+            TableKey::Boolean(b) => {
                 Hash::hash(&1, state);
                 b.hash(state);
             }
-            Value::Integer(i) => {
+            TableKey::Integer(i) => {
                 Hash::hash(&2, state);
                 i.hash(state);
             }
-            Value::Number(n) => {
+            TableKey::Number(n) => {
                 Hash::hash(&3, state);
                 canonical_float_bytes(*n).hash(state);
             }
-            Value::String(s) => {
+            TableKey::StaticStr(s) => {
+                Hash::hash(&4, state);
+                s.as_bytes().hash(state);
+            }
+            TableKey::String(s) => {
                 Hash::hash(&4, state);
                 s.hash(state);
             }
-            Value::Table(t) => {
+            TableKey::Table(t) => {
                 Hash::hash(&5, state);
                 t.hash(state);
             }
-            Value::Function(c) => {
+            TableKey::Function(c) => {
                 Hash::hash(&6, state);
                 c.hash(state);
             }
-            Value::Thread(t) => {
+            TableKey::Thread(t) => {
                 Hash::hash(&7, state);
                 t.hash(state);
             }
-            Value::UserData(u) => {
+            TableKey::UserData(u) => {
                 Hash::hash(&8, state);
                 u.hash(state);
             }
@@ -341,23 +346,39 @@ impl<'gc> Hash for TableKey<'gc> {
     }
 }
 
-impl<'gc> TableKey<'gc> {
-    fn new(value: Value<'gc>) -> Result<TableKey<'gc>, InvalidTableKey> {
-        match value {
+pub trait IntoTableKey<'gc> {
+    fn into_key(self) -> Result<TableKey<'gc>, InvalidTableKey>;
+}
+
+impl<'gc> IntoTableKey<'gc> for Value<'gc> {
+    fn into_key(self) -> Result<TableKey<'gc>, InvalidTableKey> {
+        match self {
             Value::Nil => Err(InvalidTableKey::IsNil),
+            Value::Boolean(b) => Ok(TableKey::Boolean(b)),
+            Value::Integer(i) => Ok(TableKey::Integer(i)),
             Value::Number(n) => {
                 // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
                 // to themselves when cast back to f64 are considered integer keys.
                 if n.is_nan() {
                     Err(InvalidTableKey::IsNaN)
                 } else if let Some(i) = f64_to_i64(n) {
-                    Ok(TableKey(Value::Integer(i)))
+                    Ok(TableKey::Integer(i))
                 } else {
-                    Ok(TableKey(Value::Number(n)))
+                    Ok(TableKey::Number(n))
                 }
             }
-            v => Ok(TableKey(v)),
+            Value::String(v) => Ok(TableKey::String(v)),
+            Value::Table(v) => Ok(TableKey::Table(v)),
+            Value::Function(v) => Ok(TableKey::Function(v)),
+            Value::Thread(v) => Ok(TableKey::Thread(v)),
+            Value::UserData(v) => Ok(TableKey::UserData(v)),
         }
+    }
+}
+
+impl<'gc> IntoTableKey<'gc> for &'static str {
+    fn into_key(self) -> Result<TableKey<'gc>, InvalidTableKey> {
+        Ok(TableKey::StaticStr(self))
     }
 }
 
@@ -385,10 +406,10 @@ fn canonical_float_bytes(f: f64) -> u64 {
 
 // If the given key can live in the array part of the table (integral value between 1 and
 // usize::MAX), returns the associated array index.
-fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
+fn to_array_index<'gc>(key: TableKey<'gc>) -> Option<usize> {
     let i = match key {
-        Value::Integer(i) => i,
-        Value::Number(f) => f64_to_i64(f)?,
+        TableKey::Integer(i) => i,
+        TableKey::Number(f) => f64_to_i64(f)?,
         _ => return None,
     };
 
