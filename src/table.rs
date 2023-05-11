@@ -9,7 +9,7 @@ use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
 use num_traits::cast;
 use rustc_hash::FxHashMap;
 
-use crate::{raw_ops, value::IntoValue, Value};
+use crate::{value::IntoValue, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -285,7 +285,18 @@ struct TableKey<'gc>(Value<'gc>);
 
 impl<'gc> PartialEq for TableKey<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        raw_ops::equal(self.0, other.0)
+        match (self.0, other.0) {
+            (Value::Nil, Value::Nil) => true,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Table(a), Value::Table(b)) => a == b,
+            (Value::Function(a), Value::Function(b)) => a == b,
+            (Value::Thread(a), Value::Thread(b)) => a == b,
+            (Value::UserData(a), Value::UserData(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
