@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt, io, string::String as StdString};
 
-use gc_arena::{Collect, MutationContext, StaticCollect};
+use gc_arena::{Collect, MutationContext};
 
 use crate::{
     compiler::ParserError, BadThreadMode, BinaryOperatorError, ClosureError, CompilerError,
@@ -41,7 +41,7 @@ impl<'gc> fmt::Display for RuntimeError<'gc> {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub enum Error<'gc> {
-    IoError(StaticCollect<io::Error>),
+    IoError(#[collect(require_static)] io::Error),
     ParserError(ParserError),
     CompilerError(CompilerError),
     ClosureError(ClosureError),
@@ -59,7 +59,7 @@ impl<'gc> StdError for Error<'gc> {}
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::IoError(error) => write!(fmt, "i/o error: {}", error.0),
+            Error::IoError(error) => write!(fmt, "i/o error: {}", error),
             Error::ParserError(error) => write!(fmt, "parser error: {}", error),
             Error::CompilerError(error) => write!(fmt, "compiler error: {}", error),
             Error::ClosureError(error) => write!(fmt, "closure error: {}", error),
@@ -76,7 +76,7 @@ impl<'gc> fmt::Display for Error<'gc> {
 
 impl<'gc> From<io::Error> for Error<'gc> {
     fn from(error: io::Error) -> Error<'gc> {
-        Error::IoError(StaticCollect(error))
+        Error::IoError(error)
     }
 }
 
@@ -143,7 +143,7 @@ impl<'gc> From<RuntimeError<'gc>> for Error<'gc> {
 impl<'gc> Error<'gc> {
     pub fn to_static(self) -> StaticError {
         match self {
-            Error::IoError(error) => StaticError::IoError(error.0),
+            Error::IoError(error) => StaticError::IoError(error),
             Error::ParserError(error) => StaticError::ParserError(error),
             Error::CompilerError(error) => StaticError::CompilerError(error),
             Error::ClosureError(error) => StaticError::ClosureError(error),
