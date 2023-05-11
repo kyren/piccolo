@@ -1119,11 +1119,11 @@ fn is_hex_digit(c: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::rc::Rc;
 
     use crate::compiler::interning::BasicInterner;
+
+    use super::*;
 
     fn test_tokens(source: &str, tokens: &[Token<Rc<[u8]>>]) {
         let mut lexer = Lexer::new(source.as_bytes(), BasicInterner::default());

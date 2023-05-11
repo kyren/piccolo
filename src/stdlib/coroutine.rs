@@ -1,8 +1,8 @@
 use gc_arena::{Collect, MutationContext};
 
 use crate::{
-    AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Root, RuntimeError, Sequence, Table,
-    Thread, ThreadMode, TypeError, Value,
+    value::IntoValue, AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Root, RuntimeError,
+    Sequence, Table, Thread, ThreadMode, TypeError, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -51,7 +51,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
 
                 thread
                     .resume(mc, stack.drain(1..))
-                    .map_err(|_| RuntimeError("cannot resume thread".into()))?;
+                    .map_err(|_| RuntimeError("cannot resume thread".into_value(mc)))?;
 
                 #[derive(Collect)]
                 #[collect(require_static)]
@@ -105,7 +105,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "status",
-            AnyCallback::from_fn(mc, |_, stack| {
+            AnyCallback::from_fn(mc, |mc, stack| {
                 let thread = match stack.get(0).copied().unwrap_or(Value::Nil) {
                     Value::Thread(closure) => closure,
                     value => {
@@ -125,7 +125,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                         ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",
                     }
-                    .into(),
+                    .into_value(mc),
                 );
                 Ok(CallbackReturn::Return.into())
             }),

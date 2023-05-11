@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{Collect, Gc, Lock, MutationContext};
+use gc_arena::{lock::Lock, Collect, Gc, MutationContext};
 
 use crate::{
     CompiledPrototype, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,

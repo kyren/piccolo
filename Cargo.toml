@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
 license = "MIT"
+default-run = "interpreter"
 
 [profile.release]
 opt-level = 3

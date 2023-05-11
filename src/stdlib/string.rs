@@ -1,6 +1,6 @@
 use gc_arena::MutationContext;
 
-use crate::{AnyCallback, CallbackReturn, Root, RuntimeError, Table, Value};
+use crate::{value::IntoValue, AnyCallback, CallbackReturn, Root, RuntimeError, Table, Value};
 
 pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
     let string = Table::new(mc);
@@ -16,7 +16,7 @@ pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'
                         stack.push(s.len().into());
                         Ok(CallbackReturn::Return.into())
                     }
-                    None => Err(RuntimeError("Bad argument to len".into()).into()),
+                    None => Err(RuntimeError("Bad argument to len".into_value(mc)).into()),
                 }
             }),
         )

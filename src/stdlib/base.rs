@@ -3,7 +3,8 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, Root, RuntimeError, Table, Value,
+    meta_ops, value::IntoValue, AnyCallback, AnyContinuation, CallbackReturn, Root, RuntimeError,
+    Table, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -39,9 +40,12 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "assert",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             let v = stack.get(0).copied().unwrap_or(Value::Nil);
-            let message = stack.get(1).copied().unwrap_or("assertion failed!".into());
+            let message = stack
+                .get(1)
+                .copied()
+                .unwrap_or("assertion failed!".into_value(mc));
             stack.clear();
             if v.to_bool() {
                 Ok(CallbackReturn::Return.into())
@@ -79,13 +83,13 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "type",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             if let Some(&v) = stack.get(0) {
                 stack.clear();
-                stack.push(v.type_name().into());
+                stack.push(v.type_name().into_value(mc));
                 Ok(CallbackReturn::Return.into())
             } else {
-                Err(RuntimeError("Missing argument to type".into()).into())
+                Err(RuntimeError("Missing argument to type".into_value(mc)).into())
             }
         }),
     )
@@ -94,13 +98,13 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "select",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             match stack.get(0).copied().unwrap_or(Value::Nil).to_integer() {
                 Some(n) if n >= 1 => {
                     stack.drain(0..(n as usize).min(stack.len()));
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(RuntimeError("Bad argument to 'select'".into()).into()),
+                _ => Err(RuntimeError("Bad argument to 'select'".into_value(mc)).into()),
             }
         }),
     )
@@ -109,13 +113,13 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "rawget",
-        AnyCallback::from_fn(mc, |_, stack| match (stack.get(0), stack.get(1)) {
+        AnyCallback::from_fn(mc, |mc, stack| match (stack.get(0), stack.get(1)) {
             (Some(&Value::Table(table)), Some(&key)) => {
                 stack.clear();
-                stack.push(table.get(key));
+                stack.push(table.get(mc, key));
                 Ok(CallbackReturn::Return.into())
             }
-            _ => Err(RuntimeError("Bad argument to 'rawget'".into()).into()),
+            _ => Err(RuntimeError("Bad argument to 'rawget'".into_value(mc)).into()),
         }),
     )
     .unwrap();
@@ -130,7 +134,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                     stack.drain(1..);
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(RuntimeError("Bad argument to 'rawset'".into()).into()),
+                _ => Err(RuntimeError("Bad argument to 'rawset'".into_value(mc)).into()),
             }
         }),
     )
@@ -139,7 +143,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "getmetatable",
-        AnyCallback::from_fn(mc, |_, stack| match stack.get(0) {
+        AnyCallback::from_fn(mc, |mc, stack| match stack.get(0) {
             Some(&Value::Table(table)) => {
                 stack.clear();
                 if let Some(metatable) = table.metatable() {
@@ -147,7 +151,10 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                 }
                 Ok(CallbackReturn::Return.into())
             }
-            _ => Err(RuntimeError("'getmetatable' can only be used on table types".into()).into()),
+            _ => Err(
+                RuntimeError("'getmetatable' can only be used on table types".into_value(mc))
+                    .into(),
+            ),
         }),
     )
     .unwrap();
@@ -167,7 +174,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                 Ok(CallbackReturn::Return.into())
             }
             _ => Err(RuntimeError(
-                "Bad argument to 'setmetatable', can only be used with table types".into(),
+                "Bad argument to 'setmetatable', can only be used with table types".into_value(mc),
             )
             .into()),
         }),

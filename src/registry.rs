@@ -15,12 +15,6 @@ impl fmt::Debug for StaticTable {
     }
 }
 
-impl PartialEq for StaticTable {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
-    }
-}
-
 #[derive(Clone)]
 pub struct StaticClosure(pub DynamicRoot<Rootable![Closure<'gc>]>);
 
@@ -29,12 +23,6 @@ impl fmt::Debug for StaticClosure {
         f.debug_tuple("StaticClosure")
             .field(&self.0.as_ptr())
             .finish()
-    }
-}
-
-impl PartialEq for StaticClosure {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
     }
 }
 
@@ -49,12 +37,6 @@ impl fmt::Debug for StaticCallback {
     }
 }
 
-impl PartialEq for StaticCallback {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
-    }
-}
-
 #[derive(Clone)]
 pub struct StaticThread(pub DynamicRoot<Rootable![Thread<'gc>]>);
 
@@ -63,12 +45,6 @@ impl fmt::Debug for StaticThread {
         f.debug_tuple("StaticThread")
             .field(&self.0.as_ptr())
             .finish()
-    }
-}
-
-impl PartialEq for StaticThread {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
     }
 }
 
@@ -83,48 +59,18 @@ impl fmt::Debug for StaticUserData {
     }
 }
 
-impl PartialEq for StaticUserData {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
-    }
-}
-
 #[derive(Clone)]
-pub enum StaticString {
-    Static(&'static [u8]),
-    Rooted(DynamicRoot<Rootable![String<'gc>]>),
-}
+pub struct StaticString(pub DynamicRoot<Rootable![String<'gc>]>);
 
 impl fmt::Debug for StaticString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StaticString::Static(s) => f.debug_tuple("StaticString::Static").field(s).finish(),
-            StaticString::Rooted(s) => f
-                .debug_tuple("StaticString::Rooted")
-                .field(&s.as_ptr())
-                .finish(),
-        }
+        f.debug_tuple("StaticString")
+            .field(&self.0.as_ptr())
+            .finish()
     }
 }
 
-impl PartialEq for StaticString {
-    /// This does not semantically match equality for normal strings! This is a best effort test!
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (StaticString::Static(a), StaticString::Static(b)) => a == b,
-            (StaticString::Rooted(a), StaticString::Rooted(b)) => a.as_ptr() == b.as_ptr(),
-            _ => false,
-        }
-    }
-}
-
-impl From<&'static str> for StaticString {
-    fn from(s: &'static str) -> Self {
-        Self::Static(s.as_bytes())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum StaticFunction {
     Closure(StaticClosure),
     Callback(StaticCallback),
@@ -170,25 +116,7 @@ impl StaticValue {
             StaticValue::Boolean(b) => Some(Value::Boolean(*b)),
             StaticValue::Integer(i) => Some(Value::Integer(*i)),
             StaticValue::Number(n) => Some(Value::Number(*n)),
-            StaticValue::String(StaticString::Static(s)) => Some(Value::String(String::Static(s))),
             _ => None,
-        }
-    }
-}
-
-impl PartialEq for StaticValue {
-    fn eq(&self, other: &StaticValue) -> bool {
-        if let (Some(a), Some(b)) = (self.as_primitive(), other.as_primitive()) {
-            a == b
-        } else {
-            match (self, other) {
-                (StaticValue::String(a), StaticValue::String(b)) => a == b,
-                (StaticValue::Table(a), StaticValue::Table(b)) => a == b,
-                (StaticValue::Function(a), StaticValue::Function(b)) => a == b,
-                (StaticValue::Thread(a), StaticValue::Thread(b)) => a == b,
-                (StaticValue::UserData(a), StaticValue::UserData(b)) => a == b,
-                _ => false,
-            }
         }
     }
 }
@@ -208,12 +136,6 @@ impl From<i64> for StaticValue {
 impl From<f64> for StaticValue {
     fn from(v: f64) -> StaticValue {
         StaticValue::Number(v)
-    }
-}
-
-impl From<&'static str> for StaticValue {
-    fn from(v: &'static str) -> StaticValue {
-        StaticValue::String(StaticString::Static(v.as_bytes()))
     }
 }
 
@@ -307,6 +229,7 @@ macro_rules! reg_type {
     };
 }
 
+reg_type!(String, StaticString);
 reg_type!(Table, StaticTable);
 reg_type!(Closure, StaticClosure);
 reg_type!(AnyCallback, StaticCallback);
@@ -325,33 +248,12 @@ macro_rules! fetch_type {
     };
 }
 
+fetch_type!(StaticString, String);
 fetch_type!(StaticTable, Table);
 fetch_type!(StaticClosure, Closure);
 fetch_type!(StaticCallback, AnyCallback);
 fetch_type!(StaticThread, Thread);
 fetch_type!(StaticUserData, UserData);
-
-impl<'gc> Stashable<'gc> for String<'gc> {
-    type Stashed = StaticString;
-
-    fn stash(self, roots: &DynamicRootSet<'gc>, mc: MutationContext<'gc, '_>) -> Self::Stashed {
-        match self {
-            String::Static(s) => StaticString::Static(s),
-            s => StaticString::Rooted(roots.stash::<Rootable!['a => String<'a>]>(mc, s)),
-        }
-    }
-}
-
-impl<'gc> Fetchable<'gc> for StaticString {
-    type Fetched = String<'gc>;
-
-    fn fetch(&self, roots: &DynamicRootSet<'gc>) -> Self::Fetched {
-        match self {
-            StaticString::Static(s) => String::Static(s),
-            StaticString::Rooted(s) => *roots.fetch(s),
-        }
-    }
-}
 
 impl<'gc> Stashable<'gc> for Function<'gc> {
     type Stashed = StaticFunction;

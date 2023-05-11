@@ -1,5 +1,9 @@
+mod any_callback;
+
+pub use any_callback::AnyCallback;
+
 use std::{
-    fmt::{self, Debug},
+    fmt,
     hash::{Hash, Hasher},
 };
 
@@ -14,8 +18,6 @@ pub enum CallbackReturn<'gc> {
     Yield(Option<AnyContinuation<'gc>>),
     TailCall(Function<'gc>, Option<AnyContinuation<'gc>>),
 }
-
-pub type CallbackResult<'gc> = Result<CallbackReturn<'gc>, Error<'gc>>;
 
 pub trait Sequence<'gc>: Collect {
     fn step(
@@ -77,15 +79,7 @@ pub trait Callback<'gc>: Collect {
     ) -> Result<CallbackMode<'gc>, Error<'gc>>;
 }
 
-#[derive(Clone, Copy, Collect)]
-#[collect(no_drop)]
-pub struct AnyCallback<'gc>(pub Gc<'gc, dyn Callback<'gc>>);
-
 impl<'gc> AnyCallback<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>, callback: impl Callback<'gc> + 'gc) -> Self {
-        Self(unsize!(Gc::new(mc, callback) => dyn Callback<'gc>))
-    }
-
     pub fn from_fn<F>(mc: MutationContext<'gc, '_>, call: F) -> AnyCallback<'gc>
     where
         F: 'static
@@ -134,32 +128,19 @@ impl<'gc> AnyCallback<'gc> {
             }
         }
 
-        AnyCallback(unsize!(Gc::new(
-            mc,
-            ContextCallback { context, call },
-        ) => dyn Callback<'gc>))
-    }
-
-    pub fn call(
-        &self,
-        mc: MutationContext<'gc, '_>,
-        stack: &mut Vec<Value<'gc>>,
-    ) -> Result<CallbackMode<'gc>, Error<'gc>> {
-        self.0.call(mc, stack)
+        AnyCallback::new(mc, ContextCallback { context, call })
     }
 }
 
-impl<'gc> Debug for AnyCallback<'gc> {
+impl<'gc> fmt::Debug for AnyCallback<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("Callback")
-            .field(&Gc::as_ptr(self.0))
-            .finish()
+        fmt.debug_tuple("Callback").field(&self.as_ptr()).finish()
     }
 }
 
 impl<'gc> PartialEq for AnyCallback<'gc> {
     fn eq(&self, other: &AnyCallback<'gc>) -> bool {
-        Gc::ptr_eq(self.0, other.0)
+        self.as_ptr() == other.as_ptr()
     }
 }
 
@@ -167,7 +148,7 @@ impl<'gc> Eq for AnyCallback<'gc> {}
 
 impl<'gc> Hash for AnyCallback<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Gc::as_ptr(self.0).hash(state)
+        self.as_ptr().hash(state)
     }
 }
 

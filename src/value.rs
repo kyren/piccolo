@@ -2,26 +2,7 @@ use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::{Collect, MutationContext};
 
-use crate::{AnyCallback, Closure, Constant, String, Table, Thread, UserData};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
-#[collect(no_drop)]
-pub enum Function<'gc> {
-    Closure(Closure<'gc>),
-    Callback(AnyCallback<'gc>),
-}
-
-impl<'gc> From<Closure<'gc>> for Function<'gc> {
-    fn from(closure: Closure<'gc>) -> Self {
-        Self::Closure(closure)
-    }
-}
-
-impl<'gc> From<AnyCallback<'gc>> for Function<'gc> {
-    fn from(callback: AnyCallback<'gc>) -> Self {
-        Self::Callback(callback)
-    }
-}
+use crate::{AnyCallback, Closure, Constant, Function, String, Table, Thread, UserData};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -101,9 +82,9 @@ impl<'gc> Value<'gc> {
             Value::String(s) => w.write_all(s.as_bytes()),
             Value::Table(t) => write!(w, "<table {:p}>", t.0),
             Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.0),
-            Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.0),
+            Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.as_ptr()),
             Value::Thread(t) => write!(w, "<thread {:p}>", t.0),
-            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.as_ptr()),
+            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.data_ptr()),
         }
     }
 
@@ -194,12 +175,6 @@ where
     }
 }
 
-impl<'gc> From<&'static str> for Value<'gc> {
-    fn from(v: &'static str) -> Value<'gc> {
-        Value::String(String::from(v))
-    }
-}
-
 impl<'gc> From<String<'gc>> for Value<'gc> {
     fn from(v: String<'gc>) -> Value<'gc> {
         Value::String(v)
@@ -239,5 +214,24 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
 impl<'gc> From<UserData<'gc>> for Value<'gc> {
     fn from(v: UserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
+    }
+}
+
+pub trait IntoValue<'gc> {
+    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc>;
+}
+
+impl<'gc, T> IntoValue<'gc> for T
+where
+    T: Into<Value<'gc>>,
+{
+    fn into_value(self, _mc: MutationContext<'gc, '_>) -> Value<'gc> {
+        self.into()
+    }
+}
+
+impl<'gc> IntoValue<'gc> for &'static str {
+    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+        Value::String(String::from_static(mc, self.as_bytes()))
     }
 }

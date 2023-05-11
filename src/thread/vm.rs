@@ -117,16 +117,31 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::GetUpTableR { dest, table, key } => {
-                registers.stack_frame[dest.0 as usize] = get_table(
-                    registers.get_upvalue(current_function.0.upvalues[table.0 as usize]),
-                )?
-                .get(registers.stack_frame[key.0 as usize]);
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = registers.stack_frame[key.0 as usize];
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::GetUpTableC { dest, table, key } => {
-                registers.stack_frame[dest.0 as usize] =
-                    get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
-                        .get(current_function.0.proto.constants[key.0 as usize])
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = current_function.0.proto.constants[key.0 as usize].into();
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::SetUpTableRR { table, key, value } => {
@@ -310,14 +325,14 @@ pub(crate) fn run_vm<'gc>(
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(key);
+                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
             }
 
             OpCode::SelfC { base, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(key);
+                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
             }
 
             OpCode::Concat {

@@ -3,93 +3,71 @@ use std::{
     cell::{BorrowError, BorrowMutError, Ref, RefMut},
     fmt,
     hash::{Hash, Hasher},
+    ptr,
 };
 
-use gc_arena::{unsize, Collect, Gc, MutationContext, RefLock, Root, Rootable};
+use gc_arena::{lock::RefLock, Collect, Gc, MutationContext, Root, Rootable};
 
-// Garbage collected `Any` type that can be downcast.
-
-#[derive(Collect)]
-#[collect(no_drop, bound = "")]
-pub struct AnyCell<'gc, M>(Gc<'gc, dyn AnyValue<'gc, Rootable!['gc_ => RefLock<Root<'gc_, M>>]>>)
-where
-    M: for<'a> Rootable<'a> + ?Sized + 'static;
-
-impl<'gc, M> Copy for AnyCell<'gc, M> where M: for<'a> Rootable<'a> + ?Sized {}
-
-impl<'gc, M> Clone for AnyCell<'gc, M>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
+/// Garbage collected `Any` type that can be downcast.
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub struct AnyCell<'gc, M: 'gc>(AnyValue<'gc, RefLock<M>>);
 
 impl<'gc, M> fmt::Debug for AnyCell<'gc, M>
 where
-    M: for<'a> Rootable<'a> + ?Sized,
-    Root<'gc, M>: fmt::Debug,
+    M: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("AnyGcCell")
             .field("metadata", self.0.metadata())
-            .field("data", &(self.0.data().1 as *const _))
+            .field("data", &(self.0.data_ptr()))
             .finish()
     }
 }
 
-impl<'gc, M> PartialEq for AnyCell<'gc, M>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-{
+impl<'gc, M> PartialEq for AnyCell<'gc, M> {
     fn eq(&self, other: &Self) -> bool {
-        Gc::ptr_eq(self.0, other.0)
+        self.data_ptr() == other.data_ptr()
     }
 }
 
-impl<'gc, M> Eq for AnyCell<'gc, M> where M: for<'a> Rootable<'a> + ?Sized {}
+impl<'gc, M> Eq for AnyCell<'gc, M> {}
 
-impl<'gc, M> Hash for AnyCell<'gc, M>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-{
+impl<'gc, M> Hash for AnyCell<'gc, M> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Gc::as_ptr(self.0).hash(state)
+        self.data_ptr().hash(state)
     }
 }
 
-impl<'gc, M> AnyCell<'gc, M>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-{
-    pub fn new<R>(mc: MutationContext<'gc, '_>, metadata: Root<'gc, M>, data: Root<'gc, R>) -> Self
+impl<'gc, M> AnyCell<'gc, M> {
+    pub fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
     where
+        M: Collect,
         R: for<'a> Rootable<'a> + ?Sized + 'static,
     {
-        Self(new_any::<
-            Rootable!['gc_ => RefLock<Root<'gc_, M>>],
-            Rootable!['gc_ => RefLock<Root<'gc_, R>>],
-        >(mc, RefLock::new(metadata), RefLock::new(data)))
+        Self(AnyValue::new::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(
+            mc,
+            RefLock::new(metadata),
+            RefLock::new(data),
+        ))
     }
 
-    // Only used for display, internal pointer type is private.
-    pub fn as_ptr(&self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+    pub fn data_ptr(&self) -> *const () {
+        self.0.data_ptr()
     }
 
-    pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, Root<'gc, M>>, BorrowError> {
+    pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, M>, BorrowError> {
         self.0.metadata().try_borrow()
     }
 
     pub fn write_metadata<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<RefMut<'a, Root<'gc, M>>, BorrowMutError> {
+    ) -> Result<RefMut<'a, M>, BorrowMutError> {
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { self.0.metadata().as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
-            Gc::write_barrier(mc, self.0);
+            Gc::write_barrier(mc, self.0 .0);
         }
         res
     }
@@ -98,7 +76,9 @@ where
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(&self.0)?;
+        let cell = self
+            .0
+            .downcast::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>()?;
         Some(cell.try_borrow())
     }
 
@@ -109,11 +89,13 @@ where
     where
         R: for<'b> Rootable<'b> + ?Sized + 'static,
     {
-        let cell = get_data::<_, Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(&self.0)?;
+        let cell = self
+            .0
+            .downcast::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>()?;
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { cell.as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
-            Gc::write_barrier(mc, self.0);
+            Gc::write_barrier(mc, self.0 .0);
         }
         Some(res)
     }
@@ -145,66 +127,136 @@ where
 //    collection system relies on this), the context can project to a type with any variance in 'gc
 //    and nothing can go wrong.
 
-unsafe trait AnyValue<'gc, M>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-{
-    fn metadata(&self) -> &Root<'gc, M>;
-    fn data(&self) -> (TypeId, *const ());
-}
-
-fn new_any<'gc, M, R>(
-    mc: MutationContext<'gc, '_>,
-    metadata: Root<'gc, M>,
-    data: Root<'gc, R>,
-) -> Gc<'gc, dyn AnyValue<'gc, M>>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-    R: for<'a> Rootable<'a> + ?Sized + 'static,
-{
-    let ptr = Gc::new(mc, Value::<M, R> { metadata, data });
-    unsize!(ptr => dyn AnyValue<'gc, M>)
-}
-
-fn get_data<'gc, 'a, M, R>(v: &'a Gc<'gc, dyn AnyValue<'gc, M>>) -> Option<&'a Root<'gc, R>>
-where
-    M: for<'b> Rootable<'b> + ?Sized,
-    R: for<'b> Rootable<'b> + ?Sized + 'static,
-{
-    let (type_id, ptr) = v.data();
-    if type_id == TypeId::of::<R>() {
-        let ptr = ptr as *const Root<'gc, R>;
-        Some(unsafe { &*ptr })
-    } else {
-        None
-    }
+#[derive(Collect)]
+#[collect(no_drop)]
+struct Header<M> {
+    metadata: M,
+    type_id: TypeId,
+    #[collect(require_static)]
+    data_ptr: *const (),
 }
 
 #[derive(Collect)]
-#[collect(no_drop, bound = "")]
-struct Value<'gc, M, R>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-    R: for<'a> Rootable<'a> + ?Sized + 'static,
-    Root<'gc, R>: Collect,
-{
-    metadata: Root<'gc, M>,
-    data: Root<'gc, R>,
+#[collect(no_drop)]
+#[repr(C)]
+struct Value<M, V> {
+    header: Header<M>,
+    data: V,
 }
 
-unsafe impl<'gc, M, R> AnyValue<'gc, M> for Value<'gc, M, R>
-where
-    M: for<'a> Rootable<'a> + ?Sized,
-    R: for<'a> Rootable<'a> + ?Sized + 'static,
-{
-    fn metadata(&self) -> &Root<'gc, M> {
-        &self.metadata
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct AnyValue<'gc, M: 'gc>(Gc<'gc, Header<M>>);
+
+impl<'gc, M> Copy for AnyValue<'gc, M> {}
+
+impl<'gc, M> Clone for AnyValue<'gc, M> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'gc, M> AnyValue<'gc, M> {
+    fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
+    where
+        M: Collect,
+        R: for<'a> Rootable<'a> + ?Sized + 'static,
+    {
+        let val = Gc::new(
+            mc,
+            Value::<M, Root<'gc, R>> {
+                header: Header {
+                    metadata,
+                    type_id: TypeId::of::<R>(),
+                    data_ptr: ptr::null(),
+                },
+                data,
+            },
+        );
+
+        // SAFETY: We know we can cast to a `Header<M>` because `Value<M, Root<'gc, R>>` is
+        // `#[repr(C)]` and `Header<M>` is the first field
+        //
+        // We know we can write to the pointer held by `Gc` because we know we are the only one
+        // accessing it, since we just allocated it.
+        Self(unsafe {
+            (*(Gc::as_ptr(val) as *mut Value<M, Root<'gc, R>>))
+                .header
+                .data_ptr = &val.data as *const Root<'gc, R> as *const ();
+            Gc::cast::<Header<M>>(val)
+        })
     }
 
-    fn data(&self) -> (TypeId, *const ()) {
-        (
-            TypeId::of::<R>(),
-            &self.data as *const Root<'gc, R> as *const (),
-        )
+    pub fn metadata(&self) -> &M {
+        &self.0.metadata
+    }
+
+    pub fn data_ptr(&self) -> *const () {
+        self.0.data_ptr
+    }
+
+    pub fn is<R>(&self) -> bool
+    where
+        R: for<'b> Rootable<'b> + ?Sized + 'static,
+    {
+        TypeId::of::<R>() == self.0.type_id
+    }
+
+    fn downcast<R>(&self) -> Option<&Root<'gc, R>>
+    where
+        R: for<'b> Rootable<'b> + ?Sized + 'static,
+    {
+        if TypeId::of::<R>() == self.0.type_id {
+            let ptr = self.0.data_ptr as *const Root<'gc, R>;
+            Some(unsafe { &*ptr })
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gc_arena::rootless_arena;
+
+    use super::*;
+
+    #[test]
+    fn test_any_value() {
+        rootless_arena(|mc| {
+            #[derive(Collect)]
+            #[collect(no_drop)]
+            struct A<'gc>(Gc<'gc, i32>);
+
+            #[derive(Collect)]
+            #[collect(no_drop)]
+            struct B<'gc>(Gc<'gc, i32>);
+
+            #[derive(Collect)]
+            #[collect(no_drop)]
+            struct C<'gc>(Gc<'gc, i32>);
+
+            let any1 = AnyValue::new::<Rootable![A<'gc>]>(mc, 1i32, A(Gc::new(mc, 5)));
+            let any2 = AnyValue::new::<Rootable![B<'gc>]>(mc, 2i32, B(Gc::new(mc, 6)));
+            let any3 = AnyValue::new::<Rootable![C<'gc>]>(mc, 3i32, C(Gc::new(mc, 7)));
+
+            assert!(any1.is::<Rootable![A<'gc>]>());
+            assert!(!any1.is::<Rootable![B<'gc>]>());
+            assert!(!any1.is::<Rootable![C<'gc>]>());
+
+            assert_eq!(*any1.metadata(), 1);
+            assert_eq!(*any1.downcast::<Rootable![A<'gc>]>().unwrap().0, 5);
+            assert_eq!(*any2.metadata(), 2);
+            assert_eq!(*any2.downcast::<Rootable![B<'gc>]>().unwrap().0, 6);
+            assert_eq!(*any3.metadata(), 3);
+            assert_eq!(*any3.downcast::<Rootable![C<'gc>]>().unwrap().0, 7);
+
+            assert!(any1.downcast::<Rootable![B<'gc>]>().is_none());
+            assert!(any1.downcast::<Rootable![C<'gc>]>().is_none());
+            assert!(any2.downcast::<Rootable![A<'gc>]>().is_none());
+            assert!(any2.downcast::<Rootable![C<'gc>]>().is_none());
+            assert!(any3.downcast::<Rootable![A<'gc>]>().is_none());
+            assert!(any3.downcast::<Rootable![B<'gc>]>().is_none());
+        })
     }
 }

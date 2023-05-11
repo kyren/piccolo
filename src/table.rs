@@ -5,11 +5,11 @@ use std::{
     i64, mem,
 };
 
-use gc_arena::{Collect, Gc, MutationContext, RefLock};
+use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
 use num_traits::cast;
 use rustc_hash::FxHashMap;
 
-use crate::Value;
+use crate::{value::IntoValue, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -52,17 +52,20 @@ impl<'gc> Table<'gc> {
         Table(Gc::new(mc, RefLock::new(TableState::default())))
     }
 
-    pub fn get<K: Into<Value<'gc>>>(&self, key: K) -> Value<'gc> {
-        self.0.borrow().entries.get(key.into())
+    pub fn get<K: IntoValue<'gc>>(&self, mc: MutationContext<'gc, '_>, key: K) -> Value<'gc> {
+        self.0.borrow().entries.get(key.into_value(mc))
     }
 
-    pub fn set<K: Into<Value<'gc>>, V: Into<Value<'gc>>>(
+    pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
         &self,
         mc: MutationContext<'gc, '_>,
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0.borrow_mut(mc).entries.set(key.into(), value.into())
+        self.0
+            .borrow_mut(mc)
+            .entries
+            .set(key.into_value(mc), value.into_value(mc))
     }
 
     pub fn length(&self) -> i64 {

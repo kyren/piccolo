@@ -6,7 +6,10 @@ use std::{
     mem,
 };
 
-use gc_arena::{Collect, Gc, Lock, MutationContext, RefLock};
+use gc_arena::{
+    lock::{Lock, RefLock},
+    Collect, Gc, MutationContext,
+};
 
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,

@@ -1099,10 +1099,9 @@ fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOperator> {
 
 #[cfg(test)]
 mod tests {
+    use crate::compiler::interning::BasicInterner;
 
     use super::*;
-
-    use crate::compiler::interning::BasicInterner;
 
     #[test]
     fn test_function_call() {

@@ -143,7 +143,7 @@ it is no longer worth it.
 * Garbage collected "userdata" with safe downcasting.
 * A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
   from `coroutine`)
-* A simple REPL (try it with `cargo run interpreter`)
+* A simple REPL (try it with `cargo run`!)
 
 ## What currently doesn't work ##
 
@@ -163,7 +163,6 @@ it is no longer worth it.
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
-* Optimized `Value` type that is a reasonable size.
 * Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more I've forgotten about
 

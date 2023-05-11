@@ -1,6 +1,6 @@
 use gc_arena::{Collect, MutationContext};
 
-use crate::{AnyCallback, CallbackReturn, Function, TypeError, Value};
+use crate::{value::IntoValue, AnyCallback, CallbackReturn, Function, TypeError, Value};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
@@ -18,9 +18,9 @@ impl MetaMethod {
     }
 }
 
-impl<'gc> Into<Value<'gc>> for MetaMethod {
-    fn into(self) -> Value<'gc> {
-        self.name().into()
+impl<'gc> IntoValue<'gc> for MetaMethod {
+    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+        self.name().into_value(mc)
     }
 }
 
@@ -38,13 +38,13 @@ pub fn index<'gc>(
 ) -> Result<MetaResult<'gc, 2>, TypeError> {
     let idx = match table {
         Value::Table(table) => {
-            let v = table.get(key);
+            let v = table.get(mc, key);
             if v != Value::Nil {
                 return Ok(MetaResult::Value(v));
             }
 
             let idx = if let Some(mt) = table.metatable() {
-                mt.get(MetaMethod::Index)
+                mt.get(mc, MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -57,7 +57,7 @@ pub fn index<'gc>(
         }
         Value::UserData(u) if u.metatable().is_some() => {
             let idx = if let Some(mt) = u.metatable() {
-                mt.get(MetaMethod::Index)
+                mt.get(mc, MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -115,7 +115,7 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
         found: v.type_name(),
     })?;
 
-    match metatable.get(MetaMethod::Call) {
+    match metatable.get(mc, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
             Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
                 stack.insert(0, v);

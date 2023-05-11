@@ -29,7 +29,7 @@ impl fmt::Display for UserDataError {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(no_drop)]
-pub struct UserData<'gc>(pub AnyCell<'gc, Rootable!['gc_ => UserMetadata<'gc_>]>);
+pub struct UserData<'gc>(pub AnyCell<'gc, UserMetadata<'gc>>);
 
 impl<'gc> UserData<'gc> {
     pub fn new<R>(mc: MutationContext<'gc, '_>, val: Root<'gc, R>) -> Self
@@ -37,7 +37,7 @@ impl<'gc> UserData<'gc> {
         R: for<'a> Rootable<'a> + ?Sized + 'static,
         Root<'gc, R>: Sized,
     {
-        UserData(AnyCell::<Rootable!['gc_ => UserMetadata<'gc_>]>::new::<R>(
+        UserData(AnyCell::<UserMetadata<'gc>>::new::<R>(
             mc,
             UserMetadata { metatable: None },
             val,

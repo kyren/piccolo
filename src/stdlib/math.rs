@@ -3,16 +3,19 @@ use std::{cell::RefCell, f64, ops::DerefMut, rc::Rc};
 use gc_arena::MutationContext;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use crate::{raw_ops, AnyCallback, CallbackReturn, Root, RuntimeError, String, Table, Value};
+use crate::{
+    raw_ops, value::IntoValue, AnyCallback, CallbackReturn, Root, RuntimeError, String, Table,
+    Value,
+};
 
 pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
     fn callback1<'gc>(
         name: &'static str,
         mc: MutationContext<'gc, '_>,
-        f: impl Fn(Value<'gc>) -> Option<Value<'gc>> + 'static,
+        f: impl Fn(MutationContext<'gc, '_>, Value<'gc>) -> Option<Value<'gc>> + 'static,
     ) -> AnyCallback<'gc> {
         AnyCallback::from_fn(mc, move |mc, stack| {
-            if let Some(res) = f(stack.get(0).copied().unwrap_or(Value::Nil)) {
+            if let Some(res) = f(mc, stack.get(0).copied().unwrap_or(Value::Nil)) {
                 stack[0] = res;
                 stack.drain(1..);
                 Ok(CallbackReturn::Return.into())
@@ -28,17 +31,17 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     fn callback2<'gc>(
         err: &'static str,
         mc: MutationContext<'gc, '_>,
-        f: impl Fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>> + 'static,
+        f: impl Fn(MutationContext<'gc, '_>, Value<'gc>, Value<'gc>) -> Option<Value<'gc>> + 'static,
     ) -> AnyCallback<'gc> {
-        AnyCallback::from_fn(mc, move |_, stack| {
+        AnyCallback::from_fn(mc, move |mc, stack| {
             let a = stack.get(0).copied().unwrap_or(Value::Nil);
             let b = stack.get(1).copied().unwrap_or(Value::Nil);
-            if let Some(res) = f(a, b) {
+            if let Some(res) = f(mc, a, b) {
                 stack.clear();
                 stack.push(res);
                 Ok(CallbackReturn::Return.into())
             } else {
-                Err(RuntimeError(err.into()).into())
+                Err(RuntimeError(err.into_value(mc)).into())
             }
         })
     }
@@ -57,7 +60,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "abs",
-        callback1("abs", mc, |v| {
+        callback1("abs", mc, |_, v| {
             Some(if let Value::Integer(i) = v {
                 Value::Integer(i.abs())
             } else {
@@ -70,21 +73,21 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "acos",
-        callback1("acos", mc, |v| Some(v.to_number()?.acos().into())),
+        callback1("acos", mc, |_, v| Some(v.to_number()?.acos().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "asin",
-        callback1("asin", mc, |v| Some(v.to_number()?.asin().into())),
+        callback1("asin", mc, |_, v| Some(v.to_number()?.asin().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "atan",
-        callback2("atan", mc, |a, b| {
+        callback2("atan", mc, |_, a, b| {
             Some(if b == Value::Nil {
                 a.to_number()?.atan().into()
             } else {
@@ -97,28 +100,30 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "ceil",
-        callback1("ceil", mc, |v| Some(to_int(v.to_number()?.ceil().into()))),
+        callback1("ceil", mc, |_, v| {
+            Some(to_int(v.to_number()?.ceil().into()))
+        }),
     )
     .unwrap();
 
     math.set(
         mc,
         "cos",
-        callback1("cos", mc, |v| Some(v.to_number()?.cos().into())),
+        callback1("cos", mc, |_, v| Some(v.to_number()?.cos().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "deg",
-        callback1("deg", mc, |v| Some(v.to_number()?.to_degrees().into())),
+        callback1("deg", mc, |_, v| Some(v.to_number()?.to_degrees().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "exp",
-        callback1("exp", mc, |v| {
+        callback1("exp", mc, |_, v| {
             Some(f64::consts::E.powf(v.to_number()?).into())
         }),
     )
@@ -127,14 +132,16 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "floor",
-        callback1("floor", mc, |v| Some(to_int(v.to_number()?.floor().into()))),
+        callback1("floor", mc, |_, v| {
+            Some(to_int(v.to_number()?.floor().into()))
+        }),
     )
     .unwrap();
 
     math.set(
         mc,
         "fmod",
-        callback2("fmod", mc, |f, g| {
+        callback2("fmod", mc, |_, f, g| {
             let f = f.to_number()?;
             let g = g.to_number()?;
             let result = (f % g).abs();
@@ -148,23 +155,23 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "log",
-        callback1("log", mc, |v| Some(v.to_number()?.ln().into())),
+        callback1("log", mc, |_, v| Some(v.to_number()?.ln().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "log10",
-        callback1("log10", mc, |v| Some(v.to_number()?.log10().into())),
+        callback1("log10", mc, |_, v| Some(v.to_number()?.log10().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "max",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             if stack.len() == 0 {
-                return Err(RuntimeError("Bad argument to max".into()).into());
+                return Err(RuntimeError("Bad argument to max".into_value(mc)).into());
             }
 
             let m =
@@ -172,7 +179,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
                     .drain(..)
                     .try_fold(Value::Number(-std::f64::INFINITY), |max, entry| {
                         raw_ops::less_than(max, entry)
-                            .ok_or(RuntimeError("Bad argument to max".into()))
+                            .ok_or(RuntimeError("Bad argument to max".into_value(mc)))
                             .and_then(|less| if less { Ok(entry) } else { Ok(max) })
                     })?;
 
@@ -188,16 +195,16 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "min",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             if stack.len() == 0 {
-                return Err(RuntimeError("Bad argument to min".into()).into());
+                return Err(RuntimeError("Bad argument to min".into_value(mc)).into());
             }
 
             let m = stack
                 .drain(..)
                 .try_fold(Value::Number(std::f64::INFINITY), |min, entry| {
                     raw_ops::less_than(entry, min)
-                        .ok_or(RuntimeError("Bad argument to min".into()))
+                        .ok_or(RuntimeError("Bad argument to min".into_value(mc)))
                         .and_then(|less| if less { Ok(entry) } else { Ok(min) })
                 })?;
 
@@ -213,14 +220,14 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "modf",
-        AnyCallback::from_fn(mc, |_, stack| {
+        AnyCallback::from_fn(mc, |mc, stack| {
             match stack.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
                     stack.clear();
                     stack.extend([Value::Integer(f as i64 / 1), Value::Number(f % 1.0)]);
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(RuntimeError("Bad argument to modf".into()).into()),
+                _ => Err(RuntimeError("Bad argument to modf".into_value(mc)).into()),
             }
         }),
     )
@@ -231,7 +238,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "rad",
-        callback1("rad", mc, |v| Some(v.to_number()?.to_radians().into())),
+        callback1("rad", mc, |_, v| Some(v.to_number()?.to_radians().into())),
     )
     .unwrap();
 
@@ -239,7 +246,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "random",
-        callback2("random", mc, move |a, b| {
+        callback2("random", mc, move |_, a, b| {
             let rng = &random_rng;
             match (a, b) {
                 (Value::Nil, Value::Nil) => Some(rng.borrow_mut().gen::<f64>().into()),
@@ -261,7 +268,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "randomseed",
-        AnyCallback::from_fn(mc, move |_, stack| {
+        AnyCallback::from_fn(mc, move |mc, stack| {
             let rng = &randomseed_rng;
             match stack.get(0).copied().unwrap_or(Value::Nil).to_number() {
                 Some(f) => {
@@ -269,7 +276,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
                     stack.clear();
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(RuntimeError("Bad argument to randomseed".into()).into()),
+                _ => Err(RuntimeError("Bad argument to randomseed".into_value(mc)).into()),
             }
         }),
     )
@@ -278,28 +285,28 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "sin",
-        callback1("sin", mc, |v| Some(v.to_number()?.sin().into())),
+        callback1("sin", mc, |_, v| Some(v.to_number()?.sin().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "sqrt",
-        callback1("sqrt", mc, |v| Some(v.to_number()?.sqrt().into())),
+        callback1("sqrt", mc, |_, v| Some(v.to_number()?.sqrt().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "tan",
-        callback1("tan", mc, |v| Some(v.to_number()?.tan().into())),
+        callback1("tan", mc, |_, v| Some(v.to_number()?.tan().into())),
     )
     .unwrap();
 
     math.set(
         mc,
         "tointeger",
-        callback1("tointeger", mc, |v| {
+        callback1("tointeger", mc, |_, v| {
             Some(if let Some(i) = v.to_integer() {
                 i.into()
             } else {
@@ -312,10 +319,10 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "type",
-        callback1("type", mc, |v| {
+        callback1("type", mc, |mc, v| {
             Some(match v {
-                Value::Integer(_) => "integer".into(),
-                Value::Number(_) => "float".into(),
+                Value::Integer(_) => "integer".into_value(mc),
+                Value::Number(_) => "float".into_value(mc),
                 _ => Value::Nil,
             })
         }),
@@ -325,7 +332,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "ult",
-        callback2("ult", mc, |a, b| {
+        callback2("ult", mc, |_, a, b| {
             if let (Some(f), Some(g)) = (a.to_integer(), b.to_integer()) {
                 Some(Value::Boolean((f as u64) < (g as u64)))
             } else {

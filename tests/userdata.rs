@@ -1,4 +1,4 @@
-use gc_arena::{Collect, Gc, Lock, Rootable};
+use gc_arena::{lock::Lock, Collect, Gc, Rootable};
 use piccolo::{
     compile, AnyCallback, CallbackReturn, Closure, Function, Lua, StaticError, StaticValue,
     UserData, UserDataError, Value,

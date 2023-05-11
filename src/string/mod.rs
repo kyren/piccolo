@@ -1,3 +1,7 @@
+mod header;
+
+pub use header::String;
+
 use std::{
     borrow::Borrow,
     error::Error as StdError,
@@ -8,7 +12,7 @@ use std::{
     str,
 };
 
-use gc_arena::{unsize, Collect, Gc, MutationContext, RefLock};
+use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
 use rustc_hash::FxHashSet;
 
 use crate::Value;
@@ -29,22 +33,9 @@ impl fmt::Display for StringError {
     }
 }
 
-#[derive(Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub enum String<'gc> {
-    Static(&'static [u8]),
-    Inline(Gc<'gc, [u8]>),
-    Buffer(Gc<'gc, Box<[u8]>>),
-}
-
 impl<'gc> Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            String::Static(_) => fmt.write_str("Static")?,
-            String::Inline(_) => fmt.write_str("Inline")?,
-            String::Buffer(_) => fmt.write_str("Buffer")?,
-        }
-        fmt.write_str("(")?;
+        fmt.write_str("String(")?;
         if let Ok(s) = str::from_utf8(self.as_bytes()) {
             Debug::fmt(s, fmt)?;
         } else {
@@ -56,28 +47,6 @@ impl<'gc> Debug for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
-        macro_rules! alloc_lens {
-            ($($i:expr),*) => {
-                match s.len() {
-                    $($i => String::Inline(
-                        unsize!(Gc::new(mc, <[u8; $i]>::try_from(s).unwrap()) => [u8])
-                    ),)*
-                    _ => String::Buffer(Gc::new(mc, Box::from(s))),
-                }
-            };
-        }
-
-        alloc_lens!(
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31, 32
-        )
-    }
-
-    pub fn from_static(s: &'static [u8]) -> String<'gc> {
-        String::Static(s)
-    }
-
     pub fn concat(
         mc: MutationContext<'gc, '_>,
         values: &[Value<'gc>],
@@ -109,28 +78,8 @@ impl<'gc> String<'gc> {
         Ok(String::from_slice(mc, &bytes))
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            String::Static(b) => b,
-            String::Inline(b) => b,
-            String::Buffer(b) => b,
-        }
-    }
-
     pub fn len(&self) -> i64 {
-        match self {
-            String::Static(b) => b.len(),
-            String::Inline(b) => b.len(),
-            String::Buffer(b) => b.len(),
-        }
-        .try_into()
-        .unwrap()
-    }
-}
-
-impl<'gc> From<&'static str> for String<'gc> {
-    fn from(s: &'static str) -> Self {
-        Self::from_static(s.as_bytes())
+        self.as_bytes().len().try_into().unwrap()
     }
 }
 

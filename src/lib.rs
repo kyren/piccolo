@@ -1,36 +1,32 @@
-mod any;
-mod callback;
-mod closure;
+pub mod any;
 pub mod compiler;
-mod constant;
-mod error;
+pub mod constant;
+pub mod error;
+pub mod function;
 pub mod io;
-mod lua;
+pub mod lua;
 pub mod meta_ops;
-mod opcode;
+pub mod opcode;
 pub mod raw_ops;
-mod registry;
-mod stdlib;
-mod string;
-mod table;
-mod thread;
-mod types;
-mod userdata;
-mod value;
+pub mod registry;
+pub mod stdlib;
+pub mod string;
+pub mod table;
+pub mod thread;
+pub mod types;
+pub mod userdata;
+pub mod value;
 
 pub use self::{
     any::AnyCell,
-    callback::{
-        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackResult,
-        CallbackReturn, Continuation, Sequence,
-    },
-    closure::{
-        Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
-        UpValueState,
-    },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
     error::{Error, RuntimeError, StaticError, TypeError},
+    function::{
+        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackReturn, Closure,
+        ClosureError, ClosureState, Continuation, Function, FunctionProto, Sequence, UpValue,
+        UpValueDescriptor, UpValueState,
+    },
     lua::{Lua, Root},
     opcode::OpCode,
     registry::{
@@ -45,5 +41,5 @@ pub use self::{
         VarCount,
     },
     userdata::{UserData, UserDataError},
-    value::{Function, Value},
+    value::{IntoValue, Value},
 };
