@@ -65,3 +65,36 @@ pub fn less_than<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<bool> {
 pub fn less_equal<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<bool> {
     Some(lhs.to_constant()?.less_equal(&rhs.to_constant()?)?.into())
 }
+
+pub fn equal<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> bool {
+    match (lhs, rhs) {
+        (Value::Nil, Value::Nil) => true,
+        (Value::Nil, _) => false,
+
+        (Value::Boolean(a), Value::Boolean(b)) => a == b,
+        (Value::Boolean(_), _) => false,
+
+        (Value::Integer(a), Value::Integer(b)) => a == b,
+        (Value::Integer(a), Value::Number(b)) => a as f64 == b,
+        (Value::Integer(_), _) => false,
+
+        (Value::Number(a), Value::Number(b)) => a == b,
+        (Value::Number(a), Value::Integer(b)) => b as f64 == a,
+        (Value::Number(_), _) => false,
+
+        (Value::String(a), Value::String(b)) => a == b,
+        (Value::String(_), _) => false,
+
+        (Value::Table(a), Value::Table(b)) => a == b,
+        (Value::Table(_), _) => false,
+
+        (Value::Function(a), Value::Function(b)) => a == b,
+        (Value::Function(_), _) => false,
+
+        (Value::Thread(a), Value::Thread(b)) => a == b,
+        (Value::Thread(_), _) => false,
+
+        (Value::UserData(a), Value::UserData(b)) => a == b,
+        (Value::UserData(_), _) => false,
+    }
+}

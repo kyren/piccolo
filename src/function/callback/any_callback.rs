@@ -98,7 +98,7 @@ mod tests {
 
             let mut stack = Vec::new();
             assert!(dyn_callback.call(mc, &mut stack).is_ok());
-            assert!(stack[0] == Value::Integer(17));
+            assert!(matches!(stack[0], Value::Integer(17)));
         })
     }
 }

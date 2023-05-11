@@ -9,7 +9,7 @@ use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
 use num_traits::cast;
 use rustc_hash::FxHashMap;
 
-use crate::{value::IntoValue, Value};
+use crate::{raw_ops, value::IntoValue, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -127,7 +127,7 @@ impl<'gc> TableEntries<'gc> {
         }
 
         let hash_key = TableKey::new(key)?;
-        if value == Value::Nil {
+        if value.is_nil() {
             Ok(self.map.remove(&hash_key).unwrap_or(Value::Nil))
         } else if self.map.len() < self.map.capacity() {
             Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
@@ -144,7 +144,7 @@ impl<'gc> TableEntries<'gc> {
             let mut array_total = 0;
 
             for (i, e) in self.array.iter().enumerate() {
-                if *e != Value::Nil {
+                if !e.is_nil() {
                     array_counts[highest_bit(i)] += 1;
                     array_total += 1;
                 }
@@ -244,9 +244,9 @@ impl<'gc> TableEntries<'gc> {
 
         let array_len: i64 = cast(self.array.len()).unwrap();
 
-        if !self.array.is_empty() && self.array[array_len as usize - 1] == Value::Nil {
+        if !self.array.is_empty() && self.array[array_len as usize - 1].is_nil() {
             // If the array part ends in a Nil, there must be a border inside it
-            binary_search(0, array_len, |i| self.array[i as usize - 1] == Value::Nil)
+            binary_search(0, array_len, |i| self.array[i as usize - 1].is_nil())
         } else if self.map.is_empty() {
             // If there is no border in the arraay but the map part is empty, then the array length
             // is a border
@@ -279,9 +279,15 @@ impl<'gc> TableEntries<'gc> {
 }
 
 // Value which implements Hash and Eq, and cannot contain Nil or NaN values.
-#[derive(Debug, Collect, PartialEq)]
+#[derive(Debug, Collect)]
 #[collect(no_drop)]
 struct TableKey<'gc>(Value<'gc>);
+
+impl<'gc> PartialEq for TableKey<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        raw_ops::equal(self.0, other.0)
+    }
+}
 
 impl<'gc> Eq for TableKey<'gc> {}
 

@@ -166,17 +166,26 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
 
     lua.try_run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
-            assert_eq!(stack, &[Value::Integer(1), Value::Integer(2)]);
+            assert!(matches!(
+                stack.as_slice(),
+                &[Value::Integer(1), Value::Integer(2)]
+            ));
             stack.clear();
             stack.extend([Value::Integer(3), Value::Integer(4)]);
             Ok(
                 CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
-                    assert_eq!(stack, &[Value::Integer(5), Value::Integer(6)]);
+                    assert!(matches!(
+                        stack.as_slice(),
+                        &[Value::Integer(5), Value::Integer(6)]
+                    ));
                     stack.clear();
                     stack.extend([Value::Integer(7), Value::Integer(8)]);
                     Ok(
                         CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |_, stack| {
-                            assert_eq!(stack, &[Value::Integer(9), Value::Integer(10)]);
+                            assert!(matches!(
+                                stack.as_slice(),
+                                &[Value::Integer(9), Value::Integer(10)]
+                            ));
                             stack.clear();
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
                             Ok(CallbackReturn::Return.into())
@@ -230,7 +239,7 @@ fn resume_with_err() {
     lua.run(|mc, _| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             assert!(stack.len() == 1);
-            assert!(stack[0] == "resume".into_value(mc));
+            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == b"resume"));
             stack.clear();
             stack.push("return".into_value(mc));
             Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
@@ -252,10 +261,10 @@ fn resume_with_err() {
             thread.step(mc).unwrap();
         }
 
-        assert_eq!(
-            thread.take_return(mc).unwrap().unwrap(),
-            vec!["return".into_value(mc)]
-        );
+        assert!(matches!(
+            thread.take_return(mc).unwrap().unwrap().as_slice(),
+            [Value::String(s)] if s == b"return",
+        ));
 
         thread
             .resume_err(mc, RuntimeError("an error".into_value(mc)).into())
@@ -267,7 +276,7 @@ fn resume_with_err() {
 
         match thread.take_return(mc).unwrap() {
             Err(Error::RuntimeError(RuntimeError(val))) => {
-                assert!(val == "a different error".into_value(mc))
+                assert!(matches!(val, Value::String(s) if s == "a different error"))
             }
             _ => panic!(),
         }

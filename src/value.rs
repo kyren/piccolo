@@ -24,41 +24,6 @@ impl<'gc> Default for Value<'gc> {
     }
 }
 
-impl<'gc> PartialEq for Value<'gc> {
-    fn eq(&self, other: &Value<'gc>) -> bool {
-        match (*self, *other) {
-            (Value::Nil, Value::Nil) => true,
-            (Value::Nil, _) => false,
-
-            (Value::Boolean(a), Value::Boolean(b)) => a == b,
-            (Value::Boolean(_), _) => false,
-
-            (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Integer(a), Value::Number(b)) => a as f64 == b,
-            (Value::Integer(_), _) => false,
-
-            (Value::Number(a), Value::Number(b)) => a == b,
-            (Value::Number(a), Value::Integer(b)) => b as f64 == a,
-            (Value::Number(_), _) => false,
-
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::String(_), _) => false,
-
-            (Value::Table(a), Value::Table(b)) => a == b,
-            (Value::Table(_), _) => false,
-
-            (Value::Function(a), Value::Function(b)) => a == b,
-            (Value::Function(_), _) => false,
-
-            (Value::Thread(a), Value::Thread(b)) => a == b,
-            (Value::Thread(_), _) => false,
-
-            (Value::UserData(a), Value::UserData(b)) => a == b,
-            (Value::UserData(_), _) => false,
-        }
-    }
-}
-
 impl<'gc> Value<'gc> {
     pub fn type_name(self) -> &'static str {
         match self {
@@ -88,6 +53,10 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    pub fn is_nil(self) -> bool {
+        matches!(self, Value::Nil)
+    }
+
     /// Lua `nil` and `false` are false, anything else is true.
     pub fn to_bool(self) -> bool {
         match self {
@@ -95,6 +64,10 @@ impl<'gc> Value<'gc> {
             Value::Boolean(false) => false,
             _ => true,
         }
+    }
+
+    pub fn not(self) -> Value<'gc> {
+        Value::Boolean(!self.to_bool())
     }
 
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
@@ -115,10 +88,6 @@ impl<'gc> Value<'gc> {
             Value::String(a) => Some(a),
             _ => None,
         }
-    }
-
-    pub fn not(self) -> Value<'gc> {
-        Value::Boolean(!self.to_bool())
     }
 
     pub fn to_constant(self) -> Option<Constant<String<'gc>>> {

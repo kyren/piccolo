@@ -39,7 +39,7 @@ pub fn index<'gc>(
     let idx = match table {
         Value::Table(table) => {
             let v = table.get(mc, key);
-            if v != Value::Nil {
+            if !v.is_nil() {
                 return Ok(MetaResult::Value(v));
             }
 
@@ -49,7 +49,7 @@ pub fn index<'gc>(
                 Value::Nil
             };
 
-            if idx == Value::Nil {
+            if idx.is_nil() {
                 return Ok(MetaResult::Value(Value::Nil));
             }
 
@@ -62,7 +62,7 @@ pub fn index<'gc>(
                 Value::Nil
             };
 
-            if idx == Value::Nil {
+            if idx.is_nil() {
                 return Err(TypeError {
                     expected: "table",
                     found: table.type_name(),

@@ -88,7 +88,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         mc,
         "atan",
         callback2("atan", mc, |_, a, b| {
-            Some(if b == Value::Nil {
+            Some(if b.is_nil() {
                 a.to_number()?.atan().into()
             } else {
                 a.to_number()?.atan2(b.to_number()?).into()

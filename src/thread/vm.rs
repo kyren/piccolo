@@ -375,7 +375,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 let left = registers.stack_frame[left.0 as usize];
                 let right = registers.stack_frame[right.0 as usize];
-                if (left == right) == skip_if {
+                if raw_ops::equal(left, right) == skip_if {
                     *registers.pc += 1;
                 }
             }
@@ -387,7 +387,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 let left = registers.stack_frame[left.0 as usize];
                 let right = current_function.0.proto.constants[right.0 as usize].into();
-                if (left == right) == skip_if {
+                if raw_ops::equal(left, right) == skip_if {
                     *registers.pc += 1;
                 }
             }
@@ -399,7 +399,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 let left = Value::from(current_function.0.proto.constants[left.0 as usize]);
                 let right = registers.stack_frame[right.0 as usize];
-                if (left == right) == skip_if {
+                if raw_ops::equal(left, right) == skip_if {
                     *registers.pc += 1;
                 }
             }
@@ -411,7 +411,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 let left = Value::from(current_function.0.proto.constants[left.0 as usize]);
                 let right = Value::from(current_function.0.proto.constants[right.0 as usize]);
-                if (left == right) == skip_if {
+                if raw_ops::equal(left, right) == skip_if {
                     *registers.pc += 1;
                 }
             }
