@@ -112,7 +112,7 @@ impl<'gc> Borrow<[u8]> for String<'gc> {
 
 impl<'gc, T> PartialEq<T> for String<'gc>
 where
-    T: ?Sized + AsRef<[u8]>,
+    T: AsRef<[u8]>,
 {
     fn eq(&self, other: &T) -> bool {
         self.as_bytes() == other.as_ref()

@@ -1,6 +1,6 @@
 use piccolo::{
-    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, Lua,
-    RuntimeError, StaticError, StaticValue, String, Thread, ThreadMode, Value,
+    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, IntoValue,
+    Lua, RuntimeError, StaticError, StaticValue, Thread, ThreadMode, Value,
 };
 
 #[test]
@@ -12,7 +12,7 @@ fn callback() -> Result<(), Box<StaticError>> {
             stack.push(Value::Integer(42));
             Ok(CallbackReturn::Return.into())
         });
-        root.globals.set(mc, "callback", callback.into())?;
+        root.globals.set(mc, "callback", callback)?;
         Ok(())
     })?;
 
@@ -50,7 +50,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
             stack.push(Value::Integer(3));
             Ok(CallbackReturn::Return.into())
         });
-        root.globals.set(mc, "callback", callback.into())?;
+        root.globals.set(mc, "callback", callback)?;
         Ok(())
     })?;
 
@@ -116,7 +116,7 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
             )
             .into())
         });
-        root.globals.set(mc, "callback", callback.into())?;
+        root.globals.set(mc, "callback", callback)?;
         Ok(())
     })?;
 
@@ -196,7 +196,7 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
                 .into(),
             )
         });
-        root.globals.set(mc, "callback", callback.into())?;
+        root.globals.set(mc, "callback", callback)?;
         Ok(())
     })?;
 
@@ -239,15 +239,13 @@ fn resume_with_err() {
     lua.run(|mc, _| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             assert!(stack.len() == 1);
-            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == "resume"));
+            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == b"resume"));
             stack.clear();
-            stack.push(String::from_static(mc, "return").into());
+            stack.push("return".into_value(mc));
             Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
                 mc,
                 |_, _| panic!("did not error"),
-                |mc, _, _| {
-                    Err(RuntimeError(String::from_static(mc, "a different error").into()).into())
-                },
+                |mc, _, _| Err(RuntimeError("a different error".into_value(mc)).into()),
             )))
             .into())
         });
@@ -257,9 +255,7 @@ fn resume_with_err() {
             .start_suspended(mc, Function::Callback(callback))
             .unwrap();
 
-        thread
-            .resume(mc, [String::from_static(mc, "resume").into()])
-            .unwrap();
+        thread.resume(mc, ["resume".into_value(mc)]).unwrap();
 
         while thread.mode() == ThreadMode::Normal {
             thread.step(mc).unwrap();
@@ -267,14 +263,11 @@ fn resume_with_err() {
 
         assert!(matches!(
             thread.take_return(mc).unwrap().unwrap().as_slice(),
-            [Value::String(s)] if s == "return",
+            [Value::String(s)] if s == b"return",
         ));
 
         thread
-            .resume_err(
-                mc,
-                RuntimeError(String::from_static(mc, "an error").into()).into(),
-            )
+            .resume_err(mc, RuntimeError("an error".into_value(mc)).into())
             .unwrap();
 
         while thread.mode() == ThreadMode::Normal {

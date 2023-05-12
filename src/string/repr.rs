@@ -74,11 +74,8 @@ impl<'gc> String<'gc> {
         Self::from_buffer(mc, Box::from(s))
     }
 
-    pub fn from_static<S: ?Sized + AsRef<[u8]>>(
-        mc: MutationContext<'gc, '_>,
-        s: &'static S,
-    ) -> String<'gc> {
-        String(Gc::new(mc, Header::Indirect(s.as_ref())))
+    pub fn from_static(mc: MutationContext<'gc, '_>, s: &'static [u8]) -> String<'gc> {
+        String(Gc::new(mc, Header::Indirect(s)))
     }
 
     pub fn as_bytes(&self) -> &[u8] {

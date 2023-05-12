@@ -3,6 +3,7 @@ pub mod callback;
 pub mod closure;
 pub mod compiler;
 pub mod constant;
+pub mod conversion;
 pub mod error;
 pub mod io;
 pub mod lua;
@@ -30,6 +31,7 @@ pub use self::{
     },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
+    conversion::IntoValue,
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Lua, Root},
     opcode::OpCode,

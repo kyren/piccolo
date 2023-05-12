@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, Root, RuntimeError, String, Table,
+    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, RuntimeError, Table,
     Value,
 };
 
@@ -23,8 +23,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             stdout.flush()?;
             stack.clear();
             Ok(CallbackReturn::Return.into())
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -34,8 +33,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
         AnyCallback::from_fn(mc, |_, stack| {
             let err = stack.get(0).copied().unwrap_or(Value::Nil);
             Err(RuntimeError(err).into())
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -47,15 +45,14 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             let message = stack
                 .get(1)
                 .copied()
-                .unwrap_or(String::from_static(mc, "assertion failed!").into());
+                .unwrap_or("assertion failed!".into_value(mc));
             stack.clear();
             if v.to_bool() {
                 Ok(CallbackReturn::Return.into())
             } else {
                 Err(RuntimeError(message).into())
             }
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -79,8 +76,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             let function = meta_ops::call(mc, stack.get(0).copied().unwrap_or(Value::Nil))?;
             stack.remove(0);
             Ok(CallbackReturn::TailCall(function, Some(*pcall_cont)).into())
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -90,13 +86,12 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
         AnyCallback::from_fn(mc, |mc, stack| {
             if let Some(&v) = stack.get(0) {
                 stack.clear();
-                stack.push(String::from_static(mc, v.type_name().as_bytes()).into());
+                stack.push(v.type_name().into_value(mc));
                 Ok(CallbackReturn::Return.into())
             } else {
-                Err(RuntimeError(String::from_static(mc, "Missing argument to type").into()).into())
+                Err(RuntimeError("Missing argument to type".into_value(mc)).into())
             }
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -109,12 +104,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                     stack.drain(0..(n as usize).min(stack.len()));
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(
-                    RuntimeError(String::from_static(mc, "Bad argument to 'select'").into()).into(),
-                ),
+                _ => Err(RuntimeError("Bad argument to 'select'".into_value(mc)).into()),
             }
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -124,14 +116,11 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
         AnyCallback::from_fn(mc, |mc, stack| match (stack.get(0), stack.get(1)) {
             (Some(&Value::Table(table)), Some(&key)) => {
                 stack.clear();
-                stack.push(table.get(key));
+                stack.push(table.get(mc, key));
                 Ok(CallbackReturn::Return.into())
             }
-            _ => {
-                Err(RuntimeError(String::from_static(mc, "Bad argument to 'rawget'").into()).into())
-            }
-        })
-        .into(),
+            _ => Err(RuntimeError("Bad argument to 'rawget'".into_value(mc)).into()),
+        }),
     )
     .unwrap();
 
@@ -145,12 +134,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                     stack.drain(1..);
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(
-                    RuntimeError(String::from_static(mc, "Bad argument to 'rawset'").into()).into(),
-                ),
+                _ => Err(RuntimeError("Bad argument to 'rawset'".into_value(mc)).into()),
             }
-        })
-        .into(),
+        }),
     )
     .unwrap();
 
@@ -165,12 +151,11 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                 }
                 Ok(CallbackReturn::Return.into())
             }
-            _ => Err(RuntimeError(
-                String::from_static(mc, "'getmetatable' can only be used on table types").into(),
-            )
-            .into()),
-        })
-        .into(),
+            _ => Err(
+                RuntimeError("'getmetatable' can only be used on table types".into_value(mc))
+                    .into(),
+            ),
+        }),
     )
     .unwrap();
 
@@ -189,15 +174,10 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                 Ok(CallbackReturn::Return.into())
             }
             _ => Err(RuntimeError(
-                String::from_static(
-                    mc,
-                    "Bad argument to 'setmetatable', can only be used with table types",
-                )
-                .into(),
+                "Bad argument to 'setmetatable', can only be used with table types".into_value(mc),
             )
             .into()),
-        })
-        .into(),
+        }),
     )
     .unwrap();
 }
