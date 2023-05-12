@@ -13,8 +13,8 @@ use gc_arena::{
 
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
-    CallbackMode, CallbackReturn, Closure, Error, Function, RegisterIndex, ThreadError, UpValue,
-    UpValueState, Value, VarCount,
+    CallbackMode, CallbackReturn, Closure, Error, FromMultiValue, Function, IntoMultiValue,
+    MultiValue, RegisterIndex, ThreadError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -83,12 +83,12 @@ impl<'gc> Thread<'gc> {
         self,
         mc: MutationContext<'gc, '_>,
         function: Function<'gc>,
-        args: &[Value<'gc>],
+        args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.extend(args);
+        state.external_stack.extend(args.into_multi_value(mc));
 
         state.ext_call_function(function);
 
@@ -108,25 +108,26 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in the `Return` mode, take the returned (or yielded) values. Moves the
     /// thread back to the `Stopped` (or `Suspended`) mode.
-    pub fn take_return(
+    pub fn take_return<T: FromMultiValue<'gc>>(
         self,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<Result<Vec<Value<'gc>>, Error<'gc>>, BadThreadMode> {
+    ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Return)?;
-        let returns = state.external_stack.drain(..).collect::<Vec<_>>();
-        Ok(state.returned.take().unwrap().map(|_| returns))
+        let returns = state.external_stack.drain(..).collect::<MultiValue<'gc>>();
+        let returns = state.returned.take().unwrap().map(|_| returns);
+        Ok(returns.and_then(|r| Ok(T::from_multi_value(mc, r)?)))
     }
 
     /// If the thread is in `Suspended` mode, resume it.
     pub fn resume(
         self,
         mc: MutationContext<'gc, '_>,
-        args: impl IntoIterator<Item = Value<'gc>>,
+        args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.extend(args);
+        state.external_stack.extend(args.into_multi_value(mc));
 
         match state.frames.pop().expect("no frame to resume") {
             Frame::StartCoroutine(function) => {

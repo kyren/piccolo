@@ -1,12 +1,12 @@
 mod sizes;
 
-use piccolo::{compile, Closure, Function, Lua, StaticError};
+use piccolo::{compile, Closure, Error, Lua, RuntimeError, StaticError, Value};
 
 #[test]
-fn error_unwind() -> Result<(), Box<StaticError>> {
+fn error_unwind() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -22,18 +22,16 @@ fn error_unwind() -> Result<(), Box<StaticError>> {
             )?,
             Some(root.globals),
         )?;
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    assert!(matches!(
-        lua.run_function(&function, &[]),
-        Err(StaticError::RuntimeError(_))
-    ));
-
-    assert!(matches!(
-        lua.run_function(&function, &[]),
-        Err(StaticError::RuntimeError(_))
-    ));
-
-    Ok(())
+    lua.finish_main_thread();
+    lua.try_run(|mc, root| {
+        match root.main_thread.take_return::<()>(mc)? {
+            Err(Error::RuntimeError(RuntimeError(Value::String(s)))) => assert!(s == "test error"),
+            _ => panic!(),
+        }
+        Ok(())
+    })
 }

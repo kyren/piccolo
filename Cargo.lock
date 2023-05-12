@@ -307,6 +307,7 @@ dependencies = [
  "rand",
  "rustc-hash",
  "rustyline",
+ "smallvec",
 ]
 
 [[package]]

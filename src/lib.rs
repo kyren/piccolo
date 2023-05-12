@@ -31,7 +31,7 @@ pub use self::{
     },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
-    conversion::IntoValue,
+    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, MultiValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Lua, Root},
     opcode::OpCode,

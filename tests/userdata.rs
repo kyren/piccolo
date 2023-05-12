@@ -1,7 +1,7 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
 use piccolo::{
-    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Function, Lua, StaticError,
-    StaticValue, UserDataError, Value,
+    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, UserDataError,
+    Value,
 };
 
 #[derive(Collect)]
@@ -9,7 +9,7 @@ use piccolo::{
 struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
-fn userdata() -> Result<(), Box<StaticError>> {
+fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
@@ -34,7 +34,7 @@ fn userdata() -> Result<(), Box<StaticError>> {
         Ok(())
     })?;
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -47,26 +47,25 @@ fn userdata() -> Result<(), Box<StaticError>> {
             )?,
             Some(root.globals),
         )?;
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    match &lua.run_function(&function, &[])?[..] {
-        [StaticValue::UserData(ud), StaticValue::Boolean(true)] => lua.run(|_, root| {
-            let ud = root.registry.fetch(ud);
-            let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
-            assert_eq!(data.0.get(), 23);
+    lua.finish_main_thread();
 
-            #[derive(Collect)]
-            #[collect(require_static)]
-            struct MyUserData2;
+    lua.try_run(|mc, root| {
+        let (ud, res) = root.main_thread.take_return::<(AnyUserData, bool)>(mc)??;
+        assert!(res);
+        let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
+        assert_eq!(data.0.get(), 23);
+        #[derive(Collect)]
+        #[collect(require_static)]
+        struct MyUserData2;
 
-            assert!(matches!(
-                ud.read::<Rootable![MyUserData2]>(),
-                Err(UserDataError::WrongType)
-            ));
-        }),
-        _ => panic!(),
-    }
-
-    Ok(())
+        assert!(matches!(
+            ud.read::<Rootable![MyUserData2]>(),
+            Err(UserDataError::WrongType)
+        ));
+        Ok(())
+    })
 }

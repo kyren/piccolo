@@ -2,7 +2,7 @@ use gc_arena::{Collect, MutationContext};
 
 use crate::{
     AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, IntoValue, Root, RuntimeError,
-    Sequence, Table, Thread, ThreadMode, TypeError, Value,
+    Sequence, Table, Thread, ThreadMode, TypeError, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -50,7 +50,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                 };
 
                 thread
-                    .resume(mc, stack.drain(1..))
+                    .resume(mc, Variadic::from_iter(stack.drain(1..)))
                     .map_err(|_| RuntimeError("cannot resume thread".into_value(mc)))?;
 
                 #[derive(Collect)]
@@ -72,7 +72,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                         match thread.mode() {
                             ThreadMode::Return => {
                                 stack.clear();
-                                match thread.take_return(mc).unwrap() {
+                                match thread.take_return::<Variadic<Value<'gc>>>(mc).unwrap() {
                                     Ok(res) => {
                                         stack.push(Value::Boolean(true));
                                         stack.extend(res)

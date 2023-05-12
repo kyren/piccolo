@@ -14,6 +14,7 @@ codegen-units = 1
 gc-arena = { git = "https://github.com/kyren/gc-arena" }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
+smallvec = { version = "1.10", features = ["union", "const_generics"] }
 
 [dev-dependencies]
 clap = { version = "4.2", features = ["cargo"] }

@@ -5,10 +5,10 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use piccolo::{compile, compiler::ParserError, io, Closure, Function, Lua, StaticError};
+use piccolo::{compile, compiler::ParserError, io, Closure, Lua, StaticError, Value, Variadic};
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let result = compile(mc, root.strings, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
@@ -16,15 +16,17 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
         };
         let closure = Closure::new(mc, result?, Some(root.globals))?;
 
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    let res = lua.run_function(&function, &[])?;
+    lua.finish_main_thread();
 
-    lua.try_run(|_, root| {
-        Ok(res
+    lua.try_run(|mc, root| {
+        Ok(root
+            .main_thread
+            .take_return::<Variadic<Value>>(mc)??
             .iter()
-            .map(|v| root.registry.fetch(v))
             .map(|v| format!("{v}"))
             .collect::<Vec<_>>()
             .join("\t"))
@@ -94,18 +96,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
-    let function = lua.try_run(|mc, root| {
-        Ok(root.registry.stash(
-            mc,
-            Function::Closure(Closure::new(
-                mc,
-                compile(mc, root.strings, file)?,
-                Some(root.globals),
-            )?),
-        ))
+    lua.try_run(|mc, root| {
+        let closure = Closure::new(mc, compile(mc, root.strings, file)?, Some(root.globals))?;
+
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    lua.run_function(&function, &[])?;
+    lua.run_main_thread()?;
 
     if matches.contains_id("repl") {
         run_repl(&mut lua)?;

@@ -1,10 +1,10 @@
 use piccolo::{
     compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, IntoValue,
-    Lua, RuntimeError, StaticError, StaticValue, Thread, ThreadMode, Value,
+    Lua, RuntimeError, StaticError, String, Thread, Value,
 };
 
 #[test]
-fn callback() -> Result<(), Box<StaticError>> {
+fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
@@ -16,7 +16,7 @@ fn callback() -> Result<(), Box<StaticError>> {
         Ok(())
     })?;
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -30,19 +30,16 @@ fn callback() -> Result<(), Box<StaticError>> {
             Some(root.globals),
         )?;
 
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    assert!(matches!(
-        lua.run_function(&function, &[])?.as_slice(),
-        [StaticValue::Boolean(true)],
-    ));
-
+    assert!(lua.run_main_thread::<bool>()?);
     Ok(())
 }
 
 #[test]
-fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
+fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
@@ -54,7 +51,7 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
         Ok(())
     })?;
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -67,23 +64,16 @@ fn tail_call_trivial_callback() -> Result<(), Box<StaticError>> {
             Some(root.globals),
         )?;
 
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    assert!(matches!(
-        lua.run_function(&function, &[])?.as_slice(),
-        [
-            StaticValue::Integer(1),
-            StaticValue::Integer(2),
-            StaticValue::Integer(3)
-        ],
-    ));
-
+    assert_eq!(lua.run_main_thread::<(i64, i64, i64)>()?, (1, 2, 3));
     Ok(())
 }
 
 #[test]
-fn loopy_callback() -> Result<(), Box<StaticError>> {
+fn loopy_callback() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
@@ -120,7 +110,7 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
         Ok(())
     })?;
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -149,19 +139,21 @@ fn loopy_callback() -> Result<(), Box<StaticError>> {
             )?,
             Some(root.globals),
         )?;
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    assert!(matches!(
-        lua.run_function(&function, &[])?.as_slice(),
-        [StaticValue::Boolean(true)],
-    ));
+    lua.finish_main_thread();
 
-    Ok(())
+    lua.try_run(|mc, root| {
+        assert!(root.main_thread.take_return::<bool>(mc)??);
+        Ok(())
+    })
 }
 
 #[test]
-fn yield_continuation() -> Result<(), Box<StaticError>> {
+fn yield_continuation() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|mc, root| {
@@ -200,7 +192,7 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
         Ok(())
     })?;
 
-    let function = lua.try_run(|mc, root| {
+    lua.try_run(|mc, root| {
         let closure = Closure::new(
             mc,
             compile(
@@ -224,22 +216,21 @@ fn yield_continuation() -> Result<(), Box<StaticError>> {
             )?,
             Some(root.globals),
         )?;
-        Ok(root.registry.stash(mc, Function::Closure(closure)))
+        root.main_thread.start(mc, closure.into(), ())?;
+        Ok(())
     })?;
 
-    lua.run_function(&function, &[])?;
-
-    Ok(())
+    lua.run_main_thread()
 }
 
 #[test]
 fn resume_with_err() {
     let mut lua = Lua::new();
 
-    lua.run(|mc, _| {
+    let thread = lua.run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             assert!(stack.len() == 1);
-            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == b"resume"));
+            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == "resume"));
             stack.clear();
             stack.push("return".into_value(mc));
             Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
@@ -255,26 +246,26 @@ fn resume_with_err() {
             .start_suspended(mc, Function::Callback(callback))
             .unwrap();
 
-        thread.resume(mc, ["resume".into_value(mc)]).unwrap();
+        thread.resume(mc, "resume").unwrap();
 
-        while thread.mode() == ThreadMode::Normal {
-            thread.step(mc).unwrap();
-        }
+        root.registry.stash(mc, thread)
+    });
 
-        assert!(matches!(
-            thread.take_return(mc).unwrap().unwrap().as_slice(),
-            [Value::String(s)] if s == b"return",
-        ));
+    lua.finish_thread(&thread);
 
+    lua.run(|mc, root| {
+        let thread = root.registry.fetch(&thread);
+        assert!(thread.take_return::<String>(mc).unwrap().unwrap() == "return");
         thread
             .resume_err(mc, RuntimeError("an error".into_value(mc)).into())
             .unwrap();
+    });
 
-        while thread.mode() == ThreadMode::Normal {
-            thread.step(mc).unwrap();
-        }
+    lua.finish_thread(&thread);
 
-        match thread.take_return(mc).unwrap() {
+    lua.run(|mc, root| {
+        let thread = root.registry.fetch(&thread);
+        match thread.take_return::<()>(mc).unwrap() {
             Err(Error::RuntimeError(RuntimeError(val))) => {
                 assert!(matches!(val, Value::String(s) if s == "a different error"))
             }

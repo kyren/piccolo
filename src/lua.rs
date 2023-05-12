@@ -3,7 +3,7 @@ use gc_arena::{Arena, ArenaParameters, Collect, MutationContext, Rootable};
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
     string::InternedStringSet,
-    Error, Registry, StaticError, StaticFunction, StaticValue, Table, Thread, ThreadMode,
+    Error, FromMultiValue, Registry, StaticError, StaticThread, Table, Thread, ThreadMode,
 };
 
 #[derive(Collect, Clone, Copy)]
@@ -62,24 +62,7 @@ impl Lua {
         self.run(move |mc, root| f(mc, root).map_err(Error::to_static))
     }
 
-    /// Run the given function on the main thread and return the results.
-    pub fn run_function(
-        &mut self,
-        function: &StaticFunction,
-        args: &[StaticValue],
-    ) -> Result<Vec<StaticValue>, StaticError> {
-        self.try_run(|mc, root| {
-            root.main_thread.start(
-                mc,
-                root.registry.fetch(function),
-                &args
-                    .iter()
-                    .map(|a| root.registry.fetch(a))
-                    .collect::<Vec<_>>(),
-            )?;
-            Ok(())
-        })?;
-
+    pub fn finish_main_thread(&mut self) {
         loop {
             if self.run(|mc, root| match root.main_thread.mode() {
                 ThreadMode::Normal => {
@@ -91,15 +74,35 @@ impl Lua {
                 break;
             }
         }
+    }
 
-        self.try_run(|mc, root| {
-            Ok(root
-                .main_thread
-                .take_return(mc)
-                .unwrap()?
-                .into_iter()
-                .map(|v| root.registry.stash(mc, v))
-                .collect())
-        })
+    pub fn finish_thread(&mut self, thread: &StaticThread) {
+        loop {
+            if self.run(|mc, root| {
+                let thread = root.registry.fetch(thread);
+                match thread.mode() {
+                    ThreadMode::Normal => {
+                        thread.step(mc).unwrap();
+                        false
+                    }
+                    _ => true,
+                }
+            }) {
+                break;
+            }
+        }
+    }
+
+    pub fn run_thread<R: for<'gc> FromMultiValue<'gc>>(
+        &mut self,
+        thread: &StaticThread,
+    ) -> Result<R, StaticError> {
+        self.finish_thread(thread);
+        self.try_run(|mc, root| root.registry.fetch(thread).take_return::<R>(mc)?)
+    }
+
+    pub fn run_main_thread<R: for<'gc> FromMultiValue<'gc>>(&mut self) -> Result<R, StaticError> {
+        self.finish_main_thread();
+        self.try_run(|mc, root| root.main_thread.take_return::<R>(mc)?)
     }
 }
