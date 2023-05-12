@@ -31,8 +31,8 @@ pub use self::{
     },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
-    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, MultiValue, Variadic},
-    error::{Error, RuntimeError, StaticError, TypeError},
+    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
+    error::{Error, StaticError, TypeError},
     lua::{Lua, Root},
     opcode::OpCode,
     registry::{

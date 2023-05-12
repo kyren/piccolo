@@ -26,24 +26,6 @@ impl fmt::Display for TypeError {
     }
 }
 
-#[derive(Debug, Clone, Copy, Collect)]
-#[collect(no_drop)]
-pub struct RuntimeError<'gc>(pub Value<'gc>);
-
-impl<'gc> RuntimeError<'gc> {
-    pub fn from_str<S: ?Sized + AsRef<[u8]>>(mc: MutationContext<'gc, '_>, s: &S) -> Self {
-        RuntimeError(String::from_slice(mc, s).into())
-    }
-}
-
-impl<'gc> StdError for RuntimeError<'gc> {}
-
-impl<'gc> fmt::Display for RuntimeError<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(fmt)
-    }
-}
-
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub enum Error<'gc> {
@@ -57,7 +39,7 @@ pub enum Error<'gc> {
     BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
-    RuntimeError(RuntimeError<'gc>),
+    RuntimeError(Value<'gc>),
 }
 
 impl<'gc> StdError for Error<'gc> {}
@@ -140,8 +122,8 @@ impl<'gc> From<BinaryOperatorError> for Error<'gc> {
     }
 }
 
-impl<'gc> From<RuntimeError<'gc>> for Error<'gc> {
-    fn from(error: RuntimeError<'gc>) -> Error<'gc> {
+impl<'gc> From<Value<'gc>> for Error<'gc> {
+    fn from(error: Value<'gc>) -> Error<'gc> {
         Error::RuntimeError(error)
     }
 }
@@ -161,7 +143,7 @@ impl<'gc> Error<'gc> {
             Error::BinaryOperatorError(error) => StaticError::BinaryOperatorError(error),
             Error::RuntimeError(error) => {
                 let mut buf = Vec::new();
-                error.0.display(&mut buf).unwrap();
+                error.display(&mut buf).unwrap();
                 StaticError::RuntimeError(StdString::from_utf8_lossy(&buf).to_owned().to_string())
             }
         }
@@ -169,7 +151,7 @@ impl<'gc> Error<'gc> {
 
     pub fn to_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
         match self {
-            Error::RuntimeError(error) => error.0,
+            Error::RuntimeError(error) => error,
             other => Value::String(String::from_slice(mc, other.to_string().as_bytes())),
         }
     }

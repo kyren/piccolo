@@ -5,7 +5,7 @@ use std::{
 
 use gc_arena::{unsize, Collect, Gc, MutationContext};
 
-use crate::{Error, FromMultiValue, Function, IntoMultiValue, MultiValue, Value};
+use crate::{Error, FromMultiValue, Function, IntoMultiValue, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -215,7 +215,7 @@ impl<'gc> AnyCallback<'gc> {
         R: IntoMultiValue<'gc>,
     {
         Self::from_fn_with(mc, context, move |context, mc, stack| {
-            let args = A::from_multi_value(mc, MultiValue::from_iter(stack.drain(..)))?;
+            let args = A::from_multi_value(mc, stack.drain(..))?;
             let (ret, vals) = call(&context, mc, args)?;
             stack.extend(vals.into_multi_value(mc));
             Ok(ret.into())

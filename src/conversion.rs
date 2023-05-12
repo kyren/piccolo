@@ -1,10 +1,6 @@
-use std::{
-    array, iter,
-    ops::{Deref, DerefMut},
-};
+use std::{array, iter, string::String as StdString, vec};
 
 use gc_arena::MutationContext;
-use smallvec::SmallVec;
 
 use crate::{AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, TypeError, Value};
 
@@ -24,6 +20,12 @@ where
 impl<'gc> IntoValue<'gc> for &'static str {
     fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
         Value::String(String::from_static(mc, self.as_bytes()))
+    }
+}
+
+impl<'gc> IntoValue<'gc> for StdString {
+    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+        Value::String(String::from_slice(mc, self.as_bytes()))
     }
 }
 
@@ -172,181 +174,94 @@ impl<'gc> FromValue<'gc> for AnyCallback<'gc> {
     }
 }
 
-type SmallArray<T> = [T; 4];
-
-#[derive(Default)]
-pub struct MultiValue<'gc>(SmallVec<SmallArray<Value<'gc>>>);
-
-impl<'gc> FromIterator<Value<'gc>> for MultiValue<'gc> {
-    fn from_iter<I: IntoIterator<Item = Value<'gc>>>(iter: I) -> Self {
-        let mut v = SmallVec::from_iter(iter);
-        v.reverse();
-        MultiValue(v)
-    }
-}
-
-impl<'gc> IntoIterator for MultiValue<'gc> {
-    type Item = Value<'gc>;
-    type IntoIter = iter::Rev<<SmallVec<SmallArray<Value<'gc>>> as IntoIterator>::IntoIter>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter().rev()
-    }
-}
-
-impl<'a, 'gc> IntoIterator for &'a MultiValue<'gc> {
-    type Item = &'a Value<'gc>;
-    type IntoIter = iter::Rev<<&'a [Value<'gc>] as IntoIterator>::IntoIter>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.as_slice().into_iter().rev()
-    }
-}
-
 pub trait IntoMultiValue<'gc> {
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> MultiValue<'gc>;
+    type Iter: Iterator<Item = Value<'gc>>;
+
+    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter;
 }
 
 impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for T {
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-        MultiValue::from_iter([self.into_value(mc)])
+    type Iter = iter::Once<Value<'gc>>;
+
+    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+        iter::once(self.into_value(mc))
     }
 }
 
 impl<'gc, T: IntoValue<'gc>, const N: usize> IntoMultiValue<'gc> for [T; N] {
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-        MultiValue::from_iter(self.map(|v| v.into_value(mc)))
+    type Iter = <[Value<'gc>; N] as IntoIterator>::IntoIter;
+
+    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+        let vals = self.map(|v| v.into_value(mc));
+        vals.into_iter()
     }
 }
 
-impl<'gc> IntoMultiValue<'gc> for MultiValue<'gc> {
-    fn into_multi_value(self, _: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-        self
+impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for Vec<T> {
+    type Iter = vec::IntoIter<Value<'gc>>;
+
+    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+        self.into_iter()
+            .map(|t| t.into_value(mc))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 
 pub trait FromMultiValue<'gc>: Sized {
     fn from_multi_value(
         mc: MutationContext<'gc, '_>,
-        values: MultiValue<'gc>,
+        values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError>;
 }
 
 impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
     fn from_multi_value(
         mc: MutationContext<'gc, '_>,
-        mut values: MultiValue<'gc>,
+        mut values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
-        T::from_value(mc, values.0.pop().unwrap_or(Value::Nil))
+        T::from_value(mc, values.next().unwrap_or(Value::Nil))
     }
 }
 
 impl<'gc, T: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for [T; N] {
     fn from_multi_value(
         mc: MutationContext<'gc, '_>,
-        values: MultiValue<'gc>,
+        values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
+        let mut values = values.fuse();
         let mut res: [Option<T>; N] = array::from_fn(|_| None);
-        for (i, v) in values.into_iter().enumerate() {
-            if i >= N {
-                break;
-            }
-            res[i] = Some(T::from_value(mc, v)?);
-        }
-
-        for v in &res {
-            if v.is_none() {
-                return Err(TypeError {
-                    expected: "N elements",
-                    found: "less than N elements",
-                });
-            }
+        for i in 0..N {
+            res[i] = Some(T::from_value(mc, values.next().unwrap_or(Value::Nil))?);
         }
 
         Ok(res.map(|v| v.unwrap()))
     }
 }
 
-impl<'gc> FromMultiValue<'gc> for MultiValue<'gc> {
-    fn from_multi_value(
-        _: MutationContext<'gc, '_>,
-        values: MultiValue<'gc>,
-    ) -> Result<Self, TypeError> {
-        Ok(values)
-    }
-}
-
-#[derive(Clone)]
-pub struct Variadic<T>(SmallVec<SmallArray<T>>);
-
-impl<T> Variadic<T> {
-    pub fn new() -> Variadic<T> {
-        Default::default()
-    }
-}
-
-impl<T> Default for Variadic<T> {
-    fn default() -> Variadic<T> {
-        Variadic::new()
-    }
-}
-
-impl<T> FromIterator<T> for Variadic<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Variadic(SmallVec::from_iter(iter))
-    }
-}
-
-impl<T> IntoIterator for Variadic<T> {
-    type Item = T;
-    type IntoIter = <SmallVec<SmallArray<T>> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-impl<T> Deref for Variadic<T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for Variadic<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for Variadic<T> {
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-        self.into_iter().map(|t| t.into_value(mc)).collect()
-    }
-}
-
-impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for Variadic<T> {
+impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for Vec<T> {
     fn from_multi_value(
         mc: MutationContext<'gc, '_>,
-        values: MultiValue<'gc>,
+        values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
-        values.into_iter().map(|v| T::from_value(mc, v)).collect()
+        values.map(|v| T::from_value(mc, v)).collect()
     }
 }
 
 macro_rules! impl_tuple {
     () => (
         impl<'gc> IntoMultiValue<'gc> for () {
-            fn into_multi_value(self, _: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-                MultiValue::default()
+            type Iter = iter::Empty<Value<'gc>>;
+
+            fn into_multi_value(self, _: MutationContext<'gc, '_>) -> Self::Iter {
+                iter::empty()
             }
         }
 
         impl<'gc> FromMultiValue<'gc> for () {
             fn from_multi_value(
                 _: MutationContext<'gc, '_>,
-                _: MultiValue<'gc>,
+                _: impl Iterator<Item = Value<'gc>>,
             ) -> Result<Self, TypeError> {
                 Ok(())
             }
@@ -355,17 +270,19 @@ macro_rules! impl_tuple {
 
     ($last:ident $(,$name:ident)* $(,)?) => (
         impl<'gc, $($name,)* $last> IntoMultiValue<'gc> for ($($name,)* $last,)
-            where $($name: IntoValue<'gc>,)*
-                  $last: IntoMultiValue<'gc>
+        where
+            $($name: IntoValue<'gc>,)*
+            $last: IntoMultiValue<'gc>,
         {
-            #[allow(unused_mut)]
-            #[allow(non_snake_case)]
-            fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> MultiValue<'gc> {
-                let ($($name,)* $last,) = self;
+            type Iter = vec::IntoIter<Value<'gc>>;
 
-                let mut results = $last.into_multi_value(mc);
-                push_reverse!(results, $($name.into_value(mc),)*);
-                results
+            #[allow(non_snake_case)]
+            fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+                let ($($name,)* $last,) = self;
+                let mut results = Vec::new();
+                $(results.push($name.into_value(mc));)*
+                results.extend($last.into_multi_value(mc));
+                results.into_iter()
             }
         }
 
@@ -377,27 +294,14 @@ macro_rules! impl_tuple {
             #[allow(non_snake_case)]
             fn from_multi_value(
                 mc: MutationContext<'gc, '_>,
-                mut values: MultiValue<'gc>,
+                mut values: impl Iterator<Item = Value<'gc>>,
             ) -> Result<Self, TypeError> {
-                $(let $name = values.0.pop().unwrap_or(Value::Nil);)*
+                $(let $name = FromValue::from_value(mc, values.next().unwrap_or(Value::Nil))?;)*
                 let $last = FromMultiValue::from_multi_value(mc, values)?;
-                Ok(($(FromValue::from_value(mc, $name)?,)* $last,))
+                Ok(($($name,)* $last,))
             }
         }
     );
-}
-
-macro_rules! push_reverse {
-    ($multi_value:expr, $first:expr, $($rest:expr,)*) => (
-        push_reverse!($multi_value, $($rest,)*);
-        $multi_value.0.push($first);
-    );
-
-    ($multi_value:expr, $first:expr) => (
-        $multi_value.0.push($first);
-    );
-
-    ($multi_value:expr,) => ();
 }
 
 macro_rules! smaller_tuples_too {

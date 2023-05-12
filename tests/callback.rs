@@ -1,6 +1,6 @@
 use piccolo::{
     compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, IntoValue,
-    Lua, RuntimeError, StaticError, String, Thread, Value,
+    Lua, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -236,7 +236,7 @@ fn resume_with_err() {
             Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
                 mc,
                 |_, _| panic!("did not error"),
-                |mc, _, _| Err(RuntimeError("a different error".into_value(mc)).into()),
+                |mc, _, _| Err("a different error".into_value(mc).into()),
             )))
             .into())
         });
@@ -257,7 +257,7 @@ fn resume_with_err() {
         let thread = root.registry.fetch(&thread);
         assert!(thread.take_return::<String>(mc).unwrap().unwrap() == "return");
         thread
-            .resume_err(mc, RuntimeError("an error".into_value(mc)).into())
+            .resume_err(mc, "an error".into_value(mc).into())
             .unwrap();
     });
 
@@ -266,7 +266,7 @@ fn resume_with_err() {
     lua.run(|mc, root| {
         let thread = root.registry.fetch(&thread);
         match thread.take_return::<()>(mc).unwrap() {
-            Err(Error::RuntimeError(RuntimeError(val))) => {
+            Err(Error::RuntimeError(val)) => {
                 assert!(matches!(val, Value::String(s) if s == "a different error"))
             }
             _ => panic!(),

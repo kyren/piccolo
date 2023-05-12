@@ -1,6 +1,6 @@
 mod sizes;
 
-use piccolo::{compile, Closure, Error, Lua, RuntimeError, StaticError, Value};
+use piccolo::{compile, Closure, Error, Lua, StaticError, Value};
 
 #[test]
 fn error_unwind() -> Result<(), StaticError> {
@@ -29,7 +29,7 @@ fn error_unwind() -> Result<(), StaticError> {
     lua.finish_main_thread();
     lua.try_run(|mc, root| {
         match root.main_thread.take_return::<()>(mc)? {
-            Err(Error::RuntimeError(RuntimeError(Value::String(s)))) => assert!(s == "test error"),
+            Err(Error::RuntimeError(Value::String(s))) => assert!(s == "test error"),
             _ => panic!(),
         }
         Ok(())

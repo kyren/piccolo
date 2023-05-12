@@ -3,8 +3,7 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, RuntimeError, Table,
-    Value,
+    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, Table, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -30,7 +29,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "error",
-        AnyCallback::from_immediate_fn::<_, ()>(mc, |_, e: Value| Err(RuntimeError(e).into())),
+        AnyCallback::from_immediate_fn::<_, ()>(mc, |_, e: Value| Err(e.into())),
     )
     .unwrap();
 
@@ -41,7 +40,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             if r.to_bool() {
                 Ok((CallbackReturn::Return, r))
             } else {
-                Err(RuntimeError(message).into())
+                Err(message.into())
             }
         }),
     )
@@ -80,7 +79,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                 stack.push(v.type_name().into_value(mc));
                 Ok(CallbackReturn::Return.into())
             } else {
-                Err(RuntimeError("Missing argument to type".into_value(mc)).into())
+                Err("Missing argument to type".into_value(mc).into())
             }
         }),
     )
@@ -95,7 +94,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
                     stack.drain(0..(n as usize).min(stack.len()));
                     Ok(CallbackReturn::Return.into())
                 }
-                _ => Err(RuntimeError("Bad argument to 'select'".into_value(mc)).into()),
+                _ => Err("Bad argument to 'select'".into_value(mc).into()),
             }
         }),
     )
@@ -127,10 +126,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
             if let Value::Table(t) = v {
                 Ok((CallbackReturn::Return, t.metatable()))
             } else {
-                Err(
-                    RuntimeError::from_str(mc, "'getmetatable' can only be used on table types")
-                        .into(),
-                )
+                Err("'getmetatable' can only be used on table types"
+                    .into_value(mc)
+                    .into())
             }
         }),
     )

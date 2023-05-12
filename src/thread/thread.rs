@@ -14,7 +14,7 @@ use gc_arena::{
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
     CallbackMode, CallbackReturn, Closure, Error, FromMultiValue, Function, IntoMultiValue,
-    MultiValue, RegisterIndex, ThreadError, UpValue, UpValueState, Value, VarCount,
+    RegisterIndex, ThreadError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -113,9 +113,11 @@ impl<'gc> Thread<'gc> {
         mc: MutationContext<'gc, '_>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Return)?;
-        let returns = state.external_stack.drain(..).collect::<MultiValue<'gc>>();
-        let returns = state.returned.take().unwrap().map(|_| returns);
-        Ok(returns.and_then(|r| Ok(T::from_multi_value(mc, r)?)))
+        Ok(state
+            .returned
+            .take()
+            .unwrap()
+            .and_then(|_| Ok(T::from_multi_value(mc, state.external_stack.drain(..))?)))
     }
 
     /// If the thread is in `Suspended` mode, resume it.
