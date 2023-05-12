@@ -27,13 +27,32 @@ impl<'gc> IntoValue<'gc> for &'static str {
     }
 }
 
+impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Option<T> {
+    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+        match self {
+            Some(t) => t.into_value(mc),
+            None => Value::Nil,
+        }
+    }
+}
+
 pub trait FromValue<'gc>: Sized {
     fn from_value(mc: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError>;
 }
 
-impl<'gc, T: From<Value<'gc>>> FromValue<'gc> for T {
+impl<'gc> FromValue<'gc> for Value<'gc> {
     fn from_value(_: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
-        Ok(T::from(value))
+        Ok(value)
+    }
+}
+
+impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Option<T> {
+    fn from_value(mc: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+        Ok(if value.is_nil() {
+            None
+        } else {
+            Some(T::from_value(mc, value)?)
+        })
     }
 }
 
@@ -261,9 +280,8 @@ impl<'gc> FromMultiValue<'gc> for MultiValue<'gc> {
 pub struct Variadic<T>(SmallVec<SmallArray<T>>);
 
 impl<T> Variadic<T> {
-    /// Creates an empty `Variadic` wrapper containing no values.
     pub fn new() -> Variadic<T> {
-        Variadic(SmallVec::new())
+        Default::default()
     }
 }
 

@@ -5,7 +5,7 @@ use std::{
 
 use gc_arena::{unsize, Collect, Gc, MutationContext};
 
-use crate::{Error, Function, Value};
+use crate::{Error, FromMultiValue, Function, IntoMultiValue, MultiValue, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -189,6 +189,37 @@ impl<'gc> AnyCallback<'gc> {
         }
 
         AnyCallback::new(mc, ContextCallback { context, call })
+    }
+
+    pub fn from_immediate_fn<A, R>(
+        mc: MutationContext<'gc, '_>,
+        call: impl Fn(MutationContext<'gc, '_>, A) -> Result<(CallbackReturn<'gc>, R), Error<'gc>>
+            + 'static,
+    ) -> AnyCallback<'gc>
+    where
+        A: FromMultiValue<'gc>,
+        R: IntoMultiValue<'gc>,
+    {
+        Self::from_immediate_fn_with(mc, (), move |_, mc, args| call(mc, args))
+    }
+
+    pub fn from_immediate_fn_with<C, A, R>(
+        mc: MutationContext<'gc, '_>,
+        context: C,
+        call: impl Fn(&C, MutationContext<'gc, '_>, A) -> Result<(CallbackReturn<'gc>, R), Error<'gc>>
+            + 'static,
+    ) -> AnyCallback<'gc>
+    where
+        C: 'gc + Collect,
+        A: FromMultiValue<'gc>,
+        R: IntoMultiValue<'gc>,
+    {
+        Self::from_fn_with(mc, context, move |context, mc, stack| {
+            let args = A::from_multi_value(mc, MultiValue::from_iter(stack.drain(..)))?;
+            let (ret, vals) = call(&context, mc, args)?;
+            stack.extend(vals.into_multi_value(mc));
+            Ok(ret.into())
+        })
     }
 }
 

@@ -1,8 +1,8 @@
 use gc_arena::{Collect, MutationContext};
 
 use crate::{
-    AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, IntoValue, Root, RuntimeError,
-    Sequence, Table, Thread, ThreadMode, TypeError, Value, Variadic,
+    AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Function, IntoValue, Root,
+    RuntimeError, Sequence, Table, Thread, ThreadMode, TypeError, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -12,23 +12,10 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "create",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let function = match stack.get(0).copied().unwrap_or(Value::Nil) {
-                    Value::Function(function) => function,
-                    value => {
-                        return Err(TypeError {
-                            expected: "function",
-                            found: value.type_name(),
-                        }
-                        .into());
-                    }
-                };
-
+            AnyCallback::from_immediate_fn(mc, |mc, function: Function| {
                 let thread = Thread::new(mc);
                 thread.start_suspended(mc, function).unwrap();
-                stack.clear();
-                stack.push(thread.into());
-                Ok(CallbackReturn::Return.into())
+                Ok((CallbackReturn::Return, thread))
             }),
         )
         .unwrap();
@@ -105,29 +92,16 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
         .set(
             mc,
             "status",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let thread = match stack.get(0).copied().unwrap_or(Value::Nil) {
-                    Value::Thread(closure) => closure,
-                    value => {
-                        return Err(TypeError {
-                            expected: "thread",
-                            found: value.type_name(),
-                        }
-                        .into());
-                    }
-                };
-
-                stack.clear();
-                stack.push(
+            AnyCallback::from_immediate_fn(mc, |_, thread: Thread| {
+                Ok((
+                    CallbackReturn::Return,
                     match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Return => "dead",
                         ThreadMode::Running => "running",
                         ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",
-                    }
-                    .into_value(mc),
-                );
-                Ok(CallbackReturn::Return.into())
+                    },
+                ))
             }),
         )
         .unwrap();

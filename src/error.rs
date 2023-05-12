@@ -30,6 +30,12 @@ impl fmt::Display for TypeError {
 #[collect(no_drop)]
 pub struct RuntimeError<'gc>(pub Value<'gc>);
 
+impl<'gc> RuntimeError<'gc> {
+    pub fn from_str<S: ?Sized + AsRef<[u8]>>(mc: MutationContext<'gc, '_>, s: &S) -> Self {
+        RuntimeError(String::from_slice(mc, s).into())
+    }
+}
+
 impl<'gc> StdError for RuntimeError<'gc> {}
 
 impl<'gc> fmt::Display for RuntimeError<'gc> {

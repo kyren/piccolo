@@ -30,25 +30,16 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "error",
-        AnyCallback::from_fn(mc, |_, stack| {
-            let err = stack.get(0).copied().unwrap_or(Value::Nil);
-            Err(RuntimeError(err).into())
-        }),
+        AnyCallback::from_immediate_fn::<_, ()>(mc, |_, e: Value| Err(RuntimeError(e).into())),
     )
     .unwrap();
 
     env.set(
         mc,
         "assert",
-        AnyCallback::from_fn(mc, |mc, stack| {
-            let v = stack.get(0).copied().unwrap_or(Value::Nil);
-            let message = stack
-                .get(1)
-                .copied()
-                .unwrap_or("assertion failed!".into_value(mc));
-            stack.clear();
-            if v.to_bool() {
-                Ok(CallbackReturn::Return.into())
+        AnyCallback::from_immediate_fn(mc, |_, (r, message): (Value, Value)| {
+            if r.to_bool() {
+                Ok((CallbackReturn::Return, r))
             } else {
                 Err(RuntimeError(message).into())
             }
@@ -113,13 +104,8 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "rawget",
-        AnyCallback::from_fn(mc, |mc, stack| match (stack.get(0), stack.get(1)) {
-            (Some(&Value::Table(table)), Some(&key)) => {
-                stack.clear();
-                stack.push(table.get(mc, key));
-                Ok(CallbackReturn::Return.into())
-            }
-            _ => Err(RuntimeError("Bad argument to 'rawget'".into_value(mc)).into()),
+        AnyCallback::from_immediate_fn(mc, |mc, (table, key): (Table, Value)| {
+            Ok((CallbackReturn::Return, table.get(mc, key)))
         }),
     )
     .unwrap();
@@ -127,15 +113,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "rawset",
-        AnyCallback::from_fn(mc, |mc, stack| {
-            match (stack.get(0), stack.get(1), stack.get(2)) {
-                (Some(&Value::Table(table)), Some(&key), Some(&value)) => {
-                    table.set(mc, key, value)?;
-                    stack.drain(1..);
-                    Ok(CallbackReturn::Return.into())
-                }
-                _ => Err(RuntimeError("Bad argument to 'rawset'".into_value(mc)).into()),
-            }
+        AnyCallback::from_immediate_fn(mc, |mc, (table, key, value): (Table, Value, Value)| {
+            table.set(mc, key, value)?;
+            Ok((CallbackReturn::Return, table))
         }),
     )
     .unwrap();
@@ -143,18 +123,15 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "getmetatable",
-        AnyCallback::from_fn(mc, |mc, stack| match stack.get(0) {
-            Some(&Value::Table(table)) => {
-                stack.clear();
-                if let Some(metatable) = table.metatable() {
-                    stack.push(metatable.into());
-                }
-                Ok(CallbackReturn::Return.into())
+        AnyCallback::from_immediate_fn(mc, |mc, v: Value| {
+            if let Value::Table(t) = v {
+                Ok((CallbackReturn::Return, t.metatable()))
+            } else {
+                Err(
+                    RuntimeError::from_str(mc, "'getmetatable' can only be used on table types")
+                        .into(),
+                )
             }
-            _ => Err(
-                RuntimeError("'getmetatable' can only be used on table types".into_value(mc))
-                    .into(),
-            ),
         }),
     )
     .unwrap();
@@ -162,21 +139,9 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     env.set(
         mc,
         "setmetatable",
-        AnyCallback::from_fn(mc, |mc, stack| match (stack.get(0), stack.get(1)) {
-            (Some(&Value::Table(table)), Some(&Value::Table(metatable))) => {
-                stack.drain(1..);
-                table.set_metatable(mc, Some(metatable));
-                Ok(CallbackReturn::Return.into())
-            }
-            (Some(&Value::Table(table)), Some(Value::Nil)) => {
-                stack.drain(1..);
-                table.set_metatable(mc, None);
-                Ok(CallbackReturn::Return.into())
-            }
-            _ => Err(RuntimeError(
-                "Bad argument to 'setmetatable', can only be used with table types".into_value(mc),
-            )
-            .into()),
+        AnyCallback::from_immediate_fn(mc, |mc, (t, mt): (Table, Option<Table>)| {
+            t.set_metatable(mc, mt);
+            Ok((CallbackReturn::Return, t))
         }),
     )
     .unwrap();

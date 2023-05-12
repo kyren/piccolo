@@ -51,7 +51,7 @@ impl<'gc> String<'gc> {
         String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
 
-    pub fn from_slice(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+    pub fn from_slice<S: ?Sized + AsRef<[u8]>>(mc: MutationContext<'gc, '_>, s: &S) -> String<'gc> {
         fn create<'gc, const N: usize>(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -73,6 +73,8 @@ impl<'gc> String<'gc> {
             // and `header` is the first field.
             unsafe { String(Gc::cast::<Header>(string)) }
         }
+
+        let s = s.as_ref();
 
         macro_rules! try_sizes {
             ($($size:expr),*) => {
