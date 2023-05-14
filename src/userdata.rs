@@ -48,8 +48,8 @@ impl<'gc> Hash for AnyUserData<'gc> {
 impl<'gc> AnyUserData<'gc> {
     pub fn new<R>(mc: MutationContext<'gc, '_>, val: Root<'gc, R>) -> Self
     where
-        R: for<'a> Rootable<'a> + ?Sized + 'static,
-        Root<'gc, R>: Sized,
+        R: for<'a> Rootable<'a>,
+        Root<'static, R>: Send,
     {
         AnyUserData(AnyCell::<UserMetadata<'gc>>::new::<R>(
             mc,
@@ -60,8 +60,7 @@ impl<'gc> AnyUserData<'gc> {
 
     pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
-        Root<'gc, R>: Sized,
+        R: for<'b> Rootable<'b>,
     {
         match self.0.read_data::<R>() {
             Some(Ok(r)) => Ok(r),
@@ -75,8 +74,7 @@ impl<'gc> AnyUserData<'gc> {
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, Root<'gc, R>>, UserDataError>
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
-        Root<'gc, R>: Sized,
+        R: for<'b> Rootable<'b>,
     {
         match self.0.write_data::<R>(mc) {
             Some(Ok(r)) => Ok(r),

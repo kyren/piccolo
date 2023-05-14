@@ -3,7 +3,10 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{unsize, Collect, Gc, MutationContext};
+use gc_arena::{
+    static_send::{static_send, StaticSend},
+    unsize, Collect, Gc, MutationContext, Root, Rootable,
+};
 
 use crate::{Error, FromMultiValue, Function, IntoMultiValue, Value};
 
@@ -25,20 +28,15 @@ pub trait Sequence<'gc>: Collect {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnySequence<'gc>(pub Box<dyn Sequence<'gc> + 'gc>);
-
-impl<'gc, S> From<S> for AnySequence<'gc>
-where
-    S: Sequence<'gc> + 'gc,
-{
-    fn from(v: S) -> Self {
-        Self(Box::new(v))
-    }
-}
+pub struct AnySequence<'gc>(pub Box<StaticSend<dyn Sequence<'gc> + 'gc>>);
 
 impl<'gc> AnySequence<'gc> {
-    pub fn new(sequence: impl Sequence<'gc> + 'gc) -> Self {
-        Self(Box::new(sequence))
+    pub fn new<R: for<'a> Rootable<'a>>(sequence: Root<'gc, R>) -> Self
+    where
+        Root<'gc, R>: Sequence<'gc>,
+        Root<'static, R>: Send,
+    {
+        Self(Box::new(static_send::<R>(sequence)))
     }
 
     pub fn step(
@@ -89,7 +87,12 @@ struct Header<'gc> {
 }
 
 impl<'gc> AnyCallback<'gc> {
-    pub fn new<C: Callback<'gc> + 'gc>(mc: MutationContext<'gc, '_>, callback: C) -> Self {
+    pub fn new<C>(mc: MutationContext<'gc, '_>, callback: Root<'gc, C>) -> Self
+    where
+        C: for<'a> Rootable<'a>,
+        Root<'static, C>: Send,
+        Root<'gc, C>: Callback<'gc>,
+    {
         #[repr(C)]
         struct HeaderCallback<'gc, C> {
             header: Header<'gc>,
@@ -117,7 +120,7 @@ impl<'gc> AnyCallback<'gc> {
             HeaderCallback {
                 header: Header {
                     call: |ptr, mc, stack| unsafe {
-                        let hc = ptr as *const HeaderCallback<C>;
+                        let hc = ptr as *const HeaderCallback<Root<'gc, C>>;
                         ((*hc).callback).call(mc, stack)
                     },
                 },
@@ -140,44 +143,55 @@ impl<'gc> AnyCallback<'gc> {
         unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), mc, stack) }
     }
 
-    pub fn from_fn<F>(mc: MutationContext<'gc, '_>, call: F) -> AnyCallback<'gc>
-    where
-        F: 'static
-            + Fn(
+    pub fn from_fn(
+        mc: MutationContext<'gc, '_>,
+        call: impl Fn(
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-    {
-        Self::from_fn_with(mc, (), move |_, mc, stack| call(mc, stack))
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyCallback<'gc> {
+        Self::from_fn_with::<Rootable!['a => ()]>(mc, (), move |_, mc, stack| call(mc, stack))
     }
 
-    pub fn from_fn_with<C, F>(mc: MutationContext<'gc, '_>, context: C, call: F) -> AnyCallback<'gc>
-    where
-        C: 'gc + Collect,
-        F: 'static
-            + Fn(
-                &C,
+    pub fn from_fn_with<C>(
+        mc: MutationContext<'gc, '_>,
+        context: Root<'gc, C>,
+        call: impl Fn(
+                &Root<'gc, C>,
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyCallback<'gc>
+    where
+        C: for<'a> Rootable<'a>,
+        Root<'gc, C>: Collect,
+        Root<'static, C>: Send,
     {
         #[derive(Collect)]
-        #[collect(no_drop)]
-        struct ContextCallback<C, F> {
-            context: C,
+        #[collect(no_drop, bound = "")]
+        struct ContextCallback<'gc, C, F>
+        where
+            C: for<'a> Rootable<'a>,
+        {
+            context: Root<'gc, C>,
             #[collect(require_static)]
             call: F,
         }
 
-        impl<'gc, C, F> Callback<'gc> for ContextCallback<C, F>
+        impl<'gc, C, F> Callback<'gc> for ContextCallback<'gc, C, F>
         where
-            C: 'gc + Collect,
-            F: 'static
-                + Fn(
-                    &C,
+            C: for<'a> Rootable<'a>,
+            Root<'gc, C>: Collect,
+            F: Fn(
+                    &Root<'gc, C>,
                     MutationContext<'gc, '_>,
                     &mut Vec<Value<'gc>>,
-                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>
+                + 'static,
         {
             fn call(
                 &self,
@@ -188,35 +202,47 @@ impl<'gc> AnyCallback<'gc> {
             }
         }
 
-        AnyCallback::new(mc, ContextCallback { context, call })
+        AnyCallback::new::<Rootable!['a => ContextCallback<'a, C, _>]>(
+            mc,
+            ContextCallback { context, call },
+        )
     }
 
     pub fn from_immediate_fn<A, R>(
         mc: MutationContext<'gc, '_>,
         call: impl Fn(MutationContext<'gc, '_>, A) -> Result<(CallbackReturn<'gc>, R), Error<'gc>>
+            + Send
             + 'static,
     ) -> AnyCallback<'gc>
     where
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        Self::from_immediate_fn_with(mc, (), move |_, mc, args| call(mc, args))
+        Self::from_immediate_fn_with::<Rootable!['a => ()], _, _>(mc, (), move |_, mc, args| {
+            call(mc, args)
+        })
     }
 
     pub fn from_immediate_fn_with<C, A, R>(
         mc: MutationContext<'gc, '_>,
-        context: C,
-        call: impl Fn(&C, MutationContext<'gc, '_>, A) -> Result<(CallbackReturn<'gc>, R), Error<'gc>>
+        context: Root<'gc, C>,
+        call: impl Fn(
+                &Root<'gc, C>,
+                MutationContext<'gc, '_>,
+                A,
+            ) -> Result<(CallbackReturn<'gc>, R), Error<'gc>>
+            + Send
             + 'static,
     ) -> AnyCallback<'gc>
     where
-        C: 'gc + Collect,
+        C: for<'a> Rootable<'a>,
+        Root<'static, C>: Send,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        Self::from_fn_with(mc, context, move |context, mc, stack| {
+        Self::from_fn_with::<C>(mc, context, move |context, mc, stack| {
             let args = A::from_multi_value(mc, stack.drain(..))?;
-            let (ret, vals) = call(&context, mc, args)?;
+            let (ret, vals) = call(context, mc, args)?;
             stack.extend(vals.into_multi_value(mc));
             Ok(ret.into())
         })
@@ -260,22 +286,31 @@ pub trait Continuation<'gc>: Collect {
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct AnyContinuation<'gc>(pub Gc<'gc, dyn Continuation<'gc>>);
+pub struct AnyContinuation<'gc>(pub Gc<'gc, StaticSend<dyn Continuation<'gc> + 'gc>>);
 
 impl<'gc> AnyContinuation<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>, continuation: impl Continuation<'gc> + 'gc) -> Self {
-        Self(unsize!(Gc::new(mc, continuation) => dyn Continuation<'gc>))
+    pub fn new<C>(mc: MutationContext<'gc, '_>, continuation: Root<'gc, C>) -> Self
+    where
+        C: for<'a> Rootable<'a>,
+        Root<'gc, C>: Continuation<'gc>,
+        Root<'static, C>: Send,
+    {
+        Self(
+            unsize!(Gc::new(mc, static_send::<C>(continuation)) => StaticSend<dyn Continuation<'gc>>),
+        )
     }
 
-    pub fn from_ok_fn<F>(mc: MutationContext<'gc, '_>, continue_ok: F) -> AnyContinuation<'gc>
-    where
-        F: 'static
-            + Fn(
+    pub fn from_ok_fn(
+        mc: MutationContext<'gc, '_>,
+        continue_ok: impl Fn(
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-    {
-        Self::from_fns_with(
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyContinuation<'gc>
+where {
+        Self::from_fns_with::<Rootable!['a => ()]>(
             mc,
             (),
             move |_, mc, stack| continue_ok(mc, stack),
@@ -283,21 +318,22 @@ impl<'gc> AnyContinuation<'gc> {
         )
     }
 
-    pub fn from_ok_fn_with<C, F>(
+    pub fn from_ok_fn_with<C>(
         mc: MutationContext<'gc, '_>,
-        context: C,
-        continue_ok: F,
-    ) -> AnyContinuation<'gc>
-    where
-        C: Collect + 'gc,
-        F: 'static
-            + Fn(
-                &C,
+        context: Root<'gc, C>,
+        continue_ok: impl Fn(
+                &Root<'gc, C>,
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyContinuation<'gc>
+    where
+        C: for<'a> Rootable<'a>,
+        Root<'static, C>: Send,
     {
-        Self::from_fns_with(
+        Self::from_fns_with::<C>(
             mc,
             context,
             move |context, mc, stack| continue_ok(context, mc, stack),
@@ -305,25 +341,24 @@ impl<'gc> AnyContinuation<'gc> {
         )
     }
 
-    pub fn from_fns<FO, FE>(
+    pub fn from_fns(
         mc: MutationContext<'gc, '_>,
-        continue_ok: FO,
-        continue_err: FE,
-    ) -> AnyContinuation<'gc>
-    where
-        FO: 'static
-            + Fn(
+        continue_ok: impl Fn(
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-        FE: 'static
-            + Fn(
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+        continue_err: impl Fn(
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
                 Error<'gc>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-    {
-        Self::from_fns_with(
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyContinuation<'gc>
+where {
+        Self::from_fns_with::<Rootable!['a => ()]>(
             mc,
             (),
             move |_, mc, stack| continue_ok(mc, stack),
@@ -331,27 +366,28 @@ impl<'gc> AnyContinuation<'gc> {
         )
     }
 
-    pub fn from_fns_with<C, FO, FE>(
+    pub fn from_fns_with<C>(
         mc: MutationContext<'gc, '_>,
-        context: C,
-        continue_ok: FO,
-        continue_err: FE,
-    ) -> AnyContinuation<'gc>
-    where
-        C: 'gc + Collect,
-        FO: 'static
-            + Fn(
-                &C,
+        context: Root<'gc, C>,
+        continue_ok: impl Fn(
+                &Root<'gc, C>,
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-        FE: 'static
-            + Fn(
-                &C,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+        continue_err: impl Fn(
+                &Root<'gc, C>,
                 MutationContext<'gc, '_>,
                 &mut Vec<Value<'gc>>,
                 Error<'gc>,
-            ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+            ) -> Result<CallbackMode<'gc>, Error<'gc>>
+            + Send
+            + 'static,
+    ) -> AnyContinuation<'gc>
+    where
+        C: for<'a> Rootable<'a>,
+        Root<'static, C>: Send,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
@@ -366,19 +402,19 @@ impl<'gc> AnyContinuation<'gc> {
         impl<'gc, C, FO, FE> Continuation<'gc> for ContextContinuation<C, FO, FE>
         where
             C: 'gc + Collect,
-            FO: 'static
-                + Fn(
+            FO: Fn(
                     &C,
                     MutationContext<'gc, '_>,
                     &mut Vec<Value<'gc>>,
-                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
-            FE: 'static
-                + Fn(
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>
+                + 'static,
+            FE: Fn(
                     &C,
                     MutationContext<'gc, '_>,
                     &mut Vec<Value<'gc>>,
                     Error<'gc>,
-                ) -> Result<CallbackMode<'gc>, Error<'gc>>,
+                ) -> Result<CallbackMode<'gc>, Error<'gc>>
+                + 'static,
         {
             fn continue_ok(
                 &self,
@@ -398,14 +434,14 @@ impl<'gc> AnyContinuation<'gc> {
             }
         }
 
-        AnyContinuation(unsize!(Gc::new(
+        AnyContinuation::new::<Rootable!['a => ContextContinuation<Root<'a, C>, _, _>]>(
             mc,
             ContextContinuation {
                 context,
                 continue_ok,
                 continue_err,
-            }
-        ) => dyn Continuation<'gc>))
+            },
+        )
     }
 
     pub fn continue_ok(
@@ -452,7 +488,7 @@ mod tests {
                 }
             }
 
-            let dyn_callback = AnyCallback::new(mc, CB(17));
+            let dyn_callback = AnyCallback::new::<Rootable!['a => CB]>(mc, CB(17));
 
             let mut stack = Vec::new();
             assert!(dyn_callback.call(mc, &mut stack).is_ok());

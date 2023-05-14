@@ -13,3 +13,9 @@ fn test_sizes() {
     assert_eq!(mem::size_of::<AnyUserData>(), ptr_size);
     assert!(mem::size_of::<Value>() <= ptr_size * 2);
 }
+
+#[test]
+fn test_send() {
+    fn assert_send<T: Send>() {}
+    // assert_send::<piccolo::Lua>();
+}

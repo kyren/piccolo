@@ -11,7 +11,7 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-gc-arena = { git = "https://github.com/kyren/gc-arena" }
+gc-arena = { git = "https://github.com/kyren/gc-arena", branch = "piccolo" }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
 

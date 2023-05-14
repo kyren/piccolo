@@ -1,4 +1,7 @@
-use std::{cell::RefCell, f64, ops::DerefMut, rc::Rc};
+use std::{
+    f64,
+    sync::{Arc, Mutex},
+};
 
 use gc_arena::MutationContext;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -15,7 +18,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         f: F,
     ) -> AnyCallback<'gc>
     where
-        F: Fn(MutationContext<'gc, '_>, A) -> Option<R> + 'static,
+        F: Fn(MutationContext<'gc, '_>, A) -> Option<R> + Send + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
@@ -37,7 +40,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     }
 
     let math = Table::new(mc);
-    let seeded_rng: Rc<RefCell<SmallRng>> = Rc::new(RefCell::new(SmallRng::from_entropy()));
+    let seeded_rng: Arc<Mutex<SmallRng>> = Arc::new(Mutex::new(SmallRng::from_entropy()));
 
     math.set(
         mc,
@@ -194,11 +197,11 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
             "random",
             mc,
             move |_, (a, b): (Option<i64>, Option<i64>)| -> Option<Value> {
-                let rng = &random_rng;
+                let mut rng = random_rng.lock().unwrap();
                 match (a, b) {
-                    (None, None) => Some(rng.borrow_mut().gen::<f64>().into()),
-                    (Some(a), None) => Some(rng.borrow_mut().gen_range(1..a + 1).into()),
-                    (Some(a), Some(b)) => Some(rng.borrow_mut().gen_range(a..b + 1).into()),
+                    (None, None) => Some(rng.gen::<f64>().into()),
+                    (Some(a), None) => Some(rng.gen_range(1..a + 1).into()),
+                    (Some(a), Some(b)) => Some(rng.gen_range(a..b + 1).into()),
                     _ => None,
                 }
             },
@@ -212,7 +215,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
         "randomseed",
         callback("randomseed", mc, move |_, f: i64| {
             let rng = &randomseed_rng;
-            *(rng.borrow_mut().deref_mut()) = SmallRng::seed_from_u64(f as u64);
+            *rng.lock().unwrap() = SmallRng::seed_from_u64(f as u64);
             Some(())
         }),
     )

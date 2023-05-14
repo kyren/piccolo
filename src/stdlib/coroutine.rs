@@ -1,7 +1,7 @@
-use gc_arena::{Collect, MutationContext};
+use gc_arena::{Collect, MutationContext, Rootable};
 
 use crate::{
-    AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Function, IntoValue, Root, Sequence,
+    AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Function, IntoValue, Root, Sequence,
     Table, Thread, ThreadMode, TypeError, Value,
 };
 
@@ -83,7 +83,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                     }
                 }
 
-                Ok(CallbackMode::Sequence(ThreadSequence.into()))
+                Ok(AnySequence::new::<Rootable!['a => ThreadSequence]>(ThreadSequence).into())
             }),
         )
         .unwrap();

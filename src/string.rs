@@ -28,6 +28,8 @@ enum Header {
     Inline(usize),
 }
 
+unsafe impl Send for Header {}
+
 impl<'gc> String<'gc> {
     pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Box<[u8]>) -> String<'gc> {
         #[derive(Collect)]

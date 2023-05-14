@@ -27,7 +27,8 @@ impl<'gc, M> AnyCell<'gc, M> {
     pub fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
-        R: for<'a> Rootable<'a> + ?Sized + 'static,
+        R: for<'a> Rootable<'a>,
+        Root<'static, R>: Send,
     {
         Self(AnyValue::new::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(
             mc,
@@ -58,7 +59,7 @@ impl<'gc, M> AnyCell<'gc, M> {
 
     pub fn read_data<'a, R>(&'a self) -> Option<Result<Ref<'a, Root<'gc, R>>, BorrowError>>
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
+        R: for<'b> Rootable<'b>,
     {
         let cell = self
             .0
@@ -71,7 +72,7 @@ impl<'gc, M> AnyCell<'gc, M> {
         mc: MutationContext<'gc, '_>,
     ) -> Option<Result<RefMut<'a, Root<'gc, R>>, BorrowMutError>>
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
+        R: for<'b> Rootable<'b>,
     {
         let cell = self
             .0
@@ -142,7 +143,8 @@ impl<'gc, M> AnyValue<'gc, M> {
     fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
-        R: for<'a> Rootable<'a> + ?Sized + 'static,
+        R: for<'a> Rootable<'a>,
+        Root<'static, R>: Send,
     {
         let val = Gc::new(
             mc,
@@ -174,14 +176,14 @@ impl<'gc, M> AnyValue<'gc, M> {
 
     pub fn is<R>(&self) -> bool
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
+        R: for<'b> Rootable<'b>,
     {
         TypeId::of::<R>() == self.0.type_id
     }
 
     fn downcast<R>(&self) -> Option<&Root<'gc, R>>
     where
-        R: for<'b> Rootable<'b> + ?Sized + 'static,
+        R: for<'b> Rootable<'b>,
     {
         if TypeId::of::<R>() == self.0.type_id {
             let ptr = Gc::as_ptr(self.0) as *const Value<M, Root<'gc, R>>;

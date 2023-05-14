@@ -1,4 +1,4 @@
-use gc_arena::{Collect, MutationContext};
+use gc_arena::{Collect, MutationContext, Rootable};
 
 use crate::{AnyCallback, CallbackReturn, Function, IntoValue, TypeError, Value};
 
@@ -116,13 +116,17 @@ pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function
     })?;
 
     match metatable.get(mc, MetaMethod::Call) {
-        f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
-            Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
-                stack.insert(0, v);
-                Ok(CallbackReturn::TailCall(call(mc, f)?, None).into())
-            })
-            .into())
-        }
+        f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
+            AnyCallback::from_fn_with::<Rootable!['a => (Value<'a>, Value<'a>)]>(
+                mc,
+                (v, f),
+                |&(v, f), mc, stack| {
+                    stack.insert(0, v);
+                    Ok(CallbackReturn::TailCall(call(mc, f)?, None).into())
+                },
+            )
+            .into(),
+        ),
         f => Err(TypeError {
             expected: "function",
             found: f.type_name(),
