@@ -4,8 +4,8 @@ use gc_arena::MutationContext;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    raw_ops, AnyCallback, CallbackReturn, FromMultiValue, IntoMultiValue, IntoValue, Root, Table,
-    Value,
+    conversion::Variadic, raw_ops, AnyCallback, CallbackReturn, FromMultiValue, IntoMultiValue,
+    IntoValue, Root, Table, Value,
 };
 
 pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
@@ -127,7 +127,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "max",
-        callback("max", mc, |_, v: Vec<Value>| {
+        callback("max", mc, |_, v: Variadic<Value>| {
             if v.is_empty() {
                 None
             } else {
@@ -150,7 +150,7 @@ pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc
     math.set(
         mc,
         "min",
-        callback("min", mc, |_, v: Vec<Value>| {
+        callback("min", mc, |_, v: Variadic<Value>| {
             if v.is_empty() {
                 None
             } else {

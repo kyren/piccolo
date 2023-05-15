@@ -5,7 +5,9 @@ use std::vec::Vec;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
-use piccolo::{compile, compiler::ParserError, io, Closure, Lua, StaticError, Value};
+use piccolo::{
+    compile, compiler::ParserError, conversion::Variadic, io, Closure, Lua, StaticError, Value,
+};
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     lua.try_run(|mc, root| {
@@ -25,7 +27,7 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     lua.try_run(|mc, root| {
         Ok(root
             .main_thread
-            .take_return::<Vec<Value>>(mc)??
+            .take_return::<Variadic<Value>>(mc)??
             .iter()
             .map(|v| format!("{v}"))
             .collect::<Vec<_>>()
