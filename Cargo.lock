@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#764dd9bd00b618d4646265bf9ecc2b3280fbd80f"
+source = "git+https://github.com/kyren/gc-arena#5e2a92f4ae05cfa4179bb219b92054bb59d57069"
 dependencies = [
  "gc-arena-derive",
  "sptr",
@@ -196,7 +196,7 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#764dd9bd00b618d4646265bf9ecc2b3280fbd80f"
+source = "git+https://github.com/kyren/gc-arena#5e2a92f4ae05cfa4179bb219b92054bb59d57069"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -474,9 +474,9 @@ checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
 name = "syn"
-version = "2.0.15"
+version = "2.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a34fcf3e8b60f57e6a14301a2e916d323af98b0ea63c599441eec8558660c822"
+checksum = "a6f671d4b5ffdb8eadec19c0ae67fe2639df8684bd7bc4b83d986b8db549cf01"
 dependencies = [
  "proc-macro2",
  "quote",
