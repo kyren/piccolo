@@ -17,20 +17,31 @@ Project Goals:
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
 
-Since the focus here is so much on resiliency and safety, `piccolo` is written
-in (almost) entirely *safe* Rust. This is a *slight* copout as much of the
-unsafe code that normally is involved in a language runtime actually lives in
-`gc-arena`, but since we have a safe garbage collection abstraction, (almost)
-the entire VM can be written in safe code.
-
-*(`piccolo` makes no attempt yet to guard against side channel attacks like
-spectre, so even *if* the VM is memory safe, running untrusted scripts has
-additional risk)*.
-
 **This project is currently very WIP** Right now, the short term goal is to
 get some usable subset of Lua working, and to have a robust bindings story.
 `piccolo` is being worked on again to use in a separate game project, and my
 immediate goals are going to be whatever that project requires.
+
+## Safety ##
+
+The goal with `piccolo` is to have the majority of it written in safe Rust.
+Currently, there are a few sources of unsafety, but crucially these sources
+of unsafety are *isolated*. `piccolo` will avoid at all costs relying on
+abstractions which *leak* unsafety, it should always be possible to interact
+with even low level details of `piccolo` without using `unsafe`.
+
+The current primary sources of unsafety:
+  * The particularly weird requirements of Lua tables require using hashbrown's
+    low level raw hashmap API.
+  * Userdata requires a very delicate unsafe lifetime dance to deal with
+    downcasting non-'static userdata with a safe interface. Unsafe code is
+  * required to avoid fat pointers in several Lua types, to keep `Value`
+    as small as possible and allow potential future smaller `Value`
+    representations.
+
+*(`piccolo` makes no attempt yet to guard against side channel attacks like
+spectre, so even *if* the VM is memory safe, running untrusted scripts carries
+additional risk)*.
 
 ## A unique system for Rust <-> GC interaction ##
 

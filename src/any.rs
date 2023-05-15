@@ -87,29 +87,36 @@ impl<'gc, M> AnyCell<'gc, M> {
 
 // SAFETY:
 //
-// Non-'static downcasting is notoriously dangerous. Rather than allowing arbitrary non-'static
-// data to be downcast, we rely on the fact that *only* a single 'gc lifetime is present in the held
-// type. We use the `Rootable` type as a proxy rather than the stored type itself to know what type
-// is actually being held.
+// Non-'static downcasting is notoriously dangerous. Rather than allowing arbitrary non-'static data
+// to be downcast, we rely on the fact that *only* a single non-'static 'gc lifetime is present in
+// the held type. We use the `Rootable` type as a proxy rather than the stored type itself to know
+// what type is actually being held.
 //
-// Safety here is dependent on two subtle points:
+// Safety here is dependent on three subtle points:
 //
-// 1) We use the proxy `Rootable` type as the source of the `TypeId` rather than the projected
-//    `<R as Rootable<'_>>::Root`. If we were to instead use `<R as Rootable<'static>>:Root` for
-//    the `TypeId`, then you could fool this into giving you a type with the wrong projection by
-//    implementing `Rootable` for two separate types that project to the same type differently. For
-//    example, if you had a `Dangerous<'a, 'b>` type, you could have a `BadRootable1` that projects
-//    to `Dangerous<'ctx, 'static>` and a `BadRootable2` that projects to `Dangerous<'static,
-//    'ctx>`. Since both of these contexts would project to `Dangerous<'static, 'static>` for the
-//    purposes of getting a `TypeId`, there would be no way to distinguish them, and this could be
-//    used to transmute any lifetime to or from 'ctx. By using the `TypeId` of the rootable type
-//    itself, we know we always return the same projection that we were given.
+// 1) The Rootable trait only allows for the projection of a single lifetime. We know this because
+//    `<R as Rootable<'static>>::Root` is 'static, so the only possible non-'static lifetime
+//    that the projection can have is the 'gc lifetime we give it. We don't lose any lifetime
+//    information, the only non-'static lifetime is 'gc and we can restore this lifetime upon
+//    access.
 //
 // 2) The `Gc` type is *invariant* in the 'gc lifetime. If it was instead covariant or contravariant
 //    in 'gc, then we could store a type with a mismatched variance and improperly lengthen or
 //    shorten the 'gc lifetime for that type. Since `Gc` is invariant in 'gc (the entire garbage
-//    collection system relies on this), the context can project to a type with any variance in 'gc
+//    collection system relies on this), `AnyValue` can project to a type with any variance in 'gc
 //    and nothing can go wrong.
+//
+// 3) We use the proxy `Rootable` type as the source of the `TypeId` rather than the projected
+//    `<R as Rootable<'_>>::Root`. If we were to instead use `<R as Rootable<'static>>:Root` for
+//    the `TypeId`, then you could fool this into giving you a type with the wrong projection by
+//    implementing `Rootable` for two separate types that project to the same type differently. For
+//    example, if you had a `Dangerous<'a, 'b>` type, you could have a `BadRootable1` that projects
+//    to `Dangerous<'gc, 'static>` and a `BadRootable2` that projects to `Dangerous<'static, 'gc>`.
+//    Since `<BR as Rootable<'static>>::Root` for both of these types would project to
+//    `Dangerous<'static, 'static>` for the purposes of getting a `TypeId`, there would be no way
+//    to distinguish them, and this could be used to transmute any lifetime to or from 'gc. By using
+//    the `TypeId` of the rootable type itself, we know we always return the same projection that we
+//    were given.
 
 #[derive(Collect)]
 #[collect(no_drop)]
