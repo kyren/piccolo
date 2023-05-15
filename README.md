@@ -32,7 +32,7 @@ with even low level details of `piccolo` without using `unsafe`.
 
 The current primary sources of unsafety:
   * The particularly weird requirements of Lua tables require using hashbrown's
-    low level raw hashmap API.
+    low level RawTable API.
   * Userdata requires a very delicate unsafe lifetime dance to deal with
     downcasting non-'static userdata with a safe interface.
   * Unsafe code is required to avoid fat pointers in several Lua types, to keep
