@@ -34,9 +34,9 @@ The current primary sources of unsafety:
   * The particularly weird requirements of Lua tables require using hashbrown's
     low level raw hashmap API.
   * Userdata requires a very delicate unsafe lifetime dance to deal with
-    downcasting non-'static userdata with a safe interface. Unsafe code is
-  * required to avoid fat pointers in several Lua types, to keep `Value`
-    as small as possible and allow potential future smaller `Value`
+    downcasting non-'static userdata with a safe interface.
+  * Unsafe code is required to avoid fat pointers in several Lua types, to keep
+    `Value` as small as possible and allow potential future smaller `Value`
     representations.
 
 *(`piccolo` makes no attempt yet to guard against side channel attacks like
