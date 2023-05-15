@@ -7,6 +7,7 @@ use crate::{AnyCallback, CallbackReturn, Function, IntoValue, TypeError, Value};
 pub enum MetaMethod {
     Index,
     Call,
+    Pairs,
 }
 
 impl MetaMethod {
@@ -14,6 +15,7 @@ impl MetaMethod {
         match self {
             MetaMethod::Index => "__index",
             MetaMethod::Call => "__call",
+            MetaMethod::Pairs => "__pairs",
         }
     }
 }

@@ -3,8 +3,9 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, table::NextValue, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root,
-    Table, Value,
+    meta_ops::{self, MetaMethod, MetaResult},
+    table::NextValue,
+    AnyCallback, AnyContinuation, CallbackReturn, FromMultiValue, IntoValue, Root, Table, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -145,15 +146,78 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     )
     .unwrap();
 
+    fn next<'gc>(
+        mc: MutationContext<'gc, '_>,
+        table: Table<'gc>,
+        index: Value<'gc>,
+    ) -> Result<(Value<'gc>, Value<'gc>), Value<'gc>> {
+        match table.next(mc, index) {
+            NextValue::Found { key, value } => Ok((key, value)),
+            NextValue::Last => Ok((Value::Nil, Value::Nil)),
+            NextValue::NotFound => Err("invalid table key".into_value(mc)),
+        }
+    }
+
+    let next = AnyCallback::from_immediate_fn(mc, |mc, (table, index): (Table, Value)| {
+        let (key, value) = next(mc, table, index)?;
+        Ok((CallbackReturn::Return, (key, value)))
+    });
+
+    env.set(mc, "next", next).unwrap();
+
     env.set(
         mc,
-        "next",
-        AnyCallback::from_immediate_fn(mc, |mc, (table, index): (Table, Value)| {
-            match table.next(mc, index) {
-                NextValue::Found { key, value } => Ok((CallbackReturn::Return, (key, value))),
-                NextValue::Last => Ok((CallbackReturn::Return, (Value::Nil, Value::Nil))),
-                NextValue::NotFound => Err("invalid table key".into_value(mc).into()),
+        "pairs",
+        AnyCallback::from_immediate_fn_with(mc, next, move |next, mc, table: Value| {
+            if let Some(mt) = match table {
+                Value::Table(t) => t.metatable(),
+                Value::UserData(u) => u.metatable(),
+                _ => None,
+            } {
+                let pairs = mt.get(mc, MetaMethod::Pairs);
+                if !pairs.is_nil() {
+                    let f = meta_ops::call(mc, pairs)?;
+                    return Ok((CallbackReturn::TailCall(f, None), [table, Value::Nil]));
+                }
             }
+
+            Ok((CallbackReturn::Return, [Value::from(*next), table]))
+        }),
+    )
+    .unwrap();
+
+    let inext = AnyCallback::from_fn(mc, |mc, stack| {
+        let (table, index): (Value, Option<i64>) =
+            FromMultiValue::from_multi_value(mc, stack.drain(..))?;
+        let next_index = index.unwrap_or(0) + 1;
+        Ok(match meta_ops::index(mc, table, next_index.into())? {
+            MetaResult::Value(v) => {
+                if !v.is_nil() {
+                    stack.extend([next_index.into(), v]);
+                }
+                CallbackReturn::Return.into()
+            }
+            MetaResult::Call(f, args) => {
+                stack.extend(args);
+                CallbackReturn::TailCall(
+                    f,
+                    Some(AnyContinuation::from_ok_fn(mc, move |_, stack| {
+                        if !stack.get(0).copied().unwrap_or(Value::Nil).is_nil() {
+                            stack.insert(0, next_index.into());
+                        }
+                        Ok(CallbackReturn::Return.into())
+                    })),
+                )
+                .into()
+            }
+        })
+    });
+
+    env.set(
+        mc,
+        "ipairs",
+        AnyCallback::from_immediate_fn_with(mc, inext, move |inext, _, table: Value| {
+            Ok((CallbackReturn::Return, [Value::from(*inext), table]))
         }),
     )
     .unwrap();
