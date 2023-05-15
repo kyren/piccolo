@@ -3,7 +3,8 @@ use std::io::{self, Write};
 use gc_arena::MutationContext;
 
 use crate::{
-    meta_ops, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, Table, Value,
+    meta_ops, table::NextValue, AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root,
+    Table, Value,
 };
 
 pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
@@ -140,6 +141,19 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
         AnyCallback::from_immediate_fn(mc, |mc, (t, mt): (Table, Option<Table>)| {
             t.set_metatable(mc, mt);
             Ok((CallbackReturn::Return, t))
+        }),
+    )
+    .unwrap();
+
+    env.set(
+        mc,
+        "next",
+        AnyCallback::from_immediate_fn(mc, |mc, (table, index): (Table, Value)| {
+            match table.next(mc, index) {
+                NextValue::Found { key, value } => Ok((CallbackReturn::Return, (key, value))),
+                NextValue::Last => Ok((CallbackReturn::Return, (Value::Nil, Value::Nil))),
+                NextValue::NotFound => Err("invalid table key".into_value(mc).into()),
+            }
         }),
     )
     .unwrap();

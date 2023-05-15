@@ -6,7 +6,8 @@ use std::{
 };
 
 use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
-use rustc_hash::FxHashMap;
+use hashbrown::raw::RawTable;
+use rustc_hash::FxHasher;
 
 use crate::{IntoValue, Value};
 
@@ -30,6 +31,14 @@ impl fmt::Display for InvalidTableKey {
             InvalidTableKey::IsNil => write!(fmt, "table key is Nil"),
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub enum NextValue<'gc> {
+    Found { key: Value<'gc>, value: Value<'gc> },
+    Last,
+    NotFound,
 }
 
 impl<'gc> PartialEq for Table<'gc> {
@@ -71,6 +80,19 @@ impl<'gc> Table<'gc> {
         self.0.borrow().entries.length()
     }
 
+    // Returns the next value after this key in the table order.
+    //
+    // The table order in the map portion of the table is defined by the incidental order of the
+    // internal bucket list. It is unspecified (but safe) to rely on this while inserting into the
+    // table.
+    //
+    // If given Nil, it will return the first pair in the table. If given a key that is present
+    // in the table, it will return the next pair in iteration order. If given a key that is not
+    // present in the table, the behavior is unspecified.
+    pub fn next<K: IntoValue<'gc>>(&self, mc: MutationContext<'gc, '_>, key: K) -> NextValue<'gc> {
+        self.0.borrow().entries.next(key.into_value(mc))
+    }
+
     pub fn metatable(&self) -> Option<Table<'gc>> {
         self.0.borrow().metatable
     }
@@ -91,11 +113,44 @@ pub struct TableState<'gc> {
     pub metatable: Option<Table<'gc>>,
 }
 
-#[derive(Debug, Collect, Default)]
-#[collect(no_drop)]
+#[derive(Default)]
 pub struct TableEntries<'gc> {
     array: Vec<Value<'gc>>,
-    map: FxHashMap<TableKey<'gc>, Value<'gc>>,
+    map: RawTable<(Value<'gc>, Value<'gc>)>,
+}
+
+impl<'gc> fmt::Debug for TableEntries<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(
+                self.array
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (Value::Integer(i.try_into().unwrap()), *v))
+                    .chain(unsafe {
+                        self.map.iter().map(|bucket| {
+                            let &(key, value) = bucket.as_ref();
+                            (key, value)
+                        })
+                    }),
+            )
+            .finish()
+    }
+}
+
+// SAFETY: Same as the automatic implementation, but hashbrown::RawTable does not have a `Collect`
+// impl.
+unsafe impl<'gc> Collect for TableEntries<'gc> {
+    fn trace(&self, cc: gc_arena::CollectionContext) {
+        self.array.trace(cc);
+        unsafe {
+            for bucket in self.map.iter() {
+                let (key, value) = bucket.as_ref();
+                key.trace(cc);
+                value.trace(cc);
+            }
+        }
+    }
 }
 
 impl<'gc> TableEntries<'gc> {
@@ -106,8 +161,12 @@ impl<'gc> TableEntries<'gc> {
             }
         }
 
-        if let Ok(key) = TableKey::new(key) {
-            self.map.get(&key).copied().unwrap_or(Value::Nil)
+        if let Ok(key) = table_key(key) {
+            if let Some(&(_, value)) = self.map.get(key_hash(key), |(k, _)| key_eq(key, *k)) {
+                value
+            } else {
+                Value::Nil
+            }
         } else {
             Value::Nil
         }
@@ -125,11 +184,22 @@ impl<'gc> TableEntries<'gc> {
             }
         }
 
-        let hash_key = TableKey::new(key)?;
+        let table_key = table_key(key)?;
+        let hash = key_hash(table_key);
         if value.is_nil() {
-            Ok(self.map.remove(&hash_key).unwrap_or(Value::Nil))
+            if let Some(bucket) = self.map.find(hash, |(k, _)| key_eq(*k, table_key)) {
+                unsafe { Ok(self.map.remove(bucket).1) }
+            } else {
+                Ok(Value::Nil)
+            }
         } else if self.map.len() < self.map.capacity() {
-            Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
+            if let Some(bucket) = self.map.find(hash, |(k, _)| key_eq(*k, table_key)) {
+                Ok(mem::replace(unsafe { &mut bucket.as_mut().1 }, value))
+            } else {
+                self.map
+                    .insert(hash, (table_key, value), |(k, _)| key_hash(*k));
+                Ok(Value::Nil)
+            }
         } else {
             // If a new element does not fit in either the array or map part of the table, we need
             // to grow. First, we find the total count of array candidate elements across the array
@@ -149,10 +219,13 @@ impl<'gc> TableEntries<'gc> {
                 }
             }
 
-            for k in self.map.keys() {
-                if let Some(i) = to_array_index(k.0) {
-                    array_counts[highest_bit(i)] += 1;
-                    array_total += 1;
+            unsafe {
+                for bucket in self.map.iter() {
+                    let &(key, _) = bucket.as_ref();
+                    if let Some(i) = to_array_index(key) {
+                        array_counts[highest_bit(i)] += 1;
+                        array_total += 1;
+                    }
                 }
             }
 
@@ -190,23 +263,21 @@ impl<'gc> TableEntries<'gc> {
                 self.array.resize(capacity, Value::Nil);
 
                 let array = &mut self.array;
-                self.map.retain(|k, v| {
-                    if let Some(i) = to_array_index(k.0) {
-                        if i < array.len() {
-                            array[i] = *v;
-                            return false;
+                unsafe {
+                    for bucket in self.map.iter() {
+                        let &(key, value) = bucket.as_ref();
+                        if let Some(i) = to_array_index(key) {
+                            // We do not need to call Rawiter::reflect_remove because we are
+                            // removing an item that the iterator already yielded.
+                            self.map.erase(bucket);
+                            array[i] = value;
                         }
                     }
-                    true
-                });
+                }
             } else {
-                // If we aren't growing the array, we're adding a new element to the map that
-                // won't fit in the advertised capacity. The capacity of std::collections::HashMap
-                // is just a lower-bound, so we may actually be able to insert past the capacity
-                // without the advertised capacity growing, so to make sure that we don't try to
-                // grow repeatedly, we need to make sure the capacity actually increases. We simply
-                // double the capacity here.
-                self.map.reserve(old_map_size);
+                // If we aren't growing the array, we're adding a new element to the map that won't
+                // fit in the advertised capacity. We explicitly double the map size here.
+                self.map.reserve(old_map_size, |(key, _)| key_hash(*key));
             }
 
             // Now we can insert the new key value pair
@@ -215,7 +286,13 @@ impl<'gc> TableEntries<'gc> {
                     return Ok(mem::replace(&mut self.array[index], value));
                 }
             }
-            Ok(self.map.insert(hash_key, value).unwrap_or(Value::Nil))
+            if let Some(bucket) = self.map.find(hash, |(k, _)| key_eq(*k, table_key)) {
+                Ok(mem::replace(unsafe { &mut bucket.as_mut().1 }, value))
+            } else {
+                self.map
+                    .insert(hash, (table_key, value), |(k, _)| key_hash(*k));
+                Ok(Value::Nil)
+            }
         }
     }
 
@@ -247,7 +324,7 @@ impl<'gc> TableEntries<'gc> {
             // If the array part ends in a Nil, there must be a border inside it
             binary_search(0, array_len, |i| self.array[i as usize - 1].is_nil())
         } else if self.map.is_empty() {
-            // If there is no border in the arraay but the map part is empty, then the array length
+            // If there is no border in the array but the map part is empty, then the array length
             // is a border
             array_len
         } else {
@@ -255,7 +332,11 @@ impl<'gc> TableEntries<'gc> {
             // the map part as the max for a binary search.
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
-            while self.map.contains_key(&TableKey(Value::Integer(max))) {
+            while self
+                .map
+                .find(key_hash(max.into()), |(k, _)| key_eq(max.into(), *k))
+                .is_some()
+            {
                 if max == i64::MAX {
                     // If we can't find a nil entry by doubling, then the table is pathalogical. We
                     // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
@@ -271,94 +352,146 @@ impl<'gc> TableEntries<'gc> {
 
             // We have found a max where table[max] == nil, so we can now binary search
             binary_search(min, max, |i| {
-                !self.map.contains_key(&TableKey(Value::Integer(i)))
+                self.map
+                    .find(key_hash(i.into()), |(k, _)| key_eq(i.into(), *k))
+                    .is_none()
             })
         }
     }
-}
 
-// Value which implements Hash and Eq, and cannot contain Nil or NaN values.
-#[derive(Debug, Collect)]
-#[collect(no_drop)]
-struct TableKey<'gc>(Value<'gc>);
+    pub fn next(&self, key: Value<'gc>) -> NextValue<'gc> {
+        let array_result = if let Some(index_key) = to_array_index(key) {
+            if index_key < self.array.len() {
+                Some((index_key + 1, self.array[index_key].is_nil()))
+            } else {
+                None
+            }
+        } else if key.is_nil() {
+            // Nil is never considered missing, it is the "key" before the first key.
+            Some((0, false))
+        } else {
+            None
+        };
 
-impl<'gc> PartialEq for TableKey<'gc> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.0, other.0) {
-            (Value::Nil, Value::Nil) => true,
-            (Value::Boolean(a), Value::Boolean(b)) => a == b,
-            (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::Table(a), Value::Table(b)) => a == b,
-            (Value::Function(a), Value::Function(b)) => a == b,
-            (Value::Thread(a), Value::Thread(b)) => a == b,
-            (Value::UserData(a), Value::UserData(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl<'gc> Eq for TableKey<'gc> {}
-
-impl<'gc> Hash for TableKey<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match &self.0 {
-            Value::Nil => unreachable!(),
-            Value::Boolean(b) => {
-                Hash::hash(&1, state);
-                b.hash(state);
-            }
-            Value::Integer(i) => {
-                Hash::hash(&2, state);
-                i.hash(state);
-            }
-            Value::Number(n) => {
-                Hash::hash(&3, state);
-                canonical_float_bytes(*n).hash(state);
-            }
-            Value::String(s) => {
-                Hash::hash(&4, state);
-                s.hash(state);
-            }
-            Value::Table(t) => {
-                Hash::hash(&5, state);
-                t.hash(state);
-            }
-            Value::Function(c) => {
-                Hash::hash(&6, state);
-                c.hash(state);
-            }
-            Value::Thread(t) => {
-                Hash::hash(&7, state);
-                t.hash(state);
-            }
-            Value::UserData(u) => {
-                Hash::hash(&8, state);
-                u.hash(state);
-            }
-        }
-    }
-}
-
-impl<'gc> TableKey<'gc> {
-    fn new(value: Value<'gc>) -> Result<TableKey<'gc>, InvalidTableKey> {
-        match value {
-            Value::Nil => Err(InvalidTableKey::IsNil),
-            Value::Number(n) => {
-                // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
-                // to themselves when cast back to f64 are considered integer keys.
-                if n.is_nan() {
-                    Err(InvalidTableKey::IsNaN)
-                } else if let Some(i) = f64_to_i64(n) {
-                    Ok(TableKey(Value::Integer(i)))
-                } else {
-                    Ok(TableKey(Value::Number(n)))
+        if let Some((start_index, is_missing)) = array_result {
+            for i in start_index..self.array.len() {
+                if !self.array[i].is_nil() {
+                    return NextValue::Found {
+                        key: Value::Integer((i + 1).try_into().unwrap()),
+                        value: self.array[i],
+                    };
                 }
             }
-            v => Ok(TableKey(v)),
+
+            if is_missing {
+                return NextValue::NotFound;
+            }
+
+            unsafe {
+                for bucket_index in 0..self.map.buckets() {
+                    if self.map.is_bucket_full(bucket_index) {
+                        let (key, value) = *self.map.bucket(bucket_index).as_ref();
+                        return NextValue::Found { key, value };
+                    }
+                }
+            }
+
+            return NextValue::Last;
+        }
+
+        if let Ok(table_key) = table_key(key) {
+            if let Some(bucket) = self
+                .map
+                .find(key_hash(table_key), |(k, _)| key_eq(*k, table_key))
+            {
+                unsafe {
+                    let bucket_index = self.map.bucket_index(&bucket);
+                    for i in bucket_index + 1..self.map.buckets() {
+                        if self.map.is_bucket_full(i) {
+                            let (key, value) = *self.map.bucket(i).as_ref();
+                            return NextValue::Found { key, value };
+                        }
+                    }
+                }
+                return NextValue::Last;
+            }
+        }
+
+        NextValue::NotFound
+    }
+}
+
+fn table_key<'gc>(value: Value<'gc>) -> Result<Value<'gc>, InvalidTableKey> {
+    match value {
+        Value::Nil => Err(InvalidTableKey::IsNil),
+        Value::Number(n) => {
+            // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
+            // to themselves when cast back to f64 are considered integer keys.
+            if n.is_nan() {
+                Err(InvalidTableKey::IsNaN)
+            } else if let Some(i) = f64_to_i64(n) {
+                Ok(Value::Integer(i))
+            } else {
+                Ok(Value::Number(n))
+            }
+        }
+        v => Ok(v),
+    }
+}
+
+fn key_eq<'gc>(a: Value<'gc>, b: Value<'gc>) -> bool {
+    match (a, b) {
+        (Value::Nil, Value::Nil) => true,
+        (Value::Boolean(a), Value::Boolean(b)) => a == b,
+        (Value::Integer(a), Value::Integer(b)) => a == b,
+        (Value::Number(a), Value::Number(b)) => a == b,
+        (Value::String(a), Value::String(b)) => a == b,
+        (Value::Table(a), Value::Table(b)) => a == b,
+        (Value::Function(a), Value::Function(b)) => a == b,
+        (Value::Thread(a), Value::Thread(b)) => a == b,
+        (Value::UserData(a), Value::UserData(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn key_hash<'gc>(value: Value<'gc>) -> u64 {
+    let mut state = FxHasher::default();
+    match value {
+        Value::Nil => unreachable!(),
+        Value::Boolean(b) => {
+            Hash::hash(&1, &mut state);
+            b.hash(&mut state);
+        }
+        Value::Integer(i) => {
+            Hash::hash(&2, &mut state);
+            i.hash(&mut state);
+        }
+        Value::Number(n) => {
+            Hash::hash(&3, &mut state);
+            canonical_float_bytes(n).hash(&mut state);
+        }
+        Value::String(s) => {
+            Hash::hash(&4, &mut state);
+            s.hash(&mut state);
+        }
+        Value::Table(t) => {
+            Hash::hash(&5, &mut state);
+            t.hash(&mut state);
+        }
+        Value::Function(c) => {
+            Hash::hash(&6, &mut state);
+            c.hash(&mut state);
+        }
+        Value::Thread(t) => {
+            Hash::hash(&7, &mut state);
+            t.hash(&mut state);
+        }
+        Value::UserData(u) => {
+            Hash::hash(&8, &mut state);
+            u.hash(&mut state);
         }
     }
+    state.finish()
 }
 
 // Returns the closest i64 to a given f64 such that casting the i64 back to an f64 results in an
@@ -393,7 +526,7 @@ fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
     };
 
     if i > 0 {
-        Some(i as usize - 1)
+        Some(usize::try_from(i).ok()? - 1)
     } else {
         None
     }

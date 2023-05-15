@@ -35,6 +35,8 @@ impl<'gc> PartialEq for Thread<'gc> {
     }
 }
 
+impl<'gc> Eq for Thread<'gc> {}
+
 impl<'gc> Hash for Thread<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.as_ptr().hash(state)
