@@ -49,9 +49,9 @@ additional risk)*.
 https://github.com/kyren/gc-arena), and also on crates.io. See the
 README in the linked repo for more detail about the GC design.*
 
-`piccolo` has a real, cycle detecting, incremental garbage collector with zero-
-cost `Gc` pointers (they are machine pointer sized and implement `Copy`) that
-are usable from safe Rust. It achieves this by combining two things:
+`piccolo` has a real, cycle detecting, incremental garbage collector with
+zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)
+that are usable from safe Rust. It achieves this by combining two things:
 
 1) An unsafe `Collect` trait which allows tracing through garbage collected
    types that, despite being unsafe, can be implemented safely using procedural
