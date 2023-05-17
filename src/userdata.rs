@@ -6,7 +6,7 @@ use std::{
     mem,
 };
 
-use gc_arena::{Collect, MutationContext, Root, Rootable};
+use gc_arena::{Collect, Mutation, Root, Rootable};
 
 use crate::{any::AnyCell, Table};
 
@@ -46,7 +46,7 @@ impl<'gc> Hash for AnyUserData<'gc> {
 }
 
 impl<'gc> AnyUserData<'gc> {
-    pub fn new<R>(mc: MutationContext<'gc, '_>, val: Root<'gc, R>) -> Self
+    pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a>,
         Root<'gc, R>: Sized,
@@ -72,7 +72,7 @@ impl<'gc> AnyUserData<'gc> {
 
     pub fn write<'a, R>(
         &'a self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
     ) -> Result<RefMut<'a, Root<'gc, R>>, UserDataError>
     where
         R: for<'b> Rootable<'b>,
@@ -91,7 +91,7 @@ impl<'gc> AnyUserData<'gc> {
 
     pub fn set_metatable(
         &self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
         mem::replace(&mut self.0.write_metadata(mc).unwrap().metatable, metatable)

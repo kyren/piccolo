@@ -5,7 +5,7 @@ use std::{
     i64, mem,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
+use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 use hashbrown::raw::RawTable;
 use rustc_hash::FxHasher;
 
@@ -56,17 +56,17 @@ impl<'gc> Hash for Table<'gc> {
 }
 
 impl<'gc> Table<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> Table<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> Table<'gc> {
         Table(Gc::new(mc, RefLock::new(TableState::default())))
     }
 
-    pub fn get<K: IntoValue<'gc>>(&self, mc: MutationContext<'gc, '_>, key: K) -> Value<'gc> {
+    pub fn get<K: IntoValue<'gc>>(&self, mc: &Mutation<'gc>, key: K) -> Value<'gc> {
         self.0.borrow().entries.get(key.into_value(mc))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
         &self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
@@ -89,7 +89,7 @@ impl<'gc> Table<'gc> {
     // If given Nil, it will return the first pair in the table. If given a key that is present
     // in the table, it will return the next pair in iteration order. If given a key that is not
     // present in the table, the behavior is unspecified.
-    pub fn next<K: IntoValue<'gc>>(&self, mc: MutationContext<'gc, '_>, key: K) -> NextValue<'gc> {
+    pub fn next<K: IntoValue<'gc>>(&self, mc: &Mutation<'gc>, key: K) -> NextValue<'gc> {
         self.0.borrow().entries.next(key.into_value(mc))
     }
 
@@ -99,7 +99,7 @@ impl<'gc> Table<'gc> {
 
     pub fn set_metatable(
         &self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
         mem::replace(&mut self.0.borrow_mut(mc).metatable, metatable)
@@ -134,7 +134,7 @@ impl<'gc> fmt::Debug for TableEntries<'gc> {
 }
 
 unsafe impl<'gc> Collect for TableEntries<'gc> {
-    fn trace(&self, cc: gc_arena::CollectionContext) {
+    fn trace(&self, cc: &gc_arena::Collection) {
         self.array.trace(cc);
         for (key, value) in table_iter(&self.map) {
             key.trace(cc);
@@ -479,7 +479,7 @@ fn key_eq<'gc>(a: Value<'gc>, b: Value<'gc>) -> bool {
 fn key_hash<'gc>(value: Value<'gc>) -> u64 {
     let mut state = FxHasher::default();
     match value {
-        Value::Nil => unreachable!(),
+        Value::Nil => Hash::hash(&0, &mut state),
         Value::Boolean(b) => {
             Hash::hash(&1, &mut state);
             b.hash(&mut state);

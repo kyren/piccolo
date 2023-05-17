@@ -1,11 +1,11 @@
-use gc_arena::{Collect, MutationContext};
+use gc_arena::{Collect, Mutation};
 
 use crate::{
     conversion::Variadic, AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Function,
     IntoValue, Root, Sequence, Table, Thread, ThreadMode, TypeError, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
+pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, _root: Root<'gc>, env: Table<'gc>) {
     let coroutine = Table::new(mc);
 
     coroutine
@@ -47,7 +47,7 @@ pub fn load_coroutine<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: 
                 impl<'gc> Sequence<'gc> for ThreadSequence {
                     fn step(
                         &mut self,
-                        mc: MutationContext<'gc, '_>,
+                        mc: &Mutation<'gc>,
                         stack: &mut Vec<Value<'gc>>,
                     ) -> Result<Option<CallbackReturn<'gc>>, crate::Error<'gc>>
                     {

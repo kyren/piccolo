@@ -7,7 +7,7 @@ mod register_allocator;
 
 use std::io::Read;
 
-use gc_arena::MutationContext;
+use gc_arena::Mutation;
 
 use crate::{string::InternedStringSet, Error, FunctionProto, String};
 
@@ -19,14 +19,14 @@ pub use self::{
 };
 
 pub fn compile<'gc, R: Read>(
-    mc: MutationContext<'gc, '_>,
+    mc: &Mutation<'gc>,
     strings: InternedStringSet<'gc>,
     source: R,
 ) -> Result<FunctionProto<'gc>, Error<'gc>> {
     #[derive(Copy, Clone)]
     struct Interner<'gc, 'a> {
         strings: InternedStringSet<'gc>,
-        mc: MutationContext<'gc, 'a>,
+        mc: &'a Mutation<'gc>,
     }
 
     impl<'gc, 'a> StringInterner for Interner<'gc, 'a> {

@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use gc_arena::MutationContext;
+use gc_arena::Mutation;
 
 use crate::{
     meta_ops::{self, MetaMethod, MetaResult},
@@ -8,7 +8,7 @@ use crate::{
     AnyCallback, AnyContinuation, CallbackReturn, FromMultiValue, IntoValue, Root, Table, Value,
 };
 
-pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table<'gc>) {
+pub fn load_base<'gc>(mc: &Mutation<'gc>, _root: Root<'gc>, env: Table<'gc>) {
     env.set(
         mc,
         "print",
@@ -147,7 +147,7 @@ pub fn load_base<'gc>(mc: MutationContext<'gc, '_>, _root: Root<'gc>, env: Table
     .unwrap();
 
     fn next<'gc>(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         table: Table<'gc>,
         index: Value<'gc>,
     ) -> Result<(Value<'gc>, Value<'gc>), Value<'gc>> {

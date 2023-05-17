@@ -1,4 +1,4 @@
-use gc_arena::{Gc, MutationContext};
+use gc_arena::{Gc, Mutation};
 
 use crate::{
     meta_ops::{self, MetaResult},
@@ -12,7 +12,7 @@ use crate::{
 // changed. Returns the number of instructions that were not run, or 0 if all requested instructions
 // were run.
 pub(crate) fn run_vm<'gc>(
-    mc: MutationContext<'gc, '_>,
+    mc: &Mutation<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     mut instructions: u32,
 ) -> Result<u32, Error<'gc>> {

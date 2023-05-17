@@ -1,8 +1,8 @@
-use gc_arena::MutationContext;
+use gc_arena::Mutation;
 
 use crate::{AnyCallback, CallbackReturn, IntoValue, Root, Table, Value};
 
-pub fn load_string<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
+pub fn load_string<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
     let string = Table::new(mc);
 
     string

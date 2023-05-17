@@ -1,6 +1,6 @@
 use std::{cell::RefCell, f64, ops::DerefMut, rc::Rc};
 
-use gc_arena::MutationContext;
+use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
@@ -8,14 +8,10 @@ use crate::{
     IntoValue, Root, Table, Value,
 };
 
-pub fn load_math<'gc>(mc: MutationContext<'gc, '_>, _: Root<'gc>, env: Table<'gc>) {
-    fn callback<'gc, F, A, R>(
-        name: &'static str,
-        mc: MutationContext<'gc, '_>,
-        f: F,
-    ) -> AnyCallback<'gc>
+pub fn load_math<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
+    fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> AnyCallback<'gc>
     where
-        F: Fn(MutationContext<'gc, '_>, A) -> Option<R> + 'static,
+        F: Fn(&Mutation<'gc>, A) -> Option<R> + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {

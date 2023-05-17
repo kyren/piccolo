@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, MutationContext, Root, Rootable};
+use gc_arena::{lock::RefLock, Collect, Gc, Mutation, Root, Rootable};
 
 /// Garbage collected `Any` type that can be downcast.
 #[derive(Copy, Clone, Collect)]
@@ -24,7 +24,7 @@ where
 }
 
 impl<'gc, M> AnyCell<'gc, M> {
-    pub fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
+    pub fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
         R: for<'a> Rootable<'a>,
@@ -46,7 +46,7 @@ impl<'gc, M> AnyCell<'gc, M> {
 
     pub fn write_metadata<'a>(
         &'a self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
     ) -> Result<RefMut<'a, M>, BorrowMutError> {
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { self.0.metadata().as_ref_cell().try_borrow_mut() };
@@ -68,7 +68,7 @@ impl<'gc, M> AnyCell<'gc, M> {
 
     pub fn write_data<'a, R>(
         &'a self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
     ) -> Option<Result<RefMut<'a, Root<'gc, R>>, BorrowMutError>>
     where
         R: for<'b> Rootable<'b>,
@@ -146,7 +146,7 @@ impl<'gc, M> Clone for AnyValue<'gc, M> {
 }
 
 impl<'gc, M> AnyValue<'gc, M> {
-    fn new<R>(mc: MutationContext<'gc, '_>, metadata: M, data: Root<'gc, R>) -> Self
+    fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
         R: for<'a> Rootable<'a>,

@@ -1,4 +1,4 @@
-use gc_arena::{Collect, MutationContext};
+use gc_arena::{Collect, Mutation};
 
 use crate::{AnyCallback, CallbackReturn, Function, IntoValue, TypeError, Value};
 
@@ -21,7 +21,7 @@ impl MetaMethod {
 }
 
 impl<'gc> IntoValue<'gc> for MetaMethod {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         self.name().into_value(mc)
     }
 }
@@ -34,7 +34,7 @@ pub enum MetaResult<'gc, const N: usize> {
 }
 
 pub fn index<'gc>(
-    mc: MutationContext<'gc, '_>,
+    mc: &Mutation<'gc>,
     table: Value<'gc>,
     key: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, TypeError> {
@@ -105,7 +105,7 @@ pub fn index<'gc>(
     }
 }
 
-pub fn call<'gc>(mc: MutationContext<'gc, '_>, v: Value<'gc>) -> Result<Function<'gc>, TypeError> {
+pub fn call<'gc>(mc: &Mutation<'gc>, v: Value<'gc>) -> Result<Function<'gc>, TypeError> {
     let metatable = match v {
         Value::Function(f) => return Ok(f),
         Value::Table(t) => t.metatable(),

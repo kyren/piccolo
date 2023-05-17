@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt, io, string::String as StdString};
 
-use gc_arena::{Collect, MutationContext};
+use gc_arena::{Collect, Mutation};
 
 use crate::{
     compiler::ParserError, BadThreadMode, BinaryOperatorError, ClosureError, CompilerError,
@@ -149,7 +149,7 @@ impl<'gc> Error<'gc> {
         }
     }
 
-    pub fn to_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    pub fn to_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         match self {
             Error::RuntimeError(error) => error,
             other => Value::String(String::from_slice(mc, other.to_string().as_bytes())),

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gc_arena::{Collect, DynamicRoot, DynamicRootSet, MutationContext, Rootable};
+use gc_arena::{Collect, DynamicRoot, DynamicRootSet, Mutation, Rootable};
 
 use crate::{AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, Value};
 
@@ -182,7 +182,7 @@ pub struct Registry<'gc> {
 }
 
 impl<'gc> Registry<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> Self {
+    pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             roots: DynamicRootSet::new(mc),
         }
@@ -192,7 +192,7 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
-    pub fn stash<R: Stashable<'gc>>(&self, mc: MutationContext<'gc, '_>, r: R) -> R::Stashed {
+    pub fn stash<R: Stashable<'gc>>(&self, mc: &Mutation<'gc>, r: R) -> R::Stashed {
         r.stash(&self.roots, mc)
     }
 
@@ -204,7 +204,7 @@ impl<'gc> Registry<'gc> {
 pub trait Stashable<'gc> {
     type Stashed;
 
-    fn stash(self, roots: &DynamicRootSet<'gc>, mc: MutationContext<'gc, '_>) -> Self::Stashed;
+    fn stash(self, roots: &DynamicRootSet<'gc>, mc: &Mutation<'gc>) -> Self::Stashed;
 }
 
 pub trait Fetchable<'gc> {
@@ -221,7 +221,7 @@ macro_rules! reg_type {
             fn stash(
                 self,
                 roots: &DynamicRootSet<'gc>,
-                mc: MutationContext<'gc, '_>,
+                mc: &Mutation<'gc>,
             ) -> Self::Stashed {
                 $r(roots.stash::<Rootable!['a => $t<'a>]>(mc, self))
             }
@@ -258,7 +258,7 @@ fetch_type!(StaticUserData, AnyUserData);
 impl<'gc> Stashable<'gc> for Function<'gc> {
     type Stashed = StaticFunction;
 
-    fn stash(self, roots: &DynamicRootSet<'gc>, mc: MutationContext<'gc, '_>) -> Self::Stashed {
+    fn stash(self, roots: &DynamicRootSet<'gc>, mc: &Mutation<'gc>) -> Self::Stashed {
         match self {
             Function::Closure(closure) => StaticFunction::Closure(closure.stash(roots, mc)),
             Function::Callback(callback) => StaticFunction::Callback(callback.stash(roots, mc)),
@@ -280,7 +280,7 @@ impl<'gc> Fetchable<'gc> for StaticFunction {
 impl<'gc> Stashable<'gc> for Value<'gc> {
     type Stashed = StaticValue;
 
-    fn stash(self, roots: &DynamicRootSet<'gc>, mc: MutationContext<'gc, '_>) -> Self::Stashed {
+    fn stash(self, roots: &DynamicRootSet<'gc>, mc: &Mutation<'gc>) -> Self::Stashed {
         match self {
             Value::Nil => StaticValue::Nil,
             Value::Boolean(b) => StaticValue::Boolean(b),

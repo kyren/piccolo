@@ -10,7 +10,7 @@ use std::{
     string::String as StdString,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, MutationContext};
+use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 use rustc_hash::FxHashSet;
 
 use crate::Value;
@@ -29,7 +29,7 @@ enum Header {
 }
 
 impl<'gc> String<'gc> {
-    pub fn from_buffer(mc: MutationContext<'gc, '_>, s: Box<[u8]>) -> String<'gc> {
+    pub fn from_buffer(mc: &Mutation<'gc>, s: Box<[u8]>) -> String<'gc> {
         #[derive(Collect)]
         #[collect(require_static)]
         #[repr(transparent)]
@@ -51,8 +51,8 @@ impl<'gc> String<'gc> {
         String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
 
-    pub fn from_slice<S: ?Sized + AsRef<[u8]>>(mc: MutationContext<'gc, '_>, s: &S) -> String<'gc> {
-        fn create<'gc, const N: usize>(mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+    pub fn from_slice<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &S) -> String<'gc> {
+        fn create<'gc, const N: usize>(mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
             #[derive(Collect)]
             #[collect(require_static)]
             #[repr(C)]
@@ -89,10 +89,7 @@ impl<'gc> String<'gc> {
         Self::from_buffer(mc, Box::from(s))
     }
 
-    pub fn from_static<S: ?Sized + AsRef<[u8]>>(
-        mc: MutationContext<'gc, '_>,
-        s: &'static S,
-    ) -> String<'gc> {
+    pub fn from_static<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &'static S) -> String<'gc> {
         String(Gc::new(mc, Header::Indirect(s.as_ref())))
     }
 
@@ -153,10 +150,7 @@ impl<'gc> fmt::Display for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn concat(
-        mc: MutationContext<'gc, '_>,
-        values: &[Value<'gc>],
-    ) -> Result<String<'gc>, StringError> {
+    pub fn concat(mc: &Mutation<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, StringError> {
         let mut bytes = Vec::new();
         for value in values {
             match value {
@@ -231,11 +225,11 @@ impl<'gc> Hash for String<'gc> {
 pub struct InternedStringSet<'gc>(Gc<'gc, RefLock<FxHashSet<String<'gc>>>>);
 
 impl<'gc> InternedStringSet<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> InternedStringSet<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> InternedStringSet<'gc> {
         InternedStringSet(Gc::new(mc, RefLock::new(FxHashSet::default())))
     }
 
-    pub fn new_string(&self, mc: MutationContext<'gc, '_>, s: &[u8]) -> String<'gc> {
+    pub fn new_string(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
         if let Some(found) = self.0.borrow().get(s) {
             return *found;
         }

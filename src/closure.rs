@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{lock::Lock, Collect, Gc, MutationContext};
+use gc_arena::{lock::Lock, Collect, Gc, Mutation};
 
 use crate::{
     CompiledPrototype, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
@@ -31,7 +31,7 @@ pub struct FunctionProto<'gc> {
 
 impl<'gc> FunctionProto<'gc> {
     pub fn from_compiled(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         compiled_function: CompiledPrototype<String<'gc>>,
     ) -> Self {
         Self {
@@ -112,7 +112,7 @@ impl fmt::Display for ClosureError {
 impl<'gc> Closure<'gc> {
     /// Create a top-level closure, prototype must not have any upvalues besides _ENV.
     pub fn new(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         proto: FunctionProto<'gc>,
         environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, ClosureError> {

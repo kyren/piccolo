@@ -8,7 +8,7 @@ use std::{
 
 use gc_arena::{
     lock::{Lock, RefLock},
-    Collect, Gc, MutationContext,
+    Collect, Gc, Mutation,
 };
 
 use crate::{
@@ -59,7 +59,7 @@ pub enum ThreadMode {
 }
 
 impl<'gc> Thread<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> Thread<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> Thread<'gc> {
         Thread(Gc::new(
             mc,
             RefLock::new(ThreadState {
@@ -83,7 +83,7 @@ impl<'gc> Thread<'gc> {
     /// If this thread is `Stopped`, start a new function with the given arguments.
     pub fn start(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
@@ -100,7 +100,7 @@ impl<'gc> Thread<'gc> {
     /// If this thread is `Stopped`, start a new suspended function.
     pub fn start_suspended(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
@@ -112,7 +112,7 @@ impl<'gc> Thread<'gc> {
     /// thread back to the `Stopped` (or `Suspended`) mode.
     pub fn take_return<T: FromMultiValue<'gc>>(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Return)?;
         Ok(state
@@ -125,7 +125,7 @@ impl<'gc> Thread<'gc> {
     /// If the thread is in `Suspended` mode, resume it.
     pub fn resume(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
@@ -162,11 +162,7 @@ impl<'gc> Thread<'gc> {
     }
 
     /// If the thread is in `Suspended` mode, cause an error wherever the thread was suspended.
-    pub fn resume_err(
-        self,
-        mc: MutationContext<'gc, '_>,
-        error: Error<'gc>,
-    ) -> Result<(), BadThreadMode> {
+    pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
         assert!(state.external_stack.is_empty());
         state.unwind(mc, error);
@@ -175,7 +171,7 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
-    pub fn step(self, mc: MutationContext<'gc, '_>) -> Result<(), BadThreadMode> {
+    pub fn step(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
         let mut state = self.check_mode(mc, ThreadMode::Normal)?;
         match state.frames.pop().expect("no frame to step") {
             Frame::Callback(callback) => {
@@ -296,7 +292,7 @@ impl<'gc> Thread<'gc> {
 
     fn check_mode<'a>(
         &'a self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         expected: ThreadMode,
     ) -> Result<RefMut<'a, ThreadState<'gc>>, BadThreadMode> {
         assert!(expected != ThreadMode::Running);
@@ -467,7 +463,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // placed starting at the function register.
     pub(crate) fn call_function(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
@@ -537,7 +533,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // aruments, and all registers past this are invalidated as normal.
     pub(crate) fn call_function_keep(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         func: RegisterIndex,
         arg_count: u8,
         returns: VarCount,
@@ -610,7 +606,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Nothing at all in the frame is invalidated, other than placing the return value.
     pub(crate) fn call_meta_function(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
         ret_index: RegisterIndex,
@@ -676,7 +672,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // frame, pushing a new frame for the given function.
     pub(crate) fn tail_call_function(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         func: RegisterIndex,
         args: VarCount,
     ) -> Result<(), ThreadError> {
@@ -749,7 +745,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Return to the upper frame with results starting at the given register index.
     pub(crate) fn return_upper(
         self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         start: RegisterIndex,
         count: VarCount,
     ) -> Result<(), ThreadError> {
@@ -845,11 +841,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 }
 
 impl<'gc, 'a> LuaRegisters<'gc, 'a> {
-    pub(crate) fn open_upvalue(
-        &mut self,
-        mc: MutationContext<'gc, '_>,
-        reg: RegisterIndex,
-    ) -> UpValue<'gc> {
+    pub(crate) fn open_upvalue(&mut self, mc: &Mutation<'gc>, reg: RegisterIndex) -> UpValue<'gc> {
         let ind = self.base + reg.0 as usize;
         match self.open_upvalues.entry(ind) {
             BTreeEntry::Occupied(occupied) => *occupied.get(),
@@ -880,7 +872,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
     pub(crate) fn set_upvalue(
         &mut self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         upvalue: UpValue<'gc>,
         value: Value<'gc>,
     ) {
@@ -902,7 +894,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub(crate) fn close_upvalues(&mut self, mc: MutationContext<'gc, '_>, register: RegisterIndex) {
+    pub(crate) fn close_upvalues(&mut self, mc: &Mutation<'gc>, register: RegisterIndex) {
         for (_, upval) in self
             .open_upvalues
             .split_off(&(self.base + register.0 as usize))
@@ -1036,7 +1028,7 @@ impl<'gc> ThreadState<'gc> {
         };
     }
 
-    fn unwind(&mut self, mc: MutationContext<'gc, '_>, error: Error<'gc>) {
+    fn unwind(&mut self, mc: &Mutation<'gc>, error: Error<'gc>) {
         self.external_stack.clear();
         while let Some(frame) = self.frames.pop() {
             if let Frame::PendingContinuation {
@@ -1092,7 +1084,7 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    fn close_upvalues(&mut self, mc: MutationContext<'gc, '_>, bottom: usize) {
+    fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom: usize) {
         for (_, upval) in self.open_upvalues.split_off(&bottom) {
             if let UpValueState::Open(upvalue_thread, ind) = upval.0.get() {
                 assert!(upvalue_thread.0.as_ptr() == self);

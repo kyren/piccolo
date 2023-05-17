@@ -1,4 +1,4 @@
-use gc_arena::{Arena, ArenaParameters, Collect, MutationContext, Rootable};
+use gc_arena::{Arena, ArenaParameters, Collect, Mutation, Rootable};
 
 use crate::{
     stdlib::{load_base, load_coroutine, load_math, load_string},
@@ -16,7 +16,7 @@ pub struct Root<'gc> {
 }
 
 impl<'gc> Root<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> Root<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> Root<'gc> {
         let root = Root {
             main_thread: Thread::new(mc),
             globals: Table::new(mc),
@@ -46,7 +46,7 @@ impl Lua {
     /// place.
     pub fn run<F, R>(&mut self, f: F) -> R
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc>) -> R,
+        F: for<'gc> FnOnce(&Mutation<'gc>, Root<'gc>) -> R,
     {
         let r = self.0.mutate(move |mc, root| f(mc, *root));
         if self.0.allocation_debt() > COLLECTOR_GRANULARITY {
@@ -57,7 +57,7 @@ impl Lua {
 
     pub fn try_run<F, T>(&mut self, f: F) -> Result<T, StaticError>
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc>) -> Result<T, Error<'gc>>,
+        F: for<'gc> FnOnce(&Mutation<'gc>, Root<'gc>) -> Result<T, Error<'gc>>,
     {
         self.run(move |mc, root| f(mc, root).map_err(Error::to_static))
     }

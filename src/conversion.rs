@@ -1,36 +1,36 @@
 use std::{array, iter, ops, string::String as StdString, vec};
 
-use gc_arena::MutationContext;
+use gc_arena::Mutation;
 
 use crate::{AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, TypeError, Value};
 
 pub trait IntoValue<'gc> {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc>;
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc>;
 }
 
 impl<'gc, T> IntoValue<'gc> for T
 where
     T: Into<Value<'gc>>,
 {
-    fn into_value(self, _mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, _mc: &Mutation<'gc>) -> Value<'gc> {
         self.into()
     }
 }
 
 impl<'gc> IntoValue<'gc> for &'static str {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         Value::String(String::from_static(mc, self.as_bytes()))
     }
 }
 
 impl<'gc> IntoValue<'gc> for StdString {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         Value::String(String::from_slice(mc, self.as_bytes()))
     }
 }
 
 impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Option<T> {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         match self {
             Some(t) => t.into_value(mc),
             None => Value::Nil,
@@ -39,7 +39,7 @@ impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Option<T> {
 }
 
 impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Vec<T> {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         let table = Table::new(mc);
         for (i, v) in self.into_iter().enumerate() {
             table.set(mc, i64::try_from(i).unwrap() + 1, v).unwrap();
@@ -49,7 +49,7 @@ impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Vec<T> {
 }
 
 impl<'gc, 'a, T: IntoValue<'gc> + Copy> IntoValue<'gc> for &'a Vec<T> {
-    fn into_value(self, mc: MutationContext<'gc, '_>) -> Value<'gc> {
+    fn into_value(self, mc: &Mutation<'gc>) -> Value<'gc> {
         let table = Table::new(mc);
         for (i, v) in self.iter().copied().enumerate() {
             table.set(mc, i64::try_from(i).unwrap() + 1, v).unwrap();
@@ -59,17 +59,17 @@ impl<'gc, 'a, T: IntoValue<'gc> + Copy> IntoValue<'gc> for &'a Vec<T> {
 }
 
 pub trait FromValue<'gc>: Sized {
-    fn from_value(mc: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError>;
+    fn from_value(mc: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError>;
 }
 
 impl<'gc> FromValue<'gc> for Value<'gc> {
-    fn from_value(_: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+    fn from_value(_: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         Ok(value)
     }
 }
 
 impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Option<T> {
-    fn from_value(mc: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+    fn from_value(mc: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         Ok(if value.is_nil() {
             None
         } else {
@@ -79,7 +79,7 @@ impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Option<T> {
 }
 
 impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Vec<T> {
-    fn from_value(mc: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+    fn from_value(mc: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         if let Value::Table(table) = value {
             (1..=table.length())
                 .into_iter()
@@ -99,7 +99,7 @@ macro_rules! impl_int_from {
         $(
             impl<'gc> FromValue<'gc> for $i {
                 fn from_value(
-                    _: MutationContext<'gc, '_>,
+                    _: &Mutation<'gc>,
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
                     if let Some(i) = value.to_integer() {
@@ -129,7 +129,7 @@ macro_rules! impl_float_from {
         $(
             impl<'gc> FromValue<'gc> for $f {
                 fn from_value(
-                    _: MutationContext<'gc, '_>,
+                    _: &Mutation<'gc>,
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
                     if let Some(n) = value.to_number() {
@@ -152,7 +152,7 @@ macro_rules! impl_from {
         $(
             impl<'gc> FromValue<'gc> for $t {
                 fn from_value(
-                    _: MutationContext<'gc, '_>,
+                    _: &Mutation<'gc>,
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
                     match value {
@@ -179,7 +179,7 @@ impl_from! {
 }
 
 impl<'gc> FromValue<'gc> for Closure<'gc> {
-    fn from_value(_: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+    fn from_value(_: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         match value {
             Value::Function(Function::Closure(c)) => Ok(c),
             Value::Function(Function::Callback(_)) => Err(TypeError {
@@ -195,7 +195,7 @@ impl<'gc> FromValue<'gc> for Closure<'gc> {
 }
 
 impl<'gc> FromValue<'gc> for AnyCallback<'gc> {
-    fn from_value(_: MutationContext<'gc, '_>, value: Value<'gc>) -> Result<Self, TypeError> {
+    fn from_value(_: &Mutation<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         match value {
             Value::Function(Function::Callback(c)) => Ok(c),
             Value::Function(Function::Closure(_)) => Err(TypeError {
@@ -213,13 +213,13 @@ impl<'gc> FromValue<'gc> for AnyCallback<'gc> {
 pub trait IntoMultiValue<'gc> {
     type Iter: Iterator<Item = Value<'gc>>;
 
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter;
+    fn into_multi_value(self, mc: &Mutation<'gc>) -> Self::Iter;
 }
 
 impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for T {
     type Iter = iter::Once<Value<'gc>>;
 
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+    fn into_multi_value(self, mc: &Mutation<'gc>) -> Self::Iter {
         iter::once(self.into_value(mc))
     }
 }
@@ -227,7 +227,7 @@ impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for T {
 impl<'gc, T: IntoValue<'gc>, const N: usize> IntoMultiValue<'gc> for [T; N] {
     type Iter = <[Value<'gc>; N] as IntoIterator>::IntoIter;
 
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+    fn into_multi_value(self, mc: &Mutation<'gc>) -> Self::Iter {
         let vals = self.map(|v| v.into_value(mc));
         vals.into_iter()
     }
@@ -235,14 +235,14 @@ impl<'gc, T: IntoValue<'gc>, const N: usize> IntoMultiValue<'gc> for [T; N] {
 
 pub trait FromMultiValue<'gc>: Sized {
     fn from_multi_value(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError>;
 }
 
 impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
     fn from_multi_value(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         mut values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
         T::from_value(mc, values.next().unwrap_or(Value::Nil))
@@ -251,7 +251,7 @@ impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
 
 impl<'gc, T: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for [T; N] {
     fn from_multi_value(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
         let mut values = values.fuse();
@@ -307,7 +307,7 @@ impl<T> FromIterator<T> for Variadic<T> {
 impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for Variadic<T> {
     type Iter = vec::IntoIter<Value<'gc>>;
 
-    fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+    fn into_multi_value(self, mc: &Mutation<'gc>) -> Self::Iter {
         self.into_iter()
             .map(|t| t.into_value(mc))
             .collect::<Vec<_>>()
@@ -317,7 +317,7 @@ impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for Variadic<T> {
 
 impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for Variadic<T> {
     fn from_multi_value(
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
         values.map(|v| T::from_value(mc, v)).collect()
@@ -329,14 +329,14 @@ macro_rules! impl_tuple {
         impl<'gc> IntoMultiValue<'gc> for () {
             type Iter = iter::Empty<Value<'gc>>;
 
-            fn into_multi_value(self, _: MutationContext<'gc, '_>) -> Self::Iter {
+            fn into_multi_value(self, _: &Mutation<'gc>) -> Self::Iter {
                 iter::empty()
             }
         }
 
         impl<'gc> FromMultiValue<'gc> for () {
             fn from_multi_value(
-                _: MutationContext<'gc, '_>,
+                _: &Mutation<'gc>,
                 _: impl Iterator<Item = Value<'gc>>,
             ) -> Result<Self, TypeError> {
                 Ok(())
@@ -353,7 +353,7 @@ macro_rules! impl_tuple {
             type Iter = vec::IntoIter<Value<'gc>>;
 
             #[allow(non_snake_case)]
-            fn into_multi_value(self, mc: MutationContext<'gc, '_>) -> Self::Iter {
+            fn into_multi_value(self, mc: &Mutation<'gc>) -> Self::Iter {
                 let ($($name,)* $last,) = self;
                 let mut results = Vec::new();
                 $(results.push($name.into_value(mc));)*
@@ -369,7 +369,7 @@ macro_rules! impl_tuple {
             #[allow(unused_mut)]
             #[allow(non_snake_case)]
             fn from_multi_value(
-                mc: MutationContext<'gc, '_>,
+                mc: &Mutation<'gc>,
                 mut values: impl Iterator<Item = Value<'gc>>,
             ) -> Result<Self, TypeError> {
                 $(let $name = FromValue::from_value(mc, values.next().unwrap_or(Value::Nil))?;)*
