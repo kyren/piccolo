@@ -33,7 +33,7 @@ pub fn compile<'gc, R: Read>(
         type String = String<'gc>;
 
         fn intern(&self, s: &[u8]) -> Self::String {
-            self.strings.new_string(self.mc, s)
+            self.strings.intern(self.mc, s)
         }
     }
 

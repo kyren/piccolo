@@ -24,10 +24,10 @@ impl<'gc> Root<'gc> {
             strings: InternedStringSet::new(mc),
         };
 
-        load_base(mc, root, root.globals);
-        load_coroutine(mc, root, root.globals);
-        load_math(mc, root, root.globals);
-        load_string(mc, root, root.globals);
+        load_base(mc, root);
+        load_coroutine(mc, root);
+        load_math(mc, root);
+        load_string(mc, root);
 
         root
     }

@@ -103,17 +103,17 @@ calls more Rust code which calls yet more Lua code which then yields. Our stack
 will look something like this:
 
 ```
-[Rust] -> [Lua Coroutine] -> [Rust Sequence callback] -> [Lua code that yields]
+[Rust] -> [Lua Coroutine] -> [Rust Continuation] -> [Lua code that yields]
 ```
 
-This is no problem with this VM style, the inner Rust callback must be a
-pausable `Sequence`, so the inner yield will return the value all the way to
-the top level Rust code, and when the coroutine thread is resumed, the running
-`Sequence` will also be resumed.
+This is no problem with this VM style, the inner Rust callback is paused as
+a continuation, and the inner yield will return the value all the way to the top
+level Rust code. When the coroutine thread is resumed and eventually returns,
+the Rust continuation will be resumed.
 
-With any number of nested Lua threads and `Sequence`s, control will always
-continuously return outside the GC arena and to the outer Rust code driving
-everything. This is the "trampoline" here, when using this interpreter,
+With any number of nested Lua threads and `Sequence` / `Continuation`, control
+will always continuously return outside the GC arena and to the outer Rust code
+driving everything. This is the "trampoline" here, when using this interpreter,
 somewhere there is a loop that is continuously calling `Arena::mutate` and
 `Thread::step`, and it can stop or pause or change tasks at any time, not
 requiring unwinding the Rust stack.
@@ -213,8 +213,8 @@ safely carry with you anywhere!
 ## Wasn't this project called something else? Luster? Deimos? ##
 
 There was an embarassing naming kerfluffle where I somehow ended up with other
-people's project names *twice*. They're all the same project. I *promise* I'm
-done renaming it.
+people's project names *twice*. They're all the same project. I promise I'm done
+renaming it.
 
 ## License ##
 

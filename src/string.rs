@@ -229,7 +229,7 @@ impl<'gc> InternedStringSet<'gc> {
         InternedStringSet(Gc::new(mc, RefLock::new(FxHashSet::default())))
     }
 
-    pub fn new_string(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
+    pub fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
         if let Some(found) = self.0.borrow().get(s) {
             return *found;
         }

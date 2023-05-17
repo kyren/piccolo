@@ -8,7 +8,7 @@ use crate::{
     IntoValue, Root, Table, Value,
 };
 
-pub fn load_math<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
+pub fn load_math<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
     fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> AnyCallback<'gc>
     where
         F: Fn(&Mutation<'gc>, A) -> Option<R> + 'static,
@@ -258,5 +258,5 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
     )
     .unwrap();
 
-    env.set(mc, "math", math).unwrap();
+    root.globals.set(mc, "math", math).unwrap();
 }

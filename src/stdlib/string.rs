@@ -2,7 +2,7 @@ use gc_arena::Mutation;
 
 use crate::{AnyCallback, CallbackReturn, IntoValue, Root, Table, Value};
 
-pub fn load_string<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
+pub fn load_string<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
     let string = Table::new(mc);
 
     string
@@ -19,5 +19,5 @@ pub fn load_string<'gc>(mc: &Mutation<'gc>, _: Root<'gc>, env: Table<'gc>) {
         )
         .unwrap();
 
-    env.set(mc, "string", string).unwrap();
+    root.globals.set(mc, "string", string).unwrap();
 }

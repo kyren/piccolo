@@ -5,7 +5,7 @@ use crate::{
     IntoValue, Root, Sequence, Table, Thread, ThreadMode, TypeError, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, _root: Root<'gc>, env: Table<'gc>) {
+pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
     let coroutine = Table::new(mc);
 
     coroutine
@@ -114,5 +114,5 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, _root: Root<'gc>, env: Table<'gc>
         )
         .unwrap();
 
-    env.set(mc, "coroutine", coroutine).unwrap();
+    root.globals.set(mc, "coroutine", coroutine).unwrap();
 }
