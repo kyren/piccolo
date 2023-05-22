@@ -68,7 +68,7 @@ impl<'gc> Value<'gc> {
             Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.0),
             Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.as_ptr()),
             Value::Thread(t) => write!(w, "<thread {:p}>", t.0),
-            Value::UserData(t) => write!(w, "<userdata {:p}>", t.0.as_ptr()),
+            Value::UserData(t) => write!(w, "<userdata {:p}>", t.as_ptr()),
         }
     }
 

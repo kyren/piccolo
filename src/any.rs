@@ -51,7 +51,7 @@ impl<'gc, M> AnyCell<'gc, M> {
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { self.0.metadata().as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
-            Gc::write_barrier(mc, self.0 .0);
+            Gc::write(mc, self.0 .0);
         }
         res
     }
@@ -79,7 +79,7 @@ impl<'gc, M> AnyCell<'gc, M> {
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { cell.as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
-            Gc::write_barrier(mc, self.0 .0);
+            Gc::write(mc, self.0 .0);
         }
         Some(res)
     }

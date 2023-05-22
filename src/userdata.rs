@@ -29,7 +29,7 @@ impl fmt::Display for UserDataError {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct AnyUserData<'gc>(pub AnyCell<'gc, UserMetadata<'gc>>);
+pub struct AnyUserData<'gc>(AnyCell<'gc, Option<Table<'gc>>>);
 
 impl<'gc> PartialEq for AnyUserData<'gc> {
     fn eq(&self, other: &Self) -> bool {
@@ -51,11 +51,7 @@ impl<'gc> AnyUserData<'gc> {
         R: for<'a> Rootable<'a>,
         Root<'gc, R>: Sized,
     {
-        AnyUserData(AnyCell::<UserMetadata<'gc>>::new::<R>(
-            mc,
-            UserMetadata { metatable: None },
-            val,
-        ))
+        AnyUserData(AnyCell::new::<R>(mc, None, val))
     }
 
     pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
@@ -86,7 +82,7 @@ impl<'gc> AnyUserData<'gc> {
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {
-        self.0.read_metadata().unwrap().metatable
+        *self.0.read_metadata().unwrap()
     }
 
     pub fn set_metatable(
@@ -94,12 +90,10 @@ impl<'gc> AnyUserData<'gc> {
         mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
-        mem::replace(&mut self.0.write_metadata(mc).unwrap().metatable, metatable)
+        mem::replace(&mut self.0.write_metadata(mc).unwrap(), metatable)
     }
-}
 
-#[derive(Debug, Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub struct UserMetadata<'gc> {
-    pub metatable: Option<Table<'gc>>,
+    pub fn as_ptr(&self) -> *const () {
+        self.0.as_ptr()
+    }
 }
