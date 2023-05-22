@@ -15,9 +15,10 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        AnyCallback::from_immediate_fn(mc, move |mc, args: A| {
-            if let Some(res) = f(mc, args) {
-                Ok((CallbackReturn::Return, res))
+        AnyCallback::from_fn(mc, move |mc, stack| {
+            if let Some(res) = f(mc, stack.consume(mc)?) {
+                stack.replace(mc, res);
+                Ok(CallbackReturn::Return)
             } else {
                 Err(format!("Bad argument to {name}").into_value(mc).into())
             }

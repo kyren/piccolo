@@ -13,8 +13,8 @@ use gc_arena::{
 
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
-    CallbackMode, CallbackReturn, Closure, Error, FromMultiValue, Function, IntoMultiValue,
-    RegisterIndex, ThreadError, UpValue, UpValueState, Value, VarCount,
+    CallbackReturn, Closure, Error, FromMultiValue, Function, IntoMultiValue, RegisterIndex, Stack,
+    ThreadError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -66,7 +66,7 @@ impl<'gc> Thread<'gc> {
                 stack: Vec::new(),
                 frames: Vec::new(),
                 open_upvalues: BTreeMap::new(),
-                external_stack: Vec::new(),
+                external_stack: Stack::new(),
                 returned: None,
             }),
         ))
@@ -90,7 +90,7 @@ impl<'gc> Thread<'gc> {
         let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.extend(args.into_multi_value(mc));
+        state.external_stack.replace(mc, args);
 
         state.ext_call_function(function);
 
@@ -119,7 +119,7 @@ impl<'gc> Thread<'gc> {
             .returned
             .take()
             .unwrap()
-            .and_then(|_| Ok(T::from_multi_value(mc, state.external_stack.drain(..))?)))
+            .and_then(|_| Ok(state.external_stack.consume(mc)?)))
     }
 
     /// If the thread is in `Suspended` mode, resume it.
@@ -131,7 +131,7 @@ impl<'gc> Thread<'gc> {
         let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.extend(args.into_multi_value(mc));
+        state.external_stack.replace(mc, args);
 
         match state.frames.pop().expect("no frame to resume") {
             Frame::StartCoroutine(function) => {
@@ -189,8 +189,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
-                    Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
+                    Ok(ret) => state.return_ext(ret),
                     Err(error) => state.unwind(mc, error),
                 }
             }
@@ -209,8 +208,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
-                    Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
+                    Ok(ret) => state.return_ext(ret),
                     Err(error) => state.unwind(mc, error),
                 }
             }
@@ -229,8 +227,7 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match seq {
-                    Ok(CallbackMode::Immediate(ret)) => state.return_ext(ret),
-                    Ok(CallbackMode::Sequence(seq)) => state.frames.push(Frame::Sequence(seq)),
+                    Ok(ret) => state.return_ext(ret),
                     Err(error) => state.unwind(mc, error),
                 }
             }
@@ -316,7 +313,7 @@ pub(crate) struct ThreadState<'gc> {
     stack: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
-    external_stack: Vec<Value<'gc>>,
+    external_stack: Stack<'gc>,
     returned: Option<Result<(), Error<'gc>>>,
 }
 
@@ -962,11 +959,10 @@ impl<'gc> ThreadState<'gc> {
 
                 self.stack[bottom] = Value::Function(Function::Closure(closure));
                 for i in 0..fixed_params {
-                    self.stack[base + i] =
-                        self.external_stack.get(i).copied().unwrap_or(Value::Nil);
+                    self.stack[base + i] = self.external_stack.get(i);
                 }
                 for i in 0..var_params {
-                    self.stack[bottom + 1 + i] = self.external_stack[fixed_params + i]
+                    self.stack[bottom + 1 + i] = self.external_stack.get(fixed_params + i)
                 }
 
                 self.external_stack.clear();
@@ -1005,7 +1001,7 @@ impl<'gc> ThreadState<'gc> {
                     self.stack.resize(bottom + return_len, Value::Nil);
 
                     for i in 0..return_len.min(self.external_stack.len()) {
-                        self.stack[bottom + i] = self.external_stack[i];
+                        self.stack[bottom + i] = self.external_stack.get(i);
                     }
 
                     self.external_stack.clear();
@@ -1016,7 +1012,7 @@ impl<'gc> ThreadState<'gc> {
                     }
                 }
                 Some(LuaReturn::Meta(meta_ind)) => {
-                    let meta_ret = self.external_stack.get(0).copied().unwrap_or(Value::Nil);
+                    let meta_ret = self.external_stack.get(0);
                     self.external_stack.clear();
                     self.stack.resize(*base + *stack_size, Value::Nil);
                     *is_variable = false;
@@ -1081,6 +1077,7 @@ impl<'gc> ThreadState<'gc> {
                 }
                 self.ext_call_function(function);
             }
+            CallbackReturn::Sequence(seq) => self.frames.push(Frame::Sequence(seq)),
         }
     }
 

@@ -1,8 +1,8 @@
 use gc_arena::{Collect, Mutation};
 
 use crate::{
-    conversion::Variadic, AnyCallback, BadThreadMode, CallbackMode, CallbackReturn, Function,
-    IntoValue, Root, Sequence, Table, Thread, ThreadMode, TypeError, Value,
+    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, IntoValue, Root, Sequence,
+    Stack, Table, Thread, ThreadMode, Value,
 };
 
 pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
@@ -12,10 +12,12 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         .set(
             mc,
             "create",
-            AnyCallback::from_immediate_fn(mc, |mc, function: Function| {
+            AnyCallback::from_fn(mc, |mc, stack| {
+                let function = stack.consume(mc)?;
                 let thread = Thread::new(mc);
                 thread.start_suspended(mc, function).unwrap();
-                Ok((CallbackReturn::Return, thread))
+                stack.replace(mc, thread);
+                Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
@@ -25,19 +27,10 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
             mc,
             "resume",
             AnyCallback::from_fn(mc, |mc, stack| {
-                let thread = match stack.get(0).copied().unwrap_or(Value::Nil) {
-                    Value::Thread(closure) => closure,
-                    value => {
-                        return Err(TypeError {
-                            expected: "thread",
-                            found: value.type_name(),
-                        }
-                        .into());
-                    }
-                };
+                let (thread, args): (Thread, Variadic<Value>) = stack.consume(mc)?;
 
                 thread
-                    .resume(mc, Variadic::from_iter(stack.drain(1..)))
+                    .resume(mc, args)
                     .map_err(|_| "cannot resume thread".into_value(mc))?;
 
                 #[derive(Collect)]
@@ -48,24 +41,22 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
                     fn step(
                         &mut self,
                         mc: &Mutation<'gc>,
-                        stack: &mut Vec<Value<'gc>>,
+                        stack: &mut Stack<'gc>,
                     ) -> Result<Option<CallbackReturn<'gc>>, crate::Error<'gc>>
                     {
                         let thread = match stack.get(0) {
-                            Some(&Value::Thread(thread)) => thread,
+                            Value::Thread(thread) => thread,
                             _ => panic!("thread lost from stack"),
                         };
 
                         match thread.mode() {
                             ThreadMode::Return => {
-                                stack.clear();
                                 match thread.take_return::<Variadic<Value<'gc>>>(mc).unwrap() {
                                     Ok(res) => {
-                                        stack.push(Value::Boolean(true));
-                                        stack.extend(res)
+                                        stack.replace(mc, (true, res));
                                     }
                                     Err(err) => {
-                                        stack.extend([Value::Boolean(false), err.to_value(mc)]);
+                                        stack.replace(mc, (false, err.to_value(mc)));
                                     }
                                 }
                                 Ok(Some(CallbackReturn::Return))
@@ -83,7 +74,8 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
                     }
                 }
 
-                Ok(CallbackMode::Sequence(ThreadSequence.into()))
+                stack.push_front(thread.into());
+                Ok(CallbackReturn::Sequence(ThreadSequence.into()))
             }),
         )
         .unwrap();
@@ -92,16 +84,18 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         .set(
             mc,
             "status",
-            AnyCallback::from_immediate_fn(mc, |_, thread: Thread| {
-                Ok((
-                    CallbackReturn::Return,
+            AnyCallback::from_fn(mc, |mc, stack| {
+                let thread: Thread = stack.consume(mc)?;
+                stack.replace(
+                    mc,
                     match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Return => "dead",
                         ThreadMode::Running => "running",
                         ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",
                     },
-                ))
+                );
+                Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
@@ -110,7 +104,7 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         .set(
             mc,
             "yield",
-            AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Yield(None).into())),
+            AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Yield(None))),
         )
         .unwrap();
 

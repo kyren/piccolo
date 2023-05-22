@@ -84,12 +84,12 @@ pub fn index<'gc>(
     match idx {
         Value::Table(table) => Ok(MetaResult::Call(
             AnyCallback::from_fn(mc, |mc, stack| {
-                let table = stack.get(0).copied().unwrap_or_default();
-                let key = stack.get(1).copied().unwrap_or_default();
+                let table = stack.get(0);
+                let key = stack.get(1);
                 stack.clear();
                 match index(mc, table, key)? {
                     MetaResult::Value(v) => {
-                        stack.push(v);
+                        stack.push_back(v);
                         Ok(CallbackReturn::Return.into())
                     }
                     MetaResult::Call(f, args) => {
@@ -120,7 +120,7 @@ pub fn call<'gc>(mc: &Mutation<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Typ
     match metatable.get(mc, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => {
             Ok(AnyCallback::from_fn_with(mc, (v, f), |&(v, f), mc, stack| {
-                stack.insert(0, v);
+                stack.push_front(v);
                 Ok(CallbackReturn::TailCall(call(mc, f)?, None).into())
             })
             .into())

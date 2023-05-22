@@ -11,6 +11,7 @@ pub mod meta_ops;
 pub mod opcode;
 pub mod raw_ops;
 pub mod registry;
+pub mod stack;
 pub mod stdlib;
 pub mod string;
 pub mod table;
@@ -22,8 +23,7 @@ pub mod value;
 pub use self::{
     any::AnyCell,
     callback::{
-        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackMode, CallbackReturn,
-        Continuation, Sequence,
+        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackReturn, Continuation, Sequence,
     },
     closure::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
@@ -39,6 +39,7 @@ pub use self::{
         Registry, StaticCallback, StaticClosure, StaticFunction, StaticString, StaticTable,
         StaticThread, StaticUserData, StaticValue,
     },
+    stack::Stack,
     string::{String, StringError},
     table::{InvalidTableKey, Table, TableEntries, TableState},
     thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode},

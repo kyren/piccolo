@@ -9,8 +9,8 @@ fn callback() -> Result<(), StaticError> {
 
     lua.try_run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |_, stack| {
-            stack.push(Value::Integer(42));
-            Ok(CallbackReturn::Return.into())
+            stack.push_back(Value::Integer(42));
+            Ok(CallbackReturn::Return)
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -44,8 +44,8 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 
     lua.try_run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |_, stack| {
-            stack.push(Value::Integer(3));
-            Ok(CallbackReturn::Return.into())
+            stack.push_back(Value::Integer(3));
+            Ok(CallbackReturn::Return)
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -80,31 +80,28 @@ fn loopy_callback() -> Result<(), StaticError> {
         let callback = AnyCallback::from_fn(mc, |mc, _| {
             Ok(CallbackReturn::TailCall(
                 AnyCallback::from_fn(mc, |_, stack| {
-                    stack.push(3.into());
-                    Ok(CallbackReturn::Yield(None).into())
+                    stack.push_back(3.into());
+                    Ok(CallbackReturn::Yield(None))
                 })
                 .into(),
                 Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
-                    stack.push(4.into());
+                    stack.push_back(4.into());
                     Ok(CallbackReturn::TailCall(
-                        AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Return.into())).into(),
+                        AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Return)).into(),
                         Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
-                            stack.push(5.into());
+                            stack.push_back(5.into());
                             Ok(CallbackReturn::TailCall(
                                 AnyCallback::from_fn(mc, |_, stack| {
-                                    stack.push(6.into());
-                                    Ok(CallbackReturn::Return.into())
+                                    stack.push_back(6.into());
+                                    Ok(CallbackReturn::Return)
                                 })
                                 .into(),
                                 None,
-                            )
-                            .into())
+                            ))
                         })),
-                    )
-                    .into())
+                    ))
                 })),
-            )
-            .into())
+            ))
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -158,35 +155,26 @@ fn yield_continuation() -> Result<(), StaticError> {
 
     lua.try_run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
-            assert!(matches!(
-                stack.as_slice(),
-                &[Value::Integer(1), Value::Integer(2)]
-            ));
-            stack.clear();
+            let (a, b): (i32, i32) = stack.consume(mc)?;
+            assert_eq!((a, b), (1, 2));
             stack.extend([Value::Integer(3), Value::Integer(4)]);
-            Ok(
-                CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |mc, stack| {
-                    assert!(matches!(
-                        stack.as_slice(),
-                        &[Value::Integer(5), Value::Integer(6)]
-                    ));
-                    stack.clear();
+            Ok(CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(
+                mc,
+                |mc, stack| {
+                    let (a, b): (i32, i32) = stack.consume(mc)?;
+                    assert_eq!((a, b), (5, 6));
                     stack.extend([Value::Integer(7), Value::Integer(8)]);
-                    Ok(
-                        CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(mc, |_, stack| {
-                            assert!(matches!(
-                                stack.as_slice(),
-                                &[Value::Integer(9), Value::Integer(10)]
-                            ));
-                            stack.clear();
+                    Ok(CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(
+                        mc,
+                        |mc, stack| {
+                            let (a, b): (i32, i32) = stack.consume(mc)?;
+                            assert_eq!((a, b), (9, 10));
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
-                            Ok(CallbackReturn::Return.into())
-                        })))
-                        .into(),
-                    )
-                })))
-                .into(),
-            )
+                            Ok(CallbackReturn::Return)
+                        },
+                    ))))
+                },
+            ))))
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
@@ -230,15 +218,13 @@ fn resume_with_err() {
     let thread = lua.run(|mc, root| {
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             assert!(stack.len() == 1);
-            assert!(matches!(stack.as_slice(), [Value::String(s)] if s == "resume"));
-            stack.clear();
-            stack.push("return".into_value(mc));
+            assert_eq!(stack.consume::<String>(mc)?, "resume");
+            stack.replace(mc, "return");
             Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
                 mc,
                 |_, _| panic!("did not error"),
                 |mc, _, _| Err("a different error".into_value(mc).into()),
-            )))
-            .into())
+            ))))
         });
 
         let thread = Thread::new(mc);

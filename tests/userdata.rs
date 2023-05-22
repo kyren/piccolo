@@ -28,7 +28,7 @@ fn userdata() -> Result<(), StaticError> {
                 _ => panic!(),
             };
             stack.clear();
-            Ok(CallbackReturn::Return.into())
+            Ok(CallbackReturn::Return)
         });
         root.globals.set(mc, "callback", callback)?;
         Ok(())
