@@ -112,18 +112,6 @@ impl<'gc> AnyCallback<'gc> {
         Self(unsafe { Gc::cast::<Header>(hc) })
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
-    }
-
-    pub fn call(
-        self,
-        mc: &Mutation<'gc>,
-        stack: &mut Stack<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), mc, stack) }
-    }
-
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> AnyCallback<'gc>
     where
         F: 'static + Fn(&Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
@@ -161,6 +149,18 @@ impl<'gc> AnyCallback<'gc> {
         }
 
         AnyCallback::new(mc, ContextCallback { context, call })
+    }
+
+    pub fn as_ptr(self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
+    }
+
+    pub fn call(
+        self,
+        mc: &Mutation<'gc>,
+        stack: &mut Stack<'gc>,
+    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), mc, stack) }
     }
 }
 
@@ -300,23 +300,6 @@ impl<'gc> AnyContinuation<'gc> {
         ) => dyn Continuation<'gc>))
     }
 
-    pub fn continue_ok(
-        &self,
-        mc: &Mutation<'gc>,
-        stack: &mut Stack<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_ok(mc, stack)
-    }
-
-    pub fn continue_err(
-        &self,
-        mc: &Mutation<'gc>,
-        stack: &mut Stack<'gc>,
-        error: Error<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_err(mc, stack, error)
-    }
-
     pub fn from_ok_fn<F>(mc: &Mutation<'gc>, continue_ok: F) -> AnyContinuation<'gc>
     where
         F: 'static + Fn(&Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
@@ -345,6 +328,23 @@ impl<'gc> AnyContinuation<'gc> {
             move |context, mc, stack| continue_ok(context, mc, stack),
             move |_, _, _, error| Err(error),
         )
+    }
+
+    pub fn continue_ok(
+        &self,
+        mc: &Mutation<'gc>,
+        stack: &mut Stack<'gc>,
+    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+        self.0.continue_ok(mc, stack)
+    }
+
+    pub fn continue_err(
+        &self,
+        mc: &Mutation<'gc>,
+        stack: &mut Stack<'gc>,
+        error: Error<'gc>,
+    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+        self.0.continue_err(mc, stack, error)
     }
 }
 
