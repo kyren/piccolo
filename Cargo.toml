@@ -15,6 +15,7 @@ gc-arena = { git = "https://github.com/kyren/gc-arena" }
 hashbrown = { version = "0.13", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
+thiserror = "1.0"
 
 [dev-dependencies]
 clap = { version = "4.2", features = ["cargo"] }

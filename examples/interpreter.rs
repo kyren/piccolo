@@ -10,22 +10,22 @@ use piccolo::{
 };
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
-    lua.try_run(|mc, root| {
-        let result = compile(mc, root.strings, ("return ".to_string() + code).as_bytes());
+    lua.try_run(|mc, state| {
+        let result = compile(mc, state.strings, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
-            Err(_) => compile(mc, root.strings, code.as_bytes()),
+            Err(_) => compile(mc, state.strings, code.as_bytes()),
         };
-        let closure = Closure::new(mc, result?, Some(root.globals))?;
+        let closure = Closure::new(mc, result?, Some(state.globals))?;
 
-        root.main_thread.start(mc, closure.into(), ())?;
+        state.main_thread.start(mc, closure.into(), ())?;
         Ok(())
     })?;
 
     lua.finish_main_thread();
 
-    lua.try_run(|mc, root| {
-        Ok(root
+    lua.try_run(|mc, state| {
+        Ok(state
             .main_thread
             .take_return::<Variadic<Value>>(mc)??
             .iter()
@@ -98,10 +98,10 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
-    lua.try_run(|mc, root| {
-        let closure = Closure::new(mc, compile(mc, root.strings, file)?, Some(root.globals))?;
+    lua.try_run(|mc, state| {
+        let closure = Closure::new(mc, compile(mc, state.strings, file)?, Some(state.globals))?;
 
-        root.main_thread.start(mc, closure.into(), ())?;
+        state.main_thread.start(mc, closure.into(), ())?;
         Ok(())
     })?;
 

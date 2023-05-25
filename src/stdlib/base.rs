@@ -5,11 +5,12 @@ use gc_arena::Mutation;
 use crate::{
     meta_ops::{self, MetaMethod, MetaResult},
     table::NextValue,
-    AnyCallback, AnyContinuation, CallbackReturn, IntoValue, Root, Table, Value,
+    AnyCallback, AnyContinuation, CallbackReturn, IntoValue, State, Table, Value,
 };
 
-pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
-    root.globals
+pub fn load_base<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
+    state
+        .globals
         .set(
             mc,
             "print",
@@ -29,7 +30,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "error",
@@ -39,7 +41,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "assert",
@@ -68,7 +71,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         },
     );
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "pcall",
@@ -80,7 +84,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "type",
@@ -95,7 +100,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "select",
@@ -110,7 +116,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "rawget",
@@ -122,7 +129,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "rawset",
@@ -135,7 +143,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "getmetatable",
@@ -152,7 +161,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "setmetatable",
@@ -183,9 +193,10 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         Ok(CallbackReturn::Return)
     });
 
-    root.globals.set(mc, "next", next).unwrap();
+    state.globals.set(mc, "next", next).unwrap();
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "pairs",
@@ -235,7 +246,8 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         })
     });
 
-    root.globals
+    state
+        .globals
         .set(
             mc,
             "ipairs",

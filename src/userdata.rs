@@ -1,30 +1,21 @@
 use std::{
     cell::{Ref, RefMut},
-    error::Error as StdError,
-    fmt,
     hash::{Hash, Hasher},
     mem,
 };
 
 use gc_arena::{Collect, Mutation, Root, Rootable};
+use thiserror::Error;
 
 use crate::{any::AnyCell, Table};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Error, Collect)]
+#[collect(require_static)]
 pub enum UserDataError {
+    #[error("UserData type mismatch")]
     WrongType,
+    #[error("UserData already incompatibly borrowed")]
     BorrowError,
-}
-
-impl StdError for UserDataError {}
-
-impl fmt::Display for UserDataError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UserDataError::WrongType => write!(fmt, "UserData type mismatch"),
-            UserDataError::BorrowError => write!(fmt, "UserData already incompatibly borrowed"),
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -49,15 +40,20 @@ impl<'gc> AnyUserData<'gc> {
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a>,
-        Root<'gc, R>: Sized,
     {
         AnyUserData(AnyCell::new::<R>(mc, None, val))
+    }
+
+    pub fn is<R>(&self) -> bool
+    where
+        R: for<'a> Rootable<'a>,
+    {
+        self.0.is::<R>()
     }
 
     pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
     where
         R: for<'b> Rootable<'b>,
-        Root<'gc, R>: Sized,
     {
         match self.0.read_data::<R>() {
             Some(Ok(r)) => Ok(r),
@@ -72,7 +68,6 @@ impl<'gc> AnyUserData<'gc> {
     ) -> Result<RefMut<'a, Root<'gc, R>>, UserDataError>
     where
         R: for<'b> Rootable<'b>,
-        Root<'gc, R>: Sized,
     {
         match self.0.write_data::<R>(mc) {
             Some(Ok(r)) => Ok(r),

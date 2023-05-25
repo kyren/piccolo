@@ -5,10 +5,10 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
     conversion::Variadic, raw_ops, AnyCallback, CallbackReturn, FromMultiValue, IntoMultiValue,
-    IntoValue, Root, Table, Value,
+    IntoValue, State, Table, Value,
 };
 
-pub fn load_math<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
+pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> AnyCallback<'gc>
     where
         F: Fn(&Mutation<'gc>, A) -> Option<R> + 'static,
@@ -259,5 +259,5 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
     )
     .unwrap();
 
-    root.globals.set(mc, "math", math).unwrap();
+    state.globals.set(mc, "math", math).unwrap();
 }

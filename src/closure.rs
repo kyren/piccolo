@@ -1,10 +1,7 @@
-use std::{
-    error::Error as StdError,
-    fmt,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
 
 use gc_arena::{lock::Lock, Collect, Gc, Mutation};
+use thiserror::Error;
 
 use crate::{
     CompiledPrototype, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
@@ -85,28 +82,13 @@ impl<'gc> Hash for Closure<'gc> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Collect)]
+#[derive(Debug, Copy, Clone, Error, Collect)]
 #[collect(require_static)]
 pub enum ClosureError {
+    #[error("cannot use prototype with upvalues other than _ENV to create top-level closure")]
     HasUpValues,
+    #[error("closure requires _ENV upvalue but no environment was provided")]
     RequiresEnv,
-}
-
-impl StdError for ClosureError {}
-
-impl fmt::Display for ClosureError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ClosureError::HasUpValues => write!(
-                fmt,
-                "cannot use prototype with upvalues other than _ENV to create top-level closure"
-            ),
-            ClosureError::RequiresEnv => write!(
-                fmt,
-                "closure requires _ENV upvalue but no environment was provided"
-            ),
-        }
-    }
 }
 
 impl<'gc> Closure<'gc> {

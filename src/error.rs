@@ -1,29 +1,19 @@
 use std::{error::Error as StdError, fmt, io, string::String as StdString};
 
 use gc_arena::{Collect, Mutation};
+use thiserror::Error;
 
 use crate::{
     compiler::ParserError, BadThreadMode, BinaryOperatorError, ClosureError, CompilerError,
-    InvalidTableKey, String, StringError, ThreadError, Value,
+    InvalidTableKey, String, StringError, ThreadError, UserDataError, Value,
 };
 
-#[derive(Debug, Clone, Copy, Collect)]
+#[derive(Debug, Clone, Copy, Error, Collect)]
 #[collect(require_static)]
+#[error("type error, expected {expected}, found {found}")]
 pub struct TypeError {
     pub expected: &'static str,
     pub found: &'static str,
-}
-
-impl StdError for TypeError {}
-
-impl fmt::Display for TypeError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            fmt,
-            "type error, expected {}, found {}",
-            self.expected, self.found
-        )
-    }
 }
 
 #[derive(Debug, Collect)]
@@ -39,10 +29,28 @@ pub enum Error<'gc> {
     BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
+    UserDataError(UserDataError),
     RuntimeError(Value<'gc>),
 }
 
-impl<'gc> StdError for Error<'gc> {}
+impl<'gc> StdError for Error<'gc> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Error::IoError(e) => Some(e),
+            Error::ParserError(e) => Some(e),
+            Error::CompilerError(e) => Some(e),
+            Error::ClosureError(e) => Some(e),
+            Error::InvalidTableKey(e) => Some(e),
+            Error::StringError(e) => Some(e),
+            Error::ThreadError(e) => Some(e),
+            Error::BadThreadMode(e) => Some(e),
+            Error::TypeError(e) => Some(e),
+            Error::BinaryOperatorError(e) => Some(e),
+            Error::UserDataError(e) => Some(e),
+            Error::RuntimeError(_) => None,
+        }
+    }
+}
 
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -57,6 +65,7 @@ impl<'gc> fmt::Display for Error<'gc> {
             Error::BadThreadMode(error) => write!(fmt, "bad thread mode: {}", error),
             Error::TypeError(error) => write!(fmt, "type error: {}", error),
             Error::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
+            Error::UserDataError(error) => write!(fmt, "userdata error: {}", error),
             Error::RuntimeError(error) => write!(fmt, "runtime error: {}", error),
         }
     }
@@ -122,6 +131,12 @@ impl<'gc> From<BinaryOperatorError> for Error<'gc> {
     }
 }
 
+impl<'gc> From<UserDataError> for Error<'gc> {
+    fn from(error: UserDataError) -> Error<'gc> {
+        Error::UserDataError(error)
+    }
+}
+
 impl<'gc> From<Value<'gc>> for Error<'gc> {
     fn from(error: Value<'gc>) -> Error<'gc> {
         Error::RuntimeError(error)
@@ -141,6 +156,7 @@ impl<'gc> Error<'gc> {
             Error::BadThreadMode(error) => StaticError::BadThreadMode(error),
             Error::TypeError(error) => StaticError::TypeError(error),
             Error::BinaryOperatorError(error) => StaticError::BinaryOperatorError(error),
+            Error::UserDataError(error) => StaticError::UserDataError(error),
             Error::RuntimeError(error) => {
                 let mut buf = Vec::new();
                 error.display(&mut buf).unwrap();
@@ -170,10 +186,28 @@ pub enum StaticError {
     BadThreadMode(BadThreadMode),
     TypeError(TypeError),
     BinaryOperatorError(BinaryOperatorError),
+    UserDataError(UserDataError),
     RuntimeError(StdString),
 }
 
-impl StdError for StaticError {}
+impl StdError for StaticError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            StaticError::IoError(e) => Some(e),
+            StaticError::ParserError(e) => Some(e),
+            StaticError::CompilerError(e) => Some(e),
+            StaticError::ClosureError(e) => Some(e),
+            StaticError::InvalidTableKey(e) => Some(e),
+            StaticError::StringError(e) => Some(e),
+            StaticError::ThreadError(e) => Some(e),
+            StaticError::BadThreadMode(e) => Some(e),
+            StaticError::TypeError(e) => Some(e),
+            StaticError::BinaryOperatorError(e) => Some(e),
+            StaticError::UserDataError(e) => Some(e),
+            StaticError::RuntimeError(_) => None,
+        }
+    }
+}
 
 impl fmt::Display for StaticError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -188,6 +222,7 @@ impl fmt::Display for StaticError {
             StaticError::BadThreadMode(error) => write!(fmt, "bad thread mode: {}", error),
             StaticError::TypeError(error) => write!(fmt, "type error: {}", error),
             StaticError::BinaryOperatorError(error) => write!(fmt, "operator error: {}", error),
+            StaticError::UserDataError(error) => write!(fmt, "userdata error: {}", error),
             StaticError::RuntimeError(error) => write!(fmt, "runtime error: {}", error),
         }
     }

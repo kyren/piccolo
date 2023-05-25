@@ -1,11 +1,11 @@
 use gc_arena::{Collect, Mutation};
 
 use crate::{
-    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, IntoValue, Root, Sequence,
-    Stack, Table, Thread, ThreadMode, Value,
+    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, IntoValue, Sequence, Stack,
+    State, Table, Thread, ThreadMode, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
+pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     let coroutine = Table::new(mc);
 
     coroutine
@@ -108,5 +108,5 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, root: Root<'gc>) {
         )
         .unwrap();
 
-    root.globals.set(mc, "coroutine", coroutine).unwrap();
+    state.globals.set(mc, "coroutine", coroutine).unwrap();
 }

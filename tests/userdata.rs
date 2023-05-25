@@ -12,12 +12,12 @@ struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
-    lua.try_run(|mc, root| {
+    lua.try_run(|mc, state| {
         let userdata = AnyUserData::new::<Rootable![MyUserData<'gc>]>(
             mc,
             MyUserData(Gc::new(mc, Lock::new(17))),
         );
-        root.globals.set(mc, "userdata", userdata)?;
+        state.globals.set(mc, "userdata", userdata)?;
         let callback = AnyCallback::from_fn(mc, |mc, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
@@ -30,31 +30,31 @@ fn userdata() -> Result<(), StaticError> {
             stack.clear();
             Ok(CallbackReturn::Return)
         });
-        root.globals.set(mc, "callback", callback)?;
+        state.globals.set(mc, "callback", callback)?;
         Ok(())
     })?;
 
-    lua.try_run(|mc, root| {
+    lua.try_run(|mc, state| {
         let closure = Closure::new(
             mc,
             compile(
                 mc,
-                root.strings,
+                state.strings,
                 &br#"
                     callback(userdata)
                     return userdata, type(userdata) == "userdata" and type(callback) == "function"
                 "#[..],
             )?,
-            Some(root.globals),
+            Some(state.globals),
         )?;
-        root.main_thread.start(mc, closure.into(), ())?;
+        state.main_thread.start(mc, closure.into(), ())?;
         Ok(())
     })?;
 
     lua.finish_main_thread();
 
-    lua.try_run(|mc, root| {
-        let (ud, res) = root.main_thread.take_return::<(AnyUserData, bool)>(mc)??;
+    lua.try_run(|mc, state| {
+        let (ud, res) = state.main_thread.take_return::<(AnyUserData, bool)>(mc)??;
         assert!(res);
         let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
         assert_eq!(data.0.get(), 23);

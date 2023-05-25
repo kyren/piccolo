@@ -1,10 +1,10 @@
 use std::{
     collections::{hash_map, HashMap, VecDeque},
-    error::Error as StdError,
-    fmt, iter, mem,
+    iter, mem,
 };
 
 use gc_arena::Collect;
+use thiserror::Error;
 
 use crate::{
     constant::IdenticalConstant, Constant, ConstantIndex16, ConstantIndex8, OpCode, Opt254,
@@ -29,38 +29,29 @@ use super::{
     StringInterner,
 };
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Copy, Clone, Error, Collect)]
 #[collect(require_static)]
 pub enum CompilerError {
+    #[error("insufficient available registers")]
     Registers,
+    #[error("too many upvalues")]
     UpValues,
+    #[error("too many fixed parameters")]
     FixedParameters,
+    #[error("too many inner functions")]
     Functions,
+    #[error("too many constants")]
     Constants,
+    #[error("too many opcodes")]
     OpCodes,
+    #[error("label defined multiple times")]
     DuplicateLabel,
+    #[error("goto target label not found")]
     GotoInvalid,
+    #[error("jump into scope of new local variable")]
     JumpLocal,
+    #[error("jump offset overflow")]
     JumpOverflow,
-}
-
-impl StdError for CompilerError {}
-
-impl fmt::Display for CompilerError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            CompilerError::Registers => write!(fmt, "insufficient available registers"),
-            CompilerError::UpValues => write!(fmt, "too many upvalues"),
-            CompilerError::FixedParameters => write!(fmt, "too many fixed parameters"),
-            CompilerError::Functions => write!(fmt, "too many inner functions"),
-            CompilerError::Constants => write!(fmt, "too many constants"),
-            CompilerError::OpCodes => write!(fmt, "too many opcodes"),
-            CompilerError::DuplicateLabel => write!(fmt, "label defined multiple times"),
-            CompilerError::GotoInvalid => write!(fmt, "goto target label not found"),
-            CompilerError::JumpLocal => write!(fmt, "jump into scope of new local variable"),
-            CompilerError::JumpOverflow => write!(fmt, "jump offset overflow"),
-        }
-    }
 }
 
 #[derive(Debug, Collect)]

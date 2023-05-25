@@ -1,5 +1,4 @@
 use std::{
-    error::Error as StdError,
     fmt,
     hash::{Hash, Hasher},
     i64, mem,
@@ -8,6 +7,7 @@ use std::{
 use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 use hashbrown::raw::RawTable;
 use rustc_hash::FxHasher;
+use thiserror::Error;
 
 use crate::{IntoValue, Value};
 
@@ -15,22 +15,13 @@ use crate::{IntoValue, Value};
 #[collect(no_drop)]
 pub struct Table<'gc>(pub Gc<'gc, RefLock<TableState<'gc>>>);
 
-#[derive(Debug, Clone, Copy, Collect)]
+#[derive(Debug, Copy, Clone, Error, Collect)]
 #[collect(require_static)]
 pub enum InvalidTableKey {
+    #[error("table key is NaN")]
     IsNaN,
+    #[error("table key is Nil")]
     IsNil,
-}
-
-impl StdError for InvalidTableKey {}
-
-impl fmt::Display for InvalidTableKey {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            InvalidTableKey::IsNaN => write!(fmt, "table key is NaN"),
-            InvalidTableKey::IsNil => write!(fmt, "table key is Nil"),
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone, Collect)]

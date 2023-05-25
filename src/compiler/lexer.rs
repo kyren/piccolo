@@ -5,6 +5,7 @@ use std::{
 };
 
 use gc_arena::Collect;
+use thiserror::Error;
 
 use super::StringInterner;
 
@@ -206,52 +207,37 @@ impl<S: AsRef<[u8]>> fmt::Debug for Token<S> {
     }
 }
 
-#[derive(Debug, Collect)]
-#[collect(require_static)]
-pub enum LexerError {
-    UnfinishedShortString(u8),
-    UnexpectedCharacter(u8),
-    HexDigitExpected,
-    EscapeUnicodeStart,
-    EscapeUnicodeEnd,
-    EscapeUnicodeInvalid,
-    EscapeDecimalTooLarge,
-    InvalidEscape,
-    InvalidLongStringDelimiter,
-    UnfinishedLongString,
-    BadNumber,
-    IOError(io::Error),
+fn print_char(c: u8) -> char {
+    char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-impl fmt::Display for LexerError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fn print_char(c: u8) -> char {
-            char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
-        }
-
-        match self {
-            LexerError::UnfinishedShortString(c) => write!(
-                f,
-                "short string not finished, expected matching {}",
-                print_char(*c)
-            ),
-            LexerError::UnexpectedCharacter(c) => {
-                write!(f, "unexpected character: '{}'", print_char(*c))
-            }
-            LexerError::HexDigitExpected => write!(f, "hexadecimal digit expected"),
-            LexerError::EscapeUnicodeStart => write!(f, "missing '{{' in \\u{{xxxx}} escape"),
-            LexerError::EscapeUnicodeEnd => write!(f, "missing '}}' in \\u{{xxxx}} escape"),
-            LexerError::EscapeUnicodeInvalid => {
-                write!(f, "invalid unicode value in \\u{{xxxx}} escape")
-            }
-            LexerError::EscapeDecimalTooLarge => write!(f, "\\ddd escape out of 0-255 range"),
-            LexerError::InvalidEscape => write!(f, "invalid escape sequence"),
-            LexerError::InvalidLongStringDelimiter => write!(f, "invalid long string delimiter"),
-            LexerError::UnfinishedLongString => write!(f, "unfinished long string"),
-            LexerError::BadNumber => write!(f, "malformed number"),
-            LexerError::IOError(err) => write!(f, "IO Error: {}", err),
-        }
-    }
+#[derive(Debug, Error, Collect)]
+#[collect(require_static)]
+pub enum LexerError {
+    #[error("short string not finished, expected matching {}", print_char(*.0))]
+    UnfinishedShortString(u8),
+    #[error("unexpected character: {}", print_char(*.0))]
+    UnexpectedCharacter(u8),
+    #[error("hexadecimal digit expected")]
+    HexDigitExpected,
+    #[error("missing '{{' in \\u{{xxxx}} escape")]
+    EscapeUnicodeStart,
+    #[error("missing '}}' in \\u{{xxxx}} escape")]
+    EscapeUnicodeEnd,
+    #[error("invalid unicode value in \\u{{xxxx}} escape")]
+    EscapeUnicodeInvalid,
+    #[error("\\ddd escape out of 0-255 range")]
+    EscapeDecimalTooLarge,
+    #[error("invalid escape sequence")]
+    InvalidEscape,
+    #[error("invalid long string delimiter")]
+    InvalidLongStringDelimiter,
+    #[error("unfinished long string")]
+    UnfinishedLongString,
+    #[error("malformed number")]
+    BadNumber,
+    #[error("IO Error: {0}")]
+    IOError(#[from] io::Error),
 }
 
 pub struct Lexer<R, S> {

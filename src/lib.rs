@@ -33,7 +33,7 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
     error::{Error, StaticError, TypeError},
-    lua::{Lua, Root},
+    lua::{Lua, State},
     opcode::OpCode,
     registry::{
         Registry, StaticCallback, StaticClosure, StaticFunction, StaticString, StaticTable,

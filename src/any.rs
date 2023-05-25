@@ -40,6 +40,13 @@ impl<'gc, M> AnyCell<'gc, M> {
         self.0.as_ptr()
     }
 
+    pub fn is<R>(&self) -> bool
+    where
+        R: for<'a> Rootable<'a>,
+    {
+        self.0.is::<Rootable!['a => RefLock<Root<'a, R>>]>()
+    }
+
     pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, M>, BorrowError> {
         self.0.metadata().try_borrow()
     }

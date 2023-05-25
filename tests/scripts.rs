@@ -22,10 +22,13 @@ fn test_scripts() {
                 let mut lua = Lua::new();
 
                 if let Err(err) = lua
-                    .try_run(|mc, root| {
-                        let closure =
-                            Closure::new(mc, compile(mc, root.strings, file)?, Some(root.globals))?;
-                        root.main_thread.start(mc, closure.into(), ())?;
+                    .try_run(|mc, state| {
+                        let closure = Closure::new(
+                            mc,
+                            compile(mc, state.strings, file)?,
+                            Some(state.globals),
+                        )?;
+                        state.main_thread.start(mc, closure.into(), ())?;
                         Ok(())
                     })
                     .and_then(|_| lua.run_main_thread::<()>())

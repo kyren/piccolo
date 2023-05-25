@@ -5,6 +5,7 @@ use crate::{AnyCallback, CallbackReturn, Function, IntoValue, TypeError, Value};
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
 pub enum MetaMethod {
+    Len,
     Index,
     Call,
     Pairs,
@@ -13,6 +14,7 @@ pub enum MetaMethod {
 impl MetaMethod {
     pub const fn name(self) -> &'static str {
         match self {
+            MetaMethod::Len => "__len",
             MetaMethod::Index => "__index",
             MetaMethod::Call => "__call",
             MetaMethod::Pairs => "__pairs",
@@ -127,6 +129,28 @@ pub fn call<'gc>(mc: &Mutation<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Typ
         }
         f => Err(TypeError {
             expected: "function",
+            found: f.type_name(),
+        }),
+    }
+}
+
+pub fn len<'gc>(mc: &Mutation<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, TypeError> {
+    if let Some(metatable) = match v {
+        Value::Table(t) => t.metatable(),
+        Value::UserData(u) => u.metatable(),
+        _ => None,
+    } {
+        let len = metatable.get(mc, MetaMethod::Len);
+        if !len.is_nil() {
+            return Ok(MetaResult::Call(call(mc, len)?, [v]));
+        }
+    }
+
+    match v {
+        Value::String(s) => Ok(MetaResult::Value(s.len().into())),
+        Value::Table(t) => Ok(MetaResult::Value(t.length().into())),
+        f => Err(TypeError {
+            expected: "string or table",
             found: f.type_name(),
         }),
     }

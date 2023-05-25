@@ -1,6 +1,7 @@
-use std::{error::Error as StdError, fmt, io::Read, rc::Rc};
+use std::{io::Read, rc::Rc};
 
 use gc_arena::Collect;
+use thiserror::Error;
 
 use super::{
     lexer::{Lexer, LexerError, Token},
@@ -236,54 +237,27 @@ pub enum RecordKey<S> {
     Indexed(Expression<S>),
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Error, Collect)]
 #[collect(require_static)]
 pub enum ParserError {
+    #[error("found {unexpected:?}, expected {expected:?}")]
     Unexpected {
         unexpected: String,
-        expected: Option<String>,
+        expected: String,
     },
-    EndOfStream {
-        expected: Option<String>,
-    },
+    #[error(
+        "unexpected end of token stream{}",
+        .expected.as_ref().map(|e| format!(", expected {e}")).unwrap_or_default()
+    )]
+    EndOfStream { expected: Option<String> },
+    #[error("cannot assign to expression")]
     AssignToExpression,
+    #[error("expression is not a statement")]
     ExpressionNotStatement,
+    #[error("recursion limit reached")]
     RecursionLimit,
-    LexerError(LexerError),
-}
-
-impl StdError for ParserError {}
-
-impl fmt::Display for ParserError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let write_expected = |f: &mut fmt::Formatter, expected: &Option<String>| {
-            match expected {
-                Some(expected) => {
-                    write!(f, ", expected {}", expected)?;
-                }
-                None => {}
-            }
-            Ok(())
-        };
-
-        match self {
-            ParserError::Unexpected {
-                unexpected,
-                expected,
-            } => {
-                write!(f, "found {:?}", unexpected)?;
-                write_expected(f, expected)
-            }
-            ParserError::EndOfStream { expected } => {
-                write!(f, "unexpected end of token stream")?;
-                write_expected(f, expected)
-            }
-            ParserError::AssignToExpression => write!(f, "cannot assign to expression"),
-            ParserError::ExpressionNotStatement => write!(f, "expression is not a statement"),
-            ParserError::RecursionLimit => write!(f, "recursion limit reached"),
-            ParserError::LexerError(lexer_error) => write!(f, "{}", lexer_error),
-        }
-    }
+    #[error(transparent)]
+    LexerError(#[from] LexerError),
 }
 
 pub fn parse_chunk<R, S>(source: R, interner: S) -> Result<Chunk<S::String>, ParserError>
@@ -490,7 +464,7 @@ where
 
             token => Err(ParserError::Unexpected {
                 unexpected: format!("{:?}", token),
-                expected: Some("'=' or 'in'".to_owned()),
+                expected: "'=' or 'in'".to_owned(),
             }),
         }
     }
@@ -720,7 +694,7 @@ where
             Token::Name(n) => Ok(PrimaryExpression::Name(n)),
             token => Err(ParserError::Unexpected {
                 unexpected: format!("{:?}", token),
-                expected: Some("grouped expression or name".to_owned()),
+                expected: "grouped expression or name".to_owned(),
             }),
         }
     }
@@ -739,7 +713,7 @@ where
             }
             token => Err(ParserError::Unexpected {
                 unexpected: format!("{:?}", token),
-                expected: Some("field or suffix".to_owned()),
+                expected: "field or suffix".to_owned(),
             }),
         }
     }
@@ -779,7 +753,7 @@ where
             token => {
                 return Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
-                    expected: Some("function arguments".to_owned()),
+                    expected: "function arguments".to_owned(),
                 });
             }
         };
@@ -799,7 +773,7 @@ where
             }
             token => Err(ParserError::Unexpected {
                 unexpected: format!("{:?}", token),
-                expected: Some("expression suffix".to_owned()),
+                expected: "expression suffix".to_owned(),
             }),
         }
     }
@@ -840,7 +814,7 @@ where
                     token => {
                         return Err(ParserError::Unexpected {
                             unexpected: format!("{:?}", token),
-                            expected: Some("parameter name or '...'".to_owned()),
+                            expected: "parameter name or '...'".to_owned(),
                         });
                     }
                 }
@@ -940,7 +914,7 @@ where
             } else {
                 Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", next_token),
-                    expected: Some(format!("{:?}", token)),
+                    expected: format!("{:?}", token),
                 })
             }
         }
@@ -958,7 +932,7 @@ where
                 Token::Name(name) => Ok(name),
                 token => Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
-                    expected: Some("name".to_owned()),
+                    expected: "name".to_owned(),
                 }),
             }
         }
@@ -976,7 +950,7 @@ where
                 Token::String(string) => Ok(string),
                 token => Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
-                    expected: Some("string".to_owned()),
+                    expected: "string".to_owned(),
                 }),
             }
         }
@@ -1013,7 +987,7 @@ where
     // possible).
     fn read_ahead(&mut self, n: usize) -> Result<(), ParserError> {
         while self.read_buffer.len() <= n {
-            if let Some(token) = self.lexer.read_token().map_err(ParserError::LexerError)? {
+            if let Some(token) = self.lexer.read_token()? {
                 self.read_buffer.push(token);
             } else {
                 break;

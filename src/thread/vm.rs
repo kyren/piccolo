@@ -364,8 +364,15 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::Length { dest, source } => {
-                registers.stack_frame[dest.0 as usize] =
-                    Value::Integer(get_table(registers.stack_frame[source.0 as usize])?.length());
+                match meta_ops::len(mc, registers.stack_frame[source.0 as usize])? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::EqRR {

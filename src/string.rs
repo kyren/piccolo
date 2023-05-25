@@ -1,7 +1,6 @@
 use std::{
     alloc,
     borrow::Borrow,
-    error::Error as StdError,
     fmt,
     hash::{Hash, Hasher},
     io::Write,
@@ -12,6 +11,7 @@ use std::{
 
 use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 use rustc_hash::FxHashSet;
+use thiserror::Error;
 
 use crate::Value;
 
@@ -51,7 +51,7 @@ impl<'gc> String<'gc> {
         String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
 
-    pub fn from_slice<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &S) -> String<'gc> {
+    pub fn from_slice(mc: &Mutation<'gc>, s: impl AsRef<[u8]>) -> String<'gc> {
         fn create<'gc, const N: usize>(mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -114,20 +114,11 @@ impl<'gc> String<'gc> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Collect)]
+#[derive(Debug, Copy, Clone, Error, Collect)]
 #[collect(require_static)]
+#[error("cannot concat {bad_type}")]
 pub enum StringError {
     Concat { bad_type: &'static str },
-}
-
-impl StdError for StringError {}
-
-impl fmt::Display for StringError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            StringError::Concat { bad_type } => write!(fmt, "cannot concat {}", bad_type),
-        }
-    }
 }
 
 impl<'gc> fmt::Debug for String<'gc> {

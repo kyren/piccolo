@@ -198,7 +198,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#99acdecbfb461a398a59da6e3a55a2389528c940"
+source = "git+https://github.com/kyren/gc-arena#b22f10ba8ac7cff1f7b8b968e76af34d02115233"
 dependencies = [
  "gc-arena-derive",
  "sptr",
@@ -207,7 +207,7 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.2.2"
-source = "git+https://github.com/kyren/gc-arena#99acdecbfb461a398a59da6e3a55a2389528c940"
+source = "git+https://github.com/kyren/gc-arena#b22f10ba8ac7cff1f7b8b968e76af34d02115233"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -328,6 +328,7 @@ dependencies = [
  "rand",
  "rustc-hash",
  "rustyline",
+ "thiserror",
 ]
 
 [[package]]
