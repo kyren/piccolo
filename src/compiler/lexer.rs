@@ -211,7 +211,7 @@ fn print_char(c: u8) -> char {
     char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-#[derive(Debug, Error, Collect)]
+#[derive(Debug, Collect, Error)]
 #[collect(require_static)]
 pub enum LexerError {
     #[error("short string not finished, expected matching {}", print_char(*.0))]

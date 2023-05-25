@@ -114,7 +114,7 @@ impl<'gc> String<'gc> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Error, Collect)]
+#[derive(Debug, Copy, Clone, Collect, Error)]
 #[collect(require_static)]
 #[error("cannot concat {bad_type}")]
 pub enum StringError {

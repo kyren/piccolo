@@ -237,7 +237,7 @@ pub enum RecordKey<S> {
     Indexed(Expression<S>),
 }
 
-#[derive(Debug, Error, Collect)]
+#[derive(Debug, Collect, Error)]
 #[collect(require_static)]
 pub enum ParserError {
     #[error("found {unexpected:?}, expected {expected:?}")]

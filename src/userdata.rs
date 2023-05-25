@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{any::AnyCell, Table};
 
-#[derive(Debug, Copy, Clone, Error, Collect)]
+#[derive(Debug, Copy, Clone, Collect, Error)]
 #[collect(require_static)]
 pub enum UserDataError {
     #[error("UserData type mismatch")]

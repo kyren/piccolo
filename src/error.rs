@@ -8,7 +8,7 @@ use crate::{
     InvalidTableKey, String, StringError, ThreadError, UserDataError, Value,
 };
 
-#[derive(Debug, Clone, Copy, Error, Collect)]
+#[derive(Debug, Clone, Copy, Collect, Error)]
 #[collect(require_static)]
 #[error("type error, expected {expected}, found {found}")]
 pub struct TypeError {

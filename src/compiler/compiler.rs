@@ -29,7 +29,7 @@ use super::{
     StringInterner,
 };
 
-#[derive(Debug, Copy, Clone, Error, Collect)]
+#[derive(Debug, Copy, Clone, Collect, Error)]
 #[collect(require_static)]
 pub enum CompilerError {
     #[error("insufficient available registers")]
