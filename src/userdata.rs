@@ -9,8 +9,7 @@ use thiserror::Error;
 
 use crate::{any::AnyCell, Table};
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum UserDataError {
     #[error("UserData type mismatch")]
     WrongType,
@@ -36,6 +35,14 @@ impl<'gc> Hash for AnyUserData<'gc> {
     }
 }
 
+#[derive(Collect)]
+#[collect(require_static)]
+struct StaticRoot<R>(R);
+
+impl<'a, R: 'static> Rootable<'a> for StaticRoot<R> {
+    type Root = StaticRoot<R>;
+}
+
 impl<'gc> AnyUserData<'gc> {
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
@@ -44,11 +51,19 @@ impl<'gc> AnyUserData<'gc> {
         AnyUserData(AnyCell::new::<R>(mc, None, val))
     }
 
+    pub fn new_static<R: 'static>(mc: &Mutation<'gc>, val: R) -> Self {
+        Self::new::<StaticRoot<R>>(mc, StaticRoot(val))
+    }
+
     pub fn is<R>(&self) -> bool
     where
         R: for<'a> Rootable<'a>,
     {
         self.0.is::<R>()
+    }
+
+    pub fn is_static<R: 'static>(&self) -> bool {
+        self.is::<StaticRoot<R>>()
     }
 
     pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
@@ -60,6 +75,10 @@ impl<'gc> AnyUserData<'gc> {
             Some(Err(_)) => Err(UserDataError::BorrowError),
             None => Err(UserDataError::WrongType),
         }
+    }
+
+    pub fn read_static<'a, R: 'static>(&'a self) -> Result<Ref<'a, R>, UserDataError> {
+        Ok(Ref::map(self.read::<StaticRoot<R>>()?, |r| &r.0))
     }
 
     pub fn write<'a, R>(
@@ -74,6 +93,13 @@ impl<'gc> AnyUserData<'gc> {
             Some(Err(_)) => Err(UserDataError::BorrowError),
             None => Err(UserDataError::WrongType),
         }
+    }
+
+    pub fn write_static<'a, R: 'static>(
+        &'a self,
+        mc: &Mutation<'gc>,
+    ) -> Result<RefMut<'a, R>, UserDataError> {
+        Ok(RefMut::map(self.write::<StaticRoot<R>>(mc)?, |r| &mut r.0))
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {

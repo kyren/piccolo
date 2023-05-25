@@ -11,6 +11,7 @@ lto = true
 codegen-units = 1
 
 [dependencies]
+anyhow = "1.0"
 gc-arena = { git = "https://github.com/kyren/gc-arena" }
 hashbrown = { version = "0.13", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }

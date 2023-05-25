@@ -6,7 +6,8 @@ use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Com
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compile, compiler::ParserError, conversion::Variadic, io, Closure, Lua, StaticError, Value,
+    compile, compiler::ParserError, conversion::Variadic, io, Closure, CompilerError, Lua,
+    StaticError, Value,
 };
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
@@ -46,12 +47,17 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             line.push_str(&editor.readline(prompt)?);
 
             match run_code(lua, &line) {
-                err @ Err(StaticError::ParserError(ParserError::EndOfStream { expected: _ })) => {
+                Err(StaticError::Runtime(err))
+                    if matches!(
+                        err.downcast::<CompilerError>(),
+                        Some(CompilerError::Parsing(ParserError::EndOfStream { .. }))
+                    ) =>
+                {
                     match line.chars().last() {
                         Some(c) => {
                             if c == '\n' {
                                 editor.add_history_entry(line)?;
-                                eprintln!("error: {}", err.err().unwrap());
+                                eprintln!("{}", StaticError::from(err));
                                 break;
                             }
                             prompt = ">> ";
@@ -67,7 +73,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
                 }
                 Err(e) => {
                     editor.add_history_entry(line)?;
-                    eprintln!("error: {}", e);
+                    eprintln!("{}", e);
                     break;
                 }
             }

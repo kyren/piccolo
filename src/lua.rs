@@ -1,6 +1,7 @@
 use gc_arena::{Arena, ArenaParameters, Collect, Mutation, Rootable};
 
 use crate::{
+    error::RuntimeError,
     stdlib::{load_base, load_coroutine, load_math, load_string},
     string::InternedStringSet,
     Error, FromMultiValue, Registry, StaticError, StaticThread, Table, Thread, ThreadMode,
@@ -55,11 +56,11 @@ impl Lua {
         r
     }
 
-    pub fn try_run<F, T>(&mut self, f: F) -> Result<T, StaticError>
+    pub fn try_run<F, R>(&mut self, f: F) -> Result<R, StaticError>
     where
-        F: for<'gc> FnOnce(&Mutation<'gc>, State<'gc>) -> Result<T, Error<'gc>>,
+        F: for<'gc> FnOnce(&Mutation<'gc>, State<'gc>) -> Result<R, Error<'gc>>,
     {
-        self.run(move |mc, state| f(mc, state).map_err(Error::to_static))
+        self.run(move |mc, state| f(mc, state).map_err(Error::into_static))
     }
 
     pub fn finish_main_thread(&mut self) {
@@ -98,11 +99,24 @@ impl Lua {
         thread: &StaticThread,
     ) -> Result<R, StaticError> {
         self.finish_thread(thread);
-        self.try_run(|mc, state| state.registry.fetch(thread).take_return::<R>(mc)?)
+        self.run(|mc, state| {
+            state
+                .registry
+                .fetch(thread)
+                .take_return::<R>(mc)
+                .map_err(RuntimeError::from)?
+                .map_err(Error::into_static)
+        })
     }
 
     pub fn run_main_thread<R: for<'gc> FromMultiValue<'gc>>(&mut self) -> Result<R, StaticError> {
         self.finish_main_thread();
-        self.try_run(|mc, state| state.main_thread.take_return::<R>(mc)?)
+        self.run(|mc, state| {
+            state
+                .main_thread
+                .take_return::<R>(mc)
+                .map_err(RuntimeError::from)?
+                .map_err(Error::into_static)
+        })
     }
 }

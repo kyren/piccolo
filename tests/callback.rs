@@ -252,8 +252,8 @@ fn resume_with_err() {
     lua.run(|mc, state| {
         let thread = state.registry.fetch(&thread);
         match thread.take_return::<()>(mc).unwrap() {
-            Err(Error::RuntimeError(val)) => {
-                assert!(matches!(val, Value::String(s) if s == "a different error"))
+            Err(Error::Lua(val)) => {
+                assert!(matches!(val.0, Value::String(s) if s == "a different error"))
             }
             _ => panic!(),
         }

@@ -8,21 +8,30 @@ mod register_allocator;
 use std::io::Read;
 
 use gc_arena::Mutation;
+use thiserror::Error;
 
-use crate::{string::InternedStringSet, Error, FunctionProto, String};
+use crate::{string::InternedStringSet, FunctionProto, String};
 
 pub use self::{
-    compiler::{compile_chunk, CompiledPrototype, CompilerError},
+    compiler::{compile_chunk, CompilationError, CompiledPrototype},
     interning::StringInterner,
     parser::parse_chunk,
     parser::ParserError,
 };
 
+#[derive(Debug, Error)]
+pub enum CompilerError {
+    #[error(transparent)]
+    Parsing(#[from] ParserError),
+    #[error(transparent)]
+    Compilation(#[from] CompilationError),
+}
+
 pub fn compile<'gc, R: Read>(
     mc: &Mutation<'gc>,
     strings: InternedStringSet<'gc>,
     source: R,
-) -> Result<FunctionProto<'gc>, Error<'gc>> {
+) -> Result<FunctionProto<'gc>, CompilerError> {
     #[derive(Copy, Clone)]
     struct Interner<'gc, 'a> {
         strings: InternedStringSet<'gc>,

@@ -1,10 +1,8 @@
-use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{ThreadMode, TypeError};
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum BinaryOperatorError {
     #[error("cannot add values")]
     Add,
@@ -40,16 +38,14 @@ pub enum BinaryOperatorError {
     LessEqual,
 }
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 #[error("bad thread mode: was {found:?} expected {expected:?}")]
 pub struct BadThreadMode {
     pub expected: ThreadMode,
     pub found: ThreadMode,
 }
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum ThreadError {
     #[error("{}", if *.0 {
         "operation expects variable stack"

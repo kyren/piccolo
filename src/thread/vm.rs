@@ -4,8 +4,8 @@ use crate::{
     meta_ops::{self, MetaResult},
     raw_ops,
     thread::LuaFrame,
-    BinaryOperatorError, Closure, ClosureState, Error, Function, OpCode, RegisterIndex, String,
-    Table, TypeError, UpValueDescriptor, Value, VarCount,
+    BinaryOperatorError, Closure, ClosureState, Function, OpCode, RegisterIndex, RuntimeError,
+    String, Table, TypeError, UpValueDescriptor, Value, VarCount,
 };
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
@@ -15,7 +15,7 @@ pub(crate) fn run_vm<'gc>(
     mc: &Mutation<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     mut instructions: u32,
-) -> Result<u32, Error<'gc>> {
+) -> Result<u32, RuntimeError> {
     assert_ne!(instructions, 0);
 
     let current_function = lua_frame.closure();
@@ -325,14 +325,30 @@ pub(crate) fn run_vm<'gc>(
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[base.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, base)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::SelfC { base, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                registers.stack_frame[base.0 as usize] = get_table(table)?.get(mc, key);
+                match meta_ops::index(mc, table, key)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[base.0 as usize] = v;
+                    }
+                    MetaResult::Call(f, args) => {
+                        lua_frame.call_meta_function(mc, f, &args, base)?;
+                        break;
+                    }
+                }
             }
 
             OpCode::Concat {

@@ -82,8 +82,7 @@ impl<'gc> Hash for Closure<'gc> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum ClosureError {
     #[error("cannot use prototype with upvalues other than _ENV to create top-level closure")]
     HasUpValues,

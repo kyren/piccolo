@@ -15,8 +15,7 @@ use crate::{IntoValue, Value};
 #[collect(no_drop)]
 pub struct Table<'gc>(pub Gc<'gc, RefLock<TableState<'gc>>>);
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum InvalidTableKey {
     #[error("table key is NaN")]
     IsNaN,

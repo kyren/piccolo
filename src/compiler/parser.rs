@@ -1,6 +1,5 @@
 use std::{io::Read, rc::Rc};
 
-use gc_arena::Collect;
 use thiserror::Error;
 
 use super::{
@@ -237,8 +236,7 @@ pub enum RecordKey<S> {
     Indexed(Expression<S>),
 }
 
-#[derive(Debug, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Error)]
 pub enum ParserError {
     #[error("found {unexpected:?}, expected {expected:?}")]
     Unexpected {

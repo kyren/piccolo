@@ -1,11 +1,12 @@
 use std::{
     alloc,
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     fmt,
     hash::{Hash, Hasher},
     io::Write,
     ops::Deref,
-    slice, str,
+    slice,
+    str::{self, Utf8Error},
     string::String as StdString,
 };
 
@@ -112,10 +113,17 @@ impl<'gc> String<'gc> {
             }
         }
     }
+
+    pub fn to_str(&self) -> Result<&str, Utf8Error> {
+        str::from_utf8(self.as_bytes())
+    }
+
+    pub fn to_str_lossy(&self) -> Cow<'_, str> {
+        StdString::from_utf8_lossy(self.as_bytes())
+    }
 }
 
-#[derive(Debug, Copy, Clone, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Copy, Clone, Error)]
 #[error("cannot concat {bad_type}")]
 pub enum StringError {
     Concat { bad_type: &'static str },
@@ -124,11 +132,7 @@ pub enum StringError {
 impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("String(")?;
-        if let Ok(s) = str::from_utf8(self.as_bytes()) {
-            fmt::Debug::fmt(s, fmt)?;
-        } else {
-            fmt::Debug::fmt(self.as_bytes(), fmt)?;
-        }
+        fmt.write_str(&self.to_str_lossy())?;
         fmt.write_str(")")?;
         Ok(())
     }
@@ -136,7 +140,7 @@ impl<'gc> fmt::Debug for String<'gc> {
 
 impl<'gc> fmt::Display for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(StdString::from_utf8_lossy(self.as_bytes()).as_ref())
+        fmt.write_str(&self.to_str_lossy())
     }
 }
 

@@ -4,7 +4,6 @@ use std::{
     str,
 };
 
-use gc_arena::Collect;
 use thiserror::Error;
 
 use super::StringInterner;
@@ -211,8 +210,7 @@ fn print_char(c: u8) -> char {
     char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-#[derive(Debug, Collect, Error)]
-#[collect(require_static)]
+#[derive(Debug, Error)]
 pub enum LexerError {
     #[error("short string not finished, expected matching {}", print_char(*.0))]
     UnfinishedShortString(u8),
