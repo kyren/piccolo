@@ -33,7 +33,7 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
     error::{Error, RuntimeError, StaticError, TypeError},
-    lua::{Lua, State},
+    lua::{Context, Lua, State},
     meta_ops::MetaMethod,
     opcode::OpCode,
     registry::{

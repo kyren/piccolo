@@ -1,25 +1,28 @@
-use gc_arena::Mutation;
+use crate::{AnyCallback, CallbackReturn, Context, IntoValue, Table, Value};
 
-use crate::{AnyCallback, CallbackReturn, IntoValue, State, Table, Value};
-
-pub fn load_string<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
-    let string = Table::new(mc);
+pub fn load_string<'gc>(ctx: Context<'gc>) {
+    let string = Table::new(&ctx);
 
     string
         .set(
-            mc,
+            ctx,
             "len",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let v: Option<Value> = stack.consume(mc)?;
-                if let Some(s) = v.and_then(|v| v.to_string(mc)) {
-                    stack.replace(mc, s.len());
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let v: Option<Value> = stack.consume(ctx)?;
+                if let Some(len) = v.and_then(|v| match v {
+                    Value::Integer(i) => Some(i.to_string().as_bytes().len().try_into().unwrap()),
+                    Value::Number(n) => Some(n.to_string().as_bytes().len().try_into().unwrap()),
+                    Value::String(s) => Some(s.len()),
+                    _ => None,
+                }) {
+                    stack.replace(ctx, len);
                     Ok(CallbackReturn::Return)
                 } else {
-                    Err("Bad argument to len".into_value(mc).into())
+                    Err("Bad argument to len".into_value(ctx).into())
                 }
             }),
         )
         .unwrap();
 
-    state.globals.set(mc, "string", string).unwrap();
+    ctx.state.globals.set(ctx, "string", string).unwrap();
 }

@@ -1,56 +1,108 @@
 use std::io::{self, Write};
 
-use gc_arena::Mutation;
-
 use crate::{
     meta_ops::{self, MetaMethod, MetaResult},
     table::NextValue,
-    AnyCallback, AnyContinuation, CallbackReturn, IntoValue, State, Table, Value,
+    AnyCallback, AnyContinuation, CallbackReturn, Context, Error, IntoValue, Stack, Table, Value,
 };
 
-pub fn load_base<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
-    state
+pub fn load_base<'gc>(ctx: Context<'gc>) {
+    ctx.state
         .globals
         .set(
-            mc,
-            "print",
-            AnyCallback::from_fn(mc, |_, stack| {
-                let mut stdout = io::stdout();
-                for i in 0..stack.len() {
-                    stack.get(i).display(&mut stdout)?;
-                    if i != stack.len() - 1 {
-                        stdout.write_all(&b"\t"[..])?;
+            ctx,
+            "tostring",
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                if stack.is_empty() {
+                    Err("Bad argument to tostring".into_value(ctx).into())
+                } else {
+                    match meta_ops::tostring(ctx, stack.get(0))? {
+                        MetaResult::Value(v) => {
+                            stack[0] = v;
+                            stack.drain(1..);
+                            Ok(CallbackReturn::Return)
+                        }
+                        MetaResult::Call(func, args) => {
+                            stack.replace(ctx, args);
+                            Ok(CallbackReturn::TailCall(func, None))
+                        }
                     }
                 }
-                stdout.write_all(&b"\n"[..])?;
-                stdout.flush()?;
-                stack.clear();
-                Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
 
-    state
+    fn print<'gc>(
+        ctx: Context<'gc>,
+        mut first: bool,
+        stack: &mut Stack<'gc>,
+    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+        let mut stdout = io::stdout();
+        while let Some(val) = stack.pop_front() {
+            match meta_ops::tostring(ctx, val)? {
+                MetaResult::Value(v) => {
+                    if first {
+                        first = false;
+                    } else {
+                        stdout.write_all(&b"\t"[..])?;
+                    }
+
+                    v.display(&mut stdout)?
+                }
+                MetaResult::Call(func, args) => {
+                    let rest = stack.drain(..).collect::<Vec<_>>();
+                    stack.extend(args);
+                    return Ok(CallbackReturn::TailCall(
+                        func,
+                        Some(AnyContinuation::from_ok_fn_with(
+                            &ctx,
+                            rest,
+                            move |rest, ctx, stack| {
+                                stack.drain(1..);
+                                stack.extend(rest);
+                                print(ctx, first, stack)
+                            },
+                        )),
+                    ));
+                }
+            }
+        }
+        stdout.write_all(&b"\n"[..])?;
+        stdout.flush()?;
+        stack.clear();
+        Ok(CallbackReturn::Return)
+    }
+
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
+            "print",
+            AnyCallback::from_fn(&ctx, |ctx, stack| print(ctx, true, stack)),
+        )
+        .unwrap();
+
+    ctx.state
+        .globals
+        .set(
+            ctx,
             "error",
-            AnyCallback::from_fn(mc, |_, stack| {
+            AnyCallback::from_fn(&ctx, |_, stack| {
                 Err(stack.pop_front().unwrap_or_default().into())
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "assert",
-            AnyCallback::from_fn(mc, |mc, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
                 if stack.get(0).to_bool() {
                     Ok(CallbackReturn::Return)
                 } else if stack.get(1).is_nil() {
-                    Err("assertion failed!".into_value(mc).into())
+                    Err("assertion failed!".into_value(ctx).into())
                 } else {
                     Err(stack.get(1).into())
                 }
@@ -59,172 +111,172 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
         .unwrap();
 
     let pcall_cont = AnyContinuation::from_fns(
-        mc,
+        &ctx,
         move |_, stack| {
             stack.push_front(Value::Boolean(true));
             Ok(CallbackReturn::Return)
         },
-        move |mc, stack, error| {
+        move |ctx, stack, error| {
             stack.clear();
-            stack.extend([Value::Boolean(false), error.to_value(mc)]);
+            stack.extend([Value::Boolean(false), error.to_value(&ctx)]);
             Ok(CallbackReturn::Return)
         },
     );
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "pcall",
-            AnyCallback::from_fn_with(mc, pcall_cont, move |pcall_cont, mc, stack| {
-                let function = meta_ops::call(mc, stack.get(0))?;
+            AnyCallback::from_fn_with(&ctx, pcall_cont, move |pcall_cont, ctx, stack| {
+                let function = meta_ops::call(ctx, stack.get(0))?;
                 stack.pop_front();
                 Ok(CallbackReturn::TailCall(function, Some(*pcall_cont)))
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "type",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                if let Some(v) = stack.consume::<Option<Value>>(mc)? {
-                    stack.replace(mc, v.type_name());
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                if let Some(v) = stack.consume::<Option<Value>>(ctx)? {
+                    stack.replace(ctx, v.type_name());
                     Ok(CallbackReturn::Return)
                 } else {
-                    Err("Missing argument to type".into_value(mc).into())
+                    Err("Missing argument to type".into_value(ctx).into())
                 }
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "select",
-            AnyCallback::from_fn(mc, |mc, stack| match stack.get(0).to_integer() {
+            AnyCallback::from_fn(&ctx, |ctx, stack| match stack.get(0).to_integer() {
                 Some(n) if n >= 1 => {
                     let last = (n as usize).min(stack.len());
                     stack.drain(0..last);
                     Ok(CallbackReturn::Return)
                 }
-                _ => Err("Bad argument to 'select'".into_value(mc).into()),
+                _ => Err("Bad argument to 'select'".into_value(ctx).into()),
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "rawget",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let (table, key): (Table, Value) = stack.consume(mc)?;
-                stack.replace(mc, table.get(mc, key));
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let (table, key): (Table, Value) = stack.consume(ctx)?;
+                stack.replace(ctx, table.get(ctx, key));
                 Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "rawset",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let (table, key, value): (Table, Value, Value) = stack.consume(mc)?;
-                table.set(mc, key, value)?;
-                stack.replace(mc, table);
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let (table, key, value): (Table, Value, Value) = stack.consume(ctx)?;
+                table.set(ctx, key, value)?;
+                stack.replace(ctx, table);
                 Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "getmetatable",
-            AnyCallback::from_fn(mc, |mc, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
                 if let Value::Table(t) = stack.get(0) {
-                    stack.replace(mc, t.metatable());
+                    stack.replace(ctx, t.metatable());
                     Ok(CallbackReturn::Return)
                 } else {
                     Err("'getmetatable' can only be used on table types"
-                        .into_value(mc)
+                        .into_value(ctx)
                         .into())
                 }
             }),
         )
         .unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "setmetatable",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let (t, mt): (Table, Option<Table>) = stack.consume(mc)?;
-                t.set_metatable(mc, mt);
-                stack.replace(mc, t);
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let (t, mt): (Table, Option<Table>) = stack.consume(ctx)?;
+                t.set_metatable(&ctx, mt);
+                stack.replace(ctx, t);
                 Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
 
     fn next<'gc>(
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         table: Table<'gc>,
         index: Value<'gc>,
     ) -> Result<(Value<'gc>, Value<'gc>), Value<'gc>> {
-        match table.next(mc, index) {
+        match table.next(ctx, index) {
             NextValue::Found { key, value } => Ok((key, value)),
             NextValue::Last => Ok((Value::Nil, Value::Nil)),
-            NextValue::NotFound => Err("invalid table key".into_value(mc)),
+            NextValue::NotFound => Err("invalid table key".into_value(ctx)),
         }
     }
 
-    let next = AnyCallback::from_fn(mc, |mc, stack| {
-        let (table, index): (Table, Value) = stack.consume(mc)?;
-        stack.replace(mc, next(mc, table, index)?);
+    let next = AnyCallback::from_fn(&ctx, |ctx, stack| {
+        let (table, index): (Table, Value) = stack.consume(ctx)?;
+        stack.replace(ctx, next(ctx, table, index)?);
         Ok(CallbackReturn::Return)
     });
 
-    state.globals.set(mc, "next", next).unwrap();
+    ctx.state.globals.set(ctx, "next", next).unwrap();
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "pairs",
-            AnyCallback::from_fn_with(mc, next, move |next, mc, stack| {
+            AnyCallback::from_fn_with(&ctx, next, move |next, ctx, stack| {
                 let table = stack.get(0);
                 if let Some(mt) = match table {
                     Value::Table(t) => t.metatable(),
                     Value::UserData(u) => u.metatable(),
                     _ => None,
                 } {
-                    let pairs = mt.get(mc, MetaMethod::Pairs);
+                    let pairs = mt.get(ctx, MetaMethod::Pairs);
                     if !pairs.is_nil() {
-                        let f = meta_ops::call(mc, pairs)?;
-                        stack.replace(mc, (table, Value::Nil));
+                        let f = meta_ops::call(ctx, pairs)?;
+                        stack.replace(ctx, (table, Value::Nil));
                         return Ok(CallbackReturn::TailCall(f, None));
                     }
                 }
 
-                stack.replace(mc, (*next, table));
+                stack.replace(ctx, (*next, table));
                 Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
 
-    let inext = AnyCallback::from_fn(mc, |mc, stack| {
-        let (table, index): (Value, Option<i64>) = stack.consume(mc)?;
+    let inext = AnyCallback::from_fn(&ctx, |ctx, stack| {
+        let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
         let next_index = index.unwrap_or(0) + 1;
-        Ok(match meta_ops::index(mc, table, next_index.into())? {
+        Ok(match meta_ops::index(ctx, table, next_index.into())? {
             MetaResult::Value(v) => {
                 if !v.is_nil() {
                     stack.extend([next_index.into(), v]);
@@ -235,7 +287,7 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
                 stack.extend(args);
                 CallbackReturn::TailCall(
                     f,
-                    Some(AnyContinuation::from_ok_fn(mc, move |_, stack| {
+                    Some(AnyContinuation::from_ok_fn(&ctx, move |_, stack| {
                         if !stack.get(0).is_nil() {
                             stack.push_front(next_index.into());
                         }
@@ -246,13 +298,13 @@ pub fn load_base<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
         })
     });
 
-    state
+    ctx.state
         .globals
         .set(
-            mc,
+            ctx,
             "ipairs",
-            AnyCallback::from_fn_with(mc, inext, move |inext, mc, stack| {
-                stack.into_front(mc, *inext);
+            AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, stack| {
+                stack.into_front(ctx, *inext);
                 Ok(CallbackReturn::Return)
             }),
         )

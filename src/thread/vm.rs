@@ -1,18 +1,18 @@
-use gc_arena::{Gc, Mutation};
+use gc_arena::Gc;
 
 use crate::{
     meta_ops::{self, MetaResult},
     raw_ops,
     thread::LuaFrame,
-    BinaryOperatorError, Closure, ClosureState, Function, OpCode, RegisterIndex, RuntimeError,
-    String, Table, TypeError, UpValueDescriptor, Value, VarCount,
+    BinaryOperatorError, Closure, ClosureState, Context, Function, OpCode, RegisterIndex,
+    RuntimeError, String, Table, TypeError, UpValueDescriptor, Value, VarCount,
 };
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed. Returns the number of instructions that were not run, or 0 if all requested instructions
 // were run.
 pub(crate) fn run_vm<'gc>(
-    mc: &Mutation<'gc>,
+    ctx: Context<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     mut instructions: u32,
 ) -> Result<u32, RuntimeError> {
@@ -53,18 +53,18 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::NewTable { dest } => {
-                registers.stack_frame[dest.0 as usize] = Value::Table(Table::new(mc));
+                registers.stack_frame[dest.0 as usize] = Value::Table(Table::new(&ctx));
             }
 
             OpCode::GetTableR { dest, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
                 let key = registers.stack_frame[key.0 as usize];
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
                         break;
                     }
                 }
@@ -73,12 +73,12 @@ pub(crate) fn run_vm<'gc>(
             OpCode::GetTableC { dest, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
                 let key = current_function.0.proto.constants[key.0 as usize].into();
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
                         break;
                     }
                 }
@@ -86,7 +86,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetTableRR { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
-                    mc,
+                    ctx,
                     registers.stack_frame[key.0 as usize],
                     registers.stack_frame[value.0 as usize],
                 )?;
@@ -94,7 +94,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetTableRC { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
-                    mc,
+                    ctx,
                     registers.stack_frame[key.0 as usize],
                     current_function.0.proto.constants[value.0 as usize],
                 )?;
@@ -102,7 +102,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetTableCR { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
-                    mc,
+                    ctx,
                     current_function.0.proto.constants[key.0 as usize],
                     registers.stack_frame[value.0 as usize],
                 )?;
@@ -110,7 +110,7 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetTableCC { table, key, value } => {
                 get_table(registers.stack_frame[table.0 as usize])?.set(
-                    mc,
+                    ctx,
                     current_function.0.proto.constants[key.0 as usize],
                     current_function.0.proto.constants[value.0 as usize],
                 )?;
@@ -119,12 +119,12 @@ pub(crate) fn run_vm<'gc>(
             OpCode::GetUpTableR { dest, table, key } => {
                 let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
                 let key = registers.stack_frame[key.0 as usize];
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
                         break;
                     }
                 }
@@ -133,12 +133,12 @@ pub(crate) fn run_vm<'gc>(
             OpCode::GetUpTableC { dest, table, key } => {
                 let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
                 let key = current_function.0.proto.constants[key.0 as usize].into();
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
                         break;
                     }
                 }
@@ -147,7 +147,7 @@ pub(crate) fn run_vm<'gc>(
             OpCode::SetUpTableRR { table, key, value } => {
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
-                        mc,
+                        ctx,
                         registers.stack_frame[key.0 as usize],
                         registers.stack_frame[value.0 as usize],
                     )?;
@@ -156,7 +156,7 @@ pub(crate) fn run_vm<'gc>(
             OpCode::SetUpTableRC { table, key, value } => {
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
-                        mc,
+                        ctx,
                         registers.stack_frame[key.0 as usize],
                         current_function.0.proto.constants[value.0 as usize],
                     )?;
@@ -165,7 +165,7 @@ pub(crate) fn run_vm<'gc>(
             OpCode::SetUpTableCR { table, key, value } => {
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
-                        mc,
+                        ctx,
                         current_function.0.proto.constants[key.0 as usize],
                         registers.stack_frame[value.0 as usize],
                     )?;
@@ -174,7 +174,7 @@ pub(crate) fn run_vm<'gc>(
             OpCode::SetUpTableCC { table, key, value } => {
                 get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
                     .set(
-                        mc,
+                        ctx,
                         current_function.0.proto.constants[key.0 as usize],
                         current_function.0.proto.constants[value.0 as usize],
                     )?;
@@ -185,17 +185,17 @@ pub(crate) fn run_vm<'gc>(
                 args,
                 returns,
             } => {
-                lua_frame.call_function(mc, func, args, returns)?;
+                lua_frame.call_function(ctx, func, args, returns)?;
                 break;
             }
 
             OpCode::TailCall { func, args } => {
-                lua_frame.tail_call_function(mc, func, args)?;
+                lua_frame.tail_call_function(ctx, func, args)?;
                 break;
             }
 
             OpCode::Return { start, count } => {
-                lua_frame.return_upper(mc, start, count)?;
+                lua_frame.return_upper(&ctx, start, count)?;
                 break;
             }
 
@@ -210,7 +210,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 *registers.pc = add_offset(*registers.pc, offset);
                 if let Some(r) = close_upvalues.to_u8() {
-                    registers.close_upvalues(mc, RegisterIndex(r));
+                    registers.close_upvalues(&ctx, RegisterIndex(r));
                 }
             }
 
@@ -243,7 +243,7 @@ pub(crate) fn run_vm<'gc>(
                             panic!("_ENV upvalue is only allowed on top-level closure");
                         }
                         UpValueDescriptor::ParentLocal(reg) => {
-                            upvalues.push(registers.open_upvalue(mc, reg));
+                            upvalues.push(registers.open_upvalue(&ctx, reg));
                         }
                         UpValueDescriptor::Outer(uvindex) => {
                             upvalues.push(current_function.0.upvalues[uvindex.0 as usize]);
@@ -251,7 +251,7 @@ pub(crate) fn run_vm<'gc>(
                     }
                 }
 
-                let closure = Closure(Gc::new(mc, ClosureState { proto, upvalues }));
+                let closure = Closure(Gc::new(&ctx, ClosureState { proto, upvalues }));
                 registers.stack_frame[dest.0 as usize] =
                     Value::Function(Function::Closure(closure));
             }
@@ -309,7 +309,7 @@ pub(crate) fn run_vm<'gc>(
             }
 
             OpCode::GenericForCall { base, var_count } => {
-                lua_frame.call_function_keep(mc, base, 2, VarCount::constant(var_count))?;
+                lua_frame.call_function_keep(ctx, base, 2, VarCount::constant(var_count))?;
                 break;
             }
 
@@ -325,12 +325,12 @@ pub(crate) fn run_vm<'gc>(
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[base.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, base)?;
+                        lua_frame.call_meta_function(ctx, f, &args, base)?;
                         break;
                     }
                 }
@@ -340,12 +340,12 @@ pub(crate) fn run_vm<'gc>(
                 let table = registers.stack_frame[table.0 as usize];
                 let key = Value::from(current_function.0.proto.constants[key.0 as usize]);
                 registers.stack_frame[base.0 as usize + 1] = table;
-                match meta_ops::index(mc, table, key)? {
+                match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[base.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, base)?;
+                        lua_frame.call_meta_function(ctx, f, &args, base)?;
                         break;
                     }
                 }
@@ -358,7 +358,7 @@ pub(crate) fn run_vm<'gc>(
             } => {
                 registers.stack_frame[dest.0 as usize] = Value::String(
                     String::concat(
-                        mc,
+                        ctx,
                         &registers.stack_frame
                             [source.0 as usize..source.0 as usize + count as usize],
                     )
@@ -373,19 +373,19 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::SetUpValue { source, dest } => {
                 registers.set_upvalue(
-                    mc,
+                    &ctx,
                     current_function.0.upvalues[dest.0 as usize],
                     registers.stack_frame[source.0 as usize],
                 );
             }
 
             OpCode::Length { dest, source } => {
-                match meta_ops::len(mc, registers.stack_frame[source.0 as usize])? {
+                match meta_ops::len(ctx, registers.stack_frame[source.0 as usize])? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(mc, f, &args, dest)?;
+                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
                         break;
                     }
                 }

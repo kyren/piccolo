@@ -7,28 +7,30 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compile, compiler::ParserError, conversion::Variadic, io, Closure, CompilerError, Lua,
-    StaticError, Value,
+    StaticError, Thread, Value,
 };
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
-    lua.try_run(|mc, state| {
-        let result = compile(mc, state.strings, ("return ".to_string() + code).as_bytes());
+    let thread = lua.try_run(|ctx| {
+        let result = compile(ctx, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
-            Err(_) => compile(mc, state.strings, code.as_bytes()),
+            Err(_) => compile(ctx, code.as_bytes()),
         };
-        let closure = Closure::new(mc, result?, Some(state.globals))?;
-
-        state.main_thread.start(mc, closure.into(), ())?;
-        Ok(())
+        let closure = Closure::new(&ctx, result?, Some(ctx.state.globals))?;
+        let thread = Thread::new(&ctx);
+        thread.start(ctx, closure.into(), ())?;
+        Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    lua.finish_main_thread();
+    lua.finish_thread(&thread);
 
-    lua.try_run(|mc, state| {
-        Ok(state
-            .main_thread
-            .take_return::<Variadic<Value>>(mc)??
+    lua.try_run(|ctx| {
+        Ok(ctx
+            .state
+            .registry
+            .fetch(&thread)
+            .take_return::<Variadic<Value>>(ctx)??
             .iter()
             .map(|v| format!("{v}"))
             .collect::<Vec<_>>()
@@ -104,14 +106,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
-    lua.try_run(|mc, state| {
-        let closure = Closure::new(mc, compile(mc, state.strings, file)?, Some(state.globals))?;
-
-        state.main_thread.start(mc, closure.into(), ())?;
-        Ok(())
+    let thread = lua.try_run(|ctx| {
+        let closure = Closure::new(&ctx, compile(ctx, file)?, Some(ctx.state.globals))?;
+        let thread = Thread::new(&ctx);
+        thread.start(ctx, closure.into(), ())?;
+        Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    lua.run_main_thread()?;
+    lua.run_thread(&thread)?;
 
     if matches.contains_id("repl") {
         run_repl(&mut lua)?;

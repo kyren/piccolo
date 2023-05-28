@@ -1,22 +1,22 @@
-use gc_arena::{Collect, Mutation};
+use gc_arena::Collect;
 
 use crate::{
-    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, IntoValue, Sequence, Stack,
-    State, Table, Thread, ThreadMode, Value,
+    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, Context, IntoValue, Sequence,
+    Stack, Table, Thread, ThreadMode, Value,
 };
 
-pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
-    let coroutine = Table::new(mc);
+pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
+    let coroutine = Table::new(&ctx);
 
     coroutine
         .set(
-            mc,
+            ctx,
             "create",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let function = stack.consume(mc)?;
-                let thread = Thread::new(mc);
-                thread.start_suspended(mc, function).unwrap();
-                stack.replace(mc, thread);
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let function = stack.consume(ctx)?;
+                let thread = Thread::new(&ctx);
+                thread.start_suspended(&ctx, function).unwrap();
+                stack.replace(ctx, thread);
                 Ok(CallbackReturn::Return)
             }),
         )
@@ -24,14 +24,14 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
 
     coroutine
         .set(
-            mc,
+            ctx,
             "resume",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let (thread, args): (Thread, Variadic<Value>) = stack.consume(mc)?;
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let (thread, args): (Thread, Variadic<Value>) = stack.consume(ctx)?;
 
                 thread
-                    .resume(mc, args)
-                    .map_err(|_| "cannot resume thread".into_value(mc))?;
+                    .resume(ctx, args)
+                    .map_err(|_| "cannot resume thread".into_value(ctx))?;
 
                 #[derive(Collect)]
                 #[collect(require_static)]
@@ -40,7 +40,7 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
                 impl<'gc> Sequence<'gc> for ThreadSequence {
                     fn step(
                         &mut self,
-                        mc: &Mutation<'gc>,
+                        ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
                     ) -> Result<Option<CallbackReturn<'gc>>, crate::Error<'gc>>
                     {
@@ -51,18 +51,18 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
 
                         match thread.mode() {
                             ThreadMode::Return => {
-                                match thread.take_return::<Variadic<Value<'gc>>>(mc).unwrap() {
+                                match thread.take_return::<Variadic<Value<'gc>>>(ctx).unwrap() {
                                     Ok(res) => {
-                                        stack.replace(mc, (true, res));
+                                        stack.replace(ctx, (true, res));
                                     }
                                     Err(err) => {
-                                        stack.replace(mc, (false, err.to_value(mc)));
+                                        stack.replace(ctx, (false, err.to_value(&ctx)));
                                     }
                                 }
                                 Ok(Some(CallbackReturn::Return))
                             }
                             ThreadMode::Normal => {
-                                thread.step(mc).unwrap();
+                                thread.step(ctx).unwrap();
                                 Ok(None)
                             }
                             mode => Err(BadThreadMode {
@@ -82,12 +82,12 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
 
     coroutine
         .set(
-            mc,
+            ctx,
             "status",
-            AnyCallback::from_fn(mc, |mc, stack| {
-                let thread: Thread = stack.consume(mc)?;
+            AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let thread: Thread = stack.consume(ctx)?;
                 stack.replace(
-                    mc,
+                    ctx,
                     match thread.mode() {
                         ThreadMode::Stopped | ThreadMode::Return => "dead",
                         ThreadMode::Running => "running",
@@ -102,11 +102,11 @@ pub fn load_coroutine<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
 
     coroutine
         .set(
-            mc,
+            ctx,
             "yield",
-            AnyCallback::from_fn(mc, |_, _| Ok(CallbackReturn::Yield(None))),
+            AnyCallback::from_fn(&ctx, |_, _| Ok(CallbackReturn::Yield(None))),
         )
         .unwrap();
 
-    state.globals.set(mc, "coroutine", coroutine).unwrap();
+    ctx.state.globals.set(ctx, "coroutine", coroutine).unwrap();
 }

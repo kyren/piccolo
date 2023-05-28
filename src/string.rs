@@ -10,11 +10,11 @@ use std::{
     string::String as StdString,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
-use rustc_hash::FxHashSet;
+use gc_arena::{lock::RefLock, Collect, Gc, Mutation, StaticCollect};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use thiserror::Error;
 
-use crate::Value;
+use crate::{Context, Value};
 
 // Represents `String` as either a pointer to an external / owned slice pointer or a size prefixed
 // inline array.
@@ -24,7 +24,13 @@ pub struct String<'gc>(Gc<'gc, Header>);
 
 #[derive(Copy, Clone, Collect)]
 #[collect(require_static)]
-enum Header {
+struct Header {
+    hash: u64,
+    buffer: Buffer,
+}
+
+#[derive(Copy, Clone)]
+enum Buffer {
     Indirect(*const [u8]),
     Inline(usize),
 }
@@ -38,16 +44,19 @@ impl<'gc> String<'gc> {
 
         impl Drop for Owned {
             fn drop(&mut self) {
-                match self.0 {
-                    Header::Indirect(ptr) => unsafe {
+                match self.0.buffer {
+                    Buffer::Indirect(ptr) => unsafe {
                         drop(Box::from_raw(ptr as *mut [u8]));
                     },
-                    Header::Inline(_) => unreachable!(),
+                    Buffer::Inline(_) => unreachable!(),
                 }
             }
         }
 
-        let owned = Owned(Header::Indirect(Box::into_raw(s)));
+        let owned = Owned(Header {
+            hash: str_hash(&s),
+            buffer: Buffer::Indirect(Box::into_raw(s)),
+        });
         // SAFETY: We know we can cast to `InlineHeader` because `Owned` is `#[repr(transparent)]`
         String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
@@ -64,7 +73,10 @@ impl<'gc> String<'gc> {
 
             assert!(s.len() <= N);
             let mut string = InlineString {
-                header: Header::Inline(s.len()),
+                header: Header {
+                    hash: str_hash(&s),
+                    buffer: Buffer::Inline(s.len()),
+                },
                 array: [0; N],
             };
             string.array[0..s.len()].copy_from_slice(s);
@@ -91,17 +103,24 @@ impl<'gc> String<'gc> {
     }
 
     pub fn from_static<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &'static S) -> String<'gc> {
-        String(Gc::new(mc, Header::Indirect(s.as_ref())))
+        String(Gc::new(
+            mc,
+            Header {
+                hash: str_hash(s.as_ref()),
+                buffer: Buffer::Indirect(s.as_ref()),
+            },
+        ))
+    }
+
+    pub fn stored_hash(&self) -> u64 {
+        self.0.hash
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         unsafe {
-            match *self.0 {
-                Header::Indirect(p) => &(*p),
-                Header::Inline(len) => {
-                    // This is probably ridiculous overkill, since the offset I think should
-                    // always be 1, but precisely calculate the offset of the inline array using
-                    // `alloc::Layout`
+            match self.0.buffer {
+                Buffer::Indirect(p) => &(*p),
+                Buffer::Inline(len) => {
                     let layout = alloc::Layout::new::<Header>();
                     let (_, offset) = layout
                         .extend(alloc::Layout::array::<u8>(len).unwrap())
@@ -121,6 +140,12 @@ impl<'gc> String<'gc> {
     pub fn to_str_lossy(&self) -> Cow<'_, str> {
         StdString::from_utf8_lossy(self.as_bytes())
     }
+}
+
+fn str_hash(s: &[u8]) -> u64 {
+    let mut state = FxHasher::default();
+    state.write(s);
+    state.finish()
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -145,7 +170,7 @@ impl<'gc> fmt::Display for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
-    pub fn concat(mc: &Mutation<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, StringError> {
+    pub fn concat(ctx: Context<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, StringError> {
         let mut bytes = Vec::new();
         for value in values {
             match value {
@@ -170,7 +195,7 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(String::from_slice(mc, &bytes))
+        Ok(ctx.state.strings.intern(&ctx, &bytes))
     }
 
     pub fn len(&self) -> i64 {
@@ -211,26 +236,45 @@ impl<'gc> Eq for String<'gc> {}
 
 impl<'gc> Hash for String<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_bytes().hash(state);
+        state.write_u64(self.stored_hash())
     }
+}
+
+#[derive(Default, Collect)]
+#[collect(no_drop)]
+struct InternedState<'gc> {
+    dyn_strings: FxHashSet<String<'gc>>,
+    static_strings: FxHashMap<StaticCollect<*const [u8]>, String<'gc>>,
 }
 
 #[derive(Collect, Clone, Copy)]
 #[collect(no_drop)]
-pub struct InternedStringSet<'gc>(Gc<'gc, RefLock<FxHashSet<String<'gc>>>>);
+pub struct InternedStringSet<'gc>(Gc<'gc, RefLock<InternedState<'gc>>>);
 
 impl<'gc> InternedStringSet<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> InternedStringSet<'gc> {
-        InternedStringSet(Gc::new(mc, RefLock::new(FxHashSet::default())))
+        InternedStringSet(Gc::new(mc, RefLock::new(InternedState::default())))
     }
 
     pub fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
-        if let Some(found) = self.0.borrow().get(s) {
+        if let Some(found) = self.0.borrow().dyn_strings.get(s) {
             return *found;
         }
 
         let s = String::from_slice(mc, s);
-        self.0.borrow_mut(mc).insert(s);
+        self.0.borrow_mut(mc).dyn_strings.insert(s);
+        s
+    }
+
+    pub fn intern_static(&self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
+        let key = StaticCollect(s as *const _);
+
+        if let Some(found) = self.0.borrow().static_strings.get(&key) {
+            return *found;
+        }
+
+        let s = String::from_static(mc, s);
+        self.0.borrow_mut(mc).static_strings.insert(key, s);
         s
     }
 }

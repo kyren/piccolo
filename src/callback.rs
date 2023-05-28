@@ -5,7 +5,7 @@ use std::{
 
 use gc_arena::{unsize, Collect, Gc, Mutation};
 
-use crate::{Error, Function, Stack};
+use crate::{Context, Error, Function, Stack};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -19,7 +19,7 @@ pub enum CallbackReturn<'gc> {
 pub trait Sequence<'gc>: Collect {
     fn step(
         &mut self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>>;
 }
@@ -44,17 +44,17 @@ impl<'gc> AnySequence<'gc> {
 
     pub fn step(
         &mut self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>> {
-        self.0.step(mc, stack)
+        self.0.step(ctx, stack)
     }
 }
 
 pub trait Callback<'gc>: Collect {
     fn call(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
 }
@@ -67,7 +67,7 @@ pub struct AnyCallback<'gc>(Gc<'gc, Header<'gc>>);
 struct Header<'gc> {
     call: unsafe fn(
         *const (),
-        &Mutation<'gc>,
+        Context<'gc>,
         &mut Stack<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
 }
@@ -100,9 +100,9 @@ impl<'gc> AnyCallback<'gc> {
             mc,
             HeaderCallback {
                 header: Header {
-                    call: |ptr, mc, stack| unsafe {
+                    call: |ptr, ctx, stack| unsafe {
                         let hc = ptr as *const HeaderCallback<C>;
-                        ((*hc).callback).call(mc, stack)
+                        ((*hc).callback).call(ctx, stack)
                     },
                 },
                 callback,
@@ -114,41 +114,41 @@ impl<'gc> AnyCallback<'gc> {
 
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> AnyCallback<'gc>
     where
-        F: 'static + Fn(&Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+        F: 'static + Fn(Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
-        Self::from_fn_with(mc, (), move |_, mc, stack| call(mc, stack))
+        Self::from_fn_with(mc, (), move |_, ctx, stack| call(ctx, stack))
     }
 
-    pub fn from_fn_with<C, F>(mc: &Mutation<'gc>, context: C, call: F) -> AnyCallback<'gc>
+    pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> AnyCallback<'gc>
     where
-        C: 'gc + Collect,
+        R: 'gc + Collect,
         F: 'static
-            + Fn(&C, &Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
-        struct ContextCallback<C, F> {
-            context: C,
+        struct RootCallback<R, F> {
+            root: R,
             #[collect(require_static)]
             call: F,
         }
 
-        impl<'gc, C, F> Callback<'gc> for ContextCallback<C, F>
+        impl<'gc, R, F> Callback<'gc> for RootCallback<R, F>
         where
-            C: 'gc + Collect,
+            R: 'gc + Collect,
             F: 'static
-                + Fn(&C, &Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+                + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         {
             fn call(
                 &self,
-                mc: &Mutation<'gc>,
+                ctx: Context<'gc>,
                 stack: &mut Stack<'gc>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.call)(&self.context, mc, stack)
+                (self.call)(&self.root, ctx, stack)
             }
         }
 
-        AnyCallback::new(mc, ContextCallback { context, call })
+        AnyCallback::new(mc, RootCallback { root, call })
     }
 
     pub fn as_ptr(self) -> *const () {
@@ -157,10 +157,10 @@ impl<'gc> AnyCallback<'gc> {
 
     pub fn call(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), mc, stack) }
+        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), ctx, stack) }
     }
 }
 
@@ -187,13 +187,13 @@ impl<'gc> Hash for AnyCallback<'gc> {
 pub trait Continuation<'gc>: Collect {
     fn continue_ok(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
 
     fn continue_err(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
         error: Error<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
@@ -214,86 +214,81 @@ impl<'gc> AnyContinuation<'gc> {
         continue_err: FE,
     ) -> AnyContinuation<'gc>
     where
-        FO: 'static
-            + Fn(&Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+        FO: 'static + Fn(Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         FE: 'static
-            + Fn(
-                &Mutation<'gc>,
-                &mut Stack<'gc>,
-                Error<'gc>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(Context<'gc>, &mut Stack<'gc>, Error<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         Self::from_fns_with(
             mc,
             (),
-            move |_, mc, stack| continue_ok(mc, stack),
-            move |_, mc, stack, error| continue_err(mc, stack, error),
+            move |_, ctx, stack| continue_ok(ctx, stack),
+            move |_, ctx, stack, error| continue_err(ctx, stack, error),
         )
     }
 
-    pub fn from_fns_with<C, FO, FE>(
+    pub fn from_fns_with<R, FO, FE>(
         mc: &Mutation<'gc>,
-        context: C,
+        root: R,
         continue_ok: FO,
         continue_err: FE,
     ) -> AnyContinuation<'gc>
     where
-        C: 'gc + Collect,
+        R: 'gc + Collect,
         FO: 'static
-            + Fn(&C, &Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         FE: 'static
             + Fn(
-                &C,
-                &Mutation<'gc>,
+                &R,
+                Context<'gc>,
                 &mut Stack<'gc>,
                 Error<'gc>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
-        struct ContextContinuation<C, FO, FE> {
-            context: C,
+        struct RootContinuation<R, FO, FE> {
+            root: R,
             #[collect(require_static)]
             continue_ok: FO,
             #[collect(require_static)]
             continue_err: FE,
         }
 
-        impl<'gc, C, FO, FE> Continuation<'gc> for ContextContinuation<C, FO, FE>
+        impl<'gc, R, FO, FE> Continuation<'gc> for RootContinuation<R, FO, FE>
         where
-            C: 'gc + Collect,
+            R: 'gc + Collect,
             FO: 'static
-                + Fn(&C, &Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+                + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
             FE: 'static
                 + Fn(
-                    &C,
-                    &Mutation<'gc>,
+                    &R,
+                    Context<'gc>,
                     &mut Stack<'gc>,
                     Error<'gc>,
                 ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         {
             fn continue_ok(
                 &self,
-                mc: &Mutation<'gc>,
+                ctx: Context<'gc>,
                 stack: &mut Stack<'gc>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.continue_ok)(&self.context, mc, stack)
+                (self.continue_ok)(&self.root, ctx, stack)
             }
 
             fn continue_err(
                 &self,
-                mc: &Mutation<'gc>,
+                ctx: Context<'gc>,
                 stack: &mut Stack<'gc>,
                 error: Error<'gc>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.continue_err)(&self.context, mc, stack, error)
+                (self.continue_err)(&self.root, ctx, stack, error)
             }
         }
 
         AnyContinuation(unsize!(Gc::new(
             mc,
-            ContextContinuation {
-                context,
+            RootContinuation {
+                root,
                 continue_ok,
                 continue_err,
             }
@@ -302,83 +297,84 @@ impl<'gc> AnyContinuation<'gc> {
 
     pub fn from_ok_fn<F>(mc: &Mutation<'gc>, continue_ok: F) -> AnyContinuation<'gc>
     where
-        F: 'static + Fn(&Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+        F: 'static + Fn(Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         Self::from_fns_with(
             mc,
             (),
-            move |_, mc, stack| continue_ok(mc, stack),
+            move |_, ctx, stack| continue_ok(ctx, stack),
             move |_, _, _, error| Err(error),
         )
     }
 
-    pub fn from_ok_fn_with<C, F>(
+    pub fn from_ok_fn_with<R, F>(
         mc: &Mutation<'gc>,
-        context: C,
+        root: R,
         continue_ok: F,
     ) -> AnyContinuation<'gc>
     where
-        C: Collect + 'gc,
+        R: Collect + 'gc,
         F: 'static
-            + Fn(&C, &Mutation<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         Self::from_fns_with(
             mc,
-            context,
-            move |context, mc, stack| continue_ok(context, mc, stack),
+            root,
+            move |root, ctx, stack| continue_ok(root, ctx, stack),
             move |_, _, _, error| Err(error),
         )
     }
 
     pub fn continue_ok(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_ok(mc, stack)
+        self.0.continue_ok(ctx, stack)
     }
 
     pub fn continue_err(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
         error: Error<'gc>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_err(mc, stack, error)
+        self.0.continue_err(ctx, stack, error)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::CallbackReturn;
+    use gc_arena::{Arena, Rootable};
 
-    use gc_arena::rootless_arena;
+    use crate::{CallbackReturn, State};
 
     use super::*;
 
     #[test]
     fn test_dyn_callback() {
-        rootless_arena(|mc| {
-            #[derive(Collect)]
-            #[collect(require_static)]
-            struct CB(i64);
+        #[derive(Collect)]
+        #[collect(require_static)]
+        struct CB(i64);
 
-            impl<'gc> Callback<'gc> for CB {
-                fn call(
-                    &self,
-                    mc: &Mutation<'gc>,
-                    stack: &mut Stack<'gc>,
-                ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                    stack.into_front(mc, self.0);
-                    Ok(CallbackReturn::Return)
-                }
+        impl<'gc> Callback<'gc> for CB {
+            fn call(
+                &self,
+                ctx: Context<'gc>,
+                stack: &mut Stack<'gc>,
+            ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+                stack.into_front(ctx, self.0);
+                Ok(CallbackReturn::Return)
             }
+        }
 
+        let arena = Arena::<Rootable![State<'gc>]>::new(Default::default(), |mc| State::new(mc));
+        arena.mutate(|mc, state| {
+            let ctx = state.ctx(mc);
             let dyn_callback = AnyCallback::new(mc, CB(17));
-
             let mut stack = Stack::new();
-            assert!(dyn_callback.call(mc, &mut stack).is_ok());
-            assert!(matches!(stack.from_front(mc).unwrap(), 17));
-        })
+            assert!(dyn_callback.call(ctx, &mut stack).is_ok());
+            assert!(matches!(stack.from_front(ctx).unwrap(), 17));
+        });
     }
 }

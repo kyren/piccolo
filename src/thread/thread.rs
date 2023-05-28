@@ -13,8 +13,8 @@ use gc_arena::{
 
 use crate::{
     meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
-    CallbackReturn, Closure, Error, FromMultiValue, Function, IntoMultiValue, RegisterIndex,
-    RuntimeError, Stack, ThreadError, UpValue, UpValueState, Value, VarCount,
+    CallbackReturn, Closure, Context, Error, FromMultiValue, Function, IntoMultiValue,
+    RegisterIndex, RuntimeError, Stack, ThreadError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -83,14 +83,14 @@ impl<'gc> Thread<'gc> {
     /// If this thread is `Stopped`, start a new function with the given arguments.
     pub fn start(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.replace(mc, args);
+        state.external_stack.replace(ctx, args);
 
         state.ext_call_function(function);
 
@@ -112,13 +112,13 @@ impl<'gc> Thread<'gc> {
     /// thread back to the `Stopped` (or `Suspended`) mode.
     pub fn take_return<T: FromMultiValue<'gc>>(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Return)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Return)?;
         Ok(state.returned.take().unwrap().and_then(|_| {
             Ok(state
                 .external_stack
-                .consume(mc)
+                .consume(ctx)
                 .map_err(RuntimeError::from)?)
         }))
     }
@@ -126,13 +126,13 @@ impl<'gc> Thread<'gc> {
     /// If the thread is in `Suspended` mode, resume it.
     pub fn resume(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.replace(mc, args);
+        state.external_stack.replace(ctx, args);
 
         match state.frames.pop().expect("no frame to resume") {
             Frame::StartCoroutine(function) => {
@@ -172,16 +172,16 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
-    pub fn step(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Normal)?;
+    pub fn step(self, ctx: Context<'gc>) -> Result<(), BadThreadMode> {
+        let mut state = self.check_mode(&ctx, ThreadMode::Normal)?;
         match state.frames.pop().expect("no frame to step") {
             Frame::Callback(callback) => {
                 state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
-                let seq = callback.call(mc, &mut stack);
-                let mut state = self.0.borrow_mut(mc);
+                let seq = callback.call(ctx, &mut stack);
+                let mut state = self.0.borrow_mut(&ctx);
                 state.external_stack = stack;
 
                 assert!(
@@ -191,7 +191,7 @@ impl<'gc> Thread<'gc> {
 
                 match seq {
                     Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(mc, error),
+                    Err(error) => state.unwind(&ctx, error),
                 }
             }
             Frame::ContinueOk(continuation) => {
@@ -199,8 +199,8 @@ impl<'gc> Thread<'gc> {
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
-                let seq = continuation.continue_ok(mc, &mut stack);
-                let mut state = self.0.borrow_mut(mc);
+                let seq = continuation.continue_ok(ctx, &mut stack);
+                let mut state = self.0.borrow_mut(&ctx);
                 state.external_stack = stack;
 
                 assert!(
@@ -210,7 +210,7 @@ impl<'gc> Thread<'gc> {
 
                 match seq {
                     Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(mc, error),
+                    Err(error) => state.unwind(&ctx, error),
                 }
             }
             Frame::ContinueErr(continuation, error) => {
@@ -218,8 +218,8 @@ impl<'gc> Thread<'gc> {
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
-                let seq = continuation.continue_err(mc, &mut stack, error);
-                let mut state = self.0.borrow_mut(mc);
+                let seq = continuation.continue_err(ctx, &mut stack, error);
+                let mut state = self.0.borrow_mut(&ctx);
                 state.external_stack = stack;
 
                 assert!(
@@ -229,7 +229,7 @@ impl<'gc> Thread<'gc> {
 
                 match seq {
                     Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(mc, error),
+                    Err(error) => state.unwind(&ctx, error),
                 }
             }
             Frame::Sequence(mut sequence) => {
@@ -237,8 +237,8 @@ impl<'gc> Thread<'gc> {
 
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
-                let fin = sequence.step(mc, &mut stack);
-                let mut state = self.0.borrow_mut(mc);
+                let fin = sequence.step(ctx, &mut stack);
+                let mut state = self.0.borrow_mut(&ctx);
                 state.external_stack = stack;
 
                 assert!(
@@ -249,7 +249,7 @@ impl<'gc> Thread<'gc> {
                 match fin {
                     Ok(Some(ret)) => state.return_ext(ret),
                     Ok(None) => state.frames.push(Frame::Sequence(sequence)),
-                    Err(error) => state.unwind(mc, error),
+                    Err(error) => state.unwind(&ctx, error),
                 }
             }
             frame @ Frame::Lua { .. } => {
@@ -264,9 +264,9 @@ impl<'gc> Thread<'gc> {
                         state: &mut state,
                         thread: self,
                     };
-                    match run_vm(mc, lua_frame, instructions) {
+                    match run_vm(ctx, lua_frame, instructions) {
                         Err(err) => {
-                            state.unwind(mc, err.into());
+                            state.unwind(&ctx, err.into());
                             break;
                         }
                         Ok(i) => {
@@ -461,7 +461,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // placed starting at the function register.
     pub(crate) fn call_function(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
@@ -484,7 +484,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .map(|c| c as usize)
                     .unwrap_or(self.state.stack.len() - function_index - 1);
 
-                match meta_ops::call(mc, self.state.stack[function_index]) {
+                match meta_ops::call(ctx, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
                         self.state.stack[function_index] = closure.into();
                         let fixed_params = closure.0.proto.fixed_params as usize;
@@ -531,7 +531,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // aruments, and all registers past this are invalidated as normal.
     pub(crate) fn call_function_keep(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         func: RegisterIndex,
         arg_count: u8,
         returns: VarCount,
@@ -552,7 +552,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let function_index = *base + func.0 as usize;
                 let top = function_index + 1 + arg_count;
 
-                match meta_ops::call(mc, self.state.stack[function_index]) {
+                match meta_ops::call(ctx, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
                         self.state.stack.resize(top + 1 + arg_count, Value::Nil);
                         for i in 1..arg_count + 1 {
@@ -604,7 +604,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Nothing at all in the frame is invalidated, other than placing the return value.
     pub(crate) fn call_meta_function(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
         ret_index: RegisterIndex,
@@ -624,7 +624,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 *expected_return = Some(LuaReturn::Meta(ret_index));
                 let top = *base + *stack_size;
 
-                match meta_ops::call(mc, func.into()) {
+                match meta_ops::call(ctx, func.into()) {
                     Ok(Function::Closure(closure)) => {
                         self.state.stack.resize(top + 1 + args.len(), Value::Nil);
                         self.state.stack[top] = closure.into();
@@ -670,7 +670,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // frame, pushing a new frame for the given function.
     pub(crate) fn tail_call_function(
         self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         func: RegisterIndex,
         args: VarCount,
     ) -> Result<(), ThreadError> {
@@ -685,7 +685,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     return Err(ThreadError::ExpectedVariable(is_variable));
                 }
 
-                self.state.close_upvalues(mc, bottom);
+                self.state.close_upvalues(&ctx, bottom);
 
                 let function_index = base + func.0 as usize;
                 let arg_count = args
@@ -693,7 +693,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .map(|c| c as usize)
                     .unwrap_or(self.state.stack.len() - function_index - 1);
 
-                match meta_ops::call(mc, self.state.stack[function_index]) {
+                match meta_ops::call(ctx, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
                         self.state.stack[bottom] = closure.into();
                         for i in 0..arg_count {

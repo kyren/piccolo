@@ -1,7 +1,7 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
 use piccolo::{
-    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, UserDataError,
-    Value,
+    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread,
+    UserDataError, Value,
 };
 
 #[derive(Collect)]
@@ -12,49 +12,53 @@ struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
-    lua.try_run(|mc, state| {
+    lua.try_run(|ctx| {
         let userdata = AnyUserData::new::<Rootable![MyUserData<'gc>]>(
-            mc,
-            MyUserData(Gc::new(mc, Lock::new(17))),
+            &ctx,
+            MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
-        state.globals.set(mc, "userdata", userdata)?;
-        let callback = AnyCallback::from_fn(mc, |mc, stack| {
+        ctx.state.globals.set(ctx, "userdata", userdata)?;
+        let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
                     let ud = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
                     assert_eq!(ud.0.get(), 17);
-                    ud.0.set(mc, 23);
+                    ud.0.set(&ctx, 23);
                 }
                 _ => panic!(),
             };
             stack.clear();
             Ok(CallbackReturn::Return)
         });
-        state.globals.set(mc, "callback", callback)?;
+        ctx.state.globals.set(ctx, "callback", callback)?;
         Ok(())
     })?;
 
-    lua.try_run(|mc, state| {
+    let thread = lua.try_run(|ctx| {
         let closure = Closure::new(
-            mc,
+            &ctx,
             compile(
-                mc,
-                state.strings,
+                ctx,
                 &br#"
                     callback(userdata)
                     return userdata, type(userdata) == "userdata" and type(callback) == "function"
                 "#[..],
             )?,
-            Some(state.globals),
+            Some(ctx.state.globals),
         )?;
-        state.main_thread.start(mc, closure.into(), ())?;
-        Ok(())
+        let thread = Thread::new(&ctx);
+        thread.start(ctx, closure.into(), ())?;
+        Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    lua.finish_main_thread();
+    lua.finish_thread(&thread);
 
-    lua.try_run(|mc, state| {
-        let (ud, res) = state.main_thread.take_return::<(AnyUserData, bool)>(mc)??;
+    lua.try_run(|ctx| {
+        let (ud, res) = ctx
+            .state
+            .registry
+            .fetch(&thread)
+            .take_return::<(AnyUserData, bool)>(ctx)??;
         assert!(res);
         let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
         assert_eq!(data.0.get(), 23);

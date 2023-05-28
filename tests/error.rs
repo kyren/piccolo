@@ -1,17 +1,16 @@
 mod sizes;
 
-use piccolo::{compile, error::LuaError, Closure, Error, Lua, StaticError, Value};
+use piccolo::{compile, error::LuaError, Closure, Error, Lua, StaticError, Thread, Value};
 
 #[test]
 fn error_unwind() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
-    lua.try_run(|mc, state| {
+    let thread = lua.try_run(|ctx| {
         let closure = Closure::new(
-            mc,
+            &ctx,
             compile(
-                mc,
-                state.strings,
+                ctx,
                 &br#"
                     function do_error()
                         error('test error')
@@ -20,15 +19,16 @@ fn error_unwind() -> Result<(), StaticError> {
                     do_error()
                 "#[..],
             )?,
-            Some(state.globals),
+            Some(ctx.state.globals),
         )?;
-        state.main_thread.start(mc, closure.into(), ())?;
-        Ok(())
+        let thread = Thread::new(&ctx);
+        thread.start(ctx, closure.into(), ())?;
+        Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    lua.finish_main_thread();
-    lua.try_run(|mc, state| {
-        match state.main_thread.take_return::<()>(mc)? {
+    lua.finish_thread(&thread);
+    lua.try_run(|ctx| {
+        match ctx.state.registry.fetch(&thread).take_return::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
             _ => panic!(),
         }

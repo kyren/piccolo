@@ -7,10 +7,9 @@ mod register_allocator;
 
 use std::io::Read;
 
-use gc_arena::Mutation;
 use thiserror::Error;
 
-use crate::{string::InternedStringSet, FunctionProto, String};
+use crate::{Context, FunctionProto, String};
 
 pub use self::{
     compiler::{compile_chunk, CompilationError, CompiledPrototype},
@@ -28,28 +27,24 @@ pub enum CompilerError {
 }
 
 pub fn compile<'gc, R: Read>(
-    mc: &Mutation<'gc>,
-    strings: InternedStringSet<'gc>,
+    ctx: Context<'gc>,
     source: R,
 ) -> Result<FunctionProto<'gc>, CompilerError> {
     #[derive(Copy, Clone)]
-    struct Interner<'gc, 'a> {
-        strings: InternedStringSet<'gc>,
-        mc: &'a Mutation<'gc>,
-    }
+    struct Interner<'gc>(Context<'gc>);
 
-    impl<'gc, 'a> StringInterner for Interner<'gc, 'a> {
+    impl<'gc> StringInterner for Interner<'gc> {
         type String = String<'gc>;
 
         fn intern(&self, s: &[u8]) -> Self::String {
-            self.strings.intern(self.mc, s)
+            self.0.state.strings.intern(&self.0, s)
         }
     }
 
-    let interner = Interner { strings, mc };
+    let interner = Interner(ctx);
 
     let chunk = parse_chunk(source, interner)?;
     let compiled_function = compile_chunk(&chunk, interner)?;
 
-    Ok(FunctionProto::from_compiled(mc, compiled_function))
+    Ok(FunctionProto::from_compiled(&ctx, compiled_function))
 }

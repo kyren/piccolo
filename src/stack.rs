@@ -3,11 +3,11 @@ use std::{
     iter, ops,
 };
 
-use gc_arena::{Collect, Mutation};
+use gc_arena::Collect;
 
-use crate::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
+use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
-#[derive(Default, Collect)]
+#[derive(Clone, Default, Collect)]
 #[collect(no_drop)]
 pub struct Stack<'gc>(VecDeque<Value<'gc>>);
 
@@ -34,29 +34,29 @@ impl<'gc> Stack<'gc> {
         self.0.get(i).copied().unwrap_or_default()
     }
 
-    pub fn into_back(&mut self, mc: &Mutation<'gc>, v: impl IntoValue<'gc>) {
-        self.0.push_back(v.into_value(mc));
+    pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoValue<'gc>) {
+        self.0.push_back(v.into_value(ctx));
     }
 
-    pub fn into_front(&mut self, mc: &Mutation<'gc>, v: impl IntoValue<'gc>) {
-        self.0.push_front(v.into_value(mc));
+    pub fn into_front(&mut self, ctx: Context<'gc>, v: impl IntoValue<'gc>) {
+        self.0.push_front(v.into_value(ctx));
     }
 
-    pub fn from_back<V: FromValue<'gc>>(&mut self, mc: &Mutation<'gc>) -> Result<V, TypeError> {
-        V::from_value(mc, self.0.pop_back().unwrap_or_default())
+    pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_value(ctx, self.0.pop_back().unwrap_or_default())
     }
 
-    pub fn from_front<V: FromValue<'gc>>(&mut self, mc: &Mutation<'gc>) -> Result<V, TypeError> {
-        V::from_value(mc, self.pop_front().unwrap_or_default())
+    pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_value(ctx, self.pop_front().unwrap_or_default())
     }
 
-    pub fn replace(&mut self, mc: &Mutation<'gc>, v: impl IntoMultiValue<'gc>) {
+    pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         self.0.clear();
-        self.0.extend(v.into_multi_value(mc));
+        self.0.extend(v.into_multi_value(ctx));
     }
 
-    pub fn consume<V: FromMultiValue<'gc>>(&mut self, mc: &Mutation<'gc>) -> Result<V, TypeError> {
-        V::from_multi_value(mc, self.0.drain(..))
+    pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_multi_value(ctx, self.0.drain(..))
     }
 }
 

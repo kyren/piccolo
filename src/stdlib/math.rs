@@ -4,23 +4,23 @@ use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    conversion::Variadic, raw_ops, AnyCallback, CallbackReturn, FromMultiValue, IntoMultiValue,
-    IntoValue, State, Table, Value,
+    conversion::Variadic, raw_ops, AnyCallback, CallbackReturn, Context, FromMultiValue,
+    IntoMultiValue, IntoValue, Table, Value,
 };
 
-pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
+pub fn load_math<'gc>(ctx: Context<'gc>) {
     fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> AnyCallback<'gc>
     where
-        F: Fn(&Mutation<'gc>, A) -> Option<R> + 'static,
+        F: Fn(Context<'gc>, A) -> Option<R> + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        AnyCallback::from_fn(mc, move |mc, stack| {
-            if let Some(res) = f(mc, stack.consume(mc)?) {
-                stack.replace(mc, res);
+        AnyCallback::from_fn(mc, move |ctx, stack| {
+            if let Some(res) = f(ctx, stack.consume(ctx)?) {
+                stack.replace(ctx, res);
                 Ok(CallbackReturn::Return)
             } else {
-                Err(format!("Bad argument to {name}").into_value(mc).into())
+                Err(format!("Bad argument to {name}").into_value(ctx).into())
             }
         })
     }
@@ -33,13 +33,13 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
         }
     }
 
-    let math = Table::new(mc);
+    let math = Table::new(&ctx);
     let seeded_rng: Rc<RefCell<SmallRng>> = Rc::new(RefCell::new(SmallRng::from_entropy()));
 
     math.set(
-        mc,
+        ctx,
         "abs",
-        callback("abs", mc, |_, v: Value| {
+        callback("abs", &ctx, |_, v: Value| {
             Some(if let Value::Integer(i) = v {
                 Value::Integer(i.abs())
             } else {
@@ -49,16 +49,24 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     )
     .unwrap();
 
-    math.set(mc, "acos", callback("acos", mc, |_, v: f64| Some(v.acos())))
-        .unwrap();
-
-    math.set(mc, "asin", callback("asin", mc, |_, v: f64| Some(v.asin())))
-        .unwrap();
+    math.set(
+        ctx,
+        "acos",
+        callback("acos", &ctx, |_, v: f64| Some(v.acos())),
+    )
+    .unwrap();
 
     math.set(
-        mc,
+        ctx,
+        "asin",
+        callback("asin", &ctx, |_, v: f64| Some(v.asin())),
+    )
+    .unwrap();
+
+    math.set(
+        ctx,
         "atan",
-        callback("atan", mc, |_, (a, b): (f64, Option<f64>)| {
+        callback("atan", &ctx, |_, (a, b): (f64, Option<f64>)| {
             Some(if let Some(b) = b {
                 a.atan2(b)
             } else {
@@ -69,62 +77,62 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "ceil",
-        callback("ceil", mc, |_, v: f64| Some(to_int(v.ceil().into()))),
+        callback("ceil", &ctx, |_, v: f64| Some(to_int(v.ceil().into()))),
     )
     .unwrap();
 
-    math.set(mc, "cos", callback("cos", mc, |_, v: f64| Some(v.cos())))
+    math.set(ctx, "cos", callback("cos", &ctx, |_, v: f64| Some(v.cos())))
         .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "deg",
-        callback("deg", mc, |_, v: f64| Some(v.to_degrees())),
+        callback("deg", &ctx, |_, v: f64| Some(v.to_degrees())),
     )
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "exp",
-        callback("exp", mc, |_, v: f64| Some(f64::consts::E.powf(v))),
+        callback("exp", &ctx, |_, v: f64| Some(f64::consts::E.powf(v))),
     )
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "floor",
-        callback("floor", mc, |_, v: f64| Some(to_int(v.floor().into()))),
+        callback("floor", &ctx, |_, v: f64| Some(to_int(v.floor().into()))),
     )
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "fmod",
-        callback("fmod", mc, |_, (f, g): (f64, f64)| {
+        callback("fmod", &ctx, |_, (f, g): (f64, f64)| {
             let result = (f % g).abs();
             Some(if f < 0.0 { -result } else { result })
         }),
     )
     .unwrap();
 
-    math.set(mc, "huge", Value::Number(f64::INFINITY)).unwrap();
+    math.set(ctx, "huge", Value::Number(f64::INFINITY)).unwrap();
 
-    math.set(mc, "log", callback("log", mc, |_, v: f64| Some(v.ln())))
+    math.set(ctx, "log", callback("log", &ctx, |_, v: f64| Some(v.ln())))
         .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "log10",
-        callback("log10", mc, |_, v: f64| Some(v.log10())),
+        callback("log10", &ctx, |_, v: f64| Some(v.log10())),
     )
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "max",
-        callback("max", mc, |_, v: Variadic<Value>| {
+        callback("max", &ctx, |_, v: Variadic<Value>| {
             if v.is_empty() {
                 None
             } else {
@@ -141,13 +149,13 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     )
     .unwrap();
 
-    math.set(mc, "maxinteger", Value::Integer(i64::MAX))
+    math.set(ctx, "maxinteger", Value::Integer(i64::MAX))
         .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "min",
-        callback("min", mc, |_, v: Variadic<Value>| {
+        callback("min", &ctx, |_, v: Variadic<Value>| {
             if v.is_empty() {
                 None
             } else {
@@ -164,32 +172,32 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     )
     .unwrap();
 
-    math.set(mc, "mininteger", Value::Integer(i64::MIN))
+    math.set(ctx, "mininteger", Value::Integer(i64::MIN))
         .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "modf",
-        callback("modf", mc, |_, f: f64| Some((f as i64, f % 1.0))),
+        callback("modf", &ctx, |_, f: f64| Some((f as i64, f % 1.0))),
     )
     .unwrap();
 
-    math.set(mc, "pi", Value::Number(f64::consts::PI)).unwrap();
+    math.set(ctx, "pi", Value::Number(f64::consts::PI)).unwrap();
 
     math.set(
-        mc,
+        ctx,
         "rad",
-        callback("rad", mc, |_, v: f64| Some(v.to_radians())),
+        callback("rad", &ctx, |_, v: f64| Some(v.to_radians())),
     )
     .unwrap();
 
     let random_rng = seeded_rng.clone();
     math.set(
-        mc,
+        ctx,
         "random",
         callback(
             "random",
-            mc,
+            &ctx,
             move |_, (a, b): (Option<i64>, Option<i64>)| -> Option<Value> {
                 let rng = &random_rng;
                 match (a, b) {
@@ -205,9 +213,9 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
 
     let randomseed_rng = seeded_rng.clone();
     math.set(
-        mc,
+        ctx,
         "randomseed",
-        callback("randomseed", mc, move |_, f: i64| {
+        callback("randomseed", &ctx, move |_, f: i64| {
             let rng = &randomseed_rng;
             *(rng.borrow_mut().deref_mut()) = SmallRng::seed_from_u64(f as u64);
             Some(())
@@ -215,19 +223,23 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     )
     .unwrap();
 
-    math.set(mc, "sin", callback("sin", mc, |_, v: f64| Some(v.sin())))
-        .unwrap();
-
-    math.set(mc, "sqrt", callback("sqrt", mc, |_, v: f64| Some(v.sqrt())))
-        .unwrap();
-
-    math.set(mc, "tan", callback("tan", mc, |_, v: f64| Some(v.tan())))
+    math.set(ctx, "sin", callback("sin", &ctx, |_, v: f64| Some(v.sin())))
         .unwrap();
 
     math.set(
-        mc,
+        ctx,
+        "sqrt",
+        callback("sqrt", &ctx, |_, v: f64| Some(v.sqrt())),
+    )
+    .unwrap();
+
+    math.set(ctx, "tan", callback("tan", &ctx, |_, v: f64| Some(v.tan())))
+        .unwrap();
+
+    math.set(
+        ctx,
         "tointeger",
-        callback("tointeger", mc, |_, v: Value| {
+        callback("tointeger", &ctx, |_, v: Value| {
             Some(if let Some(i) = v.to_integer() {
                 i.into()
             } else {
@@ -238,12 +250,12 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "type",
-        callback("type", mc, |mc, v: Value| {
+        callback("type", &ctx, |ctx, v: Value| {
             Some(match v {
-                Value::Integer(_) => "integer".into_value(mc),
-                Value::Number(_) => "float".into_value(mc),
+                Value::Integer(_) => "integer".into_value(ctx),
+                Value::Number(_) => "float".into_value(ctx),
                 _ => Value::Nil,
             })
         }),
@@ -251,13 +263,13 @@ pub fn load_math<'gc>(mc: &Mutation<'gc>, state: State<'gc>) {
     .unwrap();
 
     math.set(
-        mc,
+        ctx,
         "ult",
-        callback("ult", mc, |_, (a, b): (i64, i64)| {
+        callback("ult", &ctx, |_, (a, b): (i64, i64)| {
             Some(Value::Boolean((a as u64) < (b as u64)))
         }),
     )
     .unwrap();
 
-    state.globals.set(mc, "math", math).unwrap();
+    ctx.state.globals.set(ctx, "math", math).unwrap();
 }

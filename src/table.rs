@@ -9,7 +9,7 @@ use hashbrown::raw::RawTable;
 use rustc_hash::FxHasher;
 use thiserror::Error;
 
-use crate::{IntoValue, Value};
+use crate::{Context, IntoValue, Value};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -50,20 +50,20 @@ impl<'gc> Table<'gc> {
         Table(Gc::new(mc, RefLock::new(TableState::default())))
     }
 
-    pub fn get<K: IntoValue<'gc>>(&self, mc: &Mutation<'gc>, key: K) -> Value<'gc> {
-        self.0.borrow().entries.get(key.into_value(mc))
+    pub fn get<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> Value<'gc> {
+        self.0.borrow().entries.get(key.into_value(ctx))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
         &self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
         self.0
-            .borrow_mut(mc)
+            .borrow_mut(&ctx)
             .entries
-            .set(key.into_value(mc), value.into_value(mc))
+            .set(key.into_value(ctx), value.into_value(ctx))
     }
 
     pub fn length(&self) -> i64 {
@@ -79,8 +79,8 @@ impl<'gc> Table<'gc> {
     // If given Nil, it will return the first pair in the table. If given a key that is present
     // in the table, it will return the next pair in iteration order. If given a key that is not
     // present in the table, the behavior is unspecified.
-    pub fn next<K: IntoValue<'gc>>(&self, mc: &Mutation<'gc>, key: K) -> NextValue<'gc> {
-        self.0.borrow().entries.next(key.into_value(mc))
+    pub fn next<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> NextValue<'gc> {
+        self.0.borrow().entries.next(key.into_value(ctx))
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {

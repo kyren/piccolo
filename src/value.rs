@@ -1,6 +1,6 @@
 use std::{f64, fmt, i64, io, string::String as StdString};
 
-use gc_arena::{Collect, Mutation};
+use gc_arena::Collect;
 
 use crate::{AnyCallback, AnyUserData, Closure, Constant, String, Table, Thread};
 
@@ -97,16 +97,6 @@ impl<'gc> Value<'gc> {
     /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
     pub fn to_integer(self) -> Option<i64> {
         self.to_constant().and_then(|c| c.to_integer())
-    }
-
-    /// Interprets Numbers, Integers, and Strings as a String, if possible.
-    pub fn to_string(self, mc: &Mutation<'gc>) -> Option<String<'gc>> {
-        match self {
-            Value::Integer(a) => Some(String::concat(mc, &[Value::Integer(a)]).unwrap()),
-            Value::Number(a) => Some(String::concat(mc, &[Value::Number(a)]).unwrap()),
-            Value::String(a) => Some(a),
-            _ => None,
-        }
     }
 
     pub fn to_constant(self) -> Option<Constant<String<'gc>>> {

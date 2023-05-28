@@ -18,7 +18,7 @@ pub struct LuaError<'gc>(pub Value<'gc>);
 
 impl<'gc> fmt::Display for LuaError<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self}")
+        write!(f, "{}", self.0)
     }
 }
 
