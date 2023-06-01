@@ -23,7 +23,7 @@ pub mod value;
 pub use self::{
     any::AnyCell,
     callback::{
-        AnyCallback, AnyContinuation, AnySequence, Callback, CallbackReturn, Continuation, Sequence,
+        AnyCallback, AnyContinuation, Callback, CallbackReturn, Continuation, ContinuationPoll,
     },
     closure::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
@@ -31,7 +31,7 @@ pub use self::{
     },
     compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
-    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
+    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Context, Lua, State},
     meta_ops::MetaMethod,

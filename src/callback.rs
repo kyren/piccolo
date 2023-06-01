@@ -3,7 +3,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{unsize, Collect, Gc, Mutation};
+use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{Context, Error, Function, Stack};
 
@@ -11,44 +11,9 @@ use crate::{Context, Error, Function, Stack};
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
     Return,
+    Continuation(AnyContinuation<'gc>),
     Yield(Option<AnyContinuation<'gc>>),
     TailCall(Function<'gc>, Option<AnyContinuation<'gc>>),
-    Sequence(AnySequence<'gc>),
-}
-
-pub trait Sequence<'gc>: Collect {
-    fn step(
-        &mut self,
-        ctx: Context<'gc>,
-        stack: &mut Stack<'gc>,
-    ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>>;
-}
-
-#[derive(Collect)]
-#[collect(no_drop)]
-pub struct AnySequence<'gc>(pub Box<dyn Sequence<'gc> + 'gc>);
-
-impl<'gc, S> From<S> for AnySequence<'gc>
-where
-    S: Sequence<'gc> + 'gc,
-{
-    fn from(v: S) -> Self {
-        Self(Box::new(v))
-    }
-}
-
-impl<'gc> AnySequence<'gc> {
-    pub fn new(sequence: impl Sequence<'gc> + 'gc) -> Self {
-        Self(Box::new(sequence))
-    }
-
-    pub fn step(
-        &mut self,
-        ctx: Context<'gc>,
-        stack: &mut Stack<'gc>,
-    ) -> Result<Option<CallbackReturn<'gc>>, Error<'gc>> {
-        self.0.step(ctx, stack)
-    }
 }
 
 pub trait Callback<'gc>: Collect {
@@ -184,162 +149,78 @@ impl<'gc> Hash for AnyCallback<'gc> {
     }
 }
 
-pub trait Continuation<'gc>: Collect {
-    fn continue_ok(
-        &self,
-        ctx: Context<'gc>,
-        stack: &mut Stack<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
-
-    fn continue_err(
-        &self,
-        ctx: Context<'gc>,
-        stack: &mut Stack<'gc>,
-        error: Error<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
+pub enum ContinuationPoll<'gc> {
+    // Continuation pending, `Continuation::poll` will be called on the next step with the stack
+    // unchanged.
+    Pending,
+    // Continuation finished, the values in the stack will be returned to the caller.
+    Return,
+    // Yield the values in the stack inside a coroutine. If `is_tail` is true, then this also
+    // finishes the continuation, otherwise `Continuation::poll` will be called when the coroutine
+    // is resumed, or `Continuation::error` if the coroutine is resumed with an error.
+    Yield {
+        is_tail: bool,
+    },
+    // Call the given function with the arguments in the stack. If `is_tail` is true, then this
+    // is a tail call, and the continuation is now finished, otherwise `Continuation::poll`
+    // will be called with the results of the function call, or if the function errors,
+    // `Continuation::error` will be called with the function error.
+    Call {
+        function: Function<'gc>,
+        is_tail: bool,
+    },
 }
 
-#[derive(Clone, Copy, Collect)]
+pub trait Continuation<'gc>: Collect {
+    fn poll(
+        &mut self,
+        ctx: Context<'gc>,
+        stack: &mut Stack<'gc>,
+    ) -> Result<ContinuationPoll<'gc>, Error<'gc>>;
+
+    fn error(
+        &mut self,
+        _ctx: Context<'gc>,
+        error: Error<'gc>,
+        _stack: &mut Stack<'gc>,
+    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+        Err(error)
+    }
+}
+
+#[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnyContinuation<'gc>(pub Gc<'gc, dyn Continuation<'gc>>);
+pub struct AnyContinuation<'gc>(pub Box<dyn Continuation<'gc> + 'gc>);
+
+impl<'gc, S> From<S> for AnyContinuation<'gc>
+where
+    S: Continuation<'gc> + 'gc,
+{
+    fn from(v: S) -> Self {
+        Self(Box::new(v))
+    }
+}
 
 impl<'gc> AnyContinuation<'gc> {
-    pub fn new(mc: &Mutation<'gc>, continuation: impl Continuation<'gc> + 'gc) -> Self {
-        Self(unsize!(Gc::new(mc, continuation) => dyn Continuation<'gc>))
+    pub fn new(continuation: impl Continuation<'gc> + 'gc) -> Self {
+        Self(Box::new(continuation))
     }
 
-    pub fn from_fns<FO, FE>(
-        mc: &Mutation<'gc>,
-        continue_ok: FO,
-        continue_err: FE,
-    ) -> AnyContinuation<'gc>
-    where
-        FO: 'static + Fn(Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-        FE: 'static
-            + Fn(Context<'gc>, &mut Stack<'gc>, Error<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        Self::from_fns_with(
-            mc,
-            (),
-            move |_, ctx, stack| continue_ok(ctx, stack),
-            move |_, ctx, stack, error| continue_err(ctx, stack, error),
-        )
-    }
-
-    pub fn from_fns_with<R, FO, FE>(
-        mc: &Mutation<'gc>,
-        root: R,
-        continue_ok: FO,
-        continue_err: FE,
-    ) -> AnyContinuation<'gc>
-    where
-        R: 'gc + Collect,
-        FO: 'static
-            + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-        FE: 'static
-            + Fn(
-                &R,
-                Context<'gc>,
-                &mut Stack<'gc>,
-                Error<'gc>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        #[derive(Collect)]
-        #[collect(no_drop)]
-        struct RootContinuation<R, FO, FE> {
-            root: R,
-            #[collect(require_static)]
-            continue_ok: FO,
-            #[collect(require_static)]
-            continue_err: FE,
-        }
-
-        impl<'gc, R, FO, FE> Continuation<'gc> for RootContinuation<R, FO, FE>
-        where
-            R: 'gc + Collect,
-            FO: 'static
-                + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-            FE: 'static
-                + Fn(
-                    &R,
-                    Context<'gc>,
-                    &mut Stack<'gc>,
-                    Error<'gc>,
-                ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-        {
-            fn continue_ok(
-                &self,
-                ctx: Context<'gc>,
-                stack: &mut Stack<'gc>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.continue_ok)(&self.root, ctx, stack)
-            }
-
-            fn continue_err(
-                &self,
-                ctx: Context<'gc>,
-                stack: &mut Stack<'gc>,
-                error: Error<'gc>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.continue_err)(&self.root, ctx, stack, error)
-            }
-        }
-
-        AnyContinuation(unsize!(Gc::new(
-            mc,
-            RootContinuation {
-                root,
-                continue_ok,
-                continue_err,
-            }
-        ) => dyn Continuation<'gc>))
-    }
-
-    pub fn from_ok_fn<F>(mc: &Mutation<'gc>, continue_ok: F) -> AnyContinuation<'gc>
-    where
-        F: 'static + Fn(Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        Self::from_fns_with(
-            mc,
-            (),
-            move |_, ctx, stack| continue_ok(ctx, stack),
-            move |_, _, _, error| Err(error),
-        )
-    }
-
-    pub fn from_ok_fn_with<R, F>(
-        mc: &Mutation<'gc>,
-        root: R,
-        continue_ok: F,
-    ) -> AnyContinuation<'gc>
-    where
-        R: Collect + 'gc,
-        F: 'static
-            + Fn(&R, Context<'gc>, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-    {
-        Self::from_fns_with(
-            mc,
-            root,
-            move |root, ctx, stack| continue_ok(root, ctx, stack),
-            move |_, _, _, error| Err(error),
-        )
-    }
-
-    pub fn continue_ok(
-        &self,
+    pub fn poll(
+        &mut self,
         ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_ok(ctx, stack)
+    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+        self.0.poll(ctx, stack)
     }
 
-    pub fn continue_err(
-        &self,
+    pub fn error(
+        &mut self,
         ctx: Context<'gc>,
-        stack: &mut Stack<'gc>,
         error: Error<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        self.0.continue_err(ctx, stack, error)
+        stack: &mut Stack<'gc>,
+    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+        self.0.error(ctx, error, stack)
     }
 }
 

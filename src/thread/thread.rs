@@ -12,9 +12,9 @@ use gc_arena::{
 };
 
 use crate::{
-    meta_ops, thread::run_vm, AnyCallback, AnyContinuation, AnySequence, BadThreadMode,
-    CallbackReturn, Closure, Context, Error, FromMultiValue, Function, IntoMultiValue,
-    RegisterIndex, RuntimeError, Stack, ThreadError, UpValue, UpValueState, Value, VarCount,
+    meta_ops, thread::run_vm, AnyCallback, AnyContinuation, BadThreadMode, CallbackReturn, Closure,
+    Context, ContinuationPoll, Error, FromMultiValue, Function, IntoMultiValue, RegisterIndex,
+    Stack, ThreadError, UpValue, UpValueState, Value, VarCount,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -47,9 +47,9 @@ impl<'gc> Hash for Thread<'gc> {
 pub enum ThreadMode {
     // No frames are on the thread and there are no available results, the thread can be started.
     Stopped,
-    // The thread has returned (or yielded) values that must be taken to move the thread back to the
-    // `Stopped` (or `Suspended`) state.
-    Return,
+    // The thread has an error or has returned (or yielded) values that must be taken to move the
+    // thread back to the `Stopped` (or `Suspended`) state.
+    Result,
     // Thread has an active Lua frame or is waiting for a callback or continuation to finish.
     Normal,
     // Thread is currently inside its own `Thread::step` function.
@@ -67,7 +67,7 @@ impl<'gc> Thread<'gc> {
                 frames: Vec::new(),
                 open_upvalues: BTreeMap::new(),
                 external_stack: Stack::new(),
-                returned: None,
+                error: None,
             }),
         ))
     }
@@ -114,13 +114,15 @@ impl<'gc> Thread<'gc> {
         self,
         ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let mut state = self.check_mode(&ctx, ThreadMode::Return)?;
-        Ok(state.returned.take().unwrap().and_then(|_| {
-            Ok(state
-                .external_stack
-                .consume(ctx)
-                .map_err(RuntimeError::from)?)
-        }))
+        let mut state = self.check_mode(&ctx, ThreadMode::Result)?;
+        assert!(matches!(state.frames.pop(), Some(Frame::HasResult)));
+
+        Ok(if let Some(error) = state.error.take() {
+            assert!(state.external_stack.is_empty());
+            Err(error)
+        } else {
+            state.external_stack.consume(ctx).map_err(Error::from)
+        })
     }
 
     /// If the thread is in `Suspended` mode, resume it.
@@ -140,20 +142,17 @@ impl<'gc> Thread<'gc> {
                     state.stack.is_empty()
                         && state.open_upvalues.is_empty()
                         && state.frames.is_empty()
-                        && state.returned.is_none()
+                        && state.error.is_none()
                 );
                 state.ext_call_function(function);
             }
-            Frame::ResumeCoroutine => match state.frames.pop() {
-                Some(Frame::PendingContinuation { continuation, .. }) => {
-                    state.frames.push(Frame::ContinueOk(continuation));
-                }
-                Some(frame @ Frame::Lua { .. }) => {
-                    state.frames.push(frame);
+            Frame::ResumeCoroutine => match state.frames.last_mut() {
+                Some(Frame::Continuation { .. }) => {}
+                Some(Frame::Lua { .. }) => {
                     state.return_to_lua();
                 }
                 None => {
-                    state.returned = Some(Ok(()));
+                    state.frames.push(Frame::HasResult);
                 }
                 _ => panic!("resume coroutine frame must be above a continuation or lua frame"),
             },
@@ -178,6 +177,7 @@ impl<'gc> Thread<'gc> {
             Frame::Callback(callback) => {
                 state.frames.push(Frame::Calling);
 
+                assert!(state.error.is_none());
                 let mut stack = mem::take(&mut state.external_stack);
                 drop(state);
                 let seq = callback.call(ctx, &mut stack);
@@ -194,50 +194,18 @@ impl<'gc> Thread<'gc> {
                     Err(error) => state.unwind(&ctx, error),
                 }
             }
-            Frame::ContinueOk(continuation) => {
+            Frame::Continuation(mut continuation) => {
                 state.frames.push(Frame::Calling);
 
                 let mut stack = mem::take(&mut state.external_stack);
+                let error = state.error.take();
                 drop(state);
-                let seq = continuation.continue_ok(ctx, &mut stack);
-                let mut state = self.0.borrow_mut(&ctx);
-                state.external_stack = stack;
-
-                assert!(
-                    matches!(state.frames.pop(), Some(Frame::Calling)),
-                    "thread state has changed while callback was run"
-                );
-
-                match seq {
-                    Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(&ctx, error),
-                }
-            }
-            Frame::ContinueErr(continuation, error) => {
-                state.frames.push(Frame::Calling);
-
-                let mut stack = mem::take(&mut state.external_stack);
-                drop(state);
-                let seq = continuation.continue_err(ctx, &mut stack, error);
-                let mut state = self.0.borrow_mut(&ctx);
-                state.external_stack = stack;
-
-                assert!(
-                    matches!(state.frames.pop(), Some(Frame::Calling)),
-                    "thread state has changed while callback was run"
-                );
-
-                match seq {
-                    Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(&ctx, error),
-                }
-            }
-            Frame::Sequence(mut sequence) => {
-                state.frames.push(Frame::Calling);
-
-                let mut stack = mem::take(&mut state.external_stack);
-                drop(state);
-                let fin = sequence.step(ctx, &mut stack);
+                let fin = if let Some(error) = error {
+                    assert!(stack.is_empty());
+                    continuation.error(ctx, error, &mut stack)
+                } else {
+                    continuation.poll(ctx, &mut stack)
+                };
                 let mut state = self.0.borrow_mut(&ctx);
                 state.external_stack = stack;
 
@@ -247,13 +215,30 @@ impl<'gc> Thread<'gc> {
                 );
 
                 match fin {
-                    Ok(Some(ret)) => state.return_ext(ret),
-                    Ok(None) => state.frames.push(Frame::Sequence(sequence)),
+                    Ok(ContinuationPoll::Pending) => {
+                        state.return_ext(CallbackReturn::Continuation(continuation))
+                    }
+                    Ok(ContinuationPoll::Return) => state.return_ext(CallbackReturn::Return),
+                    Ok(ContinuationPoll::Yield { is_tail: tail }) => {
+                        state.return_ext(CallbackReturn::Yield(if tail {
+                            None
+                        } else {
+                            Some(continuation)
+                        }))
+                    }
+                    Ok(ContinuationPoll::Call {
+                        function,
+                        is_tail: tail,
+                    }) => state.return_ext(CallbackReturn::TailCall(
+                        function,
+                        if tail { None } else { Some(continuation) },
+                    )),
                     Err(error) => state.unwind(&ctx, error),
                 }
             }
             frame @ Frame::Lua { .. } => {
                 assert!(state.external_stack.is_empty());
+                assert!(state.error.is_none());
                 state.frames.push(frame);
 
                 const VM_GRANULARITY: u32 = 256;
@@ -315,7 +300,7 @@ pub(crate) struct ThreadState<'gc> {
     frames: Vec<Frame<'gc>>,
     open_upvalues: BTreeMap<usize, UpValue<'gc>>,
     external_stack: Stack<'gc>,
-    returned: Option<Result<(), Error<'gc>>>,
+    error: Option<Error<'gc>>,
 }
 
 pub(crate) struct LuaFrame<'gc, 'a> {
@@ -361,21 +346,13 @@ enum Frame<'gc> {
     ResumeCoroutine,
     // A callback that has been queued but not called yet. Arguments will be in the external stack.
     Callback(AnyCallback<'gc>),
-    // A marker frame for running a continuation. Cannot be the top frame, when the frame above this
-    // returns, this will trigger the continuation to run.
-    PendingContinuation {
-        bottom: usize,
-        continuation: AnyContinuation<'gc>,
-    },
-    // A frame above a continuation has returned, and this continuation has been queued but not
-    // called yet. The returns from the frame above this will be in the external stack.
-    ContinueOk(AnyContinuation<'gc>),
-    // A frame above a continuation has errored, and this continuation has caught the error and is
-    // queued to be run.
-    ContinueErr(AnyContinuation<'gc>, Error<'gc>),
-    // A callback or continuation is long running, and should be sequenced by this thread's step
-    // function until they are finished.
-    Sequence(AnySequence<'gc>),
+    // A frame for a running continuation. When it is the top frame, either the `poll` or `error`
+    // method will be called on the next call to `Thread::step`, depending on whether there is a
+    // pending error.
+    Continuation(AnyContinuation<'gc>),
+    // A marker frame that marks the thread as having available return values or an error that must
+    // be taken.
+    HasResult,
     // A marker frame that marks the thread as *actively* calling some external function, a
     // callback, continuation, or sequence.
     //
@@ -766,13 +743,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .unwrap_or(self.state.stack.len() - start);
 
                 match self.state.frames.last_mut() {
-                    Some(Frame::PendingContinuation { .. }) => {
+                    Some(Frame::Continuation { .. }) => {
                         assert!(self.state.external_stack.is_empty());
-                        let continuation = match self.state.frames.pop() {
-                            Some(Frame::PendingContinuation { continuation, .. }) => continuation,
-                            _ => unreachable!(),
-                        };
-                        self.state.frames.push(Frame::ContinueOk(continuation));
                         self.state
                             .external_stack
                             .extend(&self.state.stack[start..start + count]);
@@ -826,7 +798,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state
                             .external_stack
                             .extend(&self.state.stack[start..start + count]);
-                        self.state.returned = Some(Ok(()));
+                        self.state.frames.push(Frame::HasResult);
                         self.state.stack.clear();
                     }
                     _ => panic!("lua frame must be above a continuation or lua frame"),
@@ -914,31 +886,19 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
 impl<'gc> ThreadState<'gc> {
     fn mode(&self) -> ThreadMode {
-        if self.returned.is_some() {
-            ThreadMode::Return
-        } else {
-            match self.frames.last() {
-                None => {
-                    assert!(
-                        self.stack.is_empty()
-                            && self.open_upvalues.is_empty()
-                            && self.returned.is_none(),
-                    );
-                    ThreadMode::Stopped
-                }
-                Some(frame) => match frame {
-                    Frame::Lua { .. }
-                    | Frame::Callback { .. }
-                    | Frame::ContinueOk(_)
-                    | Frame::ContinueErr(_, _)
-                    | Frame::Sequence(_) => ThreadMode::Normal,
-                    Frame::Calling => ThreadMode::Running,
-                    Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
-                    Frame::PendingContinuation { .. } => {
-                        panic!("pending continuation cannot be top frame")
-                    }
-                },
+        match self.frames.last() {
+            None => {
+                assert!(self.stack.is_empty() && self.open_upvalues.is_empty(),);
+                ThreadMode::Stopped
             }
+            Some(frame) => match frame {
+                Frame::HasResult => ThreadMode::Result,
+                Frame::Lua { .. } | Frame::Callback { .. } | Frame::Continuation { .. } => {
+                    ThreadMode::Normal
+                }
+                Frame::Calling => ThreadMode::Running,
+                Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+            },
         }
     }
 
@@ -1027,58 +987,53 @@ impl<'gc> ThreadState<'gc> {
 
     fn unwind(&mut self, mc: &Mutation<'gc>, error: Error<'gc>) {
         self.external_stack.clear();
+        self.error = Some(error);
+
         while let Some(frame) = self.frames.pop() {
-            if let Frame::PendingContinuation {
-                bottom,
-                continuation,
-            } = frame
-            {
-                self.close_upvalues(mc, bottom);
-                self.stack.truncate(bottom);
-                self.frames.push(Frame::ContinueErr(continuation, error));
-                return;
+            match frame {
+                Frame::Lua { bottom, .. } => {
+                    self.close_upvalues(mc, bottom);
+                    self.stack.truncate(bottom);
+                }
+                Frame::Continuation(continuation) => {
+                    self.frames.push(Frame::Continuation(continuation));
+                    return;
+                }
+                _ => {}
             }
         }
-        self.close_upvalues(mc, 0);
-        self.stack.clear();
-        self.returned = Some(Err(error));
+        assert!(self.stack.is_empty());
+        self.frames.push(Frame::HasResult);
     }
 
     fn return_ext(&mut self, ret: CallbackReturn<'gc>) {
         match ret {
-            CallbackReturn::Yield(continuation) => {
-                if let Some(continuation) = continuation {
-                    self.frames.push(Frame::PendingContinuation {
-                        continuation,
-                        bottom: self.stack.len(),
-                    });
-                }
-                self.frames.push(Frame::ResumeCoroutine);
-                self.returned = Some(Ok(()));
-            }
-            CallbackReturn::Return => match self.frames.pop() {
-                Some(Frame::PendingContinuation { continuation, .. }) => {
-                    self.frames.push(Frame::ContinueOk(continuation));
-                }
-                Some(frame @ Frame::Lua { .. }) => {
-                    self.frames.push(frame);
+            CallbackReturn::Return => match self.frames.last_mut() {
+                Some(Frame::Continuation { .. }) => {}
+                Some(Frame::Lua { .. }) => {
                     self.return_to_lua();
                 }
                 None => {
-                    self.returned = Some(Ok(()));
+                    self.frames.push(Frame::HasResult);
                 }
                 _ => panic!("frame above callback must be continuation or lua frame"),
             },
+            CallbackReturn::Continuation(continuation) => {
+                self.frames.push(Frame::Continuation(continuation));
+            }
+            CallbackReturn::Yield(continuation) => {
+                if let Some(continuation) = continuation {
+                    self.frames.push(Frame::Continuation(continuation));
+                }
+                self.frames.push(Frame::ResumeCoroutine);
+                self.frames.push(Frame::HasResult);
+            }
             CallbackReturn::TailCall(function, continuation) => {
                 if let Some(continuation) = continuation {
-                    self.frames.push(Frame::PendingContinuation {
-                        continuation,
-                        bottom: self.stack.len(),
-                    });
+                    self.frames.push(Frame::Continuation(continuation));
                 }
                 self.ext_call_function(function);
             }
-            CallbackReturn::Sequence(seq) => self.frames.push(Frame::Sequence(seq)),
         }
     }
 

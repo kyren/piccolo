@@ -6,8 +6,8 @@ use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Com
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compile, compiler::ParserError, conversion::Variadic, io, Closure, CompilerError, Lua,
-    StaticError, Thread, Value,
+    compile, compiler::ParserError, io, Closure, CompilerError, Lua, StaticError, Thread, Value,
+    Variadic,
 };
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {

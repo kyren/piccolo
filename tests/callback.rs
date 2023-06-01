@@ -1,6 +1,7 @@
+use gc_arena::Collect;
 use piccolo::{
-    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Error, Function, IntoValue,
-    Lua, StaticError, String, Thread, Value,
+    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Continuation, ContinuationPoll,
+    Error, Function, IntoValue, Lua, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -78,29 +79,33 @@ fn loopy_callback() -> Result<(), StaticError> {
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _| {
+            #[derive(Collect)]
+            #[collect(require_static)]
+            struct Cont(i64);
+
+            impl<'gc> Continuation<'gc> for Cont {
+                fn poll(
+                    &mut self,
+                    _ctx: piccolo::Context<'gc>,
+                    stack: &mut piccolo::Stack<'gc>,
+                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    stack.push_back(self.0.into());
+                    self.0 += 1;
+                    if self.0 > 6 {
+                        Ok(ContinuationPoll::Return)
+                    } else {
+                        Ok(ContinuationPoll::Pending)
+                    }
+                }
+            }
+
             Ok(CallbackReturn::TailCall(
                 AnyCallback::from_fn(&ctx, |_, stack| {
                     stack.push_back(3.into());
                     Ok(CallbackReturn::Yield(None))
                 })
                 .into(),
-                Some(AnyContinuation::from_ok_fn(&ctx, |ctx, stack| {
-                    stack.push_back(4.into());
-                    Ok(CallbackReturn::TailCall(
-                        AnyCallback::from_fn(&ctx, |_, _| Ok(CallbackReturn::Return)).into(),
-                        Some(AnyContinuation::from_ok_fn(&ctx, |ctx, stack| {
-                            stack.push_back(5.into());
-                            Ok(CallbackReturn::TailCall(
-                                AnyCallback::from_fn(&ctx, |_, stack| {
-                                    stack.push_back(6.into());
-                                    Ok(CallbackReturn::Return)
-                                })
-                                .into(),
-                                None,
-                            ))
-                        })),
-                    ))
-                })),
+                Some(AnyContinuation::new(Cont(4))),
             ))
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
@@ -158,26 +163,40 @@ fn yield_continuation() -> Result<(), StaticError> {
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
-            let (a, b): (i32, i32) = stack.consume(ctx)?;
-            assert_eq!((a, b), (1, 2));
-            stack.extend([Value::Integer(3), Value::Integer(4)]);
-            Ok(CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(
-                &ctx,
-                |ctx, stack| {
-                    let (a, b): (i32, i32) = stack.consume(ctx)?;
-                    assert_eq!((a, b), (5, 6));
-                    stack.extend([Value::Integer(7), Value::Integer(8)]);
-                    Ok(CallbackReturn::Yield(Some(AnyContinuation::from_ok_fn(
-                        &ctx,
-                        |ctx, stack| {
+            #[derive(Collect)]
+            #[collect(require_static)]
+            struct Cont(i8);
+
+            impl<'gc> Continuation<'gc> for Cont {
+                fn poll(
+                    &mut self,
+                    ctx: piccolo::Context<'gc>,
+                    stack: &mut piccolo::Stack<'gc>,
+                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    match self.0 {
+                        0 => {
+                            let (a, b): (i32, i32) = stack.consume(ctx)?;
+                            assert_eq!((a, b), (5, 6));
+                            stack.extend([Value::Integer(7), Value::Integer(8)]);
+                            self.0 = 1;
+                            Ok(ContinuationPoll::Yield { is_tail: false })
+                        }
+                        1 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
                             assert_eq!((a, b), (9, 10));
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
-                            Ok(CallbackReturn::Return)
-                        },
-                    ))))
-                },
-            ))))
+                            self.0 = 2;
+                            Ok(ContinuationPoll::Return)
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+
+            let (a, b): (i32, i32) = stack.consume(ctx)?;
+            assert_eq!((a, b), (1, 2));
+            stack.extend([Value::Integer(3), Value::Integer(4)]);
+            Ok(CallbackReturn::Yield(Some(Cont(0).into())))
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
         Ok(())
@@ -221,14 +240,33 @@ fn resume_with_err() {
 
     let thread = lua.run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
+            #[derive(Collect)]
+            #[collect(require_static)]
+            struct Cont;
+
+            impl<'gc> Continuation<'gc> for Cont {
+                fn poll(
+                    &mut self,
+                    _ctx: piccolo::Context<'gc>,
+                    _stack: &mut piccolo::Stack<'gc>,
+                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    panic!("did not error");
+                }
+
+                fn error(
+                    &mut self,
+                    ctx: piccolo::Context<'gc>,
+                    _error: Error<'gc>,
+                    _stack: &mut piccolo::Stack<'gc>,
+                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    Err("a different error".into_value(ctx).into())
+                }
+            }
+
             assert!(stack.len() == 1);
             assert_eq!(stack.consume::<String>(ctx)?, "resume");
             stack.replace(ctx, "return");
-            Ok(CallbackReturn::Yield(Some(AnyContinuation::from_fns(
-                &ctx,
-                |_, _| panic!("did not error"),
-                |ctx, _, _| Err("a different error".into_value(ctx).into()),
-            ))))
+            Ok(CallbackReturn::Yield(Some(Cont.into())))
         });
 
         let thread = Thread::new(&ctx);

@@ -4,8 +4,8 @@ use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    conversion::Variadic, raw_ops, AnyCallback, CallbackReturn, Context, FromMultiValue,
-    IntoMultiValue, IntoValue, Table, Value,
+    raw_ops, AnyCallback, CallbackReturn, Context, FromMultiValue, IntoMultiValue, IntoValue,
+    Table, Value, Variadic,
 };
 
 pub fn load_math<'gc>(ctx: Context<'gc>) {

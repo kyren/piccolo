@@ -1,9 +1,12 @@
 use std::io::{self, Write};
 
+use gc_arena::Collect;
+
 use crate::{
     meta_ops::{self, MetaMethod, MetaResult},
     table::NextValue,
-    AnyCallback, AnyContinuation, CallbackReturn, Context, Error, IntoValue, Stack, Table, Value,
+    AnyCallback, CallbackReturn, Context, Continuation, ContinuationPoll, Error, IntoValue, Stack,
+    Table, Value,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -32,53 +35,76 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    fn print<'gc>(
-        ctx: Context<'gc>,
-        mut first: bool,
-        stack: &mut Stack<'gc>,
-    ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        let mut stdout = io::stdout();
-        while let Some(val) = stack.pop_front() {
-            match meta_ops::tostring(ctx, val)? {
-                MetaResult::Value(v) => {
-                    if first {
-                        first = false;
-                    } else {
-                        stdout.write_all(&b"\t"[..])?;
-                    }
-
-                    v.display(&mut stdout)?
-                }
-                MetaResult::Call(func, args) => {
-                    let rest = stack.drain(..).collect::<Vec<_>>();
-                    stack.extend(args);
-                    return Ok(CallbackReturn::TailCall(
-                        func,
-                        Some(AnyContinuation::from_ok_fn_with(
-                            &ctx,
-                            rest,
-                            move |rest, ctx, stack| {
-                                stack.drain(1..);
-                                stack.extend(rest);
-                                print(ctx, first, stack)
-                            },
-                        )),
-                    ));
-                }
-            }
-        }
-        stdout.write_all(&b"\n"[..])?;
-        stdout.flush()?;
-        stack.clear();
-        Ok(CallbackReturn::Return)
-    }
-
     ctx.state
         .globals
         .set(
             ctx,
             "print",
-            AnyCallback::from_fn(&ctx, |ctx, stack| print(ctx, true, stack)),
+            AnyCallback::from_fn(&ctx, |_, stack| {
+                #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
+                #[collect(require_static)]
+                enum Mode {
+                    Init,
+                    First,
+                    Rest,
+                }
+
+                #[derive(Collect)]
+                #[collect(no_drop)]
+                struct PrintContinuation<'gc> {
+                    mode: Mode,
+                    values: Vec<Value<'gc>>,
+                }
+
+                impl<'gc> Continuation<'gc> for PrintContinuation<'gc> {
+                    fn poll(
+                        &mut self,
+                        ctx: Context<'gc>,
+                        stack: &mut Stack<'gc>,
+                    ) -> Result<crate::ContinuationPoll<'gc>, Error<'gc>> {
+                        let mut stdout = io::stdout();
+
+                        if self.mode == Mode::Init {
+                            self.mode = Mode::First;
+                        } else {
+                            self.values.push(stack.get(0));
+                        }
+                        stack.clear();
+
+                        while let Some(value) = self.values.pop() {
+                            match meta_ops::tostring(ctx, value)? {
+                                MetaResult::Value(v) => {
+                                    if self.mode == Mode::First {
+                                        self.mode = Mode::Rest;
+                                    } else {
+                                        stdout.write_all(&b"\t"[..])?;
+                                    }
+                                    v.display(&mut stdout)?
+                                }
+                                MetaResult::Call(function, args) => {
+                                    stack.extend(args);
+                                    return Ok(ContinuationPoll::Call {
+                                        function,
+                                        is_tail: false,
+                                    });
+                                }
+                            }
+                        }
+
+                        stdout.write_all(&b"\n"[..])?;
+                        stdout.flush()?;
+                        Ok(ContinuationPoll::Return)
+                    }
+                }
+
+                Ok(CallbackReturn::Continuation(
+                    PrintContinuation {
+                        mode: Mode::Init,
+                        values: stack.drain(..).rev().collect(),
+                    }
+                    .into(),
+                ))
+            }),
         )
         .unwrap();
 
@@ -110,28 +136,41 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    let pcall_cont = AnyContinuation::from_fns(
-        &ctx,
-        move |_, stack| {
-            stack.push_front(Value::Boolean(true));
-            Ok(CallbackReturn::Return)
-        },
-        move |ctx, stack, error| {
-            stack.clear();
-            stack.extend([Value::Boolean(false), error.to_value(&ctx)]);
-            Ok(CallbackReturn::Return)
-        },
-    );
-
     ctx.state
         .globals
         .set(
             ctx,
             "pcall",
-            AnyCallback::from_fn_with(&ctx, pcall_cont, move |pcall_cont, ctx, stack| {
+            AnyCallback::from_fn(&ctx, move |ctx, stack| {
+                #[derive(Collect)]
+                #[collect(require_static)]
+                struct PCall;
+
+                impl<'gc> Continuation<'gc> for PCall {
+                    fn poll(
+                        &mut self,
+                        _ctx: Context<'gc>,
+                        stack: &mut Stack<'gc>,
+                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                        stack.push_front(Value::Boolean(true));
+                        Ok(ContinuationPoll::Return)
+                    }
+
+                    fn error(
+                        &mut self,
+                        ctx: Context<'gc>,
+                        error: Error<'gc>,
+                        stack: &mut Stack<'gc>,
+                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                        stack.clear();
+                        stack.extend([Value::Boolean(false), error.to_value(&ctx)]);
+                        Ok(ContinuationPoll::Return)
+                    }
+                }
+
                 let function = meta_ops::call(ctx, stack.get(0))?;
                 stack.pop_front();
-                Ok(CallbackReturn::TailCall(function, Some(*pcall_cont)))
+                Ok(CallbackReturn::TailCall(function, Some(PCall.into())))
             }),
         )
         .unwrap();
@@ -284,16 +323,25 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 CallbackReturn::Return
             }
             MetaResult::Call(f, args) => {
-                stack.extend(args);
-                CallbackReturn::TailCall(
-                    f,
-                    Some(AnyContinuation::from_ok_fn(&ctx, move |_, stack| {
+                #[derive(Collect)]
+                #[collect(require_static)]
+                struct INext(i64);
+
+                impl<'gc> Continuation<'gc> for INext {
+                    fn poll(
+                        &mut self,
+                        _ctx: Context<'gc>,
+                        stack: &mut Stack<'gc>,
+                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
                         if !stack.get(0).is_nil() {
-                            stack.push_front(next_index.into());
+                            stack.push_front(self.0.into());
                         }
-                        Ok(CallbackReturn::Return)
-                    })),
-                )
+                        Ok(ContinuationPoll::Return)
+                    }
+                }
+
+                stack.extend(args);
+                CallbackReturn::TailCall(f, Some(INext(next_index).into()))
             }
         })
     });

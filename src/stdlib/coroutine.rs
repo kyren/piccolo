@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    conversion::Variadic, AnyCallback, BadThreadMode, CallbackReturn, Context, IntoValue, Sequence,
-    Stack, Table, Thread, ThreadMode, Value,
+    AnyCallback, BadThreadMode, CallbackReturn, Context, Continuation, ContinuationPoll, IntoValue,
+    Stack, Table, Thread, ThreadMode, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -35,22 +35,21 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
 
                 #[derive(Collect)]
                 #[collect(require_static)]
-                struct ThreadSequence;
+                struct ThreadContinuation;
 
-                impl<'gc> Sequence<'gc> for ThreadSequence {
-                    fn step(
+                impl<'gc> Continuation<'gc> for ThreadContinuation {
+                    fn poll(
                         &mut self,
                         ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<Option<CallbackReturn<'gc>>, crate::Error<'gc>>
-                    {
+                    ) -> Result<ContinuationPoll<'gc>, crate::Error<'gc>> {
                         let thread = match stack.get(0) {
                             Value::Thread(thread) => thread,
                             _ => panic!("thread lost from stack"),
                         };
 
                         match thread.mode() {
-                            ThreadMode::Return => {
+                            ThreadMode::Result => {
                                 match thread.take_return::<Variadic<Value<'gc>>>(ctx).unwrap() {
                                     Ok(res) => {
                                         stack.replace(ctx, (true, res));
@@ -59,11 +58,11 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                                         stack.replace(ctx, (false, err.to_value(&ctx)));
                                     }
                                 }
-                                Ok(Some(CallbackReturn::Return))
+                                Ok(ContinuationPoll::Return)
                             }
                             ThreadMode::Normal => {
                                 thread.step(ctx).unwrap();
-                                Ok(None)
+                                Ok(ContinuationPoll::Pending)
                             }
                             mode => Err(BadThreadMode {
                                 expected: ThreadMode::Normal,
@@ -75,7 +74,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.push_front(thread.into());
-                Ok(CallbackReturn::Sequence(ThreadSequence.into()))
+                Ok(CallbackReturn::Continuation(ThreadContinuation.into()))
             }),
         )
         .unwrap();
@@ -89,7 +88,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                 stack.replace(
                     ctx,
                     match thread.mode() {
-                        ThreadMode::Stopped | ThreadMode::Return => "dead",
+                        ThreadMode::Stopped | ThreadMode::Result => "dead",
                         ThreadMode::Running => "running",
                         ThreadMode::Normal => "normal",
                         ThreadMode::Suspended => "suspended",
