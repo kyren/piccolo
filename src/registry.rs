@@ -179,11 +179,11 @@ impl From<StaticUserData> for StaticValue {
     }
 }
 
-pub trait Singleton<'gc>: Copy {
+pub trait Singleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self;
 }
 
-impl<'gc, T: Default + Copy> Singleton<'gc> for T {
+impl<'gc, T: Default> Singleton<'gc> for T {
     fn create(_: Context<'gc>) -> Self {
         Self::default()
     }
@@ -208,21 +208,20 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
-    pub fn singleton<S>(&self, ctx: Context<'gc>) -> Root<'gc, S>
+    pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a>,
         Root<'gc, S>: Singleton<'gc>,
     {
         let mut singletons = self.singletons.borrow_mut(&ctx);
         match singletons.entry(TypeId::of::<S>()) {
-            hash_map::Entry::Occupied(occupied) => *occupied
-                .get()
-                .downcast::<S>()
-                .expect("bad type in singletons table"),
+            hash_map::Entry::Occupied(occupied) => occupied.get().downcast::<S>().unwrap(),
             hash_map::Entry::Vacant(vacant) => {
                 let v = Root::<'gc, S>::create(ctx);
-                vacant.insert(AnyValue::new::<S>(&ctx, (), v));
-                v
+                vacant
+                    .insert(AnyValue::new::<S>(&ctx, (), v))
+                    .downcast::<S>()
+                    .unwrap()
             }
         }
     }

@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, Mutation, Root, Rootable};
+use gc_arena::{barrier::Write, lock::RefLock, Collect, Gc, Mutation, Root, Rootable};
 
 /// Garbage collected `Any` type that can be downcast.
 #[derive(Copy, Clone, Collect)]
@@ -55,12 +55,7 @@ impl<'gc, M> AnyCell<'gc, M> {
         &'a self,
         mc: &Mutation<'gc>,
     ) -> Result<RefMut<'a, M>, BorrowMutError> {
-        // SAFETY: We make sure to call the write barrier on successful borrowing.
-        let res = unsafe { self.0.metadata().as_ref_cell().try_borrow_mut() };
-        if res.is_ok() {
-            Gc::write(mc, self.0 .0);
-        }
-        res
+        self.0.write_metadata(mc).unlock().try_borrow_mut()
     }
 
     pub fn read_data<'a, R>(&'a self) -> Option<Result<Ref<'a, Root<'gc, R>>, BorrowError>>
@@ -78,13 +73,12 @@ impl<'gc, M> AnyCell<'gc, M> {
     where
         R: for<'b> Rootable<'b>,
     {
-        let cell = self.0.downcast::<Rootable![RefLock<Root<'_, R>>]>()?;
-        // SAFETY: We make sure to call the write barrier on successful borrowing.
-        let res = unsafe { cell.as_ref_cell().try_borrow_mut() };
-        if res.is_ok() {
-            Gc::write(mc, self.0 .0);
-        }
-        Some(res)
+        Some(
+            self.0
+                .downcast_write::<Rootable![RefLock<Root<'_, R>>]>(mc)?
+                .unlock()
+                .try_borrow_mut(),
+        )
     }
 }
 
@@ -170,8 +164,12 @@ impl<'gc, M> AnyValue<'gc, M> {
         Self(unsafe { Gc::cast::<Header<M>>(val) })
     }
 
-    pub fn metadata(&self) -> &M {
-        &self.0.metadata
+    pub fn metadata(&self) -> &'gc M {
+        &self.0.as_ref().metadata
+    }
+
+    pub fn write_metadata(&self, mc: &Mutation<'gc>) -> &'gc Write<M> {
+        gc_arena::barrier::field!(Gc::write(mc, self.0), Header, metadata)
     }
 
     pub fn as_ptr(&self) -> *const () {
@@ -189,16 +187,26 @@ impl<'gc, M> AnyValue<'gc, M> {
         TypeId::of::<R>() == self.0.type_id
     }
 
-    pub fn downcast<R>(&self) -> Option<&Root<'gc, R>>
+    pub fn downcast<R>(&self) -> Option<&'gc Root<'gc, R>>
     where
         R: for<'b> Rootable<'b>,
     {
         if TypeId::of::<R>() == self.0.type_id {
-            let ptr = Gc::as_ptr(self.0) as *const Value<M, Root<'gc, R>>;
-            Some(unsafe { &(*ptr).data })
+            let ptr = unsafe { Gc::from_ptr(Gc::as_ptr(self.0) as *const Value<M, Root<'gc, R>>) };
+            Some(&ptr.as_ref().data)
         } else {
             None
         }
+    }
+
+    pub fn downcast_write<R>(&self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
+    where
+        R: for<'b> Rootable<'b>,
+    {
+        let root = self.downcast::<R>()?;
+        Gc::write(mc, self.0);
+        // SAFETY: We have just called the write barrier for the containing `Gc`.
+        Some(unsafe { Write::assume(root) })
     }
 }
 
