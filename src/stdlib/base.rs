@@ -5,8 +5,8 @@ use gc_arena::Collect;
 use crate::{
     meta_ops::{self, MetaMethod, MetaResult},
     table::NextValue,
-    AnyCallback, CallbackReturn, Context, Continuation, ContinuationPoll, Error, IntoValue, Stack,
-    Table, Value,
+    AnyCallback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll, Stack, Table,
+    Value,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -51,17 +51,17 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 #[derive(Collect)]
                 #[collect(no_drop)]
-                struct PrintContinuation<'gc> {
+                struct PrintSeq<'gc> {
                     mode: Mode,
                     values: Vec<Value<'gc>>,
                 }
 
-                impl<'gc> Continuation<'gc> for PrintContinuation<'gc> {
+                impl<'gc> Sequence<'gc> for PrintSeq<'gc> {
                     fn poll(
                         &mut self,
                         ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<crate::ContinuationPoll<'gc>, Error<'gc>> {
+                    ) -> Result<crate::SequencePoll<'gc>, Error<'gc>> {
                         let mut stdout = io::stdout();
 
                         if self.mode == Mode::Init {
@@ -83,7 +83,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                 }
                                 MetaResult::Call(function, args) => {
                                     stack.extend(args);
-                                    return Ok(ContinuationPoll::Call {
+                                    return Ok(SequencePoll::Call {
                                         function,
                                         is_tail: false,
                                     });
@@ -93,12 +93,12 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                         stdout.write_all(&b"\n"[..])?;
                         stdout.flush()?;
-                        Ok(ContinuationPoll::Return)
+                        Ok(SequencePoll::Return)
                     }
                 }
 
-                Ok(CallbackReturn::Continuation(
-                    PrintContinuation {
+                Ok(CallbackReturn::Sequence(
+                    PrintSeq {
                         mode: Mode::Init,
                         values: stack.drain(..).rev().collect(),
                     }
@@ -146,14 +146,14 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 #[collect(require_static)]
                 struct PCall;
 
-                impl<'gc> Continuation<'gc> for PCall {
+                impl<'gc> Sequence<'gc> for PCall {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         stack.push_front(Value::Boolean(true));
-                        Ok(ContinuationPoll::Return)
+                        Ok(SequencePoll::Return)
                     }
 
                     fn error(
@@ -161,10 +161,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         ctx: Context<'gc>,
                         error: Error<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         stack.clear();
                         stack.extend([Value::Boolean(false), error.to_value(&ctx)]);
-                        Ok(ContinuationPoll::Return)
+                        Ok(SequencePoll::Return)
                     }
                 }
 
@@ -327,16 +327,16 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 #[collect(require_static)]
                 struct INext(i64);
 
-                impl<'gc> Continuation<'gc> for INext {
+                impl<'gc> Sequence<'gc> for INext {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         if !stack.get(0).is_nil() {
                             stack.push_front(self.0.into());
                         }
-                        Ok(ContinuationPoll::Return)
+                        Ok(SequencePoll::Return)
                     }
                 }
 

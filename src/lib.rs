@@ -22,9 +22,7 @@ pub mod value;
 
 pub use self::{
     any::AnyCell,
-    callback::{
-        AnyCallback, AnyContinuation, Callback, CallbackReturn, Continuation, ContinuationPoll,
-    },
+    callback::{AnyCallback, AnySequence, Callback, CallbackReturn, Sequence, SequencePoll},
     closure::{
         Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
         UpValueState,

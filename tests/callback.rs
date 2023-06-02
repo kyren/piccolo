@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    compile, AnyCallback, AnyContinuation, CallbackReturn, Closure, Continuation, ContinuationPoll,
-    Error, Function, IntoValue, Lua, StaticError, String, Thread, Value,
+    compile, AnyCallback, AnySequence, CallbackReturn, Closure, Error, Function, IntoValue, Lua,
+    Sequence, SequencePoll, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -83,18 +83,18 @@ fn loopy_callback() -> Result<(), StaticError> {
             #[collect(require_static)]
             struct Cont(i64);
 
-            impl<'gc> Continuation<'gc> for Cont {
+            impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
                     _ctx: piccolo::Context<'gc>,
                     stack: &mut piccolo::Stack<'gc>,
-                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     stack.push_back(self.0.into());
                     self.0 += 1;
                     if self.0 > 6 {
-                        Ok(ContinuationPoll::Return)
+                        Ok(SequencePoll::Return)
                     } else {
-                        Ok(ContinuationPoll::Pending)
+                        Ok(SequencePoll::Pending)
                     }
                 }
             }
@@ -105,7 +105,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                     Ok(CallbackReturn::Yield(None))
                 })
                 .into(),
-                Some(AnyContinuation::new(Cont(4))),
+                Some(AnySequence::new(Cont(4))),
             ))
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
@@ -158,7 +158,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn yield_continuation() -> Result<(), StaticError> {
+fn yield_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|ctx| {
@@ -167,26 +167,26 @@ fn yield_continuation() -> Result<(), StaticError> {
             #[collect(require_static)]
             struct Cont(i8);
 
-            impl<'gc> Continuation<'gc> for Cont {
+            impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
                     ctx: piccolo::Context<'gc>,
                     stack: &mut piccolo::Stack<'gc>,
-                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     match self.0 {
                         0 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
                             assert_eq!((a, b), (5, 6));
                             stack.extend([Value::Integer(7), Value::Integer(8)]);
                             self.0 = 1;
-                            Ok(ContinuationPoll::Yield { is_tail: false })
+                            Ok(SequencePoll::Yield { is_tail: false })
                         }
                         1 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
                             assert_eq!((a, b), (9, 10));
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
                             self.0 = 2;
-                            Ok(ContinuationPoll::Return)
+                            Ok(SequencePoll::Return)
                         }
                         _ => unreachable!(),
                     }
@@ -244,12 +244,12 @@ fn resume_with_err() {
             #[collect(require_static)]
             struct Cont;
 
-            impl<'gc> Continuation<'gc> for Cont {
+            impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
                     _ctx: piccolo::Context<'gc>,
                     _stack: &mut piccolo::Stack<'gc>,
-                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     panic!("did not error");
                 }
 
@@ -258,7 +258,7 @@ fn resume_with_err() {
                     ctx: piccolo::Context<'gc>,
                     _error: Error<'gc>,
                     _stack: &mut piccolo::Stack<'gc>,
-                ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     Err("a different error".into_value(ctx).into())
                 }
             }

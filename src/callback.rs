@@ -11,9 +11,9 @@ use crate::{Context, Error, Function, Stack};
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
     Return,
-    Continuation(AnyContinuation<'gc>),
-    Yield(Option<AnyContinuation<'gc>>),
-    TailCall(Function<'gc>, Option<AnyContinuation<'gc>>),
+    Sequence(AnySequence<'gc>),
+    Yield(Option<AnySequence<'gc>>),
+    TailCall(Function<'gc>, Option<AnySequence<'gc>>),
 }
 
 pub trait Callback<'gc>: Collect {
@@ -149,68 +149,77 @@ impl<'gc> Hash for AnyCallback<'gc> {
     }
 }
 
-pub enum ContinuationPoll<'gc> {
-    // Continuation pending, `Continuation::poll` will be called on the next step with the stack
-    // unchanged.
+pub enum SequencePoll<'gc> {
+    // Sequence pending, `Sequence::poll` will be called on the next step with the stack unchanged.
     Pending,
-    // Continuation finished, the values in the stack will be returned to the caller.
+    // Sequence finished, the values in the stack will be returned to the caller.
     Return,
     // Yield the values in the stack inside a coroutine. If `is_tail` is true, then this also
-    // finishes the continuation, otherwise `Continuation::poll` will be called when the coroutine
-    // is resumed, or `Continuation::error` if the coroutine is resumed with an error.
+    // finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
+    // resumed, or `Sequence::error` if the coroutine is resumed with an error.
     Yield {
         is_tail: bool,
     },
-    // Call the given function with the arguments in the stack. If `is_tail` is true, then this
-    // is a tail call, and the continuation is now finished, otherwise `Continuation::poll`
-    // will be called with the results of the function call, or if the function errors,
-    // `Continuation::error` will be called with the function error.
+    // Call the given function with the arguments in the stack. If `is_tail` is true, then this is
+    // a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called with
+    // the results of the function call, or if the function errors, `Sequence::error` will be called
+    // with the function error.
     Call {
         function: Function<'gc>,
         is_tail: bool,
     },
 }
 
-pub trait Continuation<'gc>: Collect {
+pub trait Sequence<'gc>: Collect {
+    /// Called when a `Sequence` is first run with the stack unchanged from the returned `Callback`
+    /// that spawned it.
+    ///
+    /// If a sub-function is called and succeeds, this will be called when that function finishes
+    /// successfully with its return values.
+    ///
+    /// If the `Sequence` yields values, this will suspend the containing coroutine and
+    /// `Sequence::poll` will be called again with the resume parameters.
     fn poll(
         &mut self,
         ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
-    ) -> Result<ContinuationPoll<'gc>, Error<'gc>>;
+    ) -> Result<SequencePoll<'gc>, Error<'gc>>;
 
+    /// Called if a sub-function errors to handle the error, or if a `Sequence` has yielded and the
+    /// containing coroutine is resumed with an error.
     fn error(
         &mut self,
         _ctx: Context<'gc>,
         error: Error<'gc>,
         _stack: &mut Stack<'gc>,
-    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         Err(error)
     }
 }
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnyContinuation<'gc>(pub Box<dyn Continuation<'gc> + 'gc>);
+pub struct AnySequence<'gc>(pub Box<dyn Sequence<'gc> + 'gc>);
 
-impl<'gc, S> From<S> for AnyContinuation<'gc>
+impl<'gc, S> From<S> for AnySequence<'gc>
 where
-    S: Continuation<'gc> + 'gc,
+    S: Sequence<'gc> + 'gc,
 {
     fn from(v: S) -> Self {
         Self(Box::new(v))
     }
 }
 
-impl<'gc> AnyContinuation<'gc> {
-    pub fn new(continuation: impl Continuation<'gc> + 'gc) -> Self {
-        Self(Box::new(continuation))
+impl<'gc> AnySequence<'gc> {
+    pub fn new(sequence: impl Sequence<'gc> + 'gc) -> Self {
+        Self(Box::new(sequence))
     }
 
     pub fn poll(
         &mut self,
         ctx: Context<'gc>,
         stack: &mut Stack<'gc>,
-    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         self.0.poll(ctx, stack)
     }
 
@@ -219,7 +228,7 @@ impl<'gc> AnyContinuation<'gc> {
         ctx: Context<'gc>,
         error: Error<'gc>,
         stack: &mut Stack<'gc>,
-    ) -> Result<ContinuationPoll<'gc>, Error<'gc>> {
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         self.0.error(ctx, error, stack)
     }
 }

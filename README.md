@@ -68,25 +68,17 @@ problematic. No garbage collection can take place during a call to `mutate`, so
 we have to make sure to regularly return from the `mutate` call to allow garbage
 collection to take place.
 
-The VM in `piccolo` is thus written in what is called "stackless" or
+The VM in `piccolo` is thus written in what is sometimes called "stackless" or
 "trampoline" style. It does not rely on the rust stack for Lua -> Rust and Rust
--> Lua nesting, instead callbacks can do one of the following things
+-> Lua nesting, instead callbacks can either have some kind of immediate result
+(return values, yield values from a coroutine, error), or they can produce
+a `Sequence`. A `Sequence` is a bit like a `Future` in that it is a multi-
+step operation that the parent `Thread` will drive to completion. `Thread`
+will repeatedly call `Sequence::poll` until the sequence is complete, and the
+`Sequence` can yield values and call arbitrary Lua functions while it is being
+polled.
 
-  * Return results immediately as a fast path.
-  * Return a function (either Rust or Lua) to tail call, and an optional
-    continuation function. The function will be called as normal, and after
-    finishing, the results of this function (either success or failure) will be
-    passed to the continuation, which can then itself do any of the three things
-    that any callback can do, return immediately, schedule a sequence, or do yet
-    another tail call.
-  * Yield results with an optional continuation function to call after the
-    coroutine is resumed.
-  * Return a type implementing a trait called `Sequence`, which the VM
-    will drive to completion, similar to how `Future` works. In between
-    `Sequence::step` calls, the VM can return from `mutate` and drive garbage
-    collection.
-
-For example, it is of course possible for Lua to call a Rust callback, which
+As an example, it is of course possible for Lua to call a Rust callback, which
 then in turn creates a new Lua coroutine and runs it. In order to do so, a
 callback would take a Lua function as a parameter, then create a new coroutine
 Lua thread and return a `Sequence` impl that will run it. The outer main Lua
@@ -95,25 +87,25 @@ Lua thread. This is exactly how the `coroutine.resume` Lua stdlib function is
 implemented.
 
 As another example, `pcall` is easy to implement here, a callback can call the
-provided function as a tail call with a continuation, and the continuation can
-catch the error and return the error status.
+provided function with a `Sequence` underneath it, and the sequence can catch
+the error and return the error status.
 
 Yet another example, imagine Rust code calling a Lua coroutine thread which
-calls more Rust code which calls yet more Lua code which then yields. Our stack
-will look something like this:
+calls a Rust `Sequence` which calls yet more Lua code which then yields. Our
+stack will look something like this:
 
 ```
-[Rust] -> [Lua Coroutine] -> [Rust Continuation] -> [Lua code that yields]
+[Rust] -> [Lua Coroutine] -> [Rust Sequence] -> [Lua code that yields]
 ```
 
-This is no problem with this VM style, the inner Rust callback is paused as
-a continuation, and the inner yield will return the value all the way to the top
+This is no problem with this VM style, the inner Rust callback is paused as a
+`Sequence`, and the inner yield will return the value all the way to the top
 level Rust code. When the coroutine thread is resumed and eventually returns,
-the Rust continuation will be resumed.
+the Rust `Sequence` will be resumed.
 
-With any number of nested Lua threads and `Sequence` / `Continuation`, control
-will always continuously return outside the GC arena and to the outer Rust code
-driving everything. This is the "trampoline" here, when using this interpreter,
+With any number of nested Lua threads and `Sequence`s, control will always
+continuously return outside the GC arena and to the outer Rust code driving
+everything. This is the "trampoline" here, when using this interpreter,
 somewhere there is a loop that is continuously calling `Arena::mutate` and
 `Thread::step`, and it can stop or pause or change tasks at any time, not
 requiring unwinding the Rust stack.

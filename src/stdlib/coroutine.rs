@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    AnyCallback, BadThreadMode, CallbackReturn, Context, Continuation, ContinuationPoll, IntoValue,
-    Stack, Table, Thread, ThreadMode, Value, Variadic,
+    AnyCallback, BadThreadMode, CallbackReturn, Context, IntoValue, Sequence, SequencePoll, Stack,
+    Table, Thread, ThreadMode, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -35,14 +35,14 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
 
                 #[derive(Collect)]
                 #[collect(require_static)]
-                struct ThreadContinuation;
+                struct ThreadSequence;
 
-                impl<'gc> Continuation<'gc> for ThreadContinuation {
+                impl<'gc> Sequence<'gc> for ThreadSequence {
                     fn poll(
                         &mut self,
                         ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<ContinuationPoll<'gc>, crate::Error<'gc>> {
+                    ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
                         let thread = match stack.get(0) {
                             Value::Thread(thread) => thread,
                             _ => panic!("thread lost from stack"),
@@ -58,11 +58,11 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                                         stack.replace(ctx, (false, err.to_value(&ctx)));
                                     }
                                 }
-                                Ok(ContinuationPoll::Return)
+                                Ok(SequencePoll::Return)
                             }
                             ThreadMode::Normal => {
                                 thread.step(ctx).unwrap();
-                                Ok(ContinuationPoll::Pending)
+                                Ok(SequencePoll::Pending)
                             }
                             mode => Err(BadThreadMode {
                                 expected: ThreadMode::Normal,
@@ -74,7 +74,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.push_front(thread.into());
-                Ok(CallbackReturn::Continuation(ThreadContinuation.into()))
+                Ok(CallbackReturn::Sequence(ThreadSequence.into()))
             }),
         )
         .unwrap();
