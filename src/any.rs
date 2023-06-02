@@ -153,7 +153,7 @@ impl<'gc, M> Clone for AnyValue<'gc, M> {
 }
 
 impl<'gc, M> AnyValue<'gc, M> {
-    fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
+    pub fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
         R: for<'a> Rootable<'a>,
@@ -193,7 +193,7 @@ impl<'gc, M> AnyValue<'gc, M> {
         TypeId::of::<R>() == self.0.type_id
     }
 
-    fn downcast<R>(&self) -> Option<&Root<'gc, R>>
+    pub fn downcast<R>(&self) -> Option<&Root<'gc, R>>
     where
         R: for<'b> Rootable<'b>,
     {

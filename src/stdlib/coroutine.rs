@@ -55,7 +55,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                                         stack.replace(ctx, (true, res));
                                     }
                                     Err(err) => {
-                                        stack.replace(ctx, (false, err.to_value(&ctx)));
+                                        stack.replace(ctx, (false, err.to_value(ctx)));
                                     }
                                 }
                                 Ok(SequencePoll::Return)

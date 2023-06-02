@@ -1,9 +1,9 @@
 use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc};
 
-use gc_arena::{Collect, Mutation};
+use gc_arena::{Collect, Rootable};
 use thiserror::Error;
 
-use crate::{AnyUserData, UserDataError, Value};
+use crate::{AnyCallback, AnyUserData, CallbackReturn, Context, Table, UserDataError, Value};
 
 #[derive(Debug, Clone, Copy, Error)]
 #[error("type error, expected {expected}, found {found}")]
@@ -148,10 +148,39 @@ impl<'gc> Error<'gc> {
         Error::Lua(value.into())
     }
 
-    pub fn to_value(&self, mc: &Mutation<'gc>) -> Value<'gc> {
+    pub fn to_value(&self, ctx: Context<'gc>) -> Value<'gc> {
         match self {
             Error::Lua(err) => err.0,
-            Error::Runtime(err) => AnyUserData::new_static(mc, err.clone()).into(),
+            Error::Runtime(err) => {
+                #[derive(Copy, Clone, Collect)]
+                #[collect(no_drop)]
+                struct UDMeta<'gc>(Table<'gc>);
+
+                let mt = ctx
+                    .state
+                    .registry
+                    .singleton::<Rootable!['a => UDMeta<'a>]>(&ctx, || {
+                        let table = Table::new(&ctx);
+                        table
+                            .set(
+                                ctx,
+                                "__tostring",
+                                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                                    let ud = stack.consume::<AnyUserData>(ctx)?;
+                                    let error = ud.read_static::<RuntimeError>()?;
+                                    stack.replace(ctx, error.to_string());
+                                    Ok(CallbackReturn::Return)
+                                }),
+                            )
+                            .unwrap();
+                        UDMeta(table)
+                    })
+                    .0;
+
+                let ud = AnyUserData::new_static(&ctx, err.clone());
+                ud.set_metatable(&ctx, Some(mt));
+                ud.into()
+            }
         }
     }
 

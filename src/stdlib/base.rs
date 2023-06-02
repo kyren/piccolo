@@ -163,7 +163,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         stack: &mut Stack<'gc>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         stack.clear();
-                        stack.extend([Value::Boolean(false), error.to_value(&ctx)]);
+                        stack.extend([Value::Boolean(false), error.to_value(ctx)]);
                         Ok(SequencePoll::Return)
                     }
                 }

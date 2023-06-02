@@ -1,8 +1,11 @@
-use std::fmt;
+use std::{any::TypeId, collections::hash_map, fmt};
 
-use gc_arena::{Collect, DynamicRoot, DynamicRootSet, Mutation, Rootable};
+use gc_arena::{lock::RefLock, Collect, DynamicRoot, DynamicRootSet, Gc, Mutation, Root, Rootable};
+use rustc_hash::FxHashMap;
 
-use crate::{AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, Value};
+use crate::{
+    any::AnyValue, AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, Value,
+};
 
 #[derive(Clone)]
 pub struct StaticTable(pub DynamicRoot<Rootable![Table<'gc>]>);
@@ -179,17 +182,41 @@ impl From<StaticUserData> for StaticValue {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
+    singletons: Gc<'gc, RefLock<FxHashMap<TypeId, AnyValue<'gc, ()>>>>,
 }
 
 impl<'gc> Registry<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             roots: DynamicRootSet::new(mc),
+            singletons: Gc::new(mc, RefLock::new(FxHashMap::default())),
         }
     }
 
     pub fn roots(&self) -> DynamicRootSet<'gc> {
         self.roots
+    }
+
+    pub fn singleton<R: for<'a> Rootable<'a>>(
+        &self,
+        mc: &Mutation<'gc>,
+        init: impl FnOnce() -> Root<'gc, R>,
+    ) -> Root<'gc, R>
+    where
+        Root<'gc, R>: Copy,
+    {
+        let mut singletons = self.singletons.borrow_mut(mc);
+        match singletons.entry(TypeId::of::<R>()) {
+            hash_map::Entry::Occupied(occupied) => *occupied
+                .get()
+                .downcast::<R>()
+                .expect("bad type in singletons table"),
+            hash_map::Entry::Vacant(vacant) => {
+                let v = init();
+                vacant.insert(AnyValue::new::<R>(mc, (), v));
+                v
+            }
+        }
     }
 
     pub fn stash<R: Stashable<'gc>>(&self, mc: &Mutation<'gc>, r: R) -> R::Stashed {
