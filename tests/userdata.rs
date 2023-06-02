@@ -13,7 +13,7 @@ fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     lua.try_run(|ctx| {
-        let userdata = AnyUserData::new::<Rootable![MyUserData<'gc>]>(
+        let userdata = AnyUserData::new::<Rootable![MyUserData<'_>]>(
             &ctx,
             MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
@@ -21,7 +21,7 @@ fn userdata() -> Result<(), StaticError> {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
-                    let ud = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
+                    let ud = ud.read::<Rootable![MyUserData<'_>]>().unwrap();
                     assert_eq!(ud.0.get(), 17);
                     ud.0.set(&ctx, 23);
                 }
@@ -60,7 +60,7 @@ fn userdata() -> Result<(), StaticError> {
             .fetch(&thread)
             .take_return::<(AnyUserData, bool)>(ctx)??;
         assert!(res);
-        let data = ud.read::<Rootable![MyUserData<'gc>]>().unwrap();
+        let data = ud.read::<Rootable![MyUserData<'_>]>().unwrap();
         assert_eq!(data.0.get(), 23);
         #[derive(Collect)]
         #[collect(require_static)]

@@ -180,12 +180,7 @@ impl<'gc> Error<'gc> {
                 let ud = AnyUserData::new_static(&ctx, err.clone());
                 ud.set_metatable(
                     &ctx,
-                    Some(
-                        ctx.state
-                            .registry
-                            .singleton::<Rootable!['a => UDMeta<'a>]>(ctx)
-                            .0,
-                    ),
+                    Some(ctx.state.registry.singleton::<Rootable![UDMeta<'_>]>(ctx).0),
                 );
                 ud.into()
             }

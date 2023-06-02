@@ -29,7 +29,7 @@ impl<'gc, M> AnyCell<'gc, M> {
         M: Collect,
         R: for<'a> Rootable<'a>,
     {
-        Self(AnyValue::new::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>(
+        Self(AnyValue::new::<Rootable![RefLock<Root<'_, R>>]>(
             mc,
             RefLock::new(metadata),
             RefLock::new(data),
@@ -44,7 +44,7 @@ impl<'gc, M> AnyCell<'gc, M> {
     where
         R: for<'a> Rootable<'a>,
     {
-        self.0.is::<Rootable!['a => RefLock<Root<'a, R>>]>()
+        self.0.is::<Rootable![RefLock<Root<'_, R>>]>()
     }
 
     pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, M>, BorrowError> {
@@ -67,9 +67,7 @@ impl<'gc, M> AnyCell<'gc, M> {
     where
         R: for<'b> Rootable<'b>,
     {
-        let cell = self
-            .0
-            .downcast::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>()?;
+        let cell = self.0.downcast::<Rootable![RefLock<Root<'_, R>>]>()?;
         Some(cell.try_borrow())
     }
 
@@ -80,9 +78,7 @@ impl<'gc, M> AnyCell<'gc, M> {
     where
         R: for<'b> Rootable<'b>,
     {
-        let cell = self
-            .0
-            .downcast::<Rootable!['gc_ => RefLock<Root<'gc_, R>>]>()?;
+        let cell = self.0.downcast::<Rootable![RefLock<Root<'_, R>>]>()?;
         // SAFETY: We make sure to call the write barrier on successful borrowing.
         let res = unsafe { cell.as_ref_cell().try_borrow_mut() };
         if res.is_ok() {
@@ -227,27 +223,27 @@ mod tests {
             #[collect(no_drop)]
             struct C<'gc>(Gc<'gc, i32>);
 
-            let any1 = AnyValue::new::<Rootable![A<'gc>]>(mc, 1i32, A(Gc::new(mc, 5)));
-            let any2 = AnyValue::new::<Rootable![B<'gc>]>(mc, 2i32, B(Gc::new(mc, 6)));
-            let any3 = AnyValue::new::<Rootable![C<'gc>]>(mc, 3i32, C(Gc::new(mc, 7)));
+            let any1 = AnyValue::new::<Rootable![A<'_>]>(mc, 1i32, A(Gc::new(mc, 5)));
+            let any2 = AnyValue::new::<Rootable![B<'_>]>(mc, 2i32, B(Gc::new(mc, 6)));
+            let any3 = AnyValue::new::<Rootable![C<'_>]>(mc, 3i32, C(Gc::new(mc, 7)));
 
-            assert!(any1.is::<Rootable![A<'gc>]>());
-            assert!(!any1.is::<Rootable![B<'gc>]>());
-            assert!(!any1.is::<Rootable![C<'gc>]>());
+            assert!(any1.is::<Rootable![A<'_>]>());
+            assert!(!any1.is::<Rootable![B<'_>]>());
+            assert!(!any1.is::<Rootable![C<'_>]>());
 
             assert_eq!(*any1.metadata(), 1);
-            assert_eq!(*any1.downcast::<Rootable![A<'gc>]>().unwrap().0, 5);
+            assert_eq!(*any1.downcast::<Rootable![A<'_>]>().unwrap().0, 5);
             assert_eq!(*any2.metadata(), 2);
-            assert_eq!(*any2.downcast::<Rootable![B<'gc>]>().unwrap().0, 6);
+            assert_eq!(*any2.downcast::<Rootable![B<'_>]>().unwrap().0, 6);
             assert_eq!(*any3.metadata(), 3);
-            assert_eq!(*any3.downcast::<Rootable![C<'gc>]>().unwrap().0, 7);
+            assert_eq!(*any3.downcast::<Rootable![C<'_>]>().unwrap().0, 7);
 
-            assert!(any1.downcast::<Rootable![B<'gc>]>().is_none());
-            assert!(any1.downcast::<Rootable![C<'gc>]>().is_none());
-            assert!(any2.downcast::<Rootable![A<'gc>]>().is_none());
-            assert!(any2.downcast::<Rootable![C<'gc>]>().is_none());
-            assert!(any3.downcast::<Rootable![A<'gc>]>().is_none());
-            assert!(any3.downcast::<Rootable![B<'gc>]>().is_none());
+            assert!(any1.downcast::<Rootable![B<'_>]>().is_none());
+            assert!(any1.downcast::<Rootable![C<'_>]>().is_none());
+            assert!(any2.downcast::<Rootable![A<'_>]>().is_none());
+            assert!(any2.downcast::<Rootable![C<'_>]>().is_none());
+            assert!(any3.downcast::<Rootable![A<'_>]>().is_none());
+            assert!(any3.downcast::<Rootable![B<'_>]>().is_none());
         })
     }
 }

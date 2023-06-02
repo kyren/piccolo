@@ -57,14 +57,14 @@ impl<'gc> ops::Deref for Context<'gc> {
     }
 }
 
-pub struct Lua(Arena<Rootable![State<'gc>]>);
+pub struct Lua(Arena<Rootable![State<'_>]>);
 
 const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
 impl Lua {
     pub fn new() -> Lua {
         let arena =
-            Arena::<Rootable![State<'gc>]>::new(ArenaParameters::default(), |mc| State::new(mc));
+            Arena::<Rootable![State<'_>]>::new(ArenaParameters::default(), |mc| State::new(mc));
         arena.mutate(|mc, state| state.load_safe_stdlib(mc));
         Lua(arena)
     }

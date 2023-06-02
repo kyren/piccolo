@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct StaticTable(pub DynamicRoot<Rootable![Table<'gc>]>);
+pub struct StaticTable(pub DynamicRoot<Rootable![Table<'_>]>);
 
 impl fmt::Debug for StaticTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -20,7 +20,7 @@ impl fmt::Debug for StaticTable {
 }
 
 #[derive(Clone)]
-pub struct StaticClosure(pub DynamicRoot<Rootable![Closure<'gc>]>);
+pub struct StaticClosure(pub DynamicRoot<Rootable![Closure<'_>]>);
 
 impl fmt::Debug for StaticClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -31,7 +31,7 @@ impl fmt::Debug for StaticClosure {
 }
 
 #[derive(Clone)]
-pub struct StaticCallback(pub DynamicRoot<Rootable![AnyCallback<'gc>]>);
+pub struct StaticCallback(pub DynamicRoot<Rootable![AnyCallback<'_>]>);
 
 impl fmt::Debug for StaticCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -42,7 +42,7 @@ impl fmt::Debug for StaticCallback {
 }
 
 #[derive(Clone)]
-pub struct StaticThread(pub DynamicRoot<Rootable![Thread<'gc>]>);
+pub struct StaticThread(pub DynamicRoot<Rootable![Thread<'_>]>);
 
 impl fmt::Debug for StaticThread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -53,7 +53,7 @@ impl fmt::Debug for StaticThread {
 }
 
 #[derive(Clone)]
-pub struct StaticUserData(pub DynamicRoot<Rootable![AnyUserData<'gc>]>);
+pub struct StaticUserData(pub DynamicRoot<Rootable![AnyUserData<'_>]>);
 
 impl fmt::Debug for StaticUserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -64,7 +64,7 @@ impl fmt::Debug for StaticUserData {
 }
 
 #[derive(Clone)]
-pub struct StaticString(pub DynamicRoot<Rootable![String<'gc>]>);
+pub struct StaticString(pub DynamicRoot<Rootable![String<'_>]>);
 
 impl fmt::Debug for StaticString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -253,12 +253,8 @@ macro_rules! reg_type {
         impl<'gc> Stashable<'gc> for $t<'gc> {
             type Stashed = $r;
 
-            fn stash(
-                self,
-                roots: &DynamicRootSet<'gc>,
-                mc: &Mutation<'gc>,
-            ) -> Self::Stashed {
-                $r(roots.stash::<Rootable!['a => $t<'a>]>(mc, self))
+            fn stash(self, roots: &DynamicRootSet<'gc>, mc: &Mutation<'gc>) -> Self::Stashed {
+                $r(roots.stash::<Rootable![$t<'_>]>(mc, self))
             }
         }
     };
@@ -277,7 +273,7 @@ macro_rules! fetch_type {
             type Fetched = $t<'gc>;
 
             fn fetch(&self, roots: &DynamicRootSet<'gc>) -> Self::Fetched {
-                *roots.fetch::<Rootable!['b => $t<'b>]>(&self.0)
+                *roots.fetch::<Rootable![$t<'_>]>(&self.0)
             }
         }
     };
