@@ -26,7 +26,7 @@ pub trait Callback<'gc>: Collect {
 
 // Represents a callback as a single pointer with an inline VTable header.
 #[derive(Copy, Clone, Collect)]
-#[collect(no_drop, bound = "")]
+#[collect(no_drop)]
 pub struct AnyCallback<'gc>(Gc<'gc, Header<'gc>>);
 
 struct Header<'gc> {
