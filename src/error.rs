@@ -3,7 +3,9 @@ use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc}
 use gc_arena::{Collect, Rootable};
 use thiserror::Error;
 
-use crate::{AnyCallback, AnyUserData, CallbackReturn, Context, Table, UserDataError, Value};
+use crate::{
+    AnyCallback, AnyUserData, CallbackReturn, Context, Singleton, Table, UserDataError, Value,
+};
 
 #[derive(Debug, Clone, Copy, Error)]
 #[error("type error, expected {expected}, found {found}")]
@@ -156,10 +158,8 @@ impl<'gc> Error<'gc> {
                 #[collect(no_drop)]
                 struct UDMeta<'gc>(Table<'gc>);
 
-                let mt = ctx
-                    .state
-                    .registry
-                    .singleton::<Rootable!['a => UDMeta<'a>]>(&ctx, || {
+                impl<'gc> Singleton<'gc> for UDMeta<'gc> {
+                    fn create(ctx: Context<'gc>) -> Self {
                         let table = Table::new(&ctx);
                         table
                             .set(
@@ -173,12 +173,20 @@ impl<'gc> Error<'gc> {
                                 }),
                             )
                             .unwrap();
-                        UDMeta(table)
-                    })
-                    .0;
+                        Self(table)
+                    }
+                }
 
                 let ud = AnyUserData::new_static(&ctx, err.clone());
-                ud.set_metatable(&ctx, Some(mt));
+                ud.set_metatable(
+                    &ctx,
+                    Some(
+                        ctx.state
+                            .registry
+                            .singleton::<Rootable!['a => UDMeta<'a>]>(ctx)
+                            .0,
+                    ),
+                );
                 ud.into()
             }
         }

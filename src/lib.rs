@@ -35,8 +35,8 @@ pub use self::{
     meta_ops::MetaMethod,
     opcode::OpCode,
     registry::{
-        Registry, StaticCallback, StaticClosure, StaticFunction, StaticTable, StaticThread,
-        StaticUserData, StaticValue,
+        Registry, Singleton, StaticCallback, StaticClosure, StaticFunction, StaticTable,
+        StaticThread, StaticUserData, StaticValue,
     },
     stack::Stack,
     string::{String, StringError},

@@ -4,7 +4,8 @@ use gc_arena::{lock::RefLock, Collect, DynamicRoot, DynamicRootSet, Gc, Mutation
 use rustc_hash::FxHashMap;
 
 use crate::{
-    any::AnyValue, AnyCallback, AnyUserData, Closure, Function, String, Table, Thread, Value,
+    any::AnyValue, AnyCallback, AnyUserData, Closure, Context, Function, String, Table, Thread,
+    Value,
 };
 
 #[derive(Clone)]
@@ -178,6 +179,16 @@ impl From<StaticUserData> for StaticValue {
     }
 }
 
+pub trait Singleton<'gc>: Copy {
+    fn create(ctx: Context<'gc>) -> Self;
+}
+
+impl<'gc, T: Default + Copy> Singleton<'gc> for T {
+    fn create(_: Context<'gc>) -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Registry<'gc> {
@@ -197,23 +208,20 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
-    pub fn singleton<R: for<'a> Rootable<'a>>(
-        &self,
-        mc: &Mutation<'gc>,
-        init: impl FnOnce() -> Root<'gc, R>,
-    ) -> Root<'gc, R>
+    pub fn singleton<S>(&self, ctx: Context<'gc>) -> Root<'gc, S>
     where
-        Root<'gc, R>: Copy,
+        S: for<'a> Rootable<'a>,
+        Root<'gc, S>: Singleton<'gc>,
     {
-        let mut singletons = self.singletons.borrow_mut(mc);
-        match singletons.entry(TypeId::of::<R>()) {
+        let mut singletons = self.singletons.borrow_mut(&ctx);
+        match singletons.entry(TypeId::of::<S>()) {
             hash_map::Entry::Occupied(occupied) => *occupied
                 .get()
-                .downcast::<R>()
+                .downcast::<S>()
                 .expect("bad type in singletons table"),
             hash_map::Entry::Vacant(vacant) => {
-                let v = init();
-                vacant.insert(AnyValue::new::<R>(mc, (), v));
+                let v = Root::<'gc, S>::create(ctx);
+                vacant.insert(AnyValue::new::<S>(&ctx, (), v));
                 v
             }
         }
