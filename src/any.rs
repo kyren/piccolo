@@ -192,7 +192,7 @@ impl<'gc, M> AnyValue<'gc, M> {
         R: for<'b> Rootable<'b>,
     {
         if TypeId::of::<R>() == self.0.type_id {
-            let ptr = unsafe { Gc::from_ptr(Gc::as_ptr(self.0) as *const Value<M, Root<'gc, R>>) };
+            let ptr = unsafe { Gc::cast::<Value<M, Root<'gc, R>>>(self.0) };
             Some(&ptr.as_ref().data)
         } else {
             None
