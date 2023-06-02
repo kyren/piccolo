@@ -297,8 +297,8 @@ impl<'gc> TableEntries<'gc> {
                 .is_some()
             {
                 if max == i64::MAX {
-                    // If we can't find a nil entry by doubling, then the table is pathalogical. We
-                    // return the favor with a pathalogical answer: i64::MAX + 1 can't exist in the
+                    // If we can't find a nil entry by doubling, then the table is pathological. We
+                    // return the favor with a pathological answer: i64::MAX + 1 can't exist in the
                     // table, therefore it is Nil, so since the table contains i64::MAX, i64::MAX is
                     // a border.
                     return i64::MAX;
