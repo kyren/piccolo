@@ -1,4 +1,4 @@
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/piccolo.svg)](https://circleci.com/gh/kyren/piccolo)
+[![Build Status](https://img.shields.io/circleci/project/github/triplehex/piccolo.svg)](https://circleci.com/gh/triplehex/piccolo)
 
 ## piccolo - An experimental Lua VM implemented in pure Rust ##
 
