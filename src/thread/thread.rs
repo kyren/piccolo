@@ -237,9 +237,9 @@ impl<'gc> Thread<'gc> {
                 }
             }
             frame @ Frame::Lua { .. } => {
+                state.frames.push(frame);
                 assert!(state.external_stack.is_empty());
                 assert!(state.error.is_none());
-                state.frames.push(frame);
 
                 const VM_GRANULARITY: u32 = 256;
                 let mut instructions = VM_GRANULARITY;
@@ -651,8 +651,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         func: RegisterIndex,
         args: VarCount,
     ) -> Result<(), ThreadError> {
-        match self.state.frames.pop() {
-            Some(Frame::Lua {
+        match self.state.frames.last() {
+            Some(&Frame::Lua {
                 bottom,
                 base,
                 is_variable,
@@ -691,6 +691,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
                         self.state.stack.resize(base + stack_size, Value::Nil);
 
+                        self.state.frames.pop();
                         self.state.frames.push(Frame::Lua {
                             bottom,
                             base,
@@ -706,6 +707,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.external_stack.extend(
                             &self.state.stack[function_index + 1..function_index + 1 + arg_count],
                         );
+                        self.state.frames.pop();
                         self.state.frames.push(Frame::Callback(callback));
                         self.state.stack.truncate(bottom);
                         Ok(())

@@ -136,22 +136,21 @@ it is no longer worth it.
   * Coroutines, including yielding that is transparent to Rust callbacks
   * Gotos with label handling that matches Lua 5.3
   * Proper _ENV handling
-  * Metatables and metamethods (only `__call` and `__index` right now, but the
-    infrastructure exists, metamethods can even (safely!) be fully recursive,
-    triggering any number of other metamethods. `__gc` is an entire separate can
-    of worms and doesn't count.)
+  * Metatables and metamethods, including fully recursive metamethods that
+    trigger other metamethods (Only some implemented, and `__gc` is an entirely
+    separate can of worms).
 * A robust Rust callback system that allows for sequencing callbacks that don't
   block the interpreter and reduced stack usage by safely tail calling back
   into Lua.
 * Garbage collected "userdata" with safe downcasting.
-* A few bits of the stdlib (`print`, `error`, `pcall`, `math`, and the hard bits
-  from `coroutine`)
+* Some of the stdlib (`math`, `coroutine`, many top-level stdlib functions)
 * A simple REPL (try it with `cargo run --example interpreter`)
 
 ## What currently doesn't work ##
 
-* Most of the stdlib is not implemented, `io`, `os`, `package`, `string`,
-  `table`, `utf8`, `debug`, and most top-level functions are unimplemented.
+* A huge amount of the stdlib is not implemented, `io`, `os`, `package`,
+  `string`, `table`, `utf8`, `debug`, and several top-level functions are
+  unimplemented.
 * Garbage collector finalization. Being compatible with PUC-Rio Lua would
   require object finalization *with failure*, and even having finalization, let
   alone finalization with some kind of failure story is extremely low priority.
