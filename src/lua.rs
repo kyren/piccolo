@@ -61,6 +61,12 @@ pub struct Lua(Arena<Rootable![State<'_>]>);
 
 const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
+impl Default for Lua {
+    fn default() -> Self {
+        Lua::new()
+    }
+}
+
 impl Lua {
     pub fn new() -> Lua {
         let arena =
