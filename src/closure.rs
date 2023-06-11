@@ -1,11 +1,25 @@
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    io::Read,
+};
 
 use gc_arena::{lock::Lock, Collect, Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
-    CompiledPrototype, Constant, OpCode, RegisterIndex, String, Table, Thread, UpValueIndex, Value,
+    compiler::{self, CompiledPrototype},
+    opcode::OpCode,
+    types::{RegisterIndex, UpValueIndex},
+    Constant, Context, String, Table, Thread, Value,
 };
+
+#[derive(Debug, Error)]
+pub enum ProtoCompileError {
+    #[error(transparent)]
+    Parser(#[from] compiler::ParserError),
+    #[error(transparent)]
+    Compiler(#[from] compiler::CompilerError),
+}
 
 #[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
 #[collect(require_static)]
@@ -27,10 +41,7 @@ pub struct FunctionProto<'gc> {
 }
 
 impl<'gc> FunctionProto<'gc> {
-    pub fn from_compiled(
-        mc: &Mutation<'gc>,
-        compiled_function: CompiledPrototype<String<'gc>>,
-    ) -> Self {
+    pub fn new(mc: &Mutation<'gc>, compiled_function: CompiledPrototype<String<'gc>>) -> Self {
         Self {
             fixed_params: compiled_function.fixed_params,
             stack_size: compiled_function.stack_size,
@@ -40,9 +51,32 @@ impl<'gc> FunctionProto<'gc> {
             prototypes: compiled_function
                 .prototypes
                 .into_iter()
-                .map(|cf| Gc::new(mc, FunctionProto::from_compiled(mc, *cf)))
+                .map(|cf| Gc::new(mc, FunctionProto::new(mc, *cf)))
                 .collect(),
         }
+    }
+
+    pub fn compile(
+        ctx: Context<'gc>,
+        source: impl Read,
+    ) -> Result<FunctionProto<'gc>, ProtoCompileError> {
+        #[derive(Copy, Clone)]
+        struct Interner<'gc>(Context<'gc>);
+
+        impl<'gc> compiler::StringInterner for Interner<'gc> {
+            type String = String<'gc>;
+
+            fn intern(&self, s: &[u8]) -> Self::String {
+                self.0.state.strings.intern(&self.0, s)
+            }
+        }
+
+        let interner = Interner(ctx);
+
+        let chunk = compiler::parse_chunk(source, interner)?;
+        let compiled_function = compiler::compile_chunk(&chunk, interner)?;
+
+        Ok(FunctionProto::new(&ctx, compiled_function))
     }
 }
 
@@ -114,5 +148,20 @@ impl<'gc> Closure<'gc> {
         }
 
         Ok(Closure(Gc::new(mc, ClosureState { proto, upvalues })))
+    }
+
+    /// Compile a top-level closure from source, using the globals table as the `_ENV` table.
+    pub fn load(ctx: Context<'gc>, source: impl Read) -> Result<Closure<'gc>, ProtoCompileError> {
+        Self::load_with_env(ctx, source, ctx.state.globals)
+    }
+
+    /// Compile a top-level closure from source, using the given table as the `_ENV` table.
+    pub fn load_with_env(
+        ctx: Context<'gc>,
+        source: impl Read,
+        env: Table<'gc>,
+    ) -> Result<Closure<'gc>, ProtoCompileError> {
+        let proto = FunctionProto::compile(ctx, source)?;
+        Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }
 }

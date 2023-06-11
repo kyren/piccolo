@@ -21,31 +21,23 @@ pub mod userdata;
 pub mod value;
 
 pub use self::{
-    any::AnyCell,
     callback::{AnyCallback, AnySequence, Callback, CallbackReturn, Sequence, SequencePoll},
     closure::{
-        Closure, ClosureError, ClosureState, FunctionProto, UpValue, UpValueDescriptor,
-        UpValueState,
+        Closure, ClosureError, ClosureState, FunctionProto, ProtoCompileError, UpValue,
+        UpValueDescriptor, UpValueState,
     },
-    compiler::{compile, CompiledPrototype, CompilerError},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Context, Lua, State},
-    meta_ops::MetaMethod,
-    opcode::OpCode,
     registry::{
         Registry, Singleton, StaticCallback, StaticClosure, StaticFunction, StaticTable,
         StaticThread, StaticUserData, StaticValue,
     },
     stack::Stack,
     string::{String, StringError},
-    table::{InvalidTableKey, Table, TableEntries, TableState},
-    thread::{BadThreadMode, BinaryOperatorError, Thread, ThreadError, ThreadMode},
-    types::{
-        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
-        VarCount,
-    },
+    table::{InvalidTableKey, Table},
+    thread::{BadThreadMode, Thread, ThreadError, ThreadMode},
     userdata::{AnyUserData, UserDataError},
     value::{Function, Value},
 };

@@ -1,7 +1,7 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
 use piccolo::{
-    compile, AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread,
-    UserDataError, Value,
+    AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread, UserDataError,
+    Value,
 };
 
 #[derive(Collect)]
@@ -35,16 +35,12 @@ fn userdata() -> Result<(), StaticError> {
     })?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    callback(userdata)
-                    return userdata, type(userdata) == "userdata" and type(callback) == "function"
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                callback(userdata)
+                return userdata, type(userdata) == "userdata" and type(callback) == "function"
+            "#[..],
         )?;
         let thread = Thread::new(&ctx);
         thread.start(ctx, closure.into(), ())?;

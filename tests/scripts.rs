@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use piccolo::{compile, io, Closure, Lua, Thread};
+use piccolo::{io, Closure, Lua, Thread};
 
 #[test]
 fn test_scripts() {
@@ -23,8 +23,7 @@ fn test_scripts() {
 
                 if let Err(err) = lua
                     .try_run(|ctx| {
-                        let closure =
-                            Closure::new(&ctx, compile(ctx, file)?, Some(ctx.state.globals))?;
+                        let closure = Closure::load(ctx, file)?;
                         let thread = Thread::new(&ctx);
                         thread.start(ctx, closure.into(), ())?;
                         Ok(ctx.state.registry.stash(&ctx, thread))

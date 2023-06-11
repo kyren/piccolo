@@ -3,8 +3,8 @@ use std::{error::Error as StdError, fs::File};
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 
 use piccolo::{
-    compiler::{self, interning::BasicInterner},
-    io, CompiledPrototype,
+    compiler::{self, interning::BasicInterner, CompiledPrototype},
+    io,
 };
 
 fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>) {

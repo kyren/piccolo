@@ -6,18 +6,18 @@ use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Com
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compile, compiler::ParserError, io, Closure, CompilerError, Lua, StaticError, Thread, Value,
-    Variadic,
+    compiler::ParserError, io, Closure, FunctionProto, Lua, ProtoCompileError, StaticError, Thread,
+    Value, Variadic,
 };
 
 fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
     let thread = lua.try_run(|ctx| {
-        let result = compile(ctx, ("return ".to_string() + code).as_bytes());
+        let result = Closure::load(ctx, ("return ".to_string() + code).as_bytes());
         let result = match result {
             Ok(res) => Ok(res),
-            Err(_) => compile(ctx, code.as_bytes()),
+            Err(_) => Closure::load(ctx, code.as_bytes()),
         };
-        let closure = Closure::new(&ctx, result?, Some(ctx.state.globals))?;
+        let closure = result?;
         let thread = Thread::new(&ctx);
         thread.start(ctx, closure.into(), ())?;
         Ok(ctx.state.registry.stash(&ctx, thread))
@@ -51,8 +51,8 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             match run_code(lua, &line) {
                 Err(StaticError::Runtime(err))
                     if matches!(
-                        err.downcast::<CompilerError>(),
-                        Some(CompilerError::Parsing(ParserError::EndOfStream { .. }))
+                        err.downcast::<ProtoCompileError>(),
+                        Some(ProtoCompileError::Parser(ParserError::EndOfStream { .. }))
                     ) =>
                 {
                     match line.chars().last() {
@@ -107,7 +107,11 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(&ctx, compile(ctx, file)?, Some(ctx.state.globals))?;
+        let closure = Closure::new(
+            &ctx,
+            FunctionProto::compile(ctx, file)?,
+            Some(ctx.state.globals),
+        )?;
         let thread = Thread::new(&ctx);
         thread.start(ctx, closure.into(), ())?;
         Ok(ctx.state.registry.stash(&ctx, thread))

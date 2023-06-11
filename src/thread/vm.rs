@@ -2,11 +2,14 @@ use gc_arena::Gc;
 
 use crate::{
     meta_ops::{self, MetaResult},
+    opcode::OpCode,
     raw_ops,
-    thread::LuaFrame,
-    BinaryOperatorError, Closure, ClosureState, Context, Function, OpCode, RegisterIndex,
-    RuntimeError, String, Table, TypeError, UpValueDescriptor, Value, VarCount,
+    types::{RegisterIndex, VarCount},
+    Closure, ClosureState, Context, Function, RuntimeError, String, Table, TypeError,
+    UpValueDescriptor, Value,
 };
+
+use super::{BinaryOperatorError, LuaFrame};
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed. Returns the number of instructions that were not run, or 0 if all requested instructions

@@ -1,4 +1,4 @@
-use crate::RegisterIndex;
+use crate::types::RegisterIndex;
 
 /// Allocates registers in the range [0-255].
 pub struct RegisterAllocator {

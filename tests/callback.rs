@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    compile, AnyCallback, AnySequence, CallbackReturn, Closure, Error, Function, IntoValue, Lua,
-    Sequence, SequencePoll, StaticError, String, Thread, Value,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Error, Function, IntoValue, Lua, Sequence,
+    SequencePoll, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -18,16 +18,12 @@ fn callback() -> Result<(), StaticError> {
     })?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    local a, b, c = callback(1, 2)
-                    return a == 1 and b == 2 and c == 42
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                local a, b, c = callback(1, 2)
+                return a == 1 and b == 2 and c == 42
+            "#[..],
         )?;
 
         let thread = Thread::new(&ctx);
@@ -53,15 +49,11 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
     })?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    return callback(1, 2)
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                return callback(1, 2)
+            "#[..],
         )?;
 
         let thread = Thread::new(&ctx);
@@ -113,32 +105,28 @@ fn loopy_callback() -> Result<(), StaticError> {
     })?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    local function cotest()
-                        return callback(1, 2)
-                    end
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                local function cotest()
+                    return callback(1, 2)
+                end
 
-                    local co = coroutine.create(cotest)
+                local co = coroutine.create(cotest)
 
-                    local e1, r1, r2, r3 = coroutine.resume(co)
-                    local s1 = coroutine.status(co)
-                    local e2, r4, r5, r6, r7, r8, r9 = coroutine.resume(co, r1, r2, r3)
-                    local s2 = coroutine.status(co)
+                local e1, r1, r2, r3 = coroutine.resume(co)
+                local s1 = coroutine.status(co)
+                local e2, r4, r5, r6, r7, r8, r9 = coroutine.resume(co, r1, r2, r3)
+                local s2 = coroutine.status(co)
 
-                    return
-                        e1 == true and
-                        r1 == 1 and r2 == 2 and r3 == 3 and
-                        s1 == "suspended" and
-                        e2 == true and
-                        r4 == 1 and r5 == 2 and r6 == 3 and r7 == 4 and r8 == 5 and r9 == 6 and
-                        s2 == "dead"
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+                return
+                    e1 == true and
+                    r1 == 1 and r2 == 2 and r3 == 3 and
+                    s1 == "suspended" and
+                    e2 == true and
+                    r4 == 1 and r5 == 2 and r6 == 3 and r7 == 4 and r8 == 5 and r9 == 6 and
+                    s2 == "dead"
+            "#[..],
         )?;
 
         let thread = Thread::new(&ctx);
@@ -203,27 +191,23 @@ fn yield_sequence() -> Result<(), StaticError> {
     })?;
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    local co = coroutine.create(callback)
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                local co = coroutine.create(callback)
 
-                    local e, r1, r2 = coroutine.resume(co, 1, 2)
-                    assert(e == true and r1 == 3 and r2 == 4)
-                    assert(coroutine.status(co) == "suspended")
+                local e, r1, r2 = coroutine.resume(co, 1, 2)
+                assert(e == true and r1 == 3 and r2 == 4)
+                assert(coroutine.status(co) == "suspended")
 
-                    local e, r1, r2 = coroutine.resume(co, 5, 6)
-                    assert(e == true and r1 == 7 and r2 == 8)
-                    assert(coroutine.status(co) == "suspended")
+                local e, r1, r2 = coroutine.resume(co, 5, 6)
+                assert(e == true and r1 == 7 and r2 == 8)
+                assert(coroutine.status(co) == "suspended")
 
-                    local e, r1, r2 = coroutine.resume(co, 9, 10)
-                    assert(e == true and r1 == 11 and r2 == 12)
-                    assert(coroutine.status(co) == "dead")
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+                local e, r1, r2 = coroutine.resume(co, 9, 10)
+                assert(e == true and r1 == 11 and r2 == 12)
+                assert(coroutine.status(co) == "dead")
+            "#[..],
         )?;
 
         let thread = Thread::new(&ctx);

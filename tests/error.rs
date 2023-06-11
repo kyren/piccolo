@@ -1,8 +1,6 @@
 mod sizes;
 
-use piccolo::{
-    compile, error::LuaError, AnyCallback, Closure, Error, Lua, StaticError, Thread, Value,
-};
+use piccolo::{error::LuaError, AnyCallback, Closure, Error, Lua, StaticError, Thread, Value};
 use thiserror::Error;
 
 #[test]
@@ -10,19 +8,15 @@ fn error_unwind() -> Result<(), StaticError> {
     let mut lua = Lua::new();
 
     let thread = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    function do_error()
-                        error('test error')
-                    end
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                function do_error()
+                    error('test error')
+                end
 
-                    do_error()
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+                do_error()
+            "#[..],
         )?;
         let thread = Thread::new(&ctx);
         thread.start(ctx, closure.into(), ())?;
@@ -51,17 +45,13 @@ fn error_tostring() -> Result<(), StaticError> {
         let callback = AnyCallback::from_fn(&ctx, |_, _| Err(TestError.into()));
         ctx.state.globals.set(ctx, "callback", callback)?;
 
-        let closure = Closure::new(
-            &ctx,
-            compile(
-                ctx,
-                &br#"
-                    local r, e = pcall(callback)
-                    assert(not r)
-                    assert(tostring(e) == "test error")
-                "#[..],
-            )?,
-            Some(ctx.state.globals),
+        let closure = Closure::load(
+            ctx,
+            &br#"
+                local r, e = pcall(callback)
+                assert(not r)
+                assert(tostring(e) == "test error")
+            "#[..],
         )?;
 
         let thread = Thread::new(&ctx);

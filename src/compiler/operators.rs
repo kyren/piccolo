@@ -1,4 +1,8 @@
-use crate::{Constant, ConstantIndex8, OpCode, RegisterIndex};
+use crate::{
+    opcode::OpCode,
+    types::{ConstantIndex8, RegisterIndex},
+    Constant,
+};
 
 use super::parser::{BinaryOperator, UnaryOperator};
 
