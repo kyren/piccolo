@@ -13,7 +13,7 @@ codegen-units = 1
 [dependencies]
 anyhow = "1.0"
 gc-arena = "0.3"
-hashbrown = { version = "0.13", features = ["raw"] }
+hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
 thiserror = "1.0"

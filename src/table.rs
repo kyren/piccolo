@@ -411,7 +411,7 @@ fn table_remove<'gc>(
     key: Value<'gc>,
 ) -> Option<Value<'gc>> {
     if let Some(bucket) = table.find(hash, |(k, _)| key_eq(*k, key)) {
-        unsafe { Some(table.remove(bucket).1) }
+        unsafe { Some(table.remove(bucket).0 .1) }
     } else {
         None
     }
