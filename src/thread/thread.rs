@@ -108,7 +108,7 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    /// If the thread is in the `Return` mode, take the returned (or yielded) values. Moves the
+    /// If the thread is in the `Result` mode, take the returned (or yielded) values. Moves the
     /// thread back to the `Stopped` (or `Suspended`) mode.
     pub fn take_return<T: FromMultiValue<'gc>>(
         self,
