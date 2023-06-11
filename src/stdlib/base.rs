@@ -3,10 +3,10 @@ use std::io::{self, Write};
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops::{self, MetaMethod, MetaResult},
+    meta_ops::{self, MetaResult},
     table::NextValue,
-    AnyCallback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll, Stack, Table,
-    Value,
+    AnyCallback, CallbackReturn, Context, Error, IntoValue, MetaMethod, Sequence, SequencePoll,
+    Stack, Table, Value,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {

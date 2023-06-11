@@ -30,6 +30,7 @@ pub use self::{
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
     lua::{Context, Lua, State},
+    meta_ops::MetaMethod,
     registry::{
         Registry, Singleton, StaticCallback, StaticClosure, StaticFunction, StaticTable,
         StaticThread, StaticUserData, StaticValue,
