@@ -1,6 +1,6 @@
 use std::{mem, thread::Thread};
 
-use piccolo::{AnyCallback, AnyUserData, Closure, String, Table, Value};
+use piccolo::{AnyCallback, AnyUserData, Closure, OpCode, String, Table, Value};
 
 #[test]
 fn test_sizes() {
@@ -12,4 +12,6 @@ fn test_sizes() {
     assert_eq!(mem::size_of::<Thread>(), ptr_size);
     assert_eq!(mem::size_of::<AnyUserData>(), ptr_size);
     assert!(mem::size_of::<Value>() <= ptr_size * 2);
+
+    assert!(mem::size_of::<OpCode>() <= 4);
 }
