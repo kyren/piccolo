@@ -1,8 +1,5 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{
-    AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread, UserDataError,
-    Value,
-};
+use piccolo::{AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -21,7 +18,7 @@ fn userdata() -> Result<(), StaticError> {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
-                    let ud = ud.read::<Rootable![MyUserData<'_>]>().unwrap();
+                    let ud = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
                     assert_eq!(ud.0.get(), 17);
                     ud.0.set(&ctx, 23);
                 }
@@ -56,16 +53,13 @@ fn userdata() -> Result<(), StaticError> {
             .fetch(&thread)
             .take_return::<(AnyUserData, bool)>(ctx)??;
         assert!(res);
-        let data = ud.read::<Rootable![MyUserData<'_>]>().unwrap();
+        let data = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
         assert_eq!(data.0.get(), 23);
         #[derive(Collect)]
         #[collect(require_static)]
         struct MyUserData2;
 
-        assert!(matches!(
-            ud.read::<Rootable![MyUserData2]>(),
-            Err(UserDataError::WrongType)
-        ));
+        assert!(ud.downcast::<Rootable![MyUserData2]>().is_err());
         Ok(())
     })
 }

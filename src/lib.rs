@@ -39,6 +39,6 @@ pub use self::{
     string::{String, StringError},
     table::{InvalidTableKey, Table},
     thread::{BadThreadMode, Thread, ThreadError, ThreadMode},
-    userdata::{AnyUserData, UserDataError},
+    userdata::{AnyUserData, BadUserDataType},
     value::{Function, Value},
 };

@@ -1,87 +1,9 @@
-use std::{
-    any::TypeId,
-    cell::{BorrowError, BorrowMutError, Ref, RefMut},
-    fmt,
-};
+use std::{any::TypeId, fmt};
 
-use gc_arena::{barrier::Write, lock::RefLock, Collect, Gc, Mutation, Root, Rootable};
+use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 
 /// Garbage collected `Any` type that can be downcast.
-#[derive(Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub struct AnyCell<'gc, M: 'gc>(AnyValue<'gc, RefLock<M>>);
-
-impl<'gc, M> fmt::Debug for AnyCell<'gc, M>
-where
-    M: fmt::Debug,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("AnyGcCell")
-            .field("metadata", self.0.metadata())
-            .field("type_id", &(self.0.type_id()))
-            .finish()
-    }
-}
-
-impl<'gc, M> AnyCell<'gc, M> {
-    pub fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
-    where
-        M: Collect,
-        R: for<'a> Rootable<'a>,
-    {
-        Self(AnyValue::new::<Rootable![RefLock<Root<'_, R>>]>(
-            mc,
-            RefLock::new(metadata),
-            RefLock::new(data),
-        ))
-    }
-
-    pub fn as_ptr(&self) -> *const () {
-        self.0.as_ptr()
-    }
-
-    pub fn is<R>(&self) -> bool
-    where
-        R: for<'a> Rootable<'a>,
-    {
-        self.0.is::<Rootable![RefLock<Root<'_, R>>]>()
-    }
-
-    pub fn read_metadata<'a>(&'a self) -> Result<Ref<'a, M>, BorrowError> {
-        self.0.metadata().try_borrow()
-    }
-
-    pub fn write_metadata<'a>(
-        &'a self,
-        mc: &Mutation<'gc>,
-    ) -> Result<RefMut<'a, M>, BorrowMutError> {
-        self.0.write_metadata(mc).unlock().try_borrow_mut()
-    }
-
-    pub fn read_data<'a, R>(&'a self) -> Option<Result<Ref<'a, Root<'gc, R>>, BorrowError>>
-    where
-        R: for<'b> Rootable<'b>,
-    {
-        let cell = self.0.downcast::<Rootable![RefLock<Root<'_, R>>]>()?;
-        Some(cell.try_borrow())
-    }
-
-    pub fn write_data<'a, R>(
-        &'a self,
-        mc: &Mutation<'gc>,
-    ) -> Option<Result<RefMut<'a, Root<'gc, R>>, BorrowMutError>>
-    where
-        R: for<'b> Rootable<'b>,
-    {
-        Some(
-            self.0
-                .downcast_write::<Rootable![RefLock<Root<'_, R>>]>(mc)?
-                .unlock()
-                .try_borrow_mut(),
-        )
-    }
-}
-
+//
 // SAFETY:
 //
 // Non-'static downcasting is notoriously dangerous. Rather than allowing arbitrary non-'static data
@@ -114,6 +36,21 @@ impl<'gc, M> AnyCell<'gc, M> {
 //    to distinguish them, and this could be used to transmute any lifetime to or from 'gc. By using
 //    the `TypeId` of the rootable type itself, we know we always return the same projection that we
 //    were given.
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct AnyValue<'gc, M: 'gc>(Gc<'gc, Header<M>>);
+
+impl<'gc, M> fmt::Debug for AnyValue<'gc, M>
+where
+    M: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("AnyValue")
+            .field("metadata", self.metadata())
+            .field("type_id", &(self.type_id()))
+            .finish()
+    }
+}
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -129,10 +66,6 @@ struct Value<M, V> {
     header: Header<M>,
     data: V,
 }
-
-#[derive(Collect)]
-#[collect(no_drop)]
-pub struct AnyValue<'gc, M: 'gc>(Gc<'gc, Header<M>>);
 
 impl<'gc, M> Copy for AnyValue<'gc, M> {}
 

@@ -4,7 +4,7 @@ use gc_arena::{Collect, Rootable};
 use thiserror::Error;
 
 use crate::{
-    AnyCallback, AnyUserData, CallbackReturn, Context, Singleton, Table, UserDataError, Value,
+    AnyCallback, AnyUserData, CallbackReturn, Context, MetaMethod, Singleton, Table, Value,
 };
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -134,16 +134,8 @@ where
 impl<'gc> Error<'gc> {
     pub fn from_value(value: Value<'gc>) -> Self {
         if let Value::UserData(ud) = value {
-            match ud.read_static::<RuntimeError>() {
-                Ok(err) => return Error::Runtime(err.clone()),
-                Err(UserDataError::BorrowError) => {
-                    #[derive(Debug, Error)]
-                    #[error("RustError borrowed mutably, cannot lift out of Lua value")]
-                    struct LiftRustError;
-
-                    return LiftRustError.into();
-                }
-                Err(UserDataError::WrongType) => {}
+            if let Ok(err) = ud.downcast_static::<RuntimeError>() {
+                return Error::Runtime(err.clone());
             }
         }
 
@@ -164,10 +156,10 @@ impl<'gc> Error<'gc> {
                         table
                             .set(
                                 ctx,
-                                "__tostring",
+                                MetaMethod::ToString,
                                 AnyCallback::from_fn(&ctx, |ctx, stack| {
                                     let ud = stack.consume::<AnyUserData>(ctx)?;
-                                    let error = ud.read_static::<RuntimeError>()?;
+                                    let error = ud.downcast_static::<RuntimeError>()?;
                                     stack.replace(ctx, error.to_string());
                                     Ok(CallbackReturn::Return)
                                 }),

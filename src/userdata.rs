@@ -1,25 +1,17 @@
-use std::{
-    cell::{Ref, RefMut},
-    hash::{Hash, Hasher},
-    mem,
-};
+use std::hash::{Hash, Hasher};
 
-use gc_arena::{Collect, Mutation, Root, Rootable};
+use gc_arena::{barrier, lock, Collect, Mutation, Root, Rootable};
 use thiserror::Error;
 
-use crate::{any::AnyCell, Table};
+use crate::{any::AnyValue, Table};
 
 #[derive(Debug, Copy, Clone, Error)]
-pub enum UserDataError {
-    #[error("UserData type mismatch")]
-    WrongType,
-    #[error("UserData already incompatibly borrowed")]
-    BorrowError,
-}
+#[error("UserData type mismatch")]
+pub struct BadUserDataType;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct AnyUserData<'gc>(AnyCell<'gc, Option<Table<'gc>>>);
+pub struct AnyUserData<'gc>(AnyValue<'gc, lock::Lock<Option<Table<'gc>>>>);
 
 impl<'gc> PartialEq for AnyUserData<'gc> {
     fn eq(&self, other: &Self) -> bool {
@@ -37,7 +29,9 @@ impl<'gc> Hash for AnyUserData<'gc> {
 
 #[derive(Collect)]
 #[collect(require_static)]
-struct StaticRoot<R>(R);
+struct StaticRoot<R> {
+    root: R,
+}
 
 impl<'a, R: 'static> Rootable<'a> for StaticRoot<R> {
     type Root = StaticRoot<R>;
@@ -48,11 +42,11 @@ impl<'gc> AnyUserData<'gc> {
     where
         R: for<'a> Rootable<'a>,
     {
-        AnyUserData(AnyCell::new::<R>(mc, None, val))
+        AnyUserData(AnyValue::new::<R>(mc, None.into(), val))
     }
 
     pub fn new_static<R: 'static>(mc: &Mutation<'gc>, val: R) -> Self {
-        Self::new::<StaticRoot<R>>(mc, StaticRoot(val))
+        Self::new::<StaticRoot<R>>(mc, StaticRoot { root: val })
     }
 
     pub fn is<R>(&self) -> bool
@@ -66,44 +60,42 @@ impl<'gc> AnyUserData<'gc> {
         self.is::<StaticRoot<R>>()
     }
 
-    pub fn read<'a, R>(&'a self) -> Result<Ref<'a, Root<'gc, R>>, UserDataError>
+    pub fn downcast<'a, R>(&'a self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
     where
         R: for<'b> Rootable<'b>,
     {
-        match self.0.read_data::<R>() {
-            Some(Ok(r)) => Ok(r),
-            Some(Err(_)) => Err(UserDataError::BorrowError),
-            None => Err(UserDataError::WrongType),
-        }
+        self.0.downcast::<R>().ok_or(BadUserDataType)
     }
 
-    pub fn read_static<'a, R: 'static>(&'a self) -> Result<Ref<'a, R>, UserDataError> {
-        Ok(Ref::map(self.read::<StaticRoot<R>>()?, |r| &r.0))
-    }
-
-    pub fn write<'a, R>(
+    pub fn downcast_write<'a, R>(
         &'a self,
         mc: &Mutation<'gc>,
-    ) -> Result<RefMut<'a, Root<'gc, R>>, UserDataError>
+    ) -> Result<&'gc barrier::Write<Root<'gc, R>>, BadUserDataType>
     where
         R: for<'b> Rootable<'b>,
     {
-        match self.0.write_data::<R>(mc) {
-            Some(Ok(r)) => Ok(r),
-            Some(Err(_)) => Err(UserDataError::BorrowError),
-            None => Err(UserDataError::WrongType),
-        }
+        self.0.downcast_write::<R>(mc).ok_or(BadUserDataType)
     }
 
-    pub fn write_static<'a, R: 'static>(
+    pub fn downcast_static<'a, R: 'static>(&'a self) -> Result<&'gc R, BadUserDataType> {
+        self.0
+            .downcast::<StaticRoot<R>>()
+            .map(|r| &r.root)
+            .ok_or(BadUserDataType)
+    }
+
+    pub fn downcast_write_static<'a, R: 'static>(
         &'a self,
         mc: &Mutation<'gc>,
-    ) -> Result<RefMut<'a, R>, UserDataError> {
-        Ok(RefMut::map(self.write::<StaticRoot<R>>(mc)?, |r| &mut r.0))
+    ) -> Result<&'gc barrier::Write<R>, BadUserDataType> {
+        self.0
+            .downcast_write::<StaticRoot<R>>(mc)
+            .map(|r| barrier::field!(r, StaticRoot, root))
+            .ok_or(BadUserDataType)
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {
-        *self.0.read_metadata().unwrap()
+        self.0.metadata().get()
     }
 
     pub fn set_metatable(
@@ -111,7 +103,7 @@ impl<'gc> AnyUserData<'gc> {
         mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
-        mem::replace(&mut self.0.write_metadata(mc).unwrap(), metatable)
+        self.0.write_metadata(mc).unlock().replace(metatable)
     }
 
     pub fn as_ptr(&self) -> *const () {
