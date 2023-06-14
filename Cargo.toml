@@ -1,6 +1,7 @@
 [package]
 name = "piccolo"
 version = "0.1.1"
+description = "Stackless Lua VM implemented in pure Rust"
 authors = ["kyren <catherine@triplehex.dev>"]
 edition = "2021"
 license = "MIT"
