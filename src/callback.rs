@@ -150,20 +150,18 @@ impl<'gc> Hash for AnyCallback<'gc> {
 }
 
 pub enum SequencePoll<'gc> {
-    // Sequence pending, `Sequence::poll` will be called on the next step with the stack unchanged.
+    /// Sequence pending, `Sequence::poll` will be called on the next step with the stack unchanged.
     Pending,
-    // Sequence finished, the values in the stack will be returned to the caller.
+    /// Sequence finished, the values in the stack will be returned to the caller.
     Return,
-    // Yield the values in the stack inside a coroutine. If `is_tail` is true, then this also
-    // finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
-    // resumed, or `Sequence::error` if the coroutine is resumed with an error.
-    Yield {
-        is_tail: bool,
-    },
-    // Call the given function with the arguments in the stack. If `is_tail` is true, then this is
-    // a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called with
-    // the results of the function call, or if the function errors, `Sequence::error` will be called
-    // with the function error.
+    /// Yield the values in the stack inside a coroutine. If `is_tail` is true, then this also
+    /// finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
+    /// resumed, or `Sequence::error` if the coroutine is resumed with an error.
+    Yield { is_tail: bool },
+    /// Call the given function with the arguments in the stack. If `is_tail` is true, then this is
+    /// a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called with
+    /// the results of the function call, or if the function errors, `Sequence::error` will be called
+    /// with the function error.
     Call {
         function: Function<'gc>,
         is_tail: bool,

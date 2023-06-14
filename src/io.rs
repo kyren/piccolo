@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader, Read};
 /// - skips the unix shebang if there is one (if the first character is a '#', skips everything up
 ///   until but not including the first '\n')
 ///
-/// This mimics the initial behavior of lua_loadfile[x]. In order to correctly detect and skip the
+/// This mimics the initial behavior of luaL_loadfile(x). In order to correctly detect and skip the
 /// BOM and unix shebang, the internal buffer of the BufRead must be >= 3 bytes.
 pub fn skip_prefix<R: BufRead>(r: &mut R) -> Result<(), io::Error> {
     if {

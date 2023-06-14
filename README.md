@@ -1,6 +1,8 @@
+[![crates.io](https://img.shields.io/crates/v/piccolo)](https://crates.io/crates/piccolo)
+[![docs.rs](https://docs.rs/piccolo/badge.svg)](https://docs.rs/piccolo)
 [![Build Status](https://img.shields.io/circleci/project/github/triplehex/piccolo.svg)](https://circleci.com/gh/triplehex/piccolo)
 
-## piccolo - An experimental Lua VM implemented in pure Rust ##
+## piccolo - An experimental Lua VM implemented in pure Rust
 
 **(After *four* years, now UN-paused!)**
 
@@ -22,7 +24,13 @@ get some usable subset of Lua working, and to have a robust bindings story.
 `piccolo` is being worked on again to use in a separate game project, and my
 immediate goals are going to be whatever that project requires.
 
-## Safety ##
+## API Instability
+
+Expect *frequent* pre-1.0 API breakage, this crate is still very experimental.
+All API incompatible changes will be accompanied by minor version bumps, but
+these will be very common.
+
+## Safety
 
 The goal with `piccolo` is to have the majority of it written in safe Rust.
 Currently, there are a few sources of unsafety, but crucially these sources
@@ -43,7 +51,7 @@ The current primary sources of unsafety:
 spectre, so even *if* the VM is memory safe, running untrusted scripts carries
 additional risk)*.
 
-## A unique system for Rust <-> GC interaction ##
+## A unique system for Rust <-> GC interaction
 
 *The garbage collector system for `piccolo` is now in its [own repo](
 https://github.com/kyren/gc-arena), and also on crates.io. See the
@@ -61,7 +69,7 @@ that are usable from safe Rust. It achieves this by combining two things:
    that, outside an active call to `mutate`, all such pointers are either
    reachable from the root object or are safe to collect.
    
-## Stackless VM ##
+## Stackless VM
 
 The `mutate` based GC api means that long running calls to `mutate` can be
 problematic. No garbage collection can take place during a call to `mutate`, so
@@ -121,7 +129,7 @@ allow for painlessly implementing `Sequence`, but there are *several* current
 compiler limitations that make this currently infeasible or so unergonomic that
 it is no longer worth it.
 
-## What currently works ##
+## What currently works
 
 * An actual cycle detecting, incremental GC similar to the one in PUC-Rio Lua
   5.3
@@ -146,7 +154,7 @@ it is no longer worth it.
 * Some of the stdlib (`math`, `coroutine`, many top-level stdlib functions)
 * A simple REPL (try it with `cargo run --example interpreter`)
 
-## What currently doesn't work ##
+## What currently doesn't work
 
 * A huge amount of the stdlib is not implemented, `io`, `os`, `package`,
   `string`, `table`, `utf8`, `debug`, and several top-level functions are
@@ -168,7 +176,7 @@ it is no longer worth it.
 * Actual optimization and real effort towards matching PUC-Rio Lua's performance
 * Probably much more I've forgotten about
 
-## What will probably never be implemented ##
+## What will probably never be implemented
 
 This is not an exhaustive list, but these are some things which I currently
 consider *almost definite* non-goals.
@@ -194,20 +202,20 @@ consider *almost definite* non-goals.
 * Perfectly matching all of the (sometimes exotic and weird!) garbage collector
   behavior in PUC-Rio Lua.
 
-## Why is it called 'piccolo'? ##
+## Why is it called 'piccolo'?
 
 It's a cute little "pico" Lua, get it?
 
 It's not really all that "pico", but it's still a cute little instrument you can
 safely carry with you anywhere!
 
-## Wasn't this project called something else? Luster? Deimos? ##
+## Wasn't this project called something else? Luster? Deimos?
 
 There was an embarassing naming kerfluffle where I somehow ended up with other
 people's project names *twice*. They're all the same project. I promise I'm done
 renaming it.
 
-## License ##
+## License
 
 `piccolo` is licensed under either of:
 
