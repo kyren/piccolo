@@ -90,7 +90,7 @@ impl<'gc> Thread<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(&ctx, ThreadMode::Stopped)?;
+        let mut state = self.write_state(&ctx, Some(ThreadMode::Stopped))?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -106,7 +106,7 @@ impl<'gc> Thread<'gc> {
         mc: &Mutation<'gc>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
+        let mut state = self.write_state(mc, Some(ThreadMode::Stopped))?;
         state.frames.push(Frame::StartCoroutine(function));
         Ok(())
     }
@@ -117,7 +117,7 @@ impl<'gc> Thread<'gc> {
         self,
         ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let mut state = self.check_mode(&ctx, ThreadMode::Result)?;
+        let mut state = self.write_state(&ctx, Some(ThreadMode::Result))?;
         assert!(matches!(state.frames.pop(), Some(Frame::HasResult)));
 
         Ok(if let Some(error) = state.error.take() {
@@ -134,7 +134,7 @@ impl<'gc> Thread<'gc> {
         ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(&ctx, ThreadMode::Suspended)?;
+        let mut state = self.write_state(&ctx, Some(ThreadMode::Suspended))?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -166,7 +166,7 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in `Suspended` mode, cause an error wherever the thread was suspended.
     pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
+        let mut state = self.write_state(mc, Some(ThreadMode::Suspended))?;
         assert!(state.external_stack.is_empty());
         state.unwind(mc, error);
         Ok(())
@@ -175,7 +175,7 @@ impl<'gc> Thread<'gc> {
     /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
     /// that we are waiting on.
     pub fn step(self, ctx: Context<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.check_mode(&ctx, ThreadMode::Normal)?;
+        let mut state = self.write_state(&ctx, Some(ThreadMode::Normal))?;
         match state.frames.pop().expect("no frame to step") {
             Frame::Callback(callback) => {
                 state.frames.push(Frame::Calling);
@@ -276,20 +276,37 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    fn check_mode<'a>(
+    /// If this thread is in any other mode than `Running`, reset the thread completely and restore
+    /// it to the `Stopped` state.
+    pub fn reset(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
+        let mut state = self.write_state(mc, None)?;
+
+        state.close_upvalues(mc, 0);
+        assert!(state.open_upvalues.is_empty());
+
+        state.stack.clear();
+        state.frames.clear();
+        state.external_stack.clear();
+        state.error = None;
+        Ok(())
+    }
+
+    fn write_state<'a>(
         &'a self,
         mc: &Mutation<'gc>,
-        expected: ThreadMode,
+        expected_mode: Option<ThreadMode>,
     ) -> Result<RefMut<'a, ThreadState<'gc>>, BadThreadMode> {
-        assert!(expected != ThreadMode::Running);
+        assert!(expected_mode != Some(ThreadMode::Running));
         let state = self.0.try_borrow_mut(mc).map_err(|_| BadThreadMode {
-            expected,
             found: ThreadMode::Running,
+            expected: expected_mode,
         })?;
 
-        let found = state.mode();
-        if found != expected {
-            Err(BadThreadMode { expected, found })
+        if expected_mode.is_some_and(|mode| mode != state.mode()) {
+            Err(BadThreadMode {
+                found: state.mode(),
+                expected: expected_mode,
+            })
         } else {
             Ok(state)
         }

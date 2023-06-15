@@ -209,9 +209,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b8bf44d90885c5f2033c0eef506279a8b1fbe580f9324c397f3eab240fc2d38"
+checksum = "d9510ae55655bc532af6b48ae44b58b569609086323952613240288feb95b9cd"
 dependencies = [
  "gc-arena-derive",
  "sptr",
@@ -219,9 +219,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena-derive"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0aeb2b021c0781449cfa6aaef0f7bfa17714467e5eb868e3f172050a00275fbf"
+checksum = "3864ab600538c670a3a6c3fb69edc04e0c29a24fa378c1e2ee13a1b14cc65960"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -332,7 +332,7 @@ checksum = "9670a07f94779e00908f3e686eab508878ebb390ba6e604d3a284c00e8d0487b"
 
 [[package]]
 name = "piccolo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

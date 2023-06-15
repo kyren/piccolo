@@ -65,8 +65,8 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                                 Ok(SequencePoll::Pending)
                             }
                             mode => Err(BadThreadMode {
-                                expected: ThreadMode::Normal,
                                 found: mode,
+                                expected: Some(ThreadMode::Normal),
                             }
                             .into()),
                         }

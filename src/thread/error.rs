@@ -39,10 +39,14 @@ pub enum BinaryOperatorError {
 }
 
 #[derive(Debug, Copy, Clone, Error)]
-#[error("bad thread mode: was {found:?} expected {expected:?}")]
+#[error("bad thread mode: {found:?}{}", if let Some(expected) = *.expected {
+        format!(", expected {:?}", expected)
+    } else {
+        format!("")
+    })]
 pub struct BadThreadMode {
-    pub expected: ThreadMode,
     pub found: ThreadMode,
+    pub expected: Option<ThreadMode>,
 }
 
 #[derive(Debug, Copy, Clone, Error)]
