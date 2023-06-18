@@ -66,19 +66,27 @@ impl<'gc> Table<'gc> {
             .set(key.into_value(ctx), value.into_value(ctx))
     }
 
+    /// Returns a 'border' for this table.
+    ///
+    /// A 'border' for a table is any i >= 0 where:
+    /// `(i == 0 or table[i] ~= nil) and table[i + 1] == nil`
+    ///
+    /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
+    /// length.
     pub fn length(&self) -> i64 {
         self.0.borrow().entries.length()
     }
 
-    // Returns the next value after this key in the table order.
-    //
-    // The table order in the map portion of the table is defined by the incidental order of the
-    // internal bucket list. It is unspecified (but safe) to rely on this while inserting into the
-    // table.
-    //
-    // If given Nil, it will return the first pair in the table. If given a key that is present
-    // in the table, it will return the next pair in iteration order. If given a key that is not
-    // present in the table, the behavior is unspecified.
+    /// Returns the next value after this key in the table order.
+    ///
+    /// The table order in the map portion of the table is defined by the incidental order of the
+    /// internal bucket list. This order may change whenever the bucket list changes size, such
+    /// as when inserting into the table, so relying on the order while inserting may result in
+    /// unspecified (but not unsafe) behavior.
+    ///
+    /// If given Nil, it will return the first pair in the table. If given a key that is present
+    /// in the table, it will return the next pair in iteration order. If given a key that is not
+    /// present in the table, the behavior is unspecified.
     pub fn next<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> NextValue<'gc> {
         self.0.borrow().entries.next(key.into_value(ctx))
     }
@@ -255,13 +263,6 @@ impl<'gc> TableEntries<'gc> {
         }
     }
 
-    /// Returns a 'border' for this table.
-    ///
-    /// A 'border' for a table is any i >= 0 where:
-    /// `(i == 0 or table[i] ~= nil) and table[i + 1] == nil`
-    ///
-    /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
-    /// length.
     pub fn length(&self) -> i64 {
         // Binary search for a border. Entry at max must be Nil, min must be 0 or entry at min must
         // be != Nil.
