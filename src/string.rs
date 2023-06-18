@@ -116,7 +116,8 @@ impl<'gc> String<'gc> {
         self.0.hash
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &'gc [u8] {
+        // SAFETY: `&'gc [u8]` has the correct lifetime because `Gc::as_ref` also returns `&'gc T`.
         unsafe {
             match self.0.buffer {
                 Buffer::Indirect(p) => &(*p),
@@ -133,11 +134,11 @@ impl<'gc> String<'gc> {
         }
     }
 
-    pub fn to_str(&self) -> Result<&str, Utf8Error> {
+    pub fn to_str(&self) -> Result<&'gc str, Utf8Error> {
         str::from_utf8(self.as_bytes())
     }
 
-    pub fn to_str_lossy(&self) -> Cow<'_, str> {
+    pub fn to_str_lossy(&self) -> Cow<'gc, str> {
         StdString::from_utf8_lossy(self.as_bytes())
     }
 }
