@@ -87,8 +87,8 @@ impl<'gc> Table<'gc> {
     /// If given Nil, it will return the first pair in the table. If given a key that is present
     /// in the table, it will return the next pair in iteration order. If given a key that is not
     /// present in the table, the behavior is unspecified.
-    pub fn next<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> NextValue<'gc> {
-        self.0.borrow().entries.next(key.into_value(ctx))
+    pub fn next(&self, key: Value<'gc>) -> NextValue<'gc> {
+        self.0.borrow().entries.next(key)
     }
 
     pub fn metatable(&self) -> Option<Table<'gc>> {
