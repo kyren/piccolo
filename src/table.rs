@@ -51,7 +51,7 @@ impl<'gc> Table<'gc> {
     }
 
     pub fn get<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> Value<'gc> {
-        self.0.borrow().entries.get(key.into_value(ctx))
+        self.get_value(key.into_value(ctx))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
@@ -60,10 +60,20 @@ impl<'gc> Table<'gc> {
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0
-            .borrow_mut(&ctx)
-            .entries
-            .set(key.into_value(ctx), value.into_value(ctx))
+        self.set_value(&ctx, key.into_value(ctx), value.into_value(ctx))
+    }
+
+    pub fn get_value(&self, key: Value<'gc>) -> Value<'gc> {
+        self.0.borrow().entries.get(key)
+    }
+
+    pub fn set_value(
+        &self,
+        mc: &Mutation<'gc>,
+        key: Value<'gc>,
+        value: Value<'gc>,
+    ) -> Result<Value<'gc>, InvalidTableKey> {
+        self.0.borrow_mut(&mc).entries.set(key, value)
     }
 
     /// Returns a 'border' for this table.
