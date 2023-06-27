@@ -25,9 +25,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                             stack.drain(1..);
                             Ok(CallbackReturn::Return)
                         }
-                        MetaResult::Call(func, args) => {
-                            stack.replace(ctx, args);
-                            Ok(CallbackReturn::TailCall(func, None))
+                        MetaResult::Call(call) => {
+                            stack.replace(ctx, call.args);
+                            Ok(CallbackReturn::TailCall(call.function, None))
                         }
                     }
                 }
@@ -81,10 +81,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                     }
                                     v.display(&mut stdout)?
                                 }
-                                MetaResult::Call(function, args) => {
-                                    stack.extend(args);
+                                MetaResult::Call(call) => {
+                                    stack.extend(call.args);
                                     return Ok(SequencePoll::Call {
-                                        function,
+                                        function: call.function,
                                         is_tail: false,
                                     });
                                 }
@@ -322,7 +322,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
                 CallbackReturn::Return
             }
-            MetaResult::Call(f, args) => {
+            MetaResult::Call(call) => {
                 #[derive(Collect)]
                 #[collect(require_static)]
                 struct INext(i64);
@@ -340,8 +340,8 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     }
                 }
 
-                stack.extend(args);
-                CallbackReturn::TailCall(f, Some(INext(next_index).into()))
+                stack.extend(call.args);
+                CallbackReturn::TailCall(call.function, Some(INext(next_index).into()))
             }
         })
     });

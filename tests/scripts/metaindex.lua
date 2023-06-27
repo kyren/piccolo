@@ -1,4 +1,4 @@
-function test1()
+do
     local mt = {
         __index = function(table, key)
             return key
@@ -12,7 +12,7 @@ function test1()
     assert(t["hello there"] == "hello there")
 end
 
-function test2()
+do
     local idx = {}
 
     local mt = {
@@ -28,5 +28,40 @@ function test2()
     assert(t.foo == 3)
 end
 
-test1()
-test2()
+do
+    local idx = {}
+
+    local mt = {
+        __index = idx,
+        __newindex = idx,
+    }
+
+    local t = {}
+    setmetatable(t, mt)
+
+    assert(t.foo == nil)
+
+    t.foo = 3
+    assert(t.foo == 3 and idx.foo == 3)
+    t.foo = 4
+    assert(t.foo == 4 and idx.foo == 4)
+end
+
+
+do
+    local idx = {}
+
+    local mt = {
+        __newindex = function(table, key, value) 
+            idx[key] = value
+        end,
+    }
+
+    local t = {}
+    setmetatable(t, mt)
+
+    t.foo = 3
+    assert(idx.foo == 3)
+    t.foo = 4
+    assert(idx.foo == 4)
+end

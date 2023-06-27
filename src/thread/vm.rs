@@ -5,8 +5,8 @@ use crate::{
     opcode::OpCode,
     raw_ops,
     types::{RegisterIndex, VarCount},
-    Closure, ClosureState, Context, Function, RuntimeError, String, Table, TypeError,
-    UpValueDescriptor, Value,
+    Closure, ClosureState, Context, Function, RuntimeError, String, Table, UpValueDescriptor,
+    Value,
 };
 
 use super::{BinaryOperatorError, LuaFrame};
@@ -66,8 +66,8 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
                         break;
                     }
                 }
@@ -80,43 +80,51 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
                         break;
                     }
                 }
             }
 
             OpCode::SetTableRR { table, key, value } => {
-                get_table(registers.stack_frame[table.0 as usize])?.set(
-                    ctx,
-                    registers.stack_frame[key.0 as usize],
-                    registers.stack_frame[value.0 as usize],
-                )?;
+                let table = registers.stack_frame[table.0 as usize];
+                let key = registers.stack_frame[key.0 as usize];
+                let value = registers.stack_frame[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetTableRC { table, key, value } => {
-                get_table(registers.stack_frame[table.0 as usize])?.set(
-                    ctx,
-                    registers.stack_frame[key.0 as usize],
-                    current_function.0.proto.constants[value.0 as usize],
-                )?;
+                let table = registers.stack_frame[table.0 as usize];
+                let key = registers.stack_frame[key.0 as usize];
+                let value = current_function.0.proto.constants[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key, value.into())? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetTableCR { table, key, value } => {
-                get_table(registers.stack_frame[table.0 as usize])?.set(
-                    ctx,
-                    current_function.0.proto.constants[key.0 as usize],
-                    registers.stack_frame[value.0 as usize],
-                )?;
+                let table = registers.stack_frame[table.0 as usize];
+                let key = current_function.0.proto.constants[key.0 as usize];
+                let value = registers.stack_frame[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key.into(), value)? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetTableCC { table, key, value } => {
-                get_table(registers.stack_frame[table.0 as usize])?.set(
-                    ctx,
-                    current_function.0.proto.constants[key.0 as usize],
-                    current_function.0.proto.constants[value.0 as usize],
-                )?;
+                let table = registers.stack_frame[table.0 as usize];
+                let key = current_function.0.proto.constants[key.0 as usize];
+                let value = current_function.0.proto.constants[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key.into(), value.into())? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::GetUpTableR { dest, table, key } => {
@@ -126,8 +134,8 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
                         break;
                     }
                 }
@@ -140,47 +148,51 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
                         break;
                     }
                 }
             }
 
             OpCode::SetUpTableRR { table, key, value } => {
-                get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
-                    .set(
-                        ctx,
-                        registers.stack_frame[key.0 as usize],
-                        registers.stack_frame[value.0 as usize],
-                    )?;
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = registers.stack_frame[key.0 as usize];
+                let value = registers.stack_frame[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetUpTableRC { table, key, value } => {
-                get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
-                    .set(
-                        ctx,
-                        registers.stack_frame[key.0 as usize],
-                        current_function.0.proto.constants[value.0 as usize],
-                    )?;
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = registers.stack_frame[key.0 as usize];
+                let value = current_function.0.proto.constants[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key, value.into())? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetUpTableCR { table, key, value } => {
-                get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
-                    .set(
-                        ctx,
-                        current_function.0.proto.constants[key.0 as usize],
-                        registers.stack_frame[value.0 as usize],
-                    )?;
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = current_function.0.proto.constants[key.0 as usize];
+                let value = registers.stack_frame[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key.into(), value)? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::SetUpTableCC { table, key, value } => {
-                get_table(registers.get_upvalue(current_function.0.upvalues[table.0 as usize]))?
-                    .set(
-                        ctx,
-                        current_function.0.proto.constants[key.0 as usize],
-                        current_function.0.proto.constants[value.0 as usize],
-                    )?;
+                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let key = current_function.0.proto.constants[key.0 as usize];
+                let value = current_function.0.proto.constants[value.0 as usize];
+                if let Some(call) = meta_ops::new_index(ctx, table, key.into(), value.into())? {
+                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    break;
+                }
             }
 
             OpCode::Call {
@@ -332,8 +344,8 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[base.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, base)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(base))?;
                         break;
                     }
                 }
@@ -347,8 +359,8 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[base.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, base)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(base))?;
                         break;
                     }
                 }
@@ -387,8 +399,8 @@ pub(crate) fn run_vm<'gc>(
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
-                    MetaResult::Call(f, args) => {
-                        lua_frame.call_meta_function(ctx, f, &args, dest)?;
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
                         break;
                     }
                 }
@@ -916,16 +928,6 @@ pub(crate) fn run_vm<'gc>(
     }
 
     Ok(instructions)
-}
-
-fn get_table<'gc>(value: Value<'gc>) -> Result<Table<'gc>, TypeError> {
-    match value {
-        Value::Table(t) => Ok(t),
-        val => Err(TypeError {
-            expected: "table",
-            found: val.type_name(),
-        }),
-    }
 }
 
 fn add_offset(pc: usize, offset: i16) -> usize {

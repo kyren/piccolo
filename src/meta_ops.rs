@@ -1,12 +1,15 @@
 use gc_arena::Collect;
 
-use crate::{AnyCallback, CallbackReturn, Context, Function, IntoValue, TypeError, Value};
+use crate::{
+    AnyCallback, CallbackReturn, Context, Function, IntoValue, RuntimeError, TypeError, Value,
+};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
 pub enum MetaMethod {
     Len,
     Index,
+    NewIndex,
     Call,
     Pairs,
     ToString,
@@ -17,6 +20,7 @@ impl MetaMethod {
         match self {
             MetaMethod::Len => "__len",
             MetaMethod::Index => "__index",
+            MetaMethod::NewIndex => "__newindex",
             MetaMethod::Call => "__call",
             MetaMethod::Pairs => "__pairs",
             MetaMethod::ToString => "__tostring",
@@ -32,9 +36,16 @@ impl<'gc> IntoValue<'gc> for MetaMethod {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
+pub struct MetaCall<'gc, const N: usize> {
+    pub function: Function<'gc>,
+    pub args: [Value<'gc>; N],
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
 pub enum MetaResult<'gc, const N: usize> {
     Value(Value<'gc>),
-    Call(Function<'gc>, [Value<'gc>; N]),
+    Call(MetaCall<'gc, N>),
 }
 
 pub fn index<'gc>(
@@ -85,9 +96,9 @@ pub fn index<'gc>(
         }
     };
 
-    match idx {
-        Value::Table(table) => Ok(MetaResult::Call(
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+    Ok(MetaResult::Call(match idx {
+        Value::Table(table) => MetaCall {
+            function: AnyCallback::from_fn(&ctx, |ctx, stack| {
                 let table = stack.get(0);
                 let key = stack.get(1);
                 stack.clear();
@@ -96,17 +107,97 @@ pub fn index<'gc>(
                         stack.push_back(v);
                         Ok(CallbackReturn::Return.into())
                     }
-                    MetaResult::Call(f, args) => {
-                        stack.extend(args);
-                        Ok(CallbackReturn::TailCall(f, None).into())
+                    MetaResult::Call(call) => {
+                        stack.extend(call.args);
+                        Ok(CallbackReturn::TailCall(call.function, None).into())
                     }
                 }
             })
             .into(),
-            [table.into(), key],
-        )),
-        _ => Ok(MetaResult::Call(call(ctx, idx)?, [table, key])),
-    }
+            args: [table.into(), key],
+        },
+        _ => MetaCall {
+            function: call(ctx, idx)?,
+            args: [table, key],
+        },
+    }))
+}
+
+pub fn new_index<'gc>(
+    ctx: Context<'gc>,
+    table: Value<'gc>,
+    key: Value<'gc>,
+    value: Value<'gc>,
+) -> Result<Option<MetaCall<'gc, 3>>, RuntimeError> {
+    let idx = match table {
+        Value::Table(table) => {
+            let v = table.get(ctx, key);
+            if !v.is_nil() {
+                // If the value is present in the table, then we do not invoke the metamethod.
+                table.set_value(&ctx, key, value)?;
+                return Ok(None);
+            }
+
+            let idx = if let Some(mt) = table.metatable() {
+                mt.get(ctx, MetaMethod::NewIndex)
+            } else {
+                Value::Nil
+            };
+
+            if idx.is_nil() {
+                // If we do not have a __newindex metamethod, then just set the table value
+                // directly.
+                table.set_value(&ctx, key, value)?;
+                return Ok(None);
+            }
+
+            idx
+        }
+        Value::UserData(u) if u.metatable().is_some() => {
+            let idx = if let Some(mt) = u.metatable() {
+                mt.get(ctx, MetaMethod::NewIndex)
+            } else {
+                Value::Nil
+            };
+
+            if idx.is_nil() {
+                return Err(TypeError {
+                    expected: "table",
+                    found: table.type_name(),
+                }
+                .into());
+            }
+
+            idx
+        }
+        _ => {
+            return Err(TypeError {
+                expected: "table",
+                found: table.type_name(),
+            }
+            .into())
+        }
+    };
+
+    Ok(Some(match idx {
+        Value::Table(table) => MetaCall {
+            function: AnyCallback::from_fn(&ctx, |ctx, stack| {
+                let [table, key, value]: [Value; 3] = stack.consume(ctx)?;
+                if let Some(call) = new_index(ctx, table, key, value)? {
+                    stack.extend(call.args);
+                    Ok(CallbackReturn::TailCall(call.function, None).into())
+                } else {
+                    Ok(CallbackReturn::Return)
+                }
+            })
+            .into(),
+            args: [table.into(), key, value],
+        },
+        _ => MetaCall {
+            function: call(ctx, idx)?,
+            args: [table, key, value],
+        },
+    }))
 }
 
 pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, TypeError> {
@@ -144,7 +235,10 @@ pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, 
     } {
         let len = metatable.get(ctx, MetaMethod::Len);
         if !len.is_nil() {
-            return Ok(MetaResult::Call(call(ctx, len)?, [v]));
+            return Ok(MetaResult::Call(MetaCall {
+                function: call(ctx, len)?,
+                args: [v],
+            }));
         }
     }
 
@@ -166,7 +260,10 @@ pub fn tostring<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc,
     } {
         let tostring = metatable.get(ctx, MetaMethod::ToString);
         if !tostring.is_nil() {
-            return Ok(MetaResult::Call(call(ctx, tostring)?, [v]));
+            return Ok(MetaResult::Call(MetaCall {
+                function: call(ctx, tostring)?,
+                args: [v],
+            }));
         }
     }
 

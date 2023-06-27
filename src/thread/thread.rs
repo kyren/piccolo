@@ -343,9 +343,9 @@ enum LuaReturn {
     // Normal function call, place return values at the bottom of the returning function's stack,
     // as normal.
     Normal(VarCount),
-    // Synthetic metamethod call, place a single return value at an index relative to the returned
-    // to function's bottom.
-    Meta(RegisterIndex),
+    // Synthetic metamethod call, place an optional single return value at an index relative to the
+    // returned to function's bottom.
+    Meta(Option<RegisterIndex>),
 }
 
 #[derive(Collect)]
@@ -596,15 +596,15 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Calls an externally defined function in a completely non-destructive way in a new frame, and
-    // places the single result of this function call at the given register.
+    // places an optional single result of this function call at the given register.
     //
-    // Nothing at all in the frame is invalidated, other than placing the return value.
+    // Nothing at all in the frame is invalidated, other than optionally placing the return value.
     pub(crate) fn call_meta_function(
         self,
         ctx: Context<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
-        ret_index: RegisterIndex,
+        ret_index: Option<RegisterIndex>,
     ) -> Result<(), ThreadError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
@@ -809,7 +809,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             };
                             self.state.stack.resize(*base + *stack_size, Value::Nil);
                             *is_variable = false;
-                            self.state.stack[*base + meta_ind.0 as usize] = meta_ret;
+                            if let Some(meta_ind) = meta_ind {
+                                self.state.stack[*base + meta_ind.0 as usize] = meta_ret;
+                            }
                         }
                         None => {
                             panic!("no expected returns set for returned to lua frame")
@@ -999,7 +1001,9 @@ impl<'gc> ThreadState<'gc> {
                     self.external_stack.clear();
                     self.stack.resize(*base + *stack_size, Value::Nil);
                     *is_variable = false;
-                    self.stack[*base + meta_ind.0 as usize] = meta_ret;
+                    if let Some(meta_ind) = meta_ind {
+                        self.stack[*base + meta_ind.0 as usize] = meta_ret;
+                    }
                 }
                 None => panic!("no expected return set for returned to lua frame"),
             },
