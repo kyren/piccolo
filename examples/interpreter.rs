@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
         .arg(Arg::new("file").help("File to interpret").index(1))
         .get_matches();
 
-    let mut lua = Lua::new();
+    let mut lua = Lua::full();
 
     if !matches.contains_id("file") {
         run_repl(&mut lua)?;

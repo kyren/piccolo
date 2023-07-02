@@ -7,7 +7,7 @@ struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
 fn userdata() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let userdata = AnyUserData::new::<Rootable![MyUserData<'_>]>(

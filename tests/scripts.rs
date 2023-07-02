@@ -19,7 +19,7 @@ fn test_scripts() {
         if let Some(ext) = path.extension() {
             if ext == "lua" {
                 let _ = writeln!(stdout(), "running {:?}", path);
-                let mut lua = Lua::new();
+                let mut lua = Lua::core();
 
                 if let Err(err) = lua
                     .try_run(|ctx| {

@@ -6,7 +6,7 @@ use piccolo::{
 
 #[test]
 fn callback() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, stack| {
@@ -37,7 +37,7 @@ fn callback() -> Result<(), StaticError> {
 
 #[test]
 fn tail_call_trivial_callback() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, stack| {
@@ -67,7 +67,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 
 #[test]
 fn loopy_callback() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _| {
@@ -147,7 +147,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 
 #[test]
 fn yield_sequence() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
@@ -220,7 +220,7 @@ fn yield_sequence() -> Result<(), StaticError> {
 
 #[test]
 fn resume_with_err() {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     let thread = lua.run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {

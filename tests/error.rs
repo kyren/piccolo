@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[test]
 fn error_unwind() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     let thread = lua.try_run(|ctx| {
         let closure = Closure::load(
@@ -35,7 +35,7 @@ fn error_unwind() -> Result<(), StaticError> {
 
 #[test]
 fn error_tostring() -> Result<(), StaticError> {
-    let mut lua = Lua::new();
+    let mut lua = Lua::core();
 
     #[derive(Debug, Error)]
     #[error("test error")]

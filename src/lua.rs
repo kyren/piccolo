@@ -4,7 +4,7 @@ use gc_arena::{Arena, ArenaParameters, Collect, Mutation, Rootable};
 
 use crate::{
     error::RuntimeError,
-    stdlib::{load_base, load_coroutine, load_math, load_string},
+    stdlib::{load_base, load_coroutine, load_io, load_math, load_string},
     string::InternedStringSet,
     Error, FromMultiValue, Registry, StaticError, StaticThread, Table, ThreadMode,
 };
@@ -32,15 +32,6 @@ impl<'gc> State<'gc> {
             state: self,
         }
     }
-
-    pub fn load_safe_stdlib(&'gc self, mc: &'gc Mutation<'gc>) {
-        let ctx = self.ctx(mc);
-
-        load_base(ctx);
-        load_coroutine(ctx);
-        load_math(ctx);
-        load_string(ctx);
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -63,16 +54,50 @@ const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
 impl Default for Lua {
     fn default() -> Self {
-        Lua::new()
+        Lua::core()
     }
 }
 
 impl Lua {
-    pub fn new() -> Lua {
-        let arena =
-            Arena::<Rootable![State<'_>]>::new(ArenaParameters::default(), |mc| State::new(mc));
-        arena.mutate(|mc, state| state.load_safe_stdlib(mc));
-        Lua(arena)
+    /// Create a new `Lua` instance with no parts of the stdlib loaded.
+    pub fn empty() -> Self {
+        Lua(Arena::<Rootable![State<'_>]>::new(
+            ArenaParameters::default(),
+            |mc| State::new(mc),
+        ))
+    }
+
+    /// Create a new `Lua` instance with the core stdlib loaded.
+    pub fn core() -> Self {
+        let mut lua = Self::empty();
+        lua.load_core();
+        lua
+    }
+
+    /// Create a new `Lua` instance with all of the stdlib loaded.
+    pub fn full() -> Self {
+        let mut lua = Lua::core();
+        lua.load_io();
+        lua
+    }
+
+    /// Load the core parts of the stdlib that do not allow performing any I/O.
+    ///
+    /// Calls: `load_base`, `load_coroutine`, `load_math`, and `load_string`.
+    pub fn load_core(&mut self) {
+        self.run(|ctx| {
+            load_base(ctx);
+            load_coroutine(ctx);
+            load_math(ctx);
+            load_string(ctx);
+        })
+    }
+
+    /// Load the parts of the stdlib that allow I/O.
+    pub fn load_io(&mut self) {
+        self.run(|ctx| {
+            load_io(ctx);
+        })
     }
 
     pub fn run<F, T>(&mut self, f: F) -> T
