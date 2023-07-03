@@ -34,7 +34,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                         &mut self,
                         ctx: Context<'gc>,
                         stack: &mut Stack<'gc>,
-                    ) -> Result<crate::SequencePoll<'gc>, Error<'gc>> {
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         let mut stdout = io::stdout();
 
                         if self.mode == Mode::Init {
