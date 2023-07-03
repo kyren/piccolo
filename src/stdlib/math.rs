@@ -132,7 +132,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     math.set(
         ctx,
         "max",
-        callback("max", &ctx, |_, v: Variadic<Value>| {
+        callback("max", &ctx, |_, v: Variadic<Vec<Value>>| {
             if v.is_empty() {
                 None
             } else {
@@ -155,7 +155,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     math.set(
         ctx,
         "min",
-        callback("min", &ctx, |_, v: Variadic<Value>| {
+        callback("min", &ctx, |_, v: Variadic<Vec<Value>>| {
             if v.is_empty() {
                 None
             } else {

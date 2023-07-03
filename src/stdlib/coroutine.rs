@@ -27,7 +27,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             ctx,
             "resume",
             AnyCallback::from_fn(&ctx, |ctx, stack| {
-                let (thread, args): (Thread, Variadic<Value>) = stack.consume(ctx)?;
+                let (thread, args): (Thread, Variadic<Vec<Value>>) = stack.consume(ctx)?;
 
                 thread
                     .resume(ctx, args)
@@ -50,7 +50,10 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
 
                         match thread.mode() {
                             ThreadMode::Result => {
-                                match thread.take_return::<Variadic<Value<'gc>>>(ctx).unwrap() {
+                                match thread
+                                    .take_return::<Variadic<Vec<Value<'gc>>>>(ctx)
+                                    .unwrap()
+                                {
                                     Ok(res) => {
                                         stack.replace(ctx, (true, res));
                                     }

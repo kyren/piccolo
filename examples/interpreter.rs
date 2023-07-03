@@ -30,7 +30,7 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
             .state
             .registry
             .fetch(&thread)
-            .take_return::<Variadic<Value>>(ctx)??
+            .take_return::<Variadic<Vec<Value>>>(ctx)??
             .iter()
             .map(|v| format!("{v}"))
             .collect::<Vec<_>>()

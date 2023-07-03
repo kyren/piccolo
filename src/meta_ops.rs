@@ -182,7 +182,7 @@ pub fn new_index<'gc>(
     Ok(Some(match idx {
         Value::Table(table) => MetaCall {
             function: AnyCallback::from_fn(&ctx, |ctx, stack| {
-                let [table, key, value]: [Value; 3] = stack.consume(ctx)?;
+                let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
                     Ok(CallbackReturn::TailCall(call.function, None).into())

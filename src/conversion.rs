@@ -8,14 +8,81 @@ pub trait IntoValue<'gc> {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc>;
 }
 
-impl<'gc, T> IntoValue<'gc> for T
-where
-    T: Into<Value<'gc>>,
-{
-    fn into_value(self, _ctx: Context<'gc>) -> Value<'gc> {
-        self.into()
+macro_rules! impl_into {
+    ($($i:ty),* $(,)?) => {
+        $(
+            impl<'gc> IntoValue<'gc> for $i {
+                fn into_value(self, _: Context<'gc>) -> Value<'gc> {
+                    self.into()
+                }
+            }
+        )*
+    };
+}
+impl_into!(
+    bool,
+    i64,
+    f64,
+    String<'gc>,
+    Table<'gc>,
+    Function<'gc>,
+    Closure<'gc>,
+    AnyCallback<'gc>,
+    Thread<'gc>,
+    Value<'gc>,
+    AnyUserData<'gc>,
+);
+
+macro_rules! impl_int_into {
+    ($($i:ty),* $(,)?) => {
+        $(
+            impl<'gc> IntoValue<'gc> for $i {
+                fn into_value(self, _: Context<'gc>) -> Value<'gc> {
+                    Value::Integer(self.into())
+                }
+            }
+        )*
+    };
+}
+impl_int_into!(i8, u8, i16, u16, i32, u32);
+
+impl<'gc> IntoValue<'gc> for f32 {
+    fn into_value(self, _: Context<'gc>) -> Value<'gc> {
+        Value::Number(self.into())
     }
 }
+
+macro_rules! impl_copy_into {
+    ($($i:ty),* $(,)?) => {
+        $(
+            impl<'a, 'gc> IntoValue<'gc> for &'a $i {
+                fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
+                    (*self).into_value(ctx)
+                }
+            }
+        )*
+    };
+}
+impl_copy_into!(
+    bool,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    f32,
+    f64,
+    String<'gc>,
+    Table<'gc>,
+    Function<'gc>,
+    Closure<'gc>,
+    AnyCallback<'gc>,
+    Thread<'gc>,
+    Value<'gc>,
+    AnyUserData<'gc>,
+);
 
 impl<'gc> IntoValue<'gc> for &'static str {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
@@ -38,6 +105,18 @@ impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Option<T> {
     }
 }
 
+impl<'a, 'gc, T> IntoValue<'gc> for &'a Option<T>
+where
+    &'a T: IntoValue<'gc>,
+{
+    fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
+        match self {
+            Some(t) => t.into_value(ctx),
+            None => Value::Nil,
+        }
+    }
+}
+
 impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Vec<T> {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
         let table = Table::new(&ctx);
@@ -48,10 +127,13 @@ impl<'gc, T: IntoValue<'gc>> IntoValue<'gc> for Vec<T> {
     }
 }
 
-impl<'gc, 'a, T: IntoValue<'gc> + Copy> IntoValue<'gc> for &'a Vec<T> {
+impl<'gc, 'a, T> IntoValue<'gc> for &'a [T]
+where
+    &'a T: IntoValue<'gc>,
+{
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
         let table = Table::new(&ctx);
-        for (i, v) in self.iter().copied().enumerate() {
+        for (i, v) in self.iter().enumerate() {
             table.set(ctx, i64::try_from(i).unwrap() + 1, v).unwrap();
         }
         table.into()
@@ -224,15 +306,6 @@ impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for T {
     }
 }
 
-impl<'gc, T: IntoValue<'gc>, const N: usize> IntoMultiValue<'gc> for [T; N] {
-    type Iter = <[Value<'gc>; N] as IntoIterator>::IntoIter;
-
-    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
-        let vals = self.map(|v| v.into_value(ctx));
-        vals.into_iter()
-    }
-}
-
 pub trait FromMultiValue<'gc>: Sized {
     fn from_multi_value(
         ctx: Context<'gc>,
@@ -249,25 +322,11 @@ impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
     }
 }
 
-impl<'gc, T: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for [T; N] {
-    fn from_multi_value(
-        ctx: Context<'gc>,
-        values: impl Iterator<Item = Value<'gc>>,
-    ) -> Result<Self, TypeError> {
-        let mut values = values.fuse();
-        let mut res: [Option<T>; N] = array::from_fn(|_| None);
-        for i in 0..N {
-            res[i] = Some(T::from_value(ctx, values.next().unwrap_or(Value::Nil))?);
-        }
-
-        Ok(res.map(|v| v.unwrap()))
-    }
-}
-
-pub struct Variadic<T>(pub Vec<T>);
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Variadic<T>(pub T);
 
 impl<T> ops::Deref for Variadic<T> {
-    type Target = Vec<T>;
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -280,47 +339,98 @@ impl<T> ops::DerefMut for Variadic<T> {
     }
 }
 
-impl<T> IntoIterator for Variadic<T> {
-    type Item = T;
-    type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
+impl<T: IntoIterator> IntoIterator for Variadic<T> {
+    type Item = T::Item;
+    type IntoIter = T::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<'a, T> IntoIterator for &'a Variadic<T> {
-    type Item = &'a T;
-    type IntoIter = <&'a Vec<T> as IntoIterator>::IntoIter;
+impl<'a, T> IntoIterator for &'a Variadic<T>
+where
+    &'a T: IntoIterator,
+{
+    type Item = <&'a T as IntoIterator>::Item;
+    type IntoIter = <&'a T as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         (&self.0).into_iter()
     }
 }
 
-impl<T> FromIterator<T> for Variadic<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self(Vec::from_iter(iter))
+impl<I, T: FromIterator<I>> FromIterator<I> for Variadic<T> {
+    fn from_iter<It: IntoIterator<Item = I>>(iter: It) -> Self {
+        Self(T::from_iter(iter))
     }
 }
 
-impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for Variadic<T> {
-    type Iter = vec::IntoIter<Value<'gc>>;
+pub struct IterIntoValue<'gc, I> {
+    ctx: Context<'gc>,
+    iter: I,
+}
+
+impl<'gc, I: Iterator> Iterator for IterIntoValue<'gc, I>
+where
+    I::Item: IntoValue<'gc>,
+{
+    type Item = Value<'gc>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.iter.next()?.into_value(self.ctx))
+    }
+}
+
+impl<'gc, T: IntoIterator> IntoMultiValue<'gc> for Variadic<T>
+where
+    T::Item: IntoValue<'gc>,
+{
+    type Iter = IterIntoValue<'gc, T::IntoIter>;
 
     fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
-        self.into_iter()
-            .map(|t| t.into_value(ctx))
-            .collect::<Vec<_>>()
-            .into_iter()
+        IterIntoValue {
+            ctx,
+            iter: self.0.into_iter(),
+        }
     }
 }
 
-impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for Variadic<T> {
+impl<'a, 'gc, T> IntoMultiValue<'gc> for &'a Variadic<T>
+where
+    &'a T: IntoIterator,
+    <&'a T as IntoIterator>::Item: IntoValue<'gc>,
+{
+    type Iter = IterIntoValue<'gc, <&'a T as IntoIterator>::IntoIter>;
+
+    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
+        IterIntoValue {
+            ctx,
+            iter: self.0.into_iter(),
+        }
+    }
+}
+
+impl<'gc, I: FromValue<'gc>> FromMultiValue<'gc> for Variadic<Vec<I>> {
     fn from_multi_value(
         ctx: Context<'gc>,
         values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
-        values.map(|v| T::from_value(ctx, v)).collect()
+        values.map(|v| I::from_value(ctx, v)).collect()
+    }
+}
+
+impl<'gc, I: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for Variadic<[I; N]> {
+    fn from_multi_value(
+        ctx: Context<'gc>,
+        mut values: impl Iterator<Item = Value<'gc>>,
+    ) -> Result<Self, TypeError> {
+        let mut res: [Option<I>; N] = array::from_fn(|_| None);
+        for i in 0..N {
+            res[i] = Some(I::from_value(ctx, values.next().unwrap_or(Value::Nil))?);
+        }
+
+        Ok(Self(res.map(|v| v.unwrap())))
     }
 }
 

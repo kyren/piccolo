@@ -4,7 +4,7 @@ use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
     AnyCallback, CallbackReturn, Context, Error, IntoValue, MetaMethod, Sequence, SequencePoll,
-    Stack, Table, Value,
+    Stack, Table, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -24,7 +24,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                             Ok(CallbackReturn::Return)
                         }
                         MetaResult::Call(call) => {
-                            stack.replace(ctx, call.args);
+                            stack.replace(ctx, Variadic(call.args));
                             Ok(CallbackReturn::TailCall(call.function, None))
                         }
                     }

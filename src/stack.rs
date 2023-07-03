@@ -34,12 +34,19 @@ impl<'gc> Stack<'gc> {
         self.0.get(i).copied().unwrap_or_default()
     }
 
-    pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoValue<'gc>) {
-        self.0.push_back(v.into_value(ctx));
+    pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
+        for v in v.into_multi_value(ctx) {
+            self.0.push_back(v.into_value(ctx));
+        }
     }
 
-    pub fn into_front(&mut self, ctx: Context<'gc>, v: impl IntoValue<'gc>) {
-        self.0.push_front(v.into_value(ctx));
+    pub fn into_front(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
+        let mut c = 0;
+        for v in v.into_multi_value(ctx) {
+            c += 1;
+            self.0.push_back(v.into_value(ctx));
+        }
+        self.0.rotate_right(c);
     }
 
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
