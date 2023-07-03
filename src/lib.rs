@@ -5,6 +5,7 @@ pub mod compiler;
 pub mod constant;
 pub mod conversion;
 pub mod error;
+pub mod function;
 pub mod io;
 pub mod lua;
 pub mod meta_ops;
@@ -29,6 +30,7 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
+    function::Function,
     lua::{Context, Lua, State},
     meta_ops::MetaMethod,
     registry::{
@@ -40,5 +42,5 @@ pub use self::{
     table::{InvalidTableKey, Table},
     thread::{BadThreadMode, Thread, ThreadError, ThreadMode},
     userdata::{AnyUserData, BadUserDataType},
-    value::{Function, Value},
+    value::Value,
 };
