@@ -9,8 +9,14 @@ fn function_compose_bind() -> Result<(), StaticError> {
             &ctx,
             [
                 AnyCallback::from_fn(&ctx, |ctx, stack| {
+                    let i: Variadic<Vec<i64>> = stack.consume(ctx)?;
+                    stack.replace(ctx, i.into_iter().sum::<i64>());
+                    Ok(CallbackReturn::Return)
+                })
+                .into(),
+                AnyCallback::from_fn(&ctx, |ctx, stack| {
                     let i: i64 = stack.consume(ctx)?;
-                    stack.replace(ctx, i * 3);
+                    stack.replace(ctx, i * 2);
                     Ok(CallbackReturn::Return)
                 })
                 .into(),
@@ -22,13 +28,7 @@ fn function_compose_bind() -> Result<(), StaticError> {
                 .into(),
                 AnyCallback::from_fn(&ctx, |ctx, stack| {
                     let i: i64 = stack.consume(ctx)?;
-                    stack.replace(ctx, i * 2);
-                    Ok(CallbackReturn::Return)
-                })
-                .into(),
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
-                    let i: Variadic<Vec<i64>> = stack.consume(ctx)?;
-                    stack.replace(ctx, i.into_iter().sum::<i64>());
+                    stack.replace(ctx, i * 3);
                     Ok(CallbackReturn::Return)
                 })
                 .into(),
