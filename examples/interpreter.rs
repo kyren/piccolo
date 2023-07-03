@@ -1,41 +1,51 @@
 use std::error::Error as StdError;
 use std::fs::File;
-use std::vec::Vec;
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compiler::ParserError, io, Closure, FunctionProto, Lua, ProtoCompileError, StaticError, Thread,
-    Value, Variadic,
+    compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Function,
+    FunctionProto, Lua, ProtoCompileError, StaticError, Thread,
 };
 
-fn run_code(lua: &mut Lua, code: &str) -> Result<String, StaticError> {
+fn run_code(lua: &mut Lua, code: &str) -> Result<(), StaticError> {
     let thread = lua.try_run(|ctx| {
-        let result = Closure::load(ctx, ("return ".to_string() + code).as_bytes());
-        let result = match result {
-            Ok(res) => Ok(res),
-            Err(_) => Closure::load(ctx, code.as_bytes()),
+        let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
+            Ok(closure) => closure,
+            Err(err) => {
+                if let Ok(closure) = Closure::load(ctx, code.as_bytes()) {
+                    closure
+                } else {
+                    return Err(err.into());
+                }
+            }
         };
-        let closure = result?;
+        let function = Function::compose(
+            &ctx,
+            [
+                closure.into(),
+                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                    Ok(if stack.is_empty() {
+                        CallbackReturn::Return
+                    } else {
+                        CallbackReturn::TailCall(
+                            meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                            None,
+                        )
+                    })
+                })
+                .into(),
+            ],
+        );
         let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
+        thread.start(ctx, function, ())?;
         Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
     lua.finish_thread(&thread);
 
-    lua.try_run(|ctx| {
-        Ok(ctx
-            .state
-            .registry
-            .fetch(&thread)
-            .take_return::<Variadic<Vec<Value>>>(ctx)??
-            .iter()
-            .map(|v| format!("{v}"))
-            .collect::<Vec<_>>()
-            .join("\t"))
-    })
+    lua.try_run(|ctx| Ok(ctx.state.registry.fetch(&thread).take_return::<()>(ctx)??))
 }
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
@@ -68,14 +78,13 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
                         _ => {}
                     }
                 }
-                Ok(out_string) => {
-                    editor.add_history_entry(line)?;
-                    println!("{}", out_string);
-                    break;
-                }
                 Err(e) => {
                     editor.add_history_entry(line)?;
                     eprintln!("{}", e);
+                    break;
+                }
+                Ok(()) => {
+                    editor.add_history_entry(line)?;
                     break;
                 }
             }

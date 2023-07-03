@@ -49,10 +49,11 @@ impl<'gc> Function<'gc> {
             mc,
             functions,
             |functions, _, _| {
-                let compose = Compose(Vec::from_iter(functions.clone()));
+                let mut compose = Compose(Vec::from_iter(functions.clone()));
                 if compose.0.is_empty() {
                     Ok(CallbackReturn::Return)
                 } else {
+                    compose.0.reverse();
                     Ok(CallbackReturn::Sequence(AnySequence::new(compose)))
                 }
             },
