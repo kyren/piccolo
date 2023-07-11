@@ -38,9 +38,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "error",
-            AnyCallback::from_fn(&ctx, |_, stack| {
-                Err(stack.pop_front().unwrap_or_default().into())
-            }),
+            AnyCallback::from_fn(&ctx, |_, stack| Err(stack.get(0).into())),
         )
         .unwrap();
 

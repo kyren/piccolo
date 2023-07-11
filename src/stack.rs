@@ -1,6 +1,8 @@
 use std::{
-    collections::{vec_deque, VecDeque},
-    iter, ops,
+    iter,
+    ops::{Index, IndexMut, RangeBounds},
+    slice::{self, SliceIndex},
+    vec,
 };
 
 use gc_arena::Collect;
@@ -9,21 +11,7 @@ use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeE
 
 #[derive(Clone, Default, Collect)]
 #[collect(no_drop)]
-pub struct Stack<'gc>(VecDeque<Value<'gc>>);
-
-impl<'gc> ops::Deref for Stack<'gc> {
-    type Target = VecDeque<Value<'gc>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'gc> ops::DerefMut for Stack<'gc> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+pub struct Stack<'gc>(Vec<Value<'gc>>);
 
 impl<'gc> Stack<'gc> {
     pub fn new() -> Self {
@@ -34,9 +22,45 @@ impl<'gc> Stack<'gc> {
         self.0.get(i).copied().unwrap_or_default()
     }
 
+    pub fn push_back(&mut self, value: Value<'gc>) {
+        self.0.push(value);
+    }
+
+    pub fn push_front(&mut self, value: Value<'gc>) {
+        self.0.insert(0, value);
+    }
+
+    pub fn pop_back(&mut self) -> Value<'gc> {
+        self.0.pop().unwrap_or_default()
+    }
+
+    pub fn pop_front(&mut self) -> Value<'gc> {
+        if self.0.is_empty() {
+            Value::Nil
+        } else {
+            self.0.remove(0)
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<Value<'gc>> {
+        self.0.drain(range)
+    }
+
     pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         for v in v.into_multi_value(ctx) {
-            self.0.push_back(v.into_value(ctx));
+            self.0.push(v.into_value(ctx));
         }
     }
 
@@ -44,17 +68,21 @@ impl<'gc> Stack<'gc> {
         let mut c = 0;
         for v in v.into_multi_value(ctx) {
             c += 1;
-            self.0.push_back(v.into_value(ctx));
+            self.0.push(v.into_value(ctx));
         }
         self.0.rotate_right(c);
     }
 
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.0.pop_back().unwrap_or_default())
+        V::from_value(ctx, self.0.pop().unwrap_or_default())
     }
 
     pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_front().unwrap_or_default())
+        if self.0.is_empty() {
+            V::from_value(ctx, Value::Nil)
+        } else {
+            V::from_value(ctx, self.0.remove(0))
+        }
     }
 
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
@@ -69,9 +97,41 @@ impl<'gc> Stack<'gc> {
 
 impl<'a, 'gc: 'a> IntoIterator for &'a Stack<'gc> {
     type Item = Value<'gc>;
-    type IntoIter = iter::Copied<vec_deque::Iter<'a, Value<'gc>>>;
+    type IntoIter = iter::Copied<slice::Iter<'a, Value<'gc>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter().copied()
+    }
+}
+
+impl<'gc> FromIterator<Value<'gc>> for Stack<'gc> {
+    fn from_iter<T: IntoIterator<Item = Value<'gc>>>(iter: T) -> Self {
+        Self(Vec::from_iter(iter))
+    }
+}
+
+impl<'gc> Extend<Value<'gc>> for Stack<'gc> {
+    fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
+impl<'a, 'gc: 'a> Extend<&'a Value<'gc>> for Stack<'gc> {
+    fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
+impl<'gc, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc> {
+    type Output = <Vec<Value<'gc>> as Index<I>>::Output;
+
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<'gc> IndexMut<usize> for Stack<'gc> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
     }
 }
