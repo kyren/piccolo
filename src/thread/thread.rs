@@ -1,6 +1,5 @@
 use std::{
     cell::RefMut,
-    collections::{btree_map::Entry as BTreeEntry, BTreeMap},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     mem,
@@ -68,7 +67,7 @@ impl<'gc> Thread<'gc> {
             RefLock::new(ThreadState {
                 stack: Vec::new(),
                 frames: Vec::new(),
-                open_upvalues: BTreeMap::new(),
+                open_upvalues: Vec::new(),
                 external_stack: Stack::new(),
                 error: None,
             }),
@@ -318,7 +317,7 @@ impl<'gc> Thread<'gc> {
 pub(crate) struct ThreadState<'gc> {
     stack: Vec<Value<'gc>>,
     frames: Vec<Frame<'gc>>,
-    open_upvalues: BTreeMap<usize, UpValue<'gc>>,
+    open_upvalues: Vec<UpValue<'gc>>,
     external_stack: Stack<'gc>,
     error: Option<Error<'gc>>,
 }
@@ -333,7 +332,7 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
     pub stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
     base: usize,
-    open_upvalues: &'a mut BTreeMap<usize, UpValue<'gc>>,
+    open_upvalues: &'a mut Vec<UpValue<'gc>>,
     thread: Thread<'gc>,
 }
 
@@ -837,11 +836,14 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 impl<'gc, 'a> LuaRegisters<'gc, 'a> {
     pub(crate) fn open_upvalue(&mut self, mc: &Mutation<'gc>, reg: RegisterIndex) -> UpValue<'gc> {
         let ind = self.base + reg.0 as usize;
-        match self.open_upvalues.entry(ind) {
-            BTreeEntry::Occupied(occupied) => *occupied.get(),
-            BTreeEntry::Vacant(vacant) => {
+        match self
+            .open_upvalues
+            .binary_search_by(|&u| open_upvalue_ind(u).cmp(&ind))
+        {
+            Ok(i) => self.open_upvalues[i],
+            Err(i) => {
                 let uv = UpValue(Gc::new(mc, Lock::new(UpValueState::Open(self.thread, ind))));
-                vacant.insert(uv);
+                self.open_upvalues.insert(i, uv);
                 uv
             }
         }
@@ -888,23 +890,34 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub(crate) fn close_upvalues(&mut self, mc: &Mutation<'gc>, register: RegisterIndex) {
-        for (_, upval) in self
+    pub(crate) fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom_register: RegisterIndex) {
+        let bottom = self.base + bottom_register.0 as usize;
+        let start = match self
             .open_upvalues
-            .split_off(&(self.base + register.0 as usize))
+            .binary_search_by(|&u| open_upvalue_ind(u).cmp(&bottom))
         {
-            if let UpValueState::Open(upvalue_thread, ind) = upval.0.get() {
-                assert!(upvalue_thread == self.thread);
-                upval.0.set(
-                    mc,
-                    UpValueState::Closed(if ind < self.base {
-                        self.upper_stack[ind]
-                    } else {
-                        self.stack_frame[ind - self.base]
-                    }),
-                );
+            Ok(i) => i,
+            Err(i) => i,
+        };
+
+        for &upval in &self.open_upvalues[start..] {
+            match upval.0.get() {
+                UpValueState::Open(upvalue_thread, ind) => {
+                    assert!(upvalue_thread == self.thread);
+                    upval.0.set(
+                        mc,
+                        UpValueState::Closed(if ind < self.base {
+                            self.upper_stack[ind]
+                        } else {
+                            self.stack_frame[ind - self.base]
+                        }),
+                    );
+                }
+                UpValueState::Closed(_) => panic!("upvalue is not open"),
             }
         }
+
+        self.open_upvalues.truncate(start);
     }
 }
 
@@ -1064,11 +1077,32 @@ impl<'gc> ThreadState<'gc> {
     }
 
     fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom: usize) {
-        for (_, upval) in self.open_upvalues.split_off(&bottom) {
-            if let UpValueState::Open(upvalue_thread, ind) = upval.0.get() {
-                assert!(upvalue_thread.0.as_ptr() == self);
-                upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
+        let start = match self
+            .open_upvalues
+            .binary_search_by(|&u| open_upvalue_ind(u).cmp(&bottom))
+        {
+            Ok(i) => i,
+            Err(i) => i,
+        };
+
+        let this_ptr = self as *mut _;
+        for &upval in &self.open_upvalues[start..] {
+            match upval.0.get() {
+                UpValueState::Open(upvalue_thread, ind) => {
+                    assert!(upvalue_thread.0.as_ptr() == this_ptr);
+                    upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
+                }
+                UpValueState::Closed(_) => panic!("upvalue is not open"),
             }
         }
+
+        self.open_upvalues.truncate(start);
+    }
+}
+
+fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
+    match u.0.get() {
+        UpValueState::Open(_, ind) => ind,
+        UpValueState::Closed(_) => panic!("upvalue is not open"),
     }
 }
