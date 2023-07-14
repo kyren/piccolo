@@ -1,4 +1,5 @@
-use gc_arena::{Collect, Mutation};
+use allocator_api2::vec;
+use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
 
 use crate::{
     AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, IntoMultiValue, Sequence,
@@ -31,7 +32,7 @@ impl<'gc> Function<'gc> {
     {
         #[derive(Collect)]
         #[collect(no_drop)]
-        struct Compose<'gc>(Vec<Function<'gc>>);
+        struct Compose<'gc>(vec::Vec<Function<'gc>, MetricsAlloc<'gc>>);
 
         impl<'gc> Sequence<'gc> for Compose<'gc> {
             fn poll(
@@ -48,13 +49,14 @@ impl<'gc> Function<'gc> {
         Self::Callback(AnyCallback::from_fn_with(
             mc,
             functions,
-            |functions, _, _| {
-                let mut compose = Compose(Vec::from_iter(functions.clone()));
+            |functions, ctx, _| {
+                let mut compose = Compose(vec::Vec::new_in(MetricsAlloc::new(&ctx)));
+                compose.0.extend(functions.clone());
                 if compose.0.is_empty() {
                     Ok(CallbackReturn::Return)
                 } else {
                     compose.0.reverse();
-                    Ok(CallbackReturn::Sequence(AnySequence::new(compose)))
+                    Ok(CallbackReturn::Sequence(AnySequence::new(&ctx, compose)))
                 }
             },
         ))

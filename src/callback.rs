@@ -3,7 +3,8 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{Collect, Gc, Mutation};
+use allocator_api2::boxed;
+use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
 
 use crate::{Context, Error, Function, Stack};
 
@@ -197,20 +198,16 @@ pub trait Sequence<'gc>: Collect {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnySequence<'gc>(pub Box<dyn Sequence<'gc> + 'gc>);
-
-impl<'gc, S> From<S> for AnySequence<'gc>
-where
-    S: Sequence<'gc> + 'gc,
-{
-    fn from(v: S) -> Self {
-        Self(Box::new(v))
-    }
-}
+pub struct AnySequence<'gc>(pub boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
 
 impl<'gc> AnySequence<'gc> {
-    pub fn new(sequence: impl Sequence<'gc> + 'gc) -> Self {
-        Self(Box::new(sequence))
+    pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
+        let b = boxed::Box::new_in(sequence, MetricsAlloc::new(mc));
+        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
+        // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
+        // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
+        let b = unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) };
+        Self(b)
     }
 
     pub fn poll(
@@ -256,11 +253,11 @@ mod tests {
             }
         }
 
-        let arena = Arena::<Rootable![State<'_>]>::new(Default::default(), |mc| State::new(mc));
+        let arena = Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc));
         arena.mutate(|mc, state| {
             let ctx = state.ctx(mc);
             let dyn_callback = AnyCallback::new(mc, CB(17));
-            let mut stack = Stack::new();
+            let mut stack = Stack::new(mc);
             assert!(dyn_callback.call(ctx, &mut stack).is_ok());
             assert!(matches!(stack.from_front(ctx).unwrap(), 17));
         });

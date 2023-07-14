@@ -1,17 +1,20 @@
 use std::{
     alloc,
-    borrow::{Borrow, Cow},
+    borrow::Cow,
     fmt,
-    hash::{Hash, Hasher},
+    hash::{BuildHasherDefault, Hash, Hasher},
     io::Write,
-    ops::Deref,
-    slice,
+    ops, slice,
     str::{self, Utf8Error},
     string::String as StdString,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, Mutation, StaticCollect};
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+use gc_arena::{
+    allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect, Gc,
+    GcWeak, Mutation, StaticCollect,
+};
+use hashbrown::{hash_map, raw::RawTable, HashMap};
+use rustc_hash::FxHasher;
 use thiserror::Error;
 
 use crate::{Context, Value};
@@ -39,13 +42,17 @@ impl<'gc> String<'gc> {
     pub fn from_buffer(mc: &Mutation<'gc>, s: Box<[u8]>) -> String<'gc> {
         #[derive(Collect)]
         #[collect(require_static)]
-        #[repr(transparent)]
-        struct Owned(Header);
+        #[repr(C)]
+        struct Owned {
+            header: Header,
+            metrics: Metrics,
+        }
 
         impl Drop for Owned {
             fn drop(&mut self) {
-                match self.0.buffer {
+                match self.header.buffer {
                     Buffer::Indirect(ptr) => unsafe {
+                        self.metrics.mark_external_deallocation((*ptr).len());
                         drop(Box::from_raw(ptr as *mut [u8]));
                     },
                     Buffer::Inline(_) => unreachable!(),
@@ -53,11 +60,16 @@ impl<'gc> String<'gc> {
             }
         }
 
-        let owned = Owned(Header {
-            hash: str_hash(&s),
-            buffer: Buffer::Indirect(Box::into_raw(s)),
-        });
-        // SAFETY: We know we can cast to `InlineHeader` because `Owned` is `#[repr(transparent)]`
+        let metrics = mc.metrics().clone();
+        metrics.mark_external_allocation(s.len());
+        let owned = Owned {
+            header: Header {
+                hash: str_hash(&s),
+                buffer: Buffer::Indirect(Box::into_raw(s)),
+            },
+            metrics,
+        };
+        // SAFETY: We know we can cast to `InlineHeader` because `Owned` is `#[repr(C)]`
         String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
     }
 
@@ -99,7 +111,7 @@ impl<'gc> String<'gc> {
 
         try_sizes!(0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024);
 
-        Self::from_buffer(mc, Box::from(s))
+        Self::from_buffer(mc, s.into())
     }
 
     pub fn from_static<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &'static S) -> String<'gc> {
@@ -204,7 +216,7 @@ impl<'gc> String<'gc> {
     }
 }
 
-impl<'gc> Deref for String<'gc> {
+impl<'gc> ops::Deref for String<'gc> {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
@@ -214,12 +226,6 @@ impl<'gc> Deref for String<'gc> {
 
 impl<'gc> AsRef<[u8]> for String<'gc> {
     fn as_ref(&self) -> &[u8] {
-        self.as_bytes()
-    }
-}
-
-impl<'gc> Borrow<[u8]> for String<'gc> {
-    fn borrow(&self) -> &[u8] {
         self.as_bytes()
     }
 }
@@ -241,42 +247,153 @@ impl<'gc> Hash for String<'gc> {
     }
 }
 
-#[derive(Default, Collect)]
+#[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-struct InternedState<'gc> {
-    dyn_strings: FxHashSet<String<'gc>>,
-    static_strings: FxHashMap<StaticCollect<*const [u8]>, String<'gc>>,
+struct WeakString<'gc>(GcWeak<'gc, Header>);
+
+impl<'gc> WeakString<'gc> {
+    fn downgrade(s: String<'gc>) -> Self {
+        Self(Gc::downgrade(s.0))
+    }
+
+    fn upgrade(self, mc: &Mutation<'gc>) -> Option<String<'gc>> {
+        GcWeak::upgrade(self.0, mc).map(String)
+    }
+
+    fn is_dropped(self) -> bool {
+        GcWeak::is_dropped(self.0)
+    }
 }
 
-#[derive(Collect, Clone, Copy)]
+struct InternedDynStringsInner<'gc>(RefLock<RawTable<(WeakString<'gc>, u64), MetricsAlloc<'gc>>>);
+
+#[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct InternedStringSet<'gc>(Gc<'gc, RefLock<InternedState<'gc>>>);
+struct InternedDynStrings<'gc>(Gc<'gc, InternedDynStringsInner<'gc>>);
+
+unsafe impl<'gc> Collect for InternedDynStringsInner<'gc> {
+    fn trace(&self, cc: &gc_arena::Collection) {
+        // SAFETY: No new Gc pointers are adopted or reparented.
+        let mut dyn_strings = unsafe { self.0.unlock_unchecked() }.borrow_mut();
+        unsafe {
+            for bucket in dyn_strings.iter() {
+                let s = bucket.as_ref().0;
+                s.trace(cc);
+                if s.is_dropped() {
+                    // SAFETY: it is okay to erase items yielded by the iterator.
+                    dyn_strings.erase(bucket);
+                }
+            }
+        }
+    }
+}
+
+impl<'gc> InternedDynStrings<'gc> {
+    fn new(mc: &Mutation<'gc>) -> Self {
+        Self(Gc::new(
+            mc,
+            InternedDynStringsInner(RefLock::new(RawTable::new_in(MetricsAlloc::new(mc)))),
+        ))
+    }
+
+    fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
+        // SAFETY: If a new string is added, we call the write barrier.
+        let mut dyn_strings = unsafe { self.0 .0.unlock_unchecked() }.borrow_mut();
+
+        // SAFETY: The RawTable outlives the iterator
+        unsafe {
+            for bucket in dyn_strings.iter_hash(str_hash(s)) {
+                let (key, _) = *bucket.as_ref();
+                if let Some(st) = key.upgrade(mc) {
+                    if st == s {
+                        return st;
+                    }
+                } else {
+                    // SAFETY: it is okay to erase items yielded by the iterator.
+                    dyn_strings.erase(bucket);
+                }
+            }
+        }
+
+        // SAFETY: We are going to modify the dyn_strings table, so call the write barrier.
+        Gc::write(mc, self.0);
+
+        let s = String::from_slice(mc, s);
+        dyn_strings.insert(
+            s.stored_hash(),
+            (WeakString::downgrade(s), s.stored_hash()),
+            |(_, hash)| *hash,
+        );
+
+        s
+    }
+}
+
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+struct InternedStaticStrings<'gc>(
+    Gc<
+        'gc,
+        RefLock<
+            HashMap<
+                StaticCollect<*const [u8]>,
+                String<'gc>,
+                BuildHasherDefault<FxHasher>,
+                MetricsAlloc<'gc>,
+            >,
+        >,
+    >,
+);
+
+impl<'gc> InternedStaticStrings<'gc> {
+    fn new(mc: &Mutation<'gc>) -> Self {
+        Self(Gc::new(
+            mc,
+            RefLock::new(HashMap::with_hasher_in(
+                BuildHasherDefault::default(),
+                MetricsAlloc::new(mc),
+            )),
+        ))
+    }
+
+    fn intern(&self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
+        let key = StaticCollect(s as *const _);
+
+        // SAFETY: If a new string is added, we call the write barrier.
+        let mut static_strings = unsafe { self.0.unlock_unchecked() }.borrow_mut();
+
+        match static_strings.entry(key) {
+            hash_map::Entry::Occupied(occupied) => *occupied.get(),
+            hash_map::Entry::Vacant(vacant) => {
+                // SAFETY: We are modifying the static_strings table, so we call the write barrier.
+                Gc::write(mc, self.0);
+                *vacant.insert(String::from_static(mc, s))
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub struct InternedStringSet<'gc> {
+    dyn_strings: InternedDynStrings<'gc>,
+    static_strings: InternedStaticStrings<'gc>,
+}
 
 impl<'gc> InternedStringSet<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> InternedStringSet<'gc> {
-        InternedStringSet(Gc::new(mc, RefLock::new(InternedState::default())))
+        InternedStringSet {
+            dyn_strings: InternedDynStrings::new(mc),
+            static_strings: InternedStaticStrings::new(mc),
+        }
     }
 
     pub fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
-        if let Some(found) = self.0.borrow().dyn_strings.get(s) {
-            return *found;
-        }
-
-        let s = String::from_slice(mc, s);
-        self.0.borrow_mut(mc).dyn_strings.insert(s);
-        s
+        self.dyn_strings.intern(mc, s)
     }
 
     pub fn intern_static(&self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
-        let key = StaticCollect(s as *const _);
-
-        if let Some(found) = self.0.borrow().static_strings.get(&key) {
-            return *found;
-        }
-
-        let s = String::from_static(mc, s);
-        self.0.borrow_mut(mc).static_strings.insert(key, s);
-        s
+        self.static_strings.intern(mc, s)
     }
 }
 

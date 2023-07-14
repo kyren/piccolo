@@ -1,4 +1,5 @@
-use gc_arena::Gc;
+use allocator_api2::vec;
+use gc_arena::{allocator_api::MetricsAlloc, Gc};
 
 use crate::{
     meta_ops::{self, MetaResult},
@@ -251,8 +252,8 @@ pub(crate) fn run_vm<'gc>(
 
             OpCode::Closure { proto, dest } => {
                 let proto = current_function.0.proto.prototypes[proto.0 as usize];
-                let mut upvalues = Vec::new();
-                for &desc in &proto.upvalues {
+                let mut upvalues = vec::Vec::new_in(MetricsAlloc::new(&ctx));
+                for &desc in proto.upvalues.iter() {
                     match desc {
                         UpValueDescriptor::Environment => {
                             panic!("_ENV upvalue is only allowed on top-level closure");

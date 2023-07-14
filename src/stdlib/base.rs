@@ -3,8 +3,8 @@ use gc_arena::Collect;
 use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
-    AnyCallback, CallbackReturn, Context, Error, IntoValue, MetaMethod, Sequence, SequencePoll,
-    Stack, Table, Value, Variadic,
+    AnyCallback, AnySequence, CallbackReturn, Context, Error, IntoValue, MetaMethod, Sequence,
+    SequencePoll, Stack, String, Table, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -93,7 +93,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 let function = meta_ops::call(ctx, stack.get(0))?;
                 stack.pop_front();
-                Ok(CallbackReturn::TailCall(function, Some(PCall.into())))
+                Ok(CallbackReturn::TailCall(
+                    function,
+                    Some(AnySequence::new(&ctx, PCall)),
+                ))
             }),
         )
         .unwrap();
@@ -264,7 +267,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.extend(call.args);
-                CallbackReturn::TailCall(call.function, Some(INext(next_index).into()))
+                CallbackReturn::TailCall(
+                    call.function,
+                    Some(AnySequence::new(&ctx, INext(next_index))),
+                )
             }
         })
     });
@@ -276,6 +282,29 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             "ipairs",
             AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, stack| {
                 stack.into_front(ctx, *inext);
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    ctx.state
+        .globals
+        .set(
+            ctx,
+            "collectgarbage",
+            AnyCallback::from_fn(&ctx, move |ctx, stack| {
+                match stack.consume::<Option<String>>(ctx)? {
+                    Some(arg) if arg == "count" => {
+                        stack.into_back(
+                            ctx,
+                            ctx.mutation.metrics().total_allocation() as f64 / 1024.0,
+                        );
+                    }
+                    Some(_) => {
+                        return Err("bad argument to 'collectgarbage'".into_value(ctx).into());
+                    }
+                    None => {}
+                }
                 Ok(CallbackReturn::Return)
             }),
         )

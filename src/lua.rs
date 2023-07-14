@@ -1,6 +1,6 @@
 use std::ops;
 
-use gc_arena::{Arena, ArenaParameters, Collect, Mutation, Rootable};
+use gc_arena::{metrics::Metrics, Arena, Collect, Mutation, Rootable};
 
 use crate::{
     error::RuntimeError,
@@ -61,10 +61,7 @@ impl Default for Lua {
 impl Lua {
     /// Create a new `Lua` instance with no parts of the stdlib loaded.
     pub fn empty() -> Self {
-        Lua(Arena::<Rootable![State<'_>]>::new(
-            ArenaParameters::default(),
-            |mc| State::new(mc),
-        ))
+        Lua(Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)))
     }
 
     /// Create a new `Lua` instance with the core stdlib loaded.
@@ -100,12 +97,30 @@ impl Lua {
         })
     }
 
+    /// Size of all memory used by this Lua context.
+    ///
+    /// This is equivalent to `self.gc_metrics().total_allocation()`. This counts all `Gc`
+    /// allocated memory and also all data Lua datastructures held inside `Gc`, as they are tracked
+    /// as "external allocations" in via gc-arena.
+    pub fn total_memory(&self) -> usize {
+        self.gc_metrics().total_allocation()
+    }
+
+    /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
+    pub fn gc_collect(&mut self) {
+        self.0.collect_all();
+    }
+
+    pub fn gc_metrics(&self) -> &Metrics {
+        self.0.metrics()
+    }
+
     pub fn run<F, T>(&mut self, f: F) -> T
     where
         F: for<'gc> FnOnce(Context<'gc>) -> T,
     {
         let r = self.0.mutate(move |mc, state| f(state.ctx(mc)));
-        if self.0.allocation_debt() > COLLECTOR_GRANULARITY {
+        if self.0.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
             self.0.collect_debt();
         }
         r

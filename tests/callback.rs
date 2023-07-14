@@ -97,7 +97,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                     Ok(CallbackReturn::Yield(None))
                 })
                 .into(),
-                Some(AnySequence::new(Cont(4))),
+                Some(AnySequence::new(&ctx, Cont(4))),
             ))
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
@@ -184,7 +184,7 @@ fn yield_sequence() -> Result<(), StaticError> {
             let (a, b): (i32, i32) = stack.consume(ctx)?;
             assert_eq!((a, b), (1, 2));
             stack.extend([Value::Integer(3), Value::Integer(4)]);
-            Ok(CallbackReturn::Yield(Some(Cont(0).into())))
+            Ok(CallbackReturn::Yield(Some(AnySequence::new(&ctx, Cont(0)))))
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
         Ok(())
@@ -250,7 +250,7 @@ fn resume_with_err() {
             assert!(stack.len() == 1);
             assert_eq!(stack.consume::<String>(ctx)?, "resume");
             stack.replace(ctx, "return");
-            Ok(CallbackReturn::Yield(Some(Cont.into())))
+            Ok(CallbackReturn::Yield(Some(AnySequence::new(&ctx, Cont))))
         });
 
         let thread = Thread::new(&ctx);

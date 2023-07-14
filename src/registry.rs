@@ -1,7 +1,11 @@
-use std::{any::TypeId, collections::hash_map, fmt};
+use std::{any::TypeId, fmt, hash::BuildHasherDefault};
 
-use gc_arena::{lock::RefLock, Collect, DynamicRoot, DynamicRootSet, Gc, Mutation, Root, Rootable};
-use rustc_hash::FxHashMap;
+use gc_arena::{
+    allocator_api::MetricsAlloc, lock::RefLock, Collect, DynamicRoot, DynamicRootSet, Gc, Mutation,
+    Root, Rootable,
+};
+use hashbrown::{hash_map, HashMap};
+use rustc_hash::FxHasher;
 
 use crate::{
     any::AnyValue, AnyCallback, AnyUserData, Closure, Context, Function, String, Table, Thread,
@@ -193,14 +197,22 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons: Gc<'gc, RefLock<FxHashMap<TypeId, AnyValue<'gc, ()>>>>,
+    singletons: Gc<
+        'gc,
+        RefLock<
+            HashMap<TypeId, AnyValue<'gc, ()>, BuildHasherDefault<FxHasher>, MetricsAlloc<'gc>>,
+        >,
+    >,
 }
 
 impl<'gc> Registry<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
+        let singletons =
+            HashMap::with_hasher_in(BuildHasherDefault::default(), MetricsAlloc::new(mc));
+
         Self {
             roots: DynamicRootSet::new(mc),
-            singletons: Gc::new(mc, RefLock::new(FxHashMap::default())),
+            singletons: Gc::new(mc, RefLock::new(singletons)),
         }
     }
 

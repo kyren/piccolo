@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops, AnyCallback, BadThreadMode, CallbackReturn, Context, IntoValue, Sequence,
-    SequencePoll, Stack, Table, Thread, ThreadMode, Value, Variadic,
+    meta_ops, AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Context, IntoValue,
+    Sequence, SequencePoll, Stack, Table, Thread, ThreadMode, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -78,7 +78,10 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.push_front(thread.into());
-                Ok(CallbackReturn::Sequence(ThreadSequence.into()))
+                Ok(CallbackReturn::Sequence(AnySequence::new(
+                    &ctx,
+                    ThreadSequence,
+                )))
             }),
         )
         .unwrap();

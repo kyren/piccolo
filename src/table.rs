@@ -4,8 +4,9 @@ use std::{
     i64, mem,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
-use hashbrown::raw::RawTable;
+use allocator_api2::vec;
+use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
+use hashbrown::{hash_map, HashMap};
 use rustc_hash::FxHasher;
 use thiserror::Error;
 
@@ -47,7 +48,13 @@ impl<'gc> Hash for Table<'gc> {
 
 impl<'gc> Table<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Table<'gc> {
-        Table(Gc::new(mc, RefLock::new(TableState::default())))
+        Table(Gc::new(
+            mc,
+            RefLock::new(TableState {
+                entries: TableEntries::new(mc),
+                metatable: None,
+            }),
+        ))
     }
 
     pub fn get<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> Value<'gc> {
@@ -114,17 +121,18 @@ impl<'gc> Table<'gc> {
     }
 }
 
-#[derive(Debug, Default, Collect)]
+#[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct TableState<'gc> {
     pub entries: TableEntries<'gc>,
     pub metatable: Option<Table<'gc>>,
 }
 
-#[derive(Default)]
+#[derive(Collect)]
+#[collect(no_drop)]
 pub struct TableEntries<'gc> {
-    array: Vec<Value<'gc>>,
-    map: RawTable<(Value<'gc>, Value<'gc>)>,
+    array: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    map: HashMap<Value<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
 }
 
 impl<'gc> fmt::Debug for TableEntries<'gc> {
@@ -135,23 +143,20 @@ impl<'gc> fmt::Debug for TableEntries<'gc> {
                     .iter()
                     .enumerate()
                     .map(|(i, v)| (Value::Integer(i.try_into().unwrap()), *v))
-                    .chain(table_iter(&self.map)),
+                    .chain(self.map.iter().map(|(&k, &v)| (k, v))),
             )
             .finish()
     }
 }
 
-unsafe impl<'gc> Collect for TableEntries<'gc> {
-    fn trace(&self, cc: &gc_arena::Collection) {
-        self.array.trace(cc);
-        for (key, value) in table_iter(&self.map) {
-            key.trace(cc);
-            value.trace(cc);
+impl<'gc> TableEntries<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> Self {
+        Self {
+            array: vec::Vec::new_in(MetricsAlloc::new(mc)),
+            map: hash_map::HashMap::with_hasher_in((), MetricsAlloc::new(mc)),
         }
     }
-}
 
-impl<'gc> TableEntries<'gc> {
     pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
         if let Some(index) = to_array_index(key) {
             if index < self.array.len() {
@@ -160,8 +165,12 @@ impl<'gc> TableEntries<'gc> {
         }
 
         if let Ok(key) = canonical_key(key) {
-            if let Some(&(_, value)) = self.map.get(key_hash(key), |(k, _)| key_eq(key, *k)) {
-                value
+            if let Some((_, value)) = self
+                .map
+                .raw_entry()
+                .from_hash(key_hash(key), |k| key_eq(*k, key))
+            {
+                *value
             } else {
                 Value::Nil
             }
@@ -184,10 +193,30 @@ impl<'gc> TableEntries<'gc> {
 
         let table_key = canonical_key(key)?;
         let hash = key_hash(table_key);
-        if value.is_nil() {
-            Ok(table_remove(&mut self.map, hash, table_key).unwrap_or(Value::Nil))
+        Ok(if value.is_nil() {
+            if let hash_map::RawEntryMut::Occupied(occupied) = self
+                .map
+                .raw_entry_mut()
+                .from_hash(hash, |k| key_eq(*k, table_key))
+            {
+                occupied.remove()
+            } else {
+                Value::Nil
+            }
         } else if self.map.len() < self.map.capacity() {
-            Ok(table_insert(&mut self.map, hash, table_key, value).unwrap_or(Value::Nil))
+            match self
+                .map
+                .raw_entry_mut()
+                .from_hash(hash, |k| key_eq(*k, table_key))
+            {
+                hash_map::RawEntryMut::Occupied(occupied) => {
+                    mem::replace(occupied.into_mut(), value)
+                }
+                hash_map::RawEntryMut::Vacant(vacant) => {
+                    vacant.insert_with_hasher(hash, table_key, value, |k| key_hash(*k));
+                    Value::Nil
+                }
+            }
         } else {
             // If a new element does not fit in either the array or map part of the table, we need
             // to grow. First, we find the total count of array candidate elements across the array
@@ -207,7 +236,7 @@ impl<'gc> TableEntries<'gc> {
                 }
             }
 
-            for (key, _) in table_iter(&self.map) {
+            for &key in self.map.keys() {
                 if let Some(i) = to_array_index(key) {
                     array_counts[highest_bit(i)] += 1;
                     array_total += 1;
@@ -248,7 +277,7 @@ impl<'gc> TableEntries<'gc> {
                 self.array.resize(capacity, Value::Nil);
 
                 let array = &mut self.array;
-                table_retain(&mut self.map, |key, value| {
+                self.map.retain(|&key, &mut value| {
                     if let Some(i) = to_array_index(key) {
                         if i < array.len() {
                             array[i] = value;
@@ -260,7 +289,9 @@ impl<'gc> TableEntries<'gc> {
             } else {
                 // If we aren't growing the array, we're adding a new element to the map that won't
                 // fit in the advertised capacity. We explicitly double the map size here.
-                self.map.reserve(old_map_size, |(key, _)| key_hash(*key));
+                self.map
+                    .raw_table_mut()
+                    .reserve(old_map_size, |(key, _)| key_hash(*key));
             }
 
             // Now we can insert the new key value pair
@@ -269,8 +300,20 @@ impl<'gc> TableEntries<'gc> {
                     return Ok(mem::replace(&mut self.array[index], value));
                 }
             }
-            Ok(table_insert(&mut self.map, hash, table_key, value).unwrap_or(Value::Nil))
-        }
+            match self
+                .map
+                .raw_entry_mut()
+                .from_hash(hash, |k| key_eq(*k, table_key))
+            {
+                hash_map::RawEntryMut::Occupied(occupied) => {
+                    mem::replace(occupied.into_mut(), value)
+                }
+                hash_map::RawEntryMut::Vacant(vacant) => {
+                    vacant.insert_with_hasher(hash, table_key, value, |k| key_hash(*k));
+                    Value::Nil
+                }
+            }
+        })
     }
 
     pub fn length(&self) -> i64 {
@@ -304,7 +347,8 @@ impl<'gc> TableEntries<'gc> {
             let mut max = array_len.checked_add(1).unwrap();
             while self
                 .map
-                .find(key_hash(max.into()), |(k, _)| key_eq(max.into(), *k))
+                .raw_entry()
+                .from_hash(key_hash(max.into()), |k| key_eq(*k, max.into()))
                 .is_some()
             {
                 if max == i64::MAX {
@@ -323,7 +367,8 @@ impl<'gc> TableEntries<'gc> {
             // We have found a max where table[max] == nil, so we can now binary search
             binary_search(min, max, |i| {
                 self.map
-                    .find(key_hash(i.into()), |(k, _)| key_eq(i.into(), *k))
+                    .raw_entry()
+                    .from_hash(key_hash(i.into()), |k| key_eq(*k, i.into()))
                     .is_none()
             })
         }
@@ -343,6 +388,8 @@ impl<'gc> TableEntries<'gc> {
             None
         };
 
+        let raw_table = self.map.raw_table();
+
         if let Some((start_index, is_missing)) = array_result {
             for i in start_index..self.array.len() {
                 if !self.array[i].is_nil() {
@@ -358,9 +405,9 @@ impl<'gc> TableEntries<'gc> {
             }
 
             unsafe {
-                for bucket_index in 0..self.map.buckets() {
-                    if self.map.is_bucket_full(bucket_index) {
-                        let (key, value) = *self.map.bucket(bucket_index).as_ref();
+                for bucket_index in 0..raw_table.buckets() {
+                    if raw_table.is_bucket_full(bucket_index) {
+                        let (key, value) = *raw_table.bucket(bucket_index).as_ref();
                         return NextValue::Found { key, value };
                     }
                 }
@@ -370,15 +417,14 @@ impl<'gc> TableEntries<'gc> {
         }
 
         if let Ok(table_key) = canonical_key(key) {
-            if let Some(bucket) = self
-                .map
-                .find(key_hash(table_key), |(k, _)| key_eq(*k, table_key))
+            if let Some(bucket) =
+                raw_table.find(key_hash(table_key), |(k, _)| key_eq(*k, table_key))
             {
                 unsafe {
-                    let bucket_index = self.map.bucket_index(&bucket);
-                    for i in bucket_index + 1..self.map.buckets() {
-                        if self.map.is_bucket_full(i) {
-                            let (key, value) = *self.map.bucket(i).as_ref();
+                    let bucket_index = raw_table.bucket_index(&bucket);
+                    for i in bucket_index + 1..raw_table.buckets() {
+                        if raw_table.is_bucket_full(i) {
+                            let (key, value) = *raw_table.bucket(i).as_ref();
                             return NextValue::Found { key, value };
                         }
                     }
@@ -388,59 +434,6 @@ impl<'gc> TableEntries<'gc> {
         }
 
         NextValue::NotFound
-    }
-}
-
-fn table_iter<'a, 'gc>(
-    table: &'a RawTable<(Value<'gc>, Value<'gc>)>,
-) -> impl Iterator<Item = (Value<'gc>, Value<'gc>)> + 'a {
-    unsafe {
-        table.iter().map(|bucket| {
-            let &(key, value) = bucket.as_ref();
-            (key, value)
-        })
-    }
-}
-
-fn table_insert<'gc>(
-    table: &mut RawTable<(Value<'gc>, Value<'gc>)>,
-    hash: u64,
-    key: Value<'gc>,
-    value: Value<'gc>,
-) -> Option<Value<'gc>> {
-    if let Some(bucket) = table.find(hash, |(k, _)| key_eq(*k, key)) {
-        Some(mem::replace(unsafe { &mut bucket.as_mut().1 }, value))
-    } else {
-        table.insert(hash, (key, value), |(k, _)| key_hash(*k));
-        None
-    }
-}
-
-fn table_remove<'gc>(
-    table: &mut RawTable<(Value<'gc>, Value<'gc>)>,
-    hash: u64,
-    key: Value<'gc>,
-) -> Option<Value<'gc>> {
-    if let Some(bucket) = table.find(hash, |(k, _)| key_eq(*k, key)) {
-        unsafe { Some(table.remove(bucket).0 .1) }
-    } else {
-        None
-    }
-}
-
-fn table_retain<'gc>(
-    table: &mut RawTable<(Value<'gc>, Value<'gc>)>,
-    mut f: impl FnMut(Value<'gc>, Value<'gc>) -> bool,
-) {
-    unsafe {
-        for bucket in table.iter() {
-            let &(key, value) = bucket.as_ref();
-            if !f(key, value) {
-                // SAFETY: We do not need to call Rawiter::reflect_remove because we are
-                // removing an item that the iterator already yielded.
-                table.erase(bucket);
-            }
-        }
     }
 }
 

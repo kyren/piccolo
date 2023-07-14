@@ -5,7 +5,9 @@ use std::{
     mem,
 };
 
+use allocator_api2::vec;
 use gc_arena::{
+    allocator_api::MetricsAlloc,
     lock::{Lock, RefLock},
     Collect, Gc, Mutation,
 };
@@ -65,10 +67,10 @@ impl<'gc> Thread<'gc> {
         Thread(Gc::new(
             mc,
             RefLock::new(ThreadState {
-                stack: Vec::new(),
-                frames: Vec::new(),
-                open_upvalues: Vec::new(),
-                external_stack: Stack::new(),
+                stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
+                frames: vec::Vec::new_in(MetricsAlloc::new(mc)),
+                open_upvalues: vec::Vec::new_in(MetricsAlloc::new(mc)),
+                external_stack: Stack::new(mc),
                 error: None,
             }),
         ))
@@ -180,7 +182,7 @@ impl<'gc> Thread<'gc> {
                 state.frames.push(Frame::Calling);
 
                 assert!(state.error.is_none());
-                let mut stack = mem::take(&mut state.external_stack);
+                let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
                 drop(state);
                 let seq = callback.call(ctx, &mut stack);
                 let mut state = self.0.borrow_mut(&ctx);
@@ -199,7 +201,7 @@ impl<'gc> Thread<'gc> {
             Frame::Sequence(mut sequence) => {
                 state.frames.push(Frame::Calling);
 
-                let mut stack = mem::take(&mut state.external_stack);
+                let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
                 let error = state.error.take();
                 drop(state);
                 let fin = if let Some(error) = error {
@@ -315,9 +317,9 @@ impl<'gc> Thread<'gc> {
 #[derive(Collect)]
 #[collect(no_drop)]
 pub(crate) struct ThreadState<'gc> {
-    stack: Vec<Value<'gc>>,
-    frames: Vec<Frame<'gc>>,
-    open_upvalues: Vec<UpValue<'gc>>,
+    stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
+    open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
     external_stack: Stack<'gc>,
     error: Option<Error<'gc>>,
 }
@@ -332,7 +334,7 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
     pub stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
     base: usize,
-    open_upvalues: &'a mut Vec<UpValue<'gc>>,
+    open_upvalues: &'a mut vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
     thread: Thread<'gc>,
 }
 

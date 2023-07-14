@@ -2,20 +2,20 @@ use std::{
     iter,
     ops::{Index, IndexMut, RangeBounds},
     slice::{self, SliceIndex},
-    vec,
 };
 
-use gc_arena::Collect;
+use allocator_api2::vec;
+use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
 
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
-#[derive(Clone, Default, Collect)]
+#[derive(Clone, Collect)]
 #[collect(no_drop)]
-pub struct Stack<'gc>(Vec<Value<'gc>>);
+pub struct Stack<'gc>(vec::Vec<Value<'gc>, MetricsAlloc<'gc>>);
 
 impl<'gc> Stack<'gc> {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(mc: &Mutation<'gc>) -> Self {
+        Self(vec::Vec::new_in(MetricsAlloc::new(mc)))
     }
 
     pub fn get(&self, i: usize) -> Value<'gc> {
@@ -54,7 +54,10 @@ impl<'gc> Stack<'gc> {
         self.0.clear();
     }
 
-    pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<Value<'gc>> {
+    pub fn drain<R: RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> vec::Drain<Value<'gc>, MetricsAlloc<'gc>> {
         self.0.drain(range)
     }
 
@@ -101,12 +104,6 @@ impl<'a, 'gc: 'a> IntoIterator for &'a Stack<'gc> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter().copied()
-    }
-}
-
-impl<'gc> FromIterator<Value<'gc>> for Stack<'gc> {
-    fn from_iter<T: IntoIterator<Item = Value<'gc>>>(iter: T) -> Self {
-        Self(Vec::from_iter(iter))
     }
 }
 

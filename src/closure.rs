@@ -3,7 +3,8 @@ use std::{
     io::Read,
 };
 
-use gc_arena::{lock::Lock, Collect, Gc, Mutation};
+use allocator_api2::{boxed, vec, SliceExt};
+use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
@@ -34,26 +35,56 @@ pub enum UpValueDescriptor {
 pub struct FunctionProto<'gc> {
     pub fixed_params: u8,
     pub stack_size: u16,
-    pub constants: Vec<Constant<String<'gc>>>,
-    pub opcodes: Vec<OpCode>,
-    pub upvalues: Vec<UpValueDescriptor>,
-    pub prototypes: Vec<Gc<'gc, FunctionProto<'gc>>>,
+    pub constants: boxed::Box<[Constant<String<'gc>>], MetricsAlloc<'gc>>,
+    pub opcodes: boxed::Box<[OpCode], MetricsAlloc<'gc>>,
+    pub upvalues: boxed::Box<[UpValueDescriptor], MetricsAlloc<'gc>>,
+    pub prototypes: boxed::Box<[Gc<'gc, FunctionProto<'gc>>], MetricsAlloc<'gc>>,
 }
 
 impl<'gc> FunctionProto<'gc> {
-    pub fn new(mc: &Mutation<'gc>, compiled_function: CompiledPrototype<String<'gc>>) -> Self {
-        Self {
-            fixed_params: compiled_function.fixed_params,
-            stack_size: compiled_function.stack_size,
-            constants: compiled_function.constants,
-            opcodes: compiled_function.opcodes,
-            upvalues: compiled_function.upvalues,
-            prototypes: compiled_function
-                .prototypes
-                .into_iter()
-                .map(|cf| Gc::new(mc, FunctionProto::new(mc, *cf)))
-                .collect(),
+    pub fn new<S>(
+        mc: &Mutation<'gc>,
+        compiled_function: &CompiledPrototype<S>,
+        mk_string: impl Fn(&S) -> String<'gc>,
+    ) -> Self {
+        fn new<'gc, S>(
+            mc: &Mutation<'gc>,
+            compiled_function: &CompiledPrototype<S>,
+            mk_string: &impl Fn(&S) -> String<'gc>,
+        ) -> FunctionProto<'gc> {
+            let alloc = MetricsAlloc::new(mc);
+
+            let mut constants = vec::Vec::new_in(alloc.clone());
+            constants.extend(
+                compiled_function
+                    .constants
+                    .iter()
+                    .map(|c| c.map_string(mk_string)),
+            );
+
+            let opcodes = SliceExt::to_vec_in(compiled_function.opcodes.as_slice(), alloc.clone());
+            let upvalues =
+                SliceExt::to_vec_in(compiled_function.upvalues.as_slice(), alloc.clone());
+
+            let mut prototypes = vec::Vec::new_in(alloc);
+            prototypes.extend(
+                compiled_function
+                    .prototypes
+                    .iter()
+                    .map(|cf| Gc::new(mc, new(mc, cf, mk_string))),
+            );
+
+            FunctionProto {
+                fixed_params: compiled_function.fixed_params,
+                stack_size: compiled_function.stack_size,
+                constants: constants.into_boxed_slice(),
+                opcodes: opcodes.into_boxed_slice(),
+                upvalues: upvalues.into_boxed_slice(),
+                prototypes: prototypes.into_boxed_slice(),
+            }
         }
+
+        new(mc, compiled_function, &mk_string)
     }
 
     pub fn compile(
@@ -76,7 +107,7 @@ impl<'gc> FunctionProto<'gc> {
         let chunk = compiler::parse_chunk(source, interner)?;
         let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionProto::new(&ctx, compiled_function))
+        Ok(FunctionProto::new(&ctx, &compiled_function, |s| *s))
     }
 }
 
@@ -95,7 +126,7 @@ pub struct UpValue<'gc>(pub Gc<'gc, Lock<UpValueState<'gc>>>);
 #[collect(no_drop)]
 pub struct ClosureState<'gc> {
     pub proto: Gc<'gc, FunctionProto<'gc>>,
-    pub upvalues: Vec<UpValue<'gc>>,
+    pub upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -132,7 +163,7 @@ impl<'gc> Closure<'gc> {
         environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, ClosureError> {
         let proto = Gc::new(mc, proto);
-        let mut upvalues = Vec::new();
+        let mut upvalues = vec::Vec::new_in(MetricsAlloc::new(mc));
 
         if !proto.upvalues.is_empty() {
             if proto.upvalues.len() > 1 || proto.upvalues[0] != UpValueDescriptor::Environment {

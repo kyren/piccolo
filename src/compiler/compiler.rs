@@ -1,9 +1,10 @@
 use std::{
-    collections::{hash_map, HashMap, VecDeque},
+    collections::{hash_map, VecDeque},
     iter, mem,
 };
 
 use gc_arena::Collect;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::{
@@ -91,7 +92,7 @@ struct Compiler<S: StringInterner> {
 
 struct CompilerFunction<S> {
     constants: Vec<Constant<S>>,
-    constant_table: HashMap<IdenticalConstant<S>, ConstantIndex16>,
+    constant_table: FxHashMap<IdenticalConstant<S>, ConstantIndex16>,
 
     upvalues: Vec<(S, UpValueDescriptor)>,
     functions: Vec<CompiledPrototype<S>>,
@@ -114,7 +115,7 @@ impl<S> Default for CompilerFunction<S> {
     fn default() -> Self {
         Self {
             constants: Vec::new(),
-            constant_table: HashMap::new(),
+            constant_table: FxHashMap::default(),
             upvalues: Vec::new(),
             functions: Vec::new(),
             register_allocator: RegisterAllocator::default(),
