@@ -35,6 +35,10 @@ impl Fuel {
         self.fuel
     }
 
+    pub fn set_remaining_fuel(&mut self, fuel: i32) {
+        self.fuel = fuel;
+    }
+
     /// Marks that the calling `Thread` should immediately stop executing, without actually
     /// consuming any fuel.
     ///
