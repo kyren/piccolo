@@ -7,7 +7,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "len",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let v: Option<Value> = stack.consume(ctx)?;
                 if let Some(len) = v.and_then(|v| match v {
                     Value::Integer(i) => Some(i.to_string().as_bytes().len().try_into().unwrap()),

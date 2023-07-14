@@ -15,7 +15,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        AnyCallback::from_fn(mc, move |ctx, stack| {
+        AnyCallback::from_fn(mc, move |ctx, _, stack| {
             if let Some(res) = f(ctx, stack.consume(ctx)?) {
                 stack.replace(ctx, res);
                 Ok(CallbackReturn::Return)

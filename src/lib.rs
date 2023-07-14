@@ -5,6 +5,7 @@ pub mod compiler;
 pub mod constant;
 pub mod conversion;
 pub mod error;
+pub mod fuel;
 pub mod function;
 pub mod io;
 pub mod lua;
@@ -30,6 +31,7 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
+    fuel::Fuel,
     function::Function,
     lua::{Context, Lua, State},
     meta_ops::MetaMethod,

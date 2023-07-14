@@ -25,7 +25,7 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<(), StaticError> {
             &ctx,
             [
                 closure.into(),
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                     Ok(if stack.is_empty() {
                         CallbackReturn::Return
                     } else {

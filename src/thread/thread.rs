@@ -17,7 +17,7 @@ use crate::{
     thread::run_vm,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
-    FromMultiValue, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, UpValue,
+    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, UpValue,
     UpValueState, Value,
 };
 
@@ -173,105 +173,112 @@ impl<'gc> Thread<'gc> {
         Ok(())
     }
 
-    /// If the thread is in `Normal` mode, either run the Lua VM for a while or step any callback
-    /// that we are waiting on.
-    pub fn step(self, ctx: Context<'gc>) -> Result<(), BadThreadMode> {
+    /// If the thread is in `Normal` mode, either run the Lua VM or step any callback that we are
+    /// waiting on.
+    ///
+    /// A `&mut Fuel` must be provided here; this `Thread` (and all inner callbacks and inner
+    /// `Thread`s) will consume fuel as they run, and *after* the thread makes some minimal positive
+    /// progress, it will immediately stop once `Fuel::can_continue()` returns false.
+    ///
+    /// All callbacks and sequences will consume some constant amount of fuel based vaguely on
+    /// the minimum overhead of a callback / sequence call. Callbacks and sequences can consume
+    /// *additional* fuel by consuming it from the provided `&mut Fuel` that they are given on all
+    /// calls.
+    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> Result<(), BadThreadMode> {
         let mut state = self.write_state(&ctx, Some(ThreadMode::Normal))?;
-        match state.frames.pop().expect("no frame to step") {
-            Frame::Callback(callback) => {
-                state.frames.push(Frame::Calling);
+        while state.mode() == ThreadMode::Normal {
+            match state.frames.pop().expect("no frame to step") {
+                Frame::Callback(callback) => {
+                    fuel.consume_fuel(FUEL_PER_CALLBACK);
+                    state.frames.push(Frame::Calling);
 
-                assert!(state.error.is_none());
-                let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
-                drop(state);
-                let seq = callback.call(ctx, &mut stack);
-                let mut state = self.0.borrow_mut(&ctx);
-                state.external_stack = stack;
+                    assert!(state.error.is_none());
+                    let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
+                    drop(state);
+                    let seq = callback.call(ctx, fuel, &mut stack);
+                    state = self.0.borrow_mut(&ctx);
+                    state.external_stack = stack;
 
-                assert!(
-                    matches!(state.frames.pop(), Some(Frame::Calling)),
-                    "thread state has changed while callback was run"
-                );
+                    assert!(
+                        matches!(state.frames.pop(), Some(Frame::Calling)),
+                        "thread state has changed while callback was run"
+                    );
 
-                match seq {
-                    Ok(ret) => state.return_ext(ret),
-                    Err(error) => state.unwind(&ctx, error),
-                }
-            }
-            Frame::Sequence(mut sequence) => {
-                state.frames.push(Frame::Calling);
-
-                let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
-                let error = state.error.take();
-                drop(state);
-                let fin = if let Some(error) = error {
-                    assert!(stack.is_empty());
-                    sequence.error(ctx, error, &mut stack)
-                } else {
-                    sequence.poll(ctx, &mut stack)
-                };
-                let mut state = self.0.borrow_mut(&ctx);
-                state.external_stack = stack;
-
-                assert!(
-                    matches!(state.frames.pop(), Some(Frame::Calling)),
-                    "thread state has changed while callback was run"
-                );
-
-                match fin {
-                    Ok(SequencePoll::Pending) => {
-                        state.return_ext(CallbackReturn::Sequence(sequence))
+                    match seq {
+                        Ok(ret) => state.return_ext(fuel, ret),
+                        Err(error) => state.unwind(&ctx, error),
                     }
-                    Ok(SequencePoll::Return) => state.return_ext(CallbackReturn::Return),
-                    Ok(SequencePoll::Yield { is_tail: tail }) => {
-                        state.return_ext(CallbackReturn::Yield(if tail {
-                            None
-                        } else {
-                            Some(sequence)
-                        }))
-                    }
-                    Ok(SequencePoll::Call {
-                        function,
-                        is_tail: tail,
-                    }) => state.return_ext(CallbackReturn::TailCall(
-                        function,
-                        if tail { None } else { Some(sequence) },
-                    )),
-                    Err(error) => state.unwind(&ctx, error),
                 }
-            }
-            frame @ Frame::Lua { .. } => {
-                state.frames.push(frame);
-                assert!(state.external_stack.is_empty());
-                assert!(state.error.is_none());
+                Frame::Sequence(mut sequence) => {
+                    fuel.consume_fuel(FUEL_PER_SEQ_STEP);
+                    state.frames.push(Frame::Calling);
 
-                const VM_GRANULARITY: u32 = 256;
-                let mut instructions = VM_GRANULARITY;
+                    let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
+                    let error = state.error.take();
+                    drop(state);
+                    let fin = if let Some(error) = error {
+                        assert!(stack.is_empty());
+                        sequence.error(ctx, fuel, error, &mut stack)
+                    } else {
+                        sequence.poll(ctx, fuel, &mut stack)
+                    };
+                    state = self.0.borrow_mut(&ctx);
+                    state.external_stack = stack;
 
-                loop {
+                    assert!(
+                        matches!(state.frames.pop(), Some(Frame::Calling)),
+                        "thread state has changed while callback was run"
+                    );
+
+                    match fin {
+                        Ok(SequencePoll::Pending) => {
+                            state.return_ext(fuel, CallbackReturn::Sequence(sequence))
+                        }
+                        Ok(SequencePoll::Return) => state.return_ext(fuel, CallbackReturn::Return),
+                        Ok(SequencePoll::Yield { is_tail: tail }) => state.return_ext(
+                            fuel,
+                            CallbackReturn::Yield(if tail { None } else { Some(sequence) }),
+                        ),
+                        Ok(SequencePoll::Call {
+                            function,
+                            is_tail: tail,
+                        }) => state.return_ext(
+                            fuel,
+                            CallbackReturn::TailCall(
+                                function,
+                                if tail { None } else { Some(sequence) },
+                            ),
+                        ),
+                        Err(error) => state.unwind(&ctx, error),
+                    }
+                }
+                frame @ Frame::Lua { .. } => {
+                    state.frames.push(frame);
+                    assert!(state.external_stack.is_empty());
+                    assert!(state.error.is_none());
+
+                    const VM_GRANULARITY: u32 = 64;
+
                     let lua_frame = LuaFrame {
                         state: &mut state,
                         thread: self,
+                        fuel,
                     };
-                    match run_vm(ctx, lua_frame, instructions) {
+                    match run_vm(ctx, lua_frame, VM_GRANULARITY) {
                         Err(err) => {
                             state.unwind(&ctx, err.into());
-                            break;
                         }
-                        Ok(i) => {
-                            if let Some(Frame::Lua { .. }) = state.frames.last() {
-                                instructions = i;
-                                if instructions == 0 {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
+                        Ok(instructions_run) => {
+                            fuel.consume_fuel(instructions_run.try_into().unwrap());
                         }
                     }
                 }
+                _ => panic!("tried to step invalid frame type"),
             }
-            _ => panic!("tried to step invalid frame type"),
+
+            if !fuel.should_continue() {
+                break;
+            }
         }
 
         Ok(())
@@ -327,6 +334,7 @@ pub(crate) struct ThreadState<'gc> {
 pub(crate) struct LuaFrame<'gc, 'a> {
     thread: Thread<'gc>,
     state: &'a mut ThreadState<'gc>,
+    fuel: &'a mut Fuel,
 }
 
 pub(crate) struct LuaRegisters<'gc, 'a> {
@@ -482,6 +490,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .map(|c| c as usize)
                     .unwrap_or(self.state.stack.len() - function_index - 1);
 
+                consume_call_fuel(self.fuel, arg_count);
+
                 match meta_ops::call(ctx, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
                         self.state.stack[function_index] = closure.into();
@@ -544,6 +554,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 if *is_variable {
                     return Err(ThreadError::ExpectedVariable(false));
                 }
+
+                consume_call_fuel(self.fuel, arg_count as usize);
 
                 let arg_count = arg_count as usize;
                 *expected_return = Some(LuaReturn::Normal(returns));
@@ -619,6 +631,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     return Err(ThreadError::ExpectedVariable(false));
                 }
 
+                consume_call_fuel(self.fuel, args.len());
+
                 *expected_return = Some(LuaReturn::Meta(ret_index));
                 let top = *base + *stack_size;
 
@@ -690,6 +704,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .to_constant()
                     .map(|c| c as usize)
                     .unwrap_or(self.state.stack.len() - function_index - 1);
+
+                consume_call_fuel(self.fuel, arg_count);
 
                 match meta_ops::call(ctx, self.state.stack[function_index]) {
                     Ok(Function::Closure(closure)) => {
@@ -764,6 +780,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     .to_constant()
                     .map(|c| c as usize)
                     .unwrap_or(self.state.stack.len() - start);
+
+                consume_call_fuel(self.fuel, count);
 
                 match self.state.frames.last_mut() {
                     Some(Frame::Sequence { .. }) => {
@@ -1047,11 +1065,13 @@ impl<'gc> ThreadState<'gc> {
         self.frames.push(Frame::HasResult);
     }
 
-    fn return_ext(&mut self, ret: CallbackReturn<'gc>) {
+    fn return_ext(&mut self, fuel: &mut Fuel, ret: CallbackReturn<'gc>) {
         match ret {
             CallbackReturn::Return => match self.frames.last_mut() {
                 Some(Frame::Sequence { .. }) => {}
                 Some(Frame::Lua { .. }) => {
+                    // Consume the per-return fuel for pushing the returns back to lua.
+                    consume_call_fuel(fuel, self.external_stack.len());
                     self.return_to_lua();
                 }
                 None => {
@@ -1072,6 +1092,10 @@ impl<'gc> ThreadState<'gc> {
             CallbackReturn::TailCall(function, sequence) => {
                 if let Some(sequence) = sequence {
                     self.frames.push(Frame::Sequence(sequence));
+                }
+                if matches!(function, Function::Closure(_)) {
+                    // Consume the per-call fuel for pushing the arguments back to lua.
+                    consume_call_fuel(fuel, self.external_stack.len());
                 }
                 self.ext_call_function(function);
             }
@@ -1107,4 +1131,19 @@ fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
         UpValueState::Open(_, ind) => ind,
         UpValueState::Closed(_) => panic!("upvalue is not open"),
     }
+}
+
+// Fuel consumed per Lua call and return, to represent the cost from manipulating the Lua stack.
+const FUEL_PER_CALL: i32 = 16;
+const FUEL_PER_ARG: i32 = 1;
+
+// Implicit cost per callback call. If the callback is Lua -> Rust, or Rust -> Lua, then the
+// FUEL_PER_CALL is also added to this for calling / returning.
+const FUEL_PER_CALLBACK: i32 = 8;
+
+// Implicit cost per sequence step.
+const FUEL_PER_SEQ_STEP: i32 = 4;
+
+fn consume_call_fuel(fuel: &mut Fuel, args: usize) {
+    fuel.consume_fuel(FUEL_PER_CALL + i32::try_from(args).unwrap_or(i32::MAX) * FUEL_PER_ARG);
 }

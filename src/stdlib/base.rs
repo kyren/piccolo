@@ -3,8 +3,8 @@ use gc_arena::Collect;
 use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
-    AnyCallback, AnySequence, CallbackReturn, Context, Error, IntoValue, MetaMethod, Sequence,
-    SequencePoll, Stack, String, Table, Value, Variadic,
+    AnyCallback, AnySequence, CallbackReturn, Context, Error, Fuel, IntoValue, MetaMethod,
+    Sequence, SequencePoll, Stack, String, Table, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -13,7 +13,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "tostring",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 if stack.is_empty() {
                     Err("Bad argument to tostring".into_value(ctx).into())
                 } else {
@@ -38,7 +38,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "error",
-            AnyCallback::from_fn(&ctx, |_, stack| Err(stack.get(0).into())),
+            AnyCallback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
         )
         .unwrap();
 
@@ -47,7 +47,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "assert",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 if stack.get(0).to_bool() {
                     Ok(CallbackReturn::Return)
                 } else if stack.get(1).is_nil() {
@@ -64,7 +64,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "pcall",
-            AnyCallback::from_fn(&ctx, move |ctx, stack| {
+            AnyCallback::from_fn(&ctx, move |ctx, _, stack| {
                 #[derive(Collect)]
                 #[collect(require_static)]
                 struct PCall;
@@ -73,6 +73,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
+                        _fuel: &mut Fuel,
                         stack: &mut Stack<'gc>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         stack.push_front(Value::Boolean(true));
@@ -82,6 +83,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn error(
                         &mut self,
                         ctx: Context<'gc>,
+                        _fuel: &mut Fuel,
                         error: Error<'gc>,
                         stack: &mut Stack<'gc>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
@@ -106,7 +108,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "type",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 if let Some(v) = stack.consume::<Option<Value>>(ctx)? {
                     stack.replace(ctx, v.type_name());
                     Ok(CallbackReturn::Return)
@@ -122,7 +124,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "select",
-            AnyCallback::from_fn(&ctx, |ctx, stack| match stack.get(0).to_integer() {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| match stack.get(0).to_integer() {
                 Some(n) if n >= 1 => {
                     let last = (n as usize).min(stack.len());
                     stack.drain(0..last);
@@ -138,7 +140,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "rawget",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (table, key): (Table, Value) = stack.consume(ctx)?;
                 stack.replace(ctx, table.get(ctx, key));
                 Ok(CallbackReturn::Return)
@@ -151,7 +153,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "rawset",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (table, key, value): (Table, Value, Value) = stack.consume(ctx)?;
                 table.set(ctx, key, value)?;
                 stack.replace(ctx, table);
@@ -165,7 +167,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "getmetatable",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 if let Value::Table(t) = stack.get(0) {
                     stack.replace(ctx, t.metatable());
                     Ok(CallbackReturn::Return)
@@ -183,7 +185,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "setmetatable",
-            AnyCallback::from_fn(&ctx, |ctx, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (t, mt): (Table, Option<Table>) = stack.consume(ctx)?;
                 t.set_metatable(&ctx, mt);
                 stack.replace(ctx, t);
@@ -204,7 +206,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         }
     }
 
-    let next = AnyCallback::from_fn(&ctx, |ctx, stack| {
+    let next = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
         let (table, index): (Table, Value) = stack.consume(ctx)?;
         stack.replace(ctx, next(ctx, table, index)?);
         Ok(CallbackReturn::Return)
@@ -217,7 +219,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "pairs",
-            AnyCallback::from_fn_with(&ctx, next, move |next, ctx, stack| {
+            AnyCallback::from_fn_with(&ctx, next, move |next, ctx, _, stack| {
                 let table = stack.get(0);
                 if let Some(mt) = match table {
                     Value::Table(t) => t.metatable(),
@@ -238,7 +240,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    let inext = AnyCallback::from_fn(&ctx, |ctx, stack| {
+    let inext = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
         let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
         let next_index = index.unwrap_or(0) + 1;
         Ok(match meta_ops::index(ctx, table, next_index.into())? {
@@ -257,6 +259,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
+                        _fuel: &mut Fuel,
                         stack: &mut Stack<'gc>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         if !stack.get(0).is_nil() {
@@ -280,7 +283,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "ipairs",
-            AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, stack| {
+            AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, _, stack| {
                 stack.into_front(ctx, *inext);
                 Ok(CallbackReturn::Return)
             }),
@@ -292,7 +295,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "collectgarbage",
-            AnyCallback::from_fn(&ctx, move |ctx, stack| {
+            AnyCallback::from_fn(&ctx, move |ctx, _, stack| {
                 match stack.consume::<Option<String>>(ctx)? {
                     Some(arg) if arg == "count" => {
                         stack.into_back(

@@ -42,7 +42,7 @@ fn error_tostring() -> Result<(), StaticError> {
     struct TestError;
 
     let thread = lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _| Err(TestError.into()));
+        let callback = AnyCallback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
         ctx.state.globals.set(ctx, "callback", callback)?;
 
         let closure = Closure::load(

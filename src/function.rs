@@ -2,8 +2,8 @@ use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
 
 use crate::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, IntoMultiValue, Sequence,
-    SequencePoll, Stack,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Fuel, IntoMultiValue,
+    Sequence, SequencePoll, Stack,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
@@ -38,6 +38,7 @@ impl<'gc> Function<'gc> {
             fn poll(
                 &mut self,
                 _: Context<'gc>,
+                _: &mut Fuel,
                 _: &mut Stack<'gc>,
             ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                 let function = self.0.pop().unwrap();
@@ -49,7 +50,7 @@ impl<'gc> Function<'gc> {
         Self::Callback(AnyCallback::from_fn_with(
             mc,
             functions,
-            |functions, ctx, _| {
+            |functions, ctx, _, _| {
                 let mut compose = Compose(vec::Vec::new_in(MetricsAlloc::new(&ctx)));
                 compose.0.extend(functions.clone());
                 if compose.0.is_empty() {
@@ -69,7 +70,7 @@ impl<'gc> Function<'gc> {
         Self::Callback(AnyCallback::from_fn_with(
             mc,
             (self, args),
-            |(f, args), ctx, stack| {
+            |(f, args), ctx, _, stack| {
                 stack.into_front(ctx, args.clone());
                 Ok(CallbackReturn::TailCall(*f, None))
             },

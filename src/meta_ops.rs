@@ -98,7 +98,7 @@ pub fn index<'gc>(
 
     Ok(MetaResult::Call(match idx {
         Value::Table(table) => MetaCall {
-            function: AnyCallback::from_fn(&ctx, |ctx, stack| {
+            function: AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let table = stack.get(0);
                 let key = stack.get(1);
                 stack.clear();
@@ -181,7 +181,7 @@ pub fn new_index<'gc>(
 
     Ok(Some(match idx {
         Value::Table(table) => MetaCall {
-            function: AnyCallback::from_fn(&ctx, |ctx, stack| {
+            function: AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
@@ -214,7 +214,7 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Type
 
     match metatable.get(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            AnyCallback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, stack| {
+            AnyCallback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, stack| {
                 stack.push_front(v);
                 Ok(CallbackReturn::TailCall(call(ctx, f)?, None).into())
             })

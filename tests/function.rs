@@ -8,25 +8,25 @@ fn function_compose_bind() -> Result<(), StaticError> {
         let composed_functions = Function::compose(
             &ctx,
             [
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                     let i: Variadic<Vec<i64>> = stack.consume(ctx)?;
                     stack.replace(ctx, i.into_iter().sum::<i64>());
                     Ok(CallbackReturn::Return)
                 })
                 .into(),
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                     let i: i64 = stack.consume(ctx)?;
                     stack.replace(ctx, i * 2);
                     Ok(CallbackReturn::Return)
                 })
                 .into(),
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                     let i: i64 = stack.consume(ctx)?;
                     stack.replace(ctx, i + 1);
                     Ok(CallbackReturn::Return)
                 })
                 .into(),
-                AnyCallback::from_fn(&ctx, |ctx, stack| {
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                     let i: i64 = stack.consume(ctx)?;
                     stack.replace(ctx, i * 3);
                     Ok(CallbackReturn::Return)

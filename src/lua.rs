@@ -6,7 +6,7 @@ use crate::{
     error::RuntimeError,
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string},
     string::InternedStringSet,
-    Error, FromMultiValue, Registry, StaticError, StaticThread, Table, ThreadMode,
+    Error, FromMultiValue, Fuel, Registry, StaticError, StaticThread, Table, ThreadMode,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -49,8 +49,6 @@ impl<'gc> ops::Deref for Context<'gc> {
 }
 
 pub struct Lua(Arena<Rootable![State<'_>]>);
-
-const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
 impl Default for Lua {
     fn default() -> Self {
@@ -119,6 +117,8 @@ impl Lua {
     where
         F: for<'gc> FnOnce(Context<'gc>) -> T,
     {
+        const COLLECTOR_GRANULARITY: f64 = 1024.0;
+
         let r = self.0.mutate(move |mc, state| f(state.ctx(mc)));
         if self.0.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
             self.0.collect_debt();
@@ -133,18 +133,28 @@ impl Lua {
         self.run(move |ctx| f(ctx).map_err(Error::into_static))
     }
 
+    /// Will run the thread until it is out fo the `ThreadMode::Normal` state *or* a callback
+    /// interrupts it (via `Fuel`).
     pub fn finish_thread(&mut self, thread: &StaticThread) {
+        const FUEL_PER_GC: i32 = 4096;
+
         loop {
+            let mut fuel = Fuel::with_fuel(FUEL_PER_GC);
+
             if self.run(|ctx| {
                 let thread = ctx.state.registry.fetch(thread);
                 match thread.mode() {
                     ThreadMode::Normal => {
-                        thread.step(ctx).unwrap();
+                        thread.step(ctx, &mut fuel).unwrap();
                         false
                     }
                     _ => true,
                 }
             }) {
+                break;
+            }
+
+            if fuel.is_interrupted() {
                 break;
             }
         }

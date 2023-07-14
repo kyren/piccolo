@@ -13,17 +13,21 @@ use crate::{
 use super::{BinaryOperatorError, LuaFrame};
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
-// changed. Returns the number of instructions that were not run, or 0 if all requested instructions
-// were run.
+// changed.
+//
+// Returns the number of instructions that were run.
 pub(crate) fn run_vm<'gc>(
     ctx: Context<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
-    mut instructions: u32,
+    max_instructions: u32,
 ) -> Result<u32, RuntimeError> {
-    assert_ne!(instructions, 0);
+    if max_instructions == 0 {
+        return Ok(0);
+    }
 
     let current_function = lua_frame.closure();
     let mut registers = lua_frame.registers();
+    let mut instructions_run = 0;
 
     loop {
         let op = current_function.0.proto.opcodes[*registers.pc];
@@ -921,14 +925,13 @@ pub(crate) fn run_vm<'gc>(
             }
         }
 
-        if instructions == 0 {
+        instructions_run += 1;
+        if instructions_run >= max_instructions {
             break;
-        } else {
-            instructions -= 1
         }
     }
 
-    Ok(instructions)
+    Ok(instructions_run)
 }
 
 fn add_offset(pc: usize, offset: i16) -> usize {

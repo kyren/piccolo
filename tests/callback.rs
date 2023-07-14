@@ -9,7 +9,7 @@ fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
@@ -40,7 +40,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
@@ -70,7 +70,7 @@ fn loopy_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, _| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont(i64);
@@ -79,6 +79,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 fn poll(
                     &mut self,
                     _ctx: piccolo::Context<'gc>,
+                    _fuel: &mut piccolo::Fuel,
                     stack: &mut piccolo::Stack<'gc>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     stack.push_back(self.0.into());
@@ -92,7 +93,7 @@ fn loopy_callback() -> Result<(), StaticError> {
             }
 
             Ok(CallbackReturn::TailCall(
-                AnyCallback::from_fn(&ctx, |_, stack| {
+                AnyCallback::from_fn(&ctx, |_, _, stack| {
                     stack.push_back(3.into());
                     Ok(CallbackReturn::Yield(None))
                 })
@@ -150,7 +151,7 @@ fn yield_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont(i8);
@@ -159,6 +160,7 @@ fn yield_sequence() -> Result<(), StaticError> {
                 fn poll(
                     &mut self,
                     ctx: piccolo::Context<'gc>,
+                    _fuel: &mut piccolo::Fuel,
                     stack: &mut piccolo::Stack<'gc>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     match self.0 {
@@ -223,7 +225,7 @@ fn resume_with_err() {
     let mut lua = Lua::core();
 
     let thread = lua.run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont;
@@ -232,6 +234,7 @@ fn resume_with_err() {
                 fn poll(
                     &mut self,
                     _ctx: piccolo::Context<'gc>,
+                    _fuel: &mut piccolo::Fuel,
                     _stack: &mut piccolo::Stack<'gc>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     panic!("did not error");
@@ -240,6 +243,7 @@ fn resume_with_err() {
                 fn error(
                     &mut self,
                     ctx: piccolo::Context<'gc>,
+                    _fuel: &mut piccolo::Fuel,
                     _error: Error<'gc>,
                     _stack: &mut piccolo::Stack<'gc>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {

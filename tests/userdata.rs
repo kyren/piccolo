@@ -15,7 +15,7 @@ fn userdata() -> Result<(), StaticError> {
             MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
         ctx.state.globals.set(ctx, "userdata", userdata)?;
-        let callback = AnyCallback::from_fn(&ctx, |ctx, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
             match stack[0] {
                 Value::UserData(ud) => {
                     let ud = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
