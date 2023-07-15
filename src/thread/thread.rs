@@ -13,12 +13,12 @@ use gc_arena::{
 };
 
 use crate::{
+    closure::{UpValue, UpValueState},
     meta_ops,
     thread::run_vm,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
-    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, UpValue,
-    UpValueState, Value,
+    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, Value,
 };
 
 #[derive(Clone, Copy, Collect)]

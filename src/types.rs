@@ -32,6 +32,14 @@ pub struct PrototypeIndex(pub u8);
 #[collect(require_static)]
 pub struct Opt254(u8);
 
+#[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
+#[collect(require_static)]
+pub enum UpValueDescriptor {
+    Environment,
+    ParentLocal(RegisterIndex),
+    Outer(UpValueIndex),
+}
+
 impl Opt254 {
     pub fn try_new(v: Option<u8>) -> Option<Opt254> {
         if let Some(v) = v {

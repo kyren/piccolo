@@ -9,19 +9,19 @@ use thiserror::Error;
 
 use crate::{
     constant::IdenticalConstant,
-    opcode::OpCode,
+    opcode::{OpCode, Operation, RCIndex},
     types::{
-        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex,
-        VarCount,
+        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
+        UpValueIndex, VarCount,
     },
-    Constant, UpValueDescriptor,
+    Constant,
 };
 
 use super::{
     operators::{
-        categorize_binop, comparison_binop_const_fold, comparison_binop_opcode,
-        simple_binop_const_fold, simple_binop_opcode, unop_const_fold, unop_opcode, BinOpCategory,
-        ComparisonBinOp, RegisterOrConstant, ShortCircuitBinOp, SimpleBinOp,
+        categorize_binop, comparison_binop_const_fold, comparison_binop_operation,
+        simple_binop_const_fold, simple_binop_operation, unop_const_fold, unop_operation,
+        BinOpCategory, ComparisonBinOp, ShortCircuitBinOp, SimpleBinOp,
     },
     parser::{
         AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
@@ -47,8 +47,6 @@ pub enum CompilerError {
     Functions,
     #[error("too many constants")]
     Constants,
-    #[error("too many opcodes")]
-    OpCodes,
     #[error("label defined multiple times")]
     DuplicateLabel,
     #[error("goto target label not found")]
@@ -108,7 +106,7 @@ struct CompilerFunction<S> {
     jump_targets: Vec<JumpTarget<S>>,
     pending_jumps: Vec<PendingJump<S>>,
 
-    opcodes: Vec<OpCode>,
+    operations: Vec<Operation>,
 }
 
 impl<S> Default for CompilerFunction<S> {
@@ -126,7 +124,7 @@ impl<S> Default for CompilerFunction<S> {
             unique_jump_id: 0,
             jump_targets: Vec::new(),
             pending_jumps: Vec::new(),
-            opcodes: Vec::new(),
+            operations: Vec::new(),
         }
     }
 }
@@ -281,7 +279,7 @@ impl<S: StringInterner> Compiler<S> {
             .drain(last_block.bottom_jump_target..);
 
         if last_block.owns_upvalues && !self.current_function.blocks.is_empty() {
-            self.current_function.opcodes.push(OpCode::Jump {
+            self.current_function.operations.push(Operation::Jump {
                 offset: 0,
                 close_upvalues: u8::try_from(last_block.stack_bottom)
                     .ok()
@@ -386,8 +384,8 @@ impl<S: StringInterner> Compiler<S> {
                     let func = self.expr_discharge(*func, ExprDestination::PushNew)?;
                     let args = self.push_arguments(args)?;
                     self.current_function
-                        .opcodes
-                        .push(OpCode::TailCall { func, args });
+                        .operations
+                        .push(Operation::TailCall { func, args });
                     self.current_function.register_allocator.free(func);
 
                     return Ok(());
@@ -399,7 +397,7 @@ impl<S: StringInterner> Compiler<S> {
         }
 
         let count = self.push_arguments(returns)?;
-        self.current_function.opcodes.push(OpCode::Return {
+        self.current_function.operations.push(Operation::Return {
             start: RegisterIndex(
                 self.current_function
                     .register_allocator
@@ -471,10 +469,10 @@ impl<S: StringInterner> Compiler<S> {
                 };
                 self.expr_discharge(step, ExprDestination::PushNew)?;
 
-                let for_prep_index = self.current_function.opcodes.len();
+                let for_prep_index = self.current_function.operations.len();
                 self.current_function
-                    .opcodes
-                    .push(OpCode::NumericForPrep { base, jump: 0 });
+                    .operations
+                    .push(Operation::NumericForPrep { base, jump: 0 });
 
                 self.enter_block();
                 self.enter_block();
@@ -489,14 +487,16 @@ impl<S: StringInterner> Compiler<S> {
                 self.block_statements(body)?;
                 self.exit_block()?;
 
-                let for_loop_index = self.current_function.opcodes.len();
-                self.current_function.opcodes.push(OpCode::NumericForLoop {
-                    base: RegisterIndex(base.0),
-                    jump: jump_offset(for_loop_index, for_prep_index + 1)
-                        .ok_or(CompilerError::JumpOverflow)?,
-                });
-                match &mut self.current_function.opcodes[for_prep_index] {
-                    OpCode::NumericForPrep {
+                let for_loop_index = self.current_function.operations.len();
+                self.current_function
+                    .operations
+                    .push(Operation::NumericForLoop {
+                        base: RegisterIndex(base.0),
+                        jump: jump_offset(for_loop_index, for_prep_index + 1)
+                            .ok_or(CompilerError::JumpOverflow)?,
+                    });
+                match &mut self.current_function.operations[for_prep_index] {
+                    Operation::NumericForPrep {
                         base: prep_base,
                         jump,
                     } => {
@@ -570,23 +570,28 @@ impl<S: StringInterner> Compiler<S> {
 
                 self.jump(loop_label.clone())?;
 
-                let start_inst = self.current_function.opcodes.len();
+                let start_inst = self.current_function.operations.len();
                 self.block_statements(body)?;
                 self.exit_block()?;
 
                 self.jump_target(loop_label)?;
-                self.current_function.opcodes.push(OpCode::GenericForCall {
-                    base,
-                    var_count: names
-                        .len()
-                        .try_into()
-                        .map_err(|_| CompilerError::Registers)?,
-                });
-                let loop_inst = self.current_function.opcodes.len();
-                self.current_function.opcodes.push(OpCode::GenericForLoop {
-                    base: RegisterIndex(base.0 + 2),
-                    jump: jump_offset(loop_inst, start_inst).ok_or(CompilerError::JumpOverflow)?,
-                });
+                self.current_function
+                    .operations
+                    .push(Operation::GenericForCall {
+                        base,
+                        var_count: names
+                            .len()
+                            .try_into()
+                            .map_err(|_| CompilerError::Registers)?,
+                    });
+                let loop_inst = self.current_function.operations.len();
+                self.current_function
+                    .operations
+                    .push(Operation::GenericForLoop {
+                        base: RegisterIndex(base.0 + 2),
+                        jump: jump_offset(loop_inst, start_inst)
+                            .ok_or(CompilerError::JumpOverflow)?,
+                    });
 
                 self.jump_target(JumpLabel::Break)?;
                 self.exit_block()?;
@@ -724,8 +729,8 @@ impl<S: StringInterner> Compiler<S> {
                 .push(count)
                 .ok_or(CompilerError::Registers)?;
             self.current_function
-                .opcodes
-                .push(OpCode::LoadNil { dest, count });
+                .operations
+                .push(Operation::LoadNil { dest, count });
             for i in 0..name_len {
                 self.current_function.locals.push((
                     local_statement.names[i].clone(),
@@ -813,8 +818,8 @@ impl<S: StringInterner> Compiler<S> {
                     VariableDescriptor::UpValue(dest) => {
                         let (source, source_is_temp) = this.expr_any_register(expr)?;
                         this.current_function
-                            .opcodes
-                            .push(OpCode::SetUpValue { source, dest });
+                            .operations
+                            .push(Operation::SetUpValue { source, dest });
                         if source_is_temp {
                             this.current_function.register_allocator.free(source);
                         }
@@ -886,8 +891,8 @@ impl<S: StringInterner> Compiler<S> {
             .push(1)
             .ok_or(CompilerError::Registers)?;
         self.current_function
-            .opcodes
-            .push(OpCode::Closure { proto, dest });
+            .operations
+            .push(Operation::Closure { proto, dest });
         self.current_function
             .locals
             .push((local_function.name.clone(), dest));
@@ -1253,7 +1258,7 @@ impl<S: StringInterner> Compiler<S> {
     }
 
     fn jump(&mut self, target: JumpLabel<S::String>) -> Result<(), CompilerError> {
-        let jmp_inst = self.current_function.opcodes.len();
+        let jmp_inst = self.current_function.operations.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
@@ -1268,7 +1273,7 @@ impl<S: StringInterner> Compiler<S> {
                     && (jump_target.block_index..=current_block_index)
                         .any(|i| self.current_function.blocks[i].owns_upvalues);
 
-                self.current_function.opcodes.push(OpCode::Jump {
+                self.current_function.operations.push(Operation::Jump {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
                         .ok_or(CompilerError::JumpOverflow)?,
                     close_upvalues: if needs_close_upvalues {
@@ -1287,7 +1292,7 @@ impl<S: StringInterner> Compiler<S> {
         }
 
         if !target_found {
-            self.current_function.opcodes.push(OpCode::Jump {
+            self.current_function.operations.push(Operation::Jump {
                 offset: 0,
                 close_upvalues: Opt254::none(),
             });
@@ -1305,7 +1310,7 @@ impl<S: StringInterner> Compiler<S> {
     }
 
     fn jump_target(&mut self, jump_label: JumpLabel<S::String>) -> Result<(), CompilerError> {
-        let target_instruction = self.current_function.opcodes.len();
+        let target_instruction = self.current_function.operations.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
 
@@ -1344,8 +1349,8 @@ impl<S: StringInterner> Compiler<S> {
                 return Err(CompilerError::JumpLocal);
             }
 
-            match &mut self.current_function.opcodes[pending_jump.instruction] {
-                OpCode::Jump {
+            match &mut self.current_function.operations[pending_jump.instruction] {
+                Operation::Jump {
                     offset,
                     close_upvalues,
                 } if *offset == 0 && close_upvalues.is_none() => {
@@ -1426,20 +1431,9 @@ impl<S: StringInterner> Compiler<S> {
             self.current_function.register_allocator.free(to_free);
         }
 
-        self.current_function.opcodes.push(match (key, value) {
-            (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
-                OpCode::SetUpTableRR { table, key, value }
-            }
-            (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
-                OpCode::SetUpTableRC { table, key, value }
-            }
-            (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
-                OpCode::SetUpTableCR { table, key, value }
-            }
-            (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
-                OpCode::SetUpTableCC { table, key, value }
-            }
-        });
+        self.current_function
+            .operations
+            .push(Operation::SetUpTable { table, key, value });
 
         Ok(())
     }
@@ -1460,20 +1454,9 @@ impl<S: StringInterner> Compiler<S> {
             self.current_function.register_allocator.free(to_free);
         }
 
-        self.current_function.opcodes.push(match (key, value) {
-            (RegisterOrConstant::Register(key), RegisterOrConstant::Register(value)) => {
-                OpCode::SetTableRR { table, key, value }
-            }
-            (RegisterOrConstant::Register(key), RegisterOrConstant::Constant(value)) => {
-                OpCode::SetTableRC { table, key, value }
-            }
-            (RegisterOrConstant::Constant(key), RegisterOrConstant::Register(value)) => {
-                OpCode::SetTableCR { table, key, value }
-            }
-            (RegisterOrConstant::Constant(key), RegisterOrConstant::Constant(value)) => {
-                OpCode::SetTableCC { table, key, value }
-            }
-        });
+        self.current_function
+            .operations
+            .push(Operation::SetTable { table, key, value });
 
         Ok(())
     }
@@ -1491,7 +1474,7 @@ impl<S: StringInterner> Compiler<S> {
         let func = self.expr_discharge(func, ExprDestination::PushNew)?;
         let args = self.push_arguments(args)?;
 
-        self.current_function.opcodes.push(OpCode::Call {
+        self.current_function.operations.push(Operation::Call {
             func,
             args,
             returns,
@@ -1527,9 +1510,10 @@ impl<S: StringInterner> Compiler<S> {
             .push(2)
             .ok_or(CompilerError::Registers)?;
 
-        self.current_function.opcodes.push(match method {
-            RegisterOrConstant::Register(key) => OpCode::SelfR { base, table, key },
-            RegisterOrConstant::Constant(key) => OpCode::SelfC { base, table, key },
+        self.current_function.operations.push(Operation::Method {
+            base,
+            table,
+            key: method,
         });
 
         let args = self.push_arguments(args)?;
@@ -1540,7 +1524,7 @@ impl<S: StringInterner> Compiler<S> {
                 .ok_or(CompilerError::Registers)?,
             None => VarCount::variable(),
         };
-        self.current_function.opcodes.push(OpCode::Call {
+        self.current_function.operations.push(Operation::Call {
             func: base,
             args,
             returns,
@@ -1575,7 +1559,7 @@ impl<S: StringInterner> Compiler<S> {
                     VarCount::variable()
                 }
                 ExprDescriptor::VarArgs => {
-                    self.current_function.opcodes.push(OpCode::VarArgs {
+                    self.current_function.operations.push(Operation::VarArgs {
                         dest: RegisterIndex(
                             (top as usize + args_len - 1)
                                 .try_into()
@@ -1628,16 +1612,16 @@ impl<S: StringInterner> Compiler<S> {
     fn expr_any_register_or_constant(
         &mut self,
         expr: ExprDescriptor<S::String>,
-    ) -> Result<(RegisterOrConstant, Option<RegisterIndex>), CompilerError> {
+    ) -> Result<(RCIndex, Option<RegisterIndex>), CompilerError> {
         if let ExprDescriptor::Constant(cons) = &expr {
             if let Ok(c8) = self.get_constant(cons.clone())?.0.try_into() {
-                return Ok((RegisterOrConstant::Constant(ConstantIndex8(c8)), None));
+                return Ok((RCIndex::Constant(ConstantIndex8(c8)), None));
             }
         }
 
         let (reg, is_temp) = self.expr_any_register(expr)?;
         Ok((
-            RegisterOrConstant::Register(reg),
+            RCIndex::Register(reg),
             if is_temp { Some(reg) } else { None },
         ))
     }
@@ -1676,24 +1660,23 @@ impl<S: StringInterner> Compiler<S> {
         ) -> Result<RegisterIndex, CompilerError> {
             Ok(match table {
                 ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
-                    let (key_reg_cons, key_to_free) = this.expr_any_register_or_constant(key)?;
+                    let (key_rc, key_to_free) = this.expr_any_register_or_constant(key)?;
                     if let Some(to_free) = key_to_free {
                         this.current_function.register_allocator.free(to_free);
                     }
                     let dest = new_destination(this, dest)?;
-                    this.current_function.opcodes.push(match key_reg_cons {
-                        RegisterOrConstant::Constant(key) => {
-                            OpCode::GetUpTableC { dest, table, key }
-                        }
-                        RegisterOrConstant::Register(key) => {
-                            OpCode::GetUpTableR { dest, table, key }
-                        }
-                    });
+                    this.current_function
+                        .operations
+                        .push(Operation::GetUpTable {
+                            dest,
+                            table,
+                            key: key_rc,
+                        });
                     dest
                 }
                 table => {
                     let (table, table_is_temp) = this.expr_any_register(table)?;
-                    let (key_reg_cons, key_to_free) = this.expr_any_register_or_constant(key)?;
+                    let (key_rc, key_to_free) = this.expr_any_register_or_constant(key)?;
                     if table_is_temp {
                         this.current_function.register_allocator.free(table);
                     }
@@ -1701,9 +1684,10 @@ impl<S: StringInterner> Compiler<S> {
                         this.current_function.register_allocator.free(to_free);
                     }
                     let dest = new_destination(this, dest)?;
-                    this.current_function.opcodes.push(match key_reg_cons {
-                        RegisterOrConstant::Constant(key) => OpCode::GetTableC { dest, table, key },
-                        RegisterOrConstant::Register(key) => OpCode::GetTableR { dest, table, key },
+                    this.current_function.operations.push(Operation::GetTable {
+                        dest,
+                        table,
+                        key: key_rc,
                     });
                     dest
                 }
@@ -1715,16 +1699,16 @@ impl<S: StringInterner> Compiler<S> {
                 VariableDescriptor::Local(source) => {
                     let dest = new_destination(self, dest)?;
                     self.current_function
-                        .opcodes
-                        .push(OpCode::Move { dest, source });
+                        .operations
+                        .push(Operation::Move { dest, source });
                     dest
                 }
 
                 VariableDescriptor::UpValue(source) => {
                     let dest = new_destination(self, dest)?;
                     self.current_function
-                        .opcodes
-                        .push(OpCode::GetUpValue { source, dest });
+                        .operations
+                        .push(Operation::GetUpValue { source, dest });
                     dest
                 }
 
@@ -1740,11 +1724,11 @@ impl<S: StringInterner> Compiler<S> {
                 match value {
                     Constant::Nil => {
                         self.current_function
-                            .opcodes
-                            .push(OpCode::LoadNil { dest, count: 1 });
+                            .operations
+                            .push(Operation::LoadNil { dest, count: 1 });
                     }
                     Constant::Boolean(value) => {
-                        self.current_function.opcodes.push(OpCode::LoadBool {
+                        self.current_function.operations.push(Operation::LoadBool {
                             dest,
                             value,
                             skip_next: false,
@@ -1753,8 +1737,8 @@ impl<S: StringInterner> Compiler<S> {
                     val => {
                         let constant = self.get_constant(val)?;
                         self.current_function
-                            .opcodes
-                            .push(OpCode::LoadConstant { dest, constant });
+                            .operations
+                            .push(Operation::LoadConstant { dest, constant });
                     }
                 }
                 dest
@@ -1762,7 +1746,7 @@ impl<S: StringInterner> Compiler<S> {
 
             ExprDescriptor::VarArgs => {
                 let dest = new_destination(self, dest)?;
-                self.current_function.opcodes.push(OpCode::VarArgs {
+                self.current_function.operations.push(Operation::VarArgs {
                     dest,
                     count: VarCount::constant(1),
                 });
@@ -1776,14 +1760,14 @@ impl<S: StringInterner> Compiler<S> {
                 }
 
                 let dest = new_destination(self, dest)?;
-                let unop_opcode = unop_opcode(op, dest, source);
-                self.current_function.opcodes.push(unop_opcode);
+                let unop_operation = unop_operation(op, dest, source);
+                self.current_function.operations.push(unop_operation);
                 dest
             }
 
             ExprDescriptor::SimpleBinaryOperator { left, op, right } => {
-                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
-                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
+                let (left_rc, left_to_free) = self.expr_any_register_or_constant(*left)?;
+                let (right_rc, right_to_free) = self.expr_any_register_or_constant(*right)?;
                 if let Some(to_free) = left_to_free {
                     self.current_function.register_allocator.free(to_free);
                 }
@@ -1792,16 +1776,17 @@ impl<S: StringInterner> Compiler<S> {
                 }
 
                 let dest = new_destination(self, dest)?;
-                let simple_binop_opcode =
-                    simple_binop_opcode(op, dest, left_reg_cons, right_reg_cons);
-                self.current_function.opcodes.push(simple_binop_opcode);
+                let simple_binop_operation = simple_binop_operation(op, dest, left_rc, right_rc);
+                self.current_function
+                    .operations
+                    .push(simple_binop_operation);
 
                 dest
             }
 
             ExprDescriptor::Comparison { left, op, right } => {
-                let (left_reg_cons, left_to_free) = self.expr_any_register_or_constant(*left)?;
-                let (right_reg_cons, right_to_free) = self.expr_any_register_or_constant(*right)?;
+                let (left_rc, left_to_free) = self.expr_any_register_or_constant(*left)?;
+                let (right_rc, right_to_free) = self.expr_any_register_or_constant(*right)?;
                 if let Some(to_free) = left_to_free {
                     self.current_function.register_allocator.free(to_free);
                 }
@@ -1810,21 +1795,20 @@ impl<S: StringInterner> Compiler<S> {
                 }
 
                 let dest = new_destination(self, dest)?;
-                let comparison_opcode =
-                    comparison_binop_opcode(op, left_reg_cons, right_reg_cons, false);
+                let comparison_operation = comparison_binop_operation(op, left_rc, right_rc, false);
 
-                let opcodes = &mut self.current_function.opcodes;
-                opcodes.push(comparison_opcode);
-                opcodes.push(OpCode::Jump {
+                let opcodes = &mut self.current_function.operations;
+                opcodes.push(comparison_operation);
+                opcodes.push(Operation::Jump {
                     offset: 1,
                     close_upvalues: Opt254::none(),
                 });
-                opcodes.push(OpCode::LoadBool {
+                opcodes.push(Operation::LoadBool {
                     dest,
                     value: false,
                     skip_next: true,
                 });
-                opcodes.push(OpCode::LoadBool {
+                opcodes.push(Operation::LoadBool {
                     dest,
                     value: true,
                     skip_next: false,
@@ -1843,18 +1827,18 @@ impl<S: StringInterner> Compiler<S> {
 
                 let test_op_true = op == ShortCircuitBinOp::And;
                 let test_op = if left_register == dest {
-                    OpCode::Test {
+                    Operation::Test {
                         value: left_register,
                         is_true: test_op_true,
                     }
                 } else {
-                    OpCode::TestSet {
+                    Operation::TestSet {
                         dest,
                         value: left_register,
                         is_true: test_op_true,
                     }
                 };
-                self.current_function.opcodes.push(test_op);
+                self.current_function.operations.push(test_op);
 
                 let skip = self.unique_jump_label();
                 self.jump(skip.clone())?;
@@ -1868,8 +1852,8 @@ impl<S: StringInterner> Compiler<S> {
             ExprDescriptor::TableConstructor(fields) => {
                 let dest = new_destination(self, dest)?;
                 self.current_function
-                    .opcodes
-                    .push(OpCode::NewTable { dest });
+                    .operations
+                    .push(Operation::NewTable { dest });
 
                 for (key, value) in fields {
                     self.set_rtable(dest, key, value)?;
@@ -1883,8 +1867,8 @@ impl<S: StringInterner> Compiler<S> {
             ExprDescriptor::Closure(proto) => {
                 let dest = new_destination(self, dest)?;
                 self.current_function
-                    .opcodes
-                    .push(OpCode::Closure { proto, dest });
+                    .operations
+                    .push(Operation::Closure { proto, dest });
                 dest
             }
 
@@ -1894,8 +1878,8 @@ impl<S: StringInterner> Compiler<S> {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
                         self.current_function
-                            .opcodes
-                            .push(OpCode::Move { dest, source });
+                            .operations
+                            .push(Operation::Move { dest, source });
                         dest
                     }
                     ExprDestination::AllocateNew | ExprDestination::PushNew => {
@@ -1921,8 +1905,8 @@ impl<S: StringInterner> Compiler<S> {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
                         self.current_function
-                            .opcodes
-                            .push(OpCode::Move { dest, source });
+                            .operations
+                            .push(Operation::Move { dest, source });
                         dest
                     }
                     ExprDestination::AllocateNew | ExprDestination::PushNew => {
@@ -1950,7 +1934,7 @@ impl<S: StringInterner> Compiler<S> {
                         self.expr_discharge(next, ExprDestination::Register(new))?;
                         count += 1;
                     } else {
-                        self.current_function.opcodes.push(OpCode::Concat {
+                        self.current_function.operations.push(Operation::Concat {
                             dest: source,
                             source,
                             count,
@@ -1961,7 +1945,7 @@ impl<S: StringInterner> Compiler<S> {
                         count = 1;
                     }
                 }
-                self.current_function.opcodes.push(OpCode::Concat {
+                self.current_function.operations.push(Operation::Concat {
                     dest,
                     source,
                     count,
@@ -2003,7 +1987,7 @@ impl<S: StringInterner> Compiler<S> {
                     .register_allocator
                     .push(count)
                     .ok_or(CompilerError::Registers)?;
-                self.current_function.opcodes.push(OpCode::VarArgs {
+                self.current_function.operations.push(Operation::VarArgs {
                     dest,
                     count: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
                 });
@@ -2016,8 +2000,8 @@ impl<S: StringInterner> Compiler<S> {
                     .push(count)
                     .ok_or(CompilerError::Registers)?;
                 self.current_function
-                    .opcodes
-                    .push(OpCode::LoadNil { dest, count });
+                    .operations
+                    .push(Operation::LoadNil { dest, count });
                 dest
             }
             expr => {
@@ -2028,7 +2012,7 @@ impl<S: StringInterner> Compiler<S> {
                         .register_allocator
                         .push(count - 1)
                         .ok_or(CompilerError::Registers)?;
-                    self.current_function.opcodes.push(OpCode::LoadNil {
+                    self.current_function.operations.push(Operation::LoadNil {
                         dest: nils,
                         count: count - 1,
                     });
@@ -2052,8 +2036,8 @@ impl<S: StringInterner> Compiler<S> {
             right: ExprDescriptor<S::String>,
             skip_if: bool,
         ) -> Result<(), CompilerError> {
-            let (left_reg_cons, left_to_free) = this.expr_any_register_or_constant(left)?;
-            let (right_reg_cons, right_to_free) = this.expr_any_register_or_constant(right)?;
+            let (left_rc, left_to_free) = this.expr_any_register_or_constant(left)?;
+            let (right_rc, right_to_free) = this.expr_any_register_or_constant(right)?;
             if let Some(to_free) = left_to_free {
                 this.current_function.register_allocator.free(to_free);
             }
@@ -2061,9 +2045,8 @@ impl<S: StringInterner> Compiler<S> {
                 this.current_function.register_allocator.free(to_free);
             }
 
-            let comparison_opcode =
-                comparison_binop_opcode(op, left_reg_cons, right_reg_cons, skip_if);
-            this.current_function.opcodes.push(comparison_opcode);
+            let comparison_operation = comparison_binop_operation(op, left_rc, right_rc, skip_if);
+            this.current_function.operations.push(comparison_operation);
 
             Ok(())
         }
@@ -2077,7 +2060,7 @@ impl<S: StringInterner> Compiler<S> {
             if test_is_temp {
                 this.current_function.register_allocator.free(test_reg);
             }
-            this.current_function.opcodes.push(OpCode::Test {
+            this.current_function.operations.push(Operation::Test {
                 value: test_reg,
                 is_true,
             });
@@ -2088,7 +2071,7 @@ impl<S: StringInterner> Compiler<S> {
         match expr {
             ExprDescriptor::Constant(cons) => {
                 if cons.to_bool() == skip_if {
-                    self.current_function.opcodes.push(OpCode::Jump {
+                    self.current_function.operations.push(Operation::Jump {
                         offset: 1,
                         close_upvalues: Opt254::none(),
                     });
@@ -2134,7 +2117,7 @@ impl<S: Clone> CompilerFunction<S> {
     }
 
     fn finish(mut self) -> Result<CompiledPrototype<S>, CompilerError> {
-        self.opcodes.push(OpCode::Return {
+        self.operations.push(Operation::Return {
             start: RegisterIndex(0),
             count: VarCount::constant(0),
         });
@@ -2157,7 +2140,12 @@ impl<S: Clone> CompilerFunction<S> {
             has_varargs: self.has_varargs,
             stack_size: self.register_allocator.stack_size(),
             constants: self.constants,
-            opcodes: self.opcodes,
+            opcodes: self
+                .operations
+                .iter()
+                .copied()
+                .map(OpCode::encode)
+                .collect(),
             upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
             prototypes: self.functions.into_iter().map(|f| Box::new(f)).collect(),
         })

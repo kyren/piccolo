@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     compiler::{self, CompiledPrototype},
     opcode::OpCode,
-    types::{RegisterIndex, UpValueIndex},
+    types::UpValueDescriptor,
     Constant, Context, String, Table, Thread, Value,
 };
 
@@ -20,14 +20,6 @@ pub enum ProtoCompileError {
     Parser(#[from] compiler::ParserError),
     #[error(transparent)]
     Compiler(#[from] compiler::CompilerError),
-}
-
-#[derive(Debug, Collect, Clone, Copy, PartialEq, Eq)]
-#[collect(require_static)]
-pub enum UpValueDescriptor {
-    Environment,
-    ParentLocal(RegisterIndex),
-    Outer(UpValueIndex),
 }
 
 #[derive(Debug, Collect)]

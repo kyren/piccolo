@@ -24,10 +24,7 @@ pub mod value;
 
 pub use self::{
     callback::{AnyCallback, AnySequence, Callback, CallbackReturn, Sequence, SequencePoll},
-    closure::{
-        Closure, ClosureError, ClosureState, FunctionProto, ProtoCompileError, UpValue,
-        UpValueDescriptor, UpValueState,
-    },
+    closure::{Closure, ClosureError, FunctionProto, ProtoCompileError},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
