@@ -157,7 +157,6 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
 
 * An actual cycle detecting, incremental GC similar to the incremental collector
   in PUC-Rio Lua 5.3 / 5.4
-* A basic Lua bytecode compiler
 * Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
   there are a complete set of VM instructions implemented
 * Almost all of the core Lua language works. Some tricky Lua features that
