@@ -124,13 +124,22 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "select",
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| match stack.get(0).to_integer() {
-                Some(n) if n >= 1 => {
-                    let last = (n as usize).min(stack.len());
-                    stack.drain(0..last);
-                    Ok(CallbackReturn::Return)
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                let ind = stack.get(0);
+                if let Some(n) = ind.to_integer() {
+                    if n >= 1 {
+                        let last = (n as usize).min(stack.len());
+                        stack.drain(0..last);
+                        return Ok(CallbackReturn::Return);
+                    }
                 }
-                _ => Err("Bad argument to 'select'".into_value(ctx).into()),
+
+                if matches!(ind, Value::String(s) if s == b"#") {
+                    stack.replace(ctx, stack.len() as i64 - 1);
+                    return Ok(CallbackReturn::Return);
+                }
+
+                Err("Bad argument to 'select'".into_value(ctx).into())
             }),
         )
         .unwrap();

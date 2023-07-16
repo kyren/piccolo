@@ -4,7 +4,7 @@ use gc_arena::{metrics::Metrics, Arena, Collect, Mutation, Rootable};
 
 use crate::{
     error::RuntimeError,
-    stdlib::{load_base, load_coroutine, load_io, load_math, load_string},
+    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
     Error, FromMultiValue, Fuel, Registry, StaticError, StaticThread, Table, ThreadMode,
 };
@@ -78,13 +78,19 @@ impl Lua {
 
     /// Load the core parts of the stdlib that do not allow performing any I/O.
     ///
-    /// Calls: `load_base`, `load_coroutine`, `load_math`, and `load_string`.
+    /// Calls:
+    ///   - `load_base`
+    ///   - `load_coroutine`
+    ///   - `load_math`
+    ///   - `load_string`
+    ///   - `load_table`
     pub fn load_core(&mut self) {
         self.run(|ctx| {
             load_base(ctx);
             load_coroutine(ctx);
             load_math(ctx);
             load_string(ctx);
+            load_table(ctx);
         })
     }
 
