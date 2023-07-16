@@ -124,7 +124,7 @@ allow for painlessly implementing `Sequence`, but there are *several* current
 compiler limitations that make this currently infeasible or so unergonomic that
 it is no longer worth it.
 
-## Sandboxing via thread "fuel" and memory tracking
+## Thread "fuel" and VM memory tracking
 
 The stackless VM style "periodically" returns control to the outer Rust code
 driving everything, and how often this happens can be controlled using the
