@@ -1126,7 +1126,7 @@ impl<'gc> ThreadState<'gc> {
             CallbackReturn::Return => match self.frames.last_mut() {
                 Some(Frame::Sequence { .. }) => {}
                 Some(Frame::Lua { .. }) => {
-                    // Consume the per-return fuel for pushing the returns back to lua.
+                    // Consume the per-return fuel for pushing the returns back to Lua.
                     consume_call_fuel(fuel, self.external_stack.len());
                     self.return_to_lua();
                 }
@@ -1190,7 +1190,7 @@ fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
 }
 
 // Fuel consumed per Lua call and return, to represent the cost from manipulating the Lua stack.
-const FUEL_PER_CALL: i32 = 16;
+const FUEL_PER_CALL: i32 = 4;
 const FUEL_PER_ARG: i32 = 1;
 
 // Implicit cost per callback call. If the callback is Lua -> Rust, or Rust -> Lua, then the
