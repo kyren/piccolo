@@ -213,10 +213,10 @@ consider *almost definite* non-goals.
   impossible (longjmp error handling and adjacent behavior).
 * Perfect compatibility with certain classes of behavior in PUC-Rio Lua:
   * PUC-Rio Lua behaves differently on systems depending on the OS, environment,
-    compilation settings, system locale (In certain versions of PUC-Rio Lua, the
-    way numbers are lexed changes depending on the system locale! Yes, really!),
-    etc. `piccolo` is more or less aiming to emulate PUC-Rio Lua behavior with
-    the "C" locale set with the default settings in `luaconf.h` on 64-bit Linux.
+    compilation settings, system locale, etc. (In certain versions of PUC-Rio Lua,
+    even the behavior of the *lexer* changes depending on the system locale!)
+    `piccolo` is more or less aiming to emulate PUC-Rio Lua behavior with the
+    "C" locale set with the default settings in `luaconf.h` on 64-bit Linux.
   * The specific format of error messages.
   * The specific iteration order of tables, and the specific behavior of the
     length operator (the length operator currently functions correctly and will
