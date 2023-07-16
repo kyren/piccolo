@@ -2,7 +2,7 @@
 [![docs.rs](https://docs.rs/piccolo/badge.svg)](https://docs.rs/piccolo)
 [![Build Status](https://img.shields.io/circleci/project/github/triplehex/piccolo.svg)](https://circleci.com/gh/triplehex/piccolo)
 
-## piccolo - An experimental Stackless Lua VM implemented in pure Rust
+## piccolo - An experimental stackless Lua VM implemented in pure Rust
 
 **(After *four* years, now UN-paused!)**
 
