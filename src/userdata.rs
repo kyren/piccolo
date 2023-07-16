@@ -84,16 +84,6 @@ impl<'gc> AnyUserData<'gc> {
             .ok_or(BadUserDataType)
     }
 
-    pub fn downcast_write_static<'a, R: 'static>(
-        &'a self,
-        mc: &Mutation<'gc>,
-    ) -> Result<&'gc barrier::Write<R>, BadUserDataType> {
-        self.0
-            .downcast_write::<StaticRoot<R>>(mc)
-            .map(|r| barrier::field!(r, StaticRoot, root))
-            .ok_or(BadUserDataType)
-    }
-
     pub fn metatable(&self) -> Option<Table<'gc>> {
         self.0.metadata().get()
     }
