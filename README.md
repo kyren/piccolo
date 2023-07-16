@@ -2,27 +2,22 @@
 [![docs.rs](https://docs.rs/piccolo/badge.svg)](https://docs.rs/piccolo)
 [![Build Status](https://img.shields.io/circleci/project/github/triplehex/piccolo.svg)](https://circleci.com/gh/triplehex/piccolo)
 
-## piccolo - An experimental Lua VM implemented in pure Rust
+## piccolo - An experimental Stackless Lua VM implemented in pure Rust
 
 **(After *four* years, now UN-paused!)**
 
 Project Goals:
   * Be an arguably working, useful Lua interpreter.
   * Be an easy way to confidently sandbox untrusted Lua scripts.
-  * Be somewhat resilient against DoS from untrusted scripts (scripts should not
-    be able to cause the interpreter to panic and should be guaranteed to pause
-    in some reasonable bounded amount of time).
+  * Be resilient against DoS from untrusted scripts (scripts should not be able
+    to cause the interpreter to panic or use an unbounded amount of memory and
+    should be guaranteed to pause in some bounded amount of time).
   * Be an easy way to bind Rust APIs to Lua safely, with a bindings system that is
     resilient against weirdness and edge cases, and with user types that can
     safely participate in runtime garbage collection.
   * Be pragmatically compatible with some version(s) of PUC-Rio Lua.
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
-
-**This project is currently very WIP** Right now, the short term goal is to
-get some usable subset of Lua working, and to have a robust bindings story.
-`piccolo` is being worked on again to use in a separate game project, and my
-immediate goals are going to be whatever that project requires.
 
 ## API Instability
 
@@ -48,7 +43,7 @@ The current primary sources of unsafety:
     representations.
 
 *(`piccolo` makes no attempt yet to guard against side channel attacks like
-spectre, so even *if* the VM is memory safe, running untrusted scripts carries
+spectre, so even if the VM is memory safe, running untrusted scripts may carry
 additional risk)*.
 
 ## A unique system for Rust <-> GC interaction
@@ -129,10 +124,39 @@ allow for painlessly implementing `Sequence`, but there are *several* current
 compiler limitations that make this currently infeasible or so unergonomic that
 it is no longer worth it.
 
+## Sandboxing via thread "fuel" and memory tracking
+
+The stackless VM style "periodically" returns control to the outer Rust code
+driving everything, and how often this happens can be controlled using the
+"fuel" system.
+
+Lua and Lua driven callback code *always* happens within some call to
+`Thread::step` (either directly or recursively through an outer `Thread::step`
+in the case of coroutines). `Thread::step` has a `fuel` parameter which controls
+how long the VM should run before pausing, with fuel measured (roughly) in units
+of VM instructions.
+
+Different amounts of fuel provided to `Thread::step` bound the amount of Lua
+execution that can occur, bounding both the CPU time used and also the amount of
+memory allocation that can occur within a single `Thread::step` call (assuming
+certain rules are followed w.r.t. provided callbacks).
+
+The VM also now accurately tracks all memory allocated within its inner `gc-
+arena::Arena` using `gc-arena` memory tracking features. This can extend to
+userdata and userdata APIs, and assuming the correct rules are follwed in
+exposed userdata and callbacks, allows for accurate memory reporting and memory
+limits.
+
+*Assuming* that both of these mechanisms work correctly, and *assuming* that all
+callback / userdata APIs also follow the same rules, this allows for completely
+sandboxing untrusted scripts not only in memory safety and API access but also
+in CPU and RAM usage. These are big assumptions though, and `piccolo` is still
+very much WIP, so ensuring this is done correctly is an ongoing effort.
+
 ## What currently works
 
-* An actual cycle detecting, incremental GC similar to the one in PUC-Rio Lua
-  5.3
+* An actual cycle detecting, incremental GC similar to the incremental collector
+  in PUC-Rio Lua 5.3 / 5.4
 * A basic Lua bytecode compiler
 * Lua source code is compiled to a VM bytecode similar to PUC-Rio Lua's, and
   there are a complete set of VM instructions implemented
@@ -140,40 +164,44 @@ it is no longer worth it.
   currently actually work:
   * Real closures with proper upvalue handling
   * Proper tail calls
-  * Variable arguments and returns
+  * Variable arguments and returns and generally proper vararg (`...`) handling
   * Coroutines, including yielding that is transparent to Rust callbacks
-  * Gotos with label handling that matches Lua 5.3
+  * Gotos with label handling that matches Lua 5.3 / 5.4
   * Proper _ENV handling
   * Metatables and metamethods, including fully recursive metamethods that
-    trigger other metamethods (Only some implemented, and `__gc` is an entirely
-    separate can of worms).
+    trigger other metamethods (Not all metamethods implemented yet, and `__gc`
+    is an entirely separate can of worms).
 * A robust Rust callback system that allows for sequencing callbacks that don't
   block the interpreter and reduced stack usage by safely tail calling back
   into Lua.
 * Garbage collected "userdata" with safe downcasting.
-* Some of the stdlib (`math`, `coroutine`, many top-level stdlib functions)
+* Some of the stdlib (most of the more core, fundamental parts of the stdlib are
+  implemented, e.g. things like the `coroutine` library, `pcall`, `error`, most
+  everything that exposes some fundamental runtime feature is implemented).
 * A simple REPL (try it with `cargo run --example interpreter`)
 
 ## What currently doesn't work
 
-* A huge amount of the stdlib is not implemented, `io`, `os`, `package`,
-  `string`, `table`, `utf8`, `debug`, and several top-level functions are
-  unimplemented.
-* Garbage collector finalization. Being compatible with PUC-Rio Lua would
-  require object finalization *with failure*, and even having finalization, let
-  alone finalization with some kind of failure story is extremely low priority.
-  Userdata types can currently implement `Drop` (just like any other rust type)
-  to get something equivalent to finaliazation for userdata.
-* Other magic garbage collector stuff that PUC-Rio Lua has, like tables with
-  weak keys / values, "ephemeron" tables, finalization with object resurrection,
-  etc...
+* A large amount of the stdlib is not implemented yet. Most "peripheral" parts
+  of the stdlib are this way, the `io`, `file`, `os`, `package`, `string`,
+  `table`, and `utf8` libs are either missing or very sparsely implemented.
+* The garbage collector has no finalization support. Being compatible with PUC-
+  Rio Lua would require object finalization *with failure*, and even having
+  finalization, let alone finalization with some kind of failure story is
+  extremely low priority. Userdata types can currently implement `Drop` (just
+  like any other rust type) to get something equivalent to finaliazation for
+  userdata. This means the `__gc` metamethod currently has no effect.
+* There is no support for other magic garbage collector stuff that PUC-Rio Lua
+  has, like tables with weak keys / values, "ephemeron" tables, finalization
+  with object resurrection, etc...
 * The compiled VM code is in a couple of ways worse than what PUC-Rio Lua will
   generate. Notably, there is a JMP chaining optimization that is not yet
   implemented that makes most loops much slower than in PUC-Rio Lua.
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
-* Actual optimization and real effort towards matching PUC-Rio Lua's performance
+* Aggressive optimization and *real* effort towards ensuring that it matches
+  PUC-Rio Lua's performance in all cases.
 * Probably much more I've forgotten about
 
 ## What will probably never be implemented
@@ -195,7 +223,8 @@ consider *almost definite* non-goals.
     length operator (the length operator currently functions correctly and will
     always return a table "border", but for tables that are not sequences,
     the choice of border that is returned may differ).
-* Probably many things in the `debug` library.
+* The `debug` library is unimplemented and much of it will probably never be
+  implemented due to fundamental VM differences.
 * Compatibility with PUC-Rio Lua bytecode
 * `os.setlocale` and other weirdness inherited from C
 * `package.loadlib` and all functionality which allows loading C libraries.
