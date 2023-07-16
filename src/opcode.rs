@@ -68,17 +68,29 @@ pub enum Operation {
         key: RCIndex,
         value: RCIndex,
     },
-    // Call the given function with arguments placed after it, invalidates the function register and
-    // all registers above it. When the function returns, the results are placed starting where the
-    // function was located.
+    /// Set elements of a table as a list.
+    ///
+    /// Expects the table to be at the `base` index, and it expects a register for the last set
+    /// table index at `base + 1`. The register at `base + 1` must *always* be an integer.
+    ///
+    /// On execution, it will set N values in the table at `base + 1 + n`, offset all of the indexes
+    /// by the `base + 1` startind index, and increment the starting index by however many values
+    /// were set.
+    SetList {
+        base: RegisterIndex,
+        count: VarCount,
+    },
+    /// Call the given function with arguments placed after it, invalidates the function register
+    /// and all registers above it. When the function returns, the results are placed starting where
+    /// the function was located.
     Call {
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
     },
-    // Effectively, call the given function with the arguments placed after it, and return the
-    // results of this function to the upper frame. Invalidates the entire current frame and
-    // replaces it with the called function.
+    /// Effectively, call the given function with the arguments placed after it, and return the
+    /// results of this function to the upper frame. Invalidates the entire current frame and
+    /// replaces it with the called function.
     TailCall {
         func: RegisterIndex,
         args: VarCount,
@@ -87,8 +99,9 @@ pub enum Operation {
         start: RegisterIndex,
         count: VarCount,
     },
-    // Places the contents of the "varargs" at the given register, expecting the given count. If the
-    // count is "variable", then the top of the stack indicates the number of available arguments.
+    /// Places the contents of the "varargs" at the given register, expecting the given count.
+    /// If the count is "variable", then the top of the stack indicates the number of available
+    /// arguments.
     VarArgs {
         dest: RegisterIndex,
         count: VarCount,
@@ -98,15 +111,15 @@ pub enum Operation {
         // If set, close upvalues >= `close_upvalues`
         close_upvalues: Opt254,
     },
-    // Test the register as a boolean, if its boolean value matches `is_true`, skip the next
-    // instruction.
+    /// Test the register as a boolean, if its boolean value matches `is_true`, skip the next
+    /// instruction.
     Test {
         value: RegisterIndex,
         is_true: bool,
     },
-    // Test the value at the `value` register as a boolean, if its boolean value matches `is_true`,
-    // skip the next instruction, otherwise assign the given value (not converted to a boolean) to
-    // the destination register.
+    /// Test the value at the `value` register as a boolean, if its boolean value matches `is_true`,
+    /// skip the next instruction, otherwise assign the given value (not converted to a boolean) to
+    /// the destination register.
     TestSet {
         dest: RegisterIndex,
         value: RegisterIndex,
@@ -116,54 +129,54 @@ pub enum Operation {
         dest: RegisterIndex,
         proto: PrototypeIndex,
     },
-    // Used to set up for a numeric for loop:
-    //
-    // R(base) -= R(base + 2)
-    // pc += jump
+    /// Used to set up for a numeric for loop:
+    ///
+    /// R(base) -= R(base + 2)
+    /// pc += jump
     NumericForPrep {
         base: RegisterIndex,
         jump: i16,
     },
-    // Used to iterate a numeric for loop:
-    //
-    // R(base) += R(base + 2)
-    // if R(base) <?= R(base + 1) then
-    //     pc += jump
-    //     R(base + 3) = R(base)
-    // end
-    //
-    // The `<?=` operator here means "less than" if the step (aka R(base + 2)) is positive, and
-    // "greater than" if the step is negative
+    /// Used to iterate a numeric for loop:
+    ///
+    /// R(base) += R(base + 2)
+    /// if R(base) <?= R(base + 1) then
+    ///     pc += jump
+    ///     R(base + 3) = R(base)
+    /// end
+    ///
+    /// The `<?=` operator here means "less than" if the step (aka R(base + 2)) is positive, and
+    /// "greater than" if the step is negative
     NumericForLoop {
         base: RegisterIndex,
         jump: i16,
     },
-    // Used to set up for a generic for loop:
-    //
-    // R(base + 3), ..., R(base + 2 + var_count) = R(base)(R(base + 1), R(base + 2))
+    /// Used to set up for a generic for loop:
+    ///
+    /// R(base + 3), ..., R(base + 2 + var_count) = R(base)(R(base + 1), R(base + 2))
     GenericForCall {
         base: RegisterIndex,
         var_count: u8,
     },
-    // Used to iterate a generic for loop:
-    //
-    // if R(base + 1) ~= nil then
-    //     R(base) = R(base + 1)
-    //     pc += jump
-    // end
+    /// Used to iterate a generic for loop:
+    ///
+    /// if R(base + 1) ~= nil then
+    ///     R(base) = R(base + 1)
+    ///     pc += jump
+    /// end
     GenericForLoop {
         base: RegisterIndex,
         jump: i16,
     },
-    // Used for calling methods on tables:
-    // R(base + 1) = R(table)
-    // R(base) = R(table)[RC(key)]
+    /// Used for calling methods on tables:
+    /// R(base + 1) = R(table)
+    /// R(base) = R(table)[RC(key)]
     Method {
         base: RegisterIndex,
         table: RegisterIndex,
         key: RCIndex,
     },
-    // Concatenate the given arguments into a string
+    /// Concatenate the given arguments into a string
     Concat {
         dest: RegisterIndex,
         source: RegisterIndex,
@@ -328,6 +341,7 @@ impl OpCode {
                     OpCodeRepr::SetUpTableCC { table, key, value }
                 }
             },
+            Operation::SetList { base, count } => OpCodeRepr::SetList { base, count },
             Operation::Call {
                 func,
                 args,
@@ -709,6 +723,7 @@ impl OpCode {
                 key: key.into(),
                 value: value.into(),
             },
+            OpCodeRepr::SetList { base, count } => Operation::SetList { base, count },
             OpCodeRepr::Call {
                 func,
                 args,
@@ -1204,6 +1219,10 @@ enum OpCodeRepr {
         table: UpValueIndex,
         key: ConstantIndex8,
         value: ConstantIndex8,
+    },
+    SetList {
+        base: RegisterIndex,
+        count: VarCount,
     },
     Call {
         func: RegisterIndex,

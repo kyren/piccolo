@@ -54,9 +54,9 @@ pub enum ThreadError {
     #[error("{}", if *.0 {
         "operation expects variable stack"
     } else {
-        "unexpected variable stack in operation"
+        "unexpected variable stack during operation"
     })]
     ExpectedVariable(bool),
     #[error(transparent)]
-    BadCall(TypeError),
+    BadType(#[from] TypeError),
 }

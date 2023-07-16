@@ -153,7 +153,10 @@ enum ExprDescriptor<S> {
         op: ShortCircuitBinOp,
         right: Box<ExprDescriptor<S>>,
     },
-    TableConstructor(Vec<(ExprDescriptor<S>, ExprDescriptor<S>)>),
+    TableConstructor {
+        array_fields: Vec<ExprDescriptor<S>>,
+        record_fields: Vec<(ExprDescriptor<S>, ExprDescriptor<S>)>,
+    },
     TableField {
         table: Box<ExprDescriptor<S>>,
         key: Box<ExprDescriptor<S>>,
@@ -949,29 +952,30 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         table_constructor: &TableConstructor<S::String>,
     ) -> Result<ExprDescriptor<S::String>, CompilerError> {
-        let mut array_index = 0;
-        let mut fields = Vec::new();
+        let mut array_fields = Vec::new();
+        let mut record_fields = Vec::new();
         for field in &table_constructor.fields {
-            fields.push(match field {
+            match field {
                 ConstructorField::Array(value) => {
-                    array_index += 1;
-                    (
-                        ExprDescriptor::Constant(Constant::Integer(array_index)),
-                        self.expression(value)?,
-                    )
+                    array_fields.push(self.expression(value)?);
                 }
-                ConstructorField::Record(key, value) => (
-                    match key {
-                        RecordKey::Named(key) => {
-                            ExprDescriptor::Constant(Constant::String(key.clone()))
-                        }
-                        RecordKey::Indexed(key) => self.expression(key)?,
-                    },
-                    self.expression(value)?,
-                ),
-            });
+                ConstructorField::Record(key, value) => {
+                    record_fields.push((
+                        match key {
+                            RecordKey::Named(key) => {
+                                ExprDescriptor::Constant(Constant::String(key.clone()))
+                            }
+                            RecordKey::Indexed(key) => self.expression(key)?,
+                        },
+                        self.expression(value)?,
+                    ));
+                }
+            };
         }
-        Ok(ExprDescriptor::TableConstructor(fields))
+        Ok(ExprDescriptor::TableConstructor {
+            array_fields,
+            record_fields,
+        })
     }
 
     fn function_expression(
@@ -1480,7 +1484,7 @@ impl<S: StringInterner> Compiler<S> {
             returns,
         });
 
-        // OpCode::Call places returns at the previous location of the function
+        // Operation::Call places returns at the previous location of the function
         self.current_function.register_allocator.free(func);
         Ok(func)
     }
@@ -1849,17 +1853,93 @@ impl<S: StringInterner> Compiler<S> {
                 dest
             }
 
-            ExprDescriptor::TableConstructor(fields) => {
-                let dest = new_destination(self, dest)?;
+            ExprDescriptor::TableConstructor {
+                array_fields,
+                record_fields,
+            } => {
+                let table = self
+                    .current_function
+                    .register_allocator
+                    .push(1)
+                    .ok_or(CompilerError::Registers)?;
+
                 self.current_function
                     .operations
-                    .push(Operation::NewTable { dest });
+                    .push(Operation::NewTable { dest: table });
 
-                for (key, value) in fields {
-                    self.set_rtable(dest, key, value)?;
+                for (key, value) in record_fields {
+                    self.set_rtable(table, key, value)?;
                 }
 
-                dest
+                // Register for the starting index, updated with repeated SetList operations.
+                let index = self
+                    .current_function
+                    .register_allocator
+                    .push(1)
+                    .ok_or(CompilerError::Registers)?;
+                // We should be at the top of the stack still.
+                assert_eq!(index.0, table.0 + 1);
+
+                // Index must start at zero.
+                self.expr_discharge(
+                    ExprDescriptor::Constant(Constant::Integer(0)),
+                    ExprDestination::Register(index),
+                )?;
+
+                let mut array_fields = array_fields.into_iter();
+
+                const FIELDS_PER_FLUSH: u8 = 32;
+
+                while array_fields.len() > 0 {
+                    let chunk = (&mut array_fields)
+                        .take(FIELDS_PER_FLUSH as usize)
+                        .collect::<Vec<_>>();
+                    let count = if array_fields.len() == 0 {
+                        self.push_arguments(chunk)?
+                    } else {
+                        let field_count = chunk.len() as u8;
+                        let reg_start = self
+                            .current_function
+                            .register_allocator
+                            .push(field_count)
+                            .ok_or(CompilerError::Registers)?;
+
+                        // We should be at the top of the stack still.
+                        assert_eq!(reg_start.0, index.0 + 1);
+
+                        for (i, expr) in chunk.into_iter().enumerate() {
+                            let r = RegisterIndex(reg_start.0 + i as u8);
+                            self.expr_discharge(expr, ExprDestination::Register(r))?;
+                        }
+                        VarCount::constant(field_count)
+                    };
+
+                    self.current_function
+                        .operations
+                        .push(Operation::SetList { base: table, count });
+
+                    self.current_function
+                        .register_allocator
+                        .pop_to(index.0 as u16 + 1)
+                }
+
+                self.current_function.register_allocator.free(index);
+
+                // If we were requested to place the result in a specific register, move it there
+                // and free the temporary, otherwise the temporary is at the top of the allocated
+                // registers and is a valid result location.
+                match dest {
+                    ExprDestination::Register(dest) => {
+                        self.current_function.operations.push(Operation::Move {
+                            dest,
+                            source: table,
+                        });
+                        self.current_function.register_allocator.free(table);
+                        dest
+                    }
+                    ExprDestination::AllocateNew => table,
+                    ExprDestination::PushNew => table,
+                }
             }
 
             ExprDescriptor::TableField { table, key } => get_table(self, *table, *key, dest)?,

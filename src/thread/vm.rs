@@ -147,6 +147,11 @@ pub(crate) fn run_vm<'gc>(
                 }
             }
 
+            Operation::SetList { base, count } => {
+                lua_frame.set_table_list(&ctx, base, count)?;
+                registers = lua_frame.registers();
+            }
+
             Operation::Call {
                 func,
                 args,
@@ -168,7 +173,7 @@ pub(crate) fn run_vm<'gc>(
 
             Operation::VarArgs { dest, count } => {
                 lua_frame.varargs(dest, count)?;
-                break;
+                registers = lua_frame.registers();
             }
 
             Operation::Jump {

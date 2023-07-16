@@ -18,7 +18,8 @@ use crate::{
     thread::run_vm,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
-    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, Value,
+    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, TypeError,
+    Value,
 };
 
 #[derive(Clone, Copy, Collect)]
@@ -463,6 +464,65 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
+    pub(crate) fn set_table_list(
+        &mut self,
+        mc: &Mutation<'gc>,
+        table_base: RegisterIndex,
+        count: VarCount,
+    ) -> Result<(), ThreadError> {
+        let Some(&mut Frame::Lua {
+            base,
+            ref mut is_variable,
+            stack_size,
+            ..
+        }) = self.state.frames.last_mut() else {
+            panic!("top frame is not lua frame");
+        };
+
+        if count.is_variable() != *is_variable {
+            return Err(ThreadError::ExpectedVariable(count.is_variable()));
+        }
+
+        let table_ind = base + table_base.0 as usize;
+        let start_ind = table_ind + 1;
+        let table = self.state.stack[table_ind];
+        let Value::Table(table) = table else {
+            return Err(TypeError { expected: "table", found: table.type_name() }.into());
+        };
+
+        let set_count = count
+            .to_constant()
+            .map(|c| c as usize)
+            .unwrap_or(self.state.stack.len() - table_ind - 2);
+
+        let Value::Integer(mut start) = self.state.stack[start_ind] else {
+            return Err(TypeError {
+                expected: "integer",
+                found: self.state.stack[start_ind].type_name()
+            }.into());
+        };
+
+        for i in 0..set_count {
+            if let Some(inc) = start.checked_add(1) {
+                start = inc;
+                table
+                    .set_value(mc, inc.into(), self.state.stack[table_ind + 2 + i])
+                    .unwrap();
+            } else {
+                break;
+            }
+        }
+
+        self.state.stack[start_ind] = Value::Integer(start);
+
+        if count.is_variable() {
+            self.state.stack.resize(base + stack_size, Value::Nil);
+            *is_variable = false;
+        }
+
+        Ok(())
+    }
+
     // Call the function at the given register with the given arguments. On return, results will be
     // placed starting at the function register.
     pub(crate) fn call_function(
@@ -480,7 +540,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if *is_variable != args.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(*is_variable));
+                    return Err(ThreadError::ExpectedVariable(args.is_variable()));
                 }
 
                 *expected_return = Some(LuaReturn::Normal(returns));
@@ -492,8 +552,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
                 consume_call_fuel(self.fuel, arg_count);
 
-                match meta_ops::call(ctx, self.state.stack[function_index]) {
-                    Ok(Function::Closure(closure)) => {
+                match meta_ops::call(ctx, self.state.stack[function_index])? {
+                    Function::Closure(closure) => {
                         self.state.stack[function_index] = closure.into();
                         let fixed_params = closure.0.proto.fixed_params as usize;
                         let stack_size = closure.0.proto.stack_size as usize;
@@ -518,7 +578,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Ok(Function::Callback(callback)) => {
+                    Function::Callback(callback) => {
                         assert!(self.state.external_stack.is_empty());
                         self.state.external_stack.extend(
                             &self.state.stack[function_index + 1..function_index + 1 + arg_count],
@@ -527,7 +587,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.stack.resize(function_index, Value::Nil);
                         Ok(())
                     }
-                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -562,8 +621,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let function_index = *base + func.0 as usize;
                 let top = function_index + 1 + arg_count;
 
-                match meta_ops::call(ctx, self.state.stack[function_index]) {
-                    Ok(Function::Closure(closure)) => {
+                match meta_ops::call(ctx, self.state.stack[function_index])? {
+                    Function::Closure(closure) => {
                         self.state.stack.resize(top + 1 + arg_count, Value::Nil);
                         for i in 1..arg_count + 1 {
                             self.state.stack[top + i] = self.state.stack[function_index + i];
@@ -592,7 +651,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Ok(Function::Callback(callback)) => {
+                    Function::Callback(callback) => {
                         assert!(self.state.external_stack.is_empty());
                         self.state
                             .external_stack
@@ -601,7 +660,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.frames.push(Frame::Callback(callback));
                         Ok(())
                     }
-                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -636,8 +694,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 *expected_return = Some(LuaReturn::Meta(ret_index));
                 let top = *base + *stack_size;
 
-                match meta_ops::call(ctx, func.into()) {
-                    Ok(Function::Closure(closure)) => {
+                match meta_ops::call(ctx, func.into())? {
+                    Function::Closure(closure) => {
                         self.state.stack.resize(top + 1 + args.len(), Value::Nil);
                         self.state.stack[top] = closure.into();
                         self.state.stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
@@ -664,14 +722,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Ok(Function::Callback(callback)) => {
+                    Function::Callback(callback) => {
                         assert!(self.state.external_stack.is_empty());
                         self.state.external_stack.extend(args);
                         self.state.stack.resize(top, Value::Nil);
                         self.state.frames.push(Frame::Callback(callback));
                         Ok(())
                     }
-                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -694,7 +751,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if is_variable != args.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(is_variable));
+                    return Err(ThreadError::ExpectedVariable(args.is_variable()));
                 }
 
                 self.state.close_upvalues(&ctx, bottom);
@@ -707,8 +764,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
                 consume_call_fuel(self.fuel, arg_count);
 
-                match meta_ops::call(ctx, self.state.stack[function_index]) {
-                    Ok(Function::Closure(closure)) => {
+                match meta_ops::call(ctx, self.state.stack[function_index])? {
+                    Function::Closure(closure) => {
                         self.state.stack[bottom] = closure.into();
                         for i in 0..arg_count {
                             self.state.stack[bottom + 1 + i] =
@@ -739,7 +796,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         });
                         Ok(())
                     }
-                    Ok(Function::Callback(callback)) => {
+                    Function::Callback(callback) => {
                         assert!(self.state.external_stack.is_empty());
                         self.state.external_stack.extend(
                             &self.state.stack[function_index + 1..function_index + 1 + arg_count],
@@ -749,7 +806,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state.stack.truncate(bottom);
                         Ok(())
                     }
-                    Err(err) => Err(ThreadError::BadCall(err)),
                 }
             }
             _ => panic!("top frame is not lua frame"),
@@ -771,7 +827,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if is_variable != count.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(is_variable));
+                    return Err(ThreadError::ExpectedVariable(count.is_variable()));
                 }
                 self.state.close_upvalues(mc, bottom);
 
