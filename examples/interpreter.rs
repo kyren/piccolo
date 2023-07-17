@@ -6,11 +6,11 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Function,
-    FunctionProto, Lua, ProtoCompileError, StaticError, Thread,
+    FunctionProto, Lua, ProtoCompileError, StaticError, StaticThread, Thread,
 };
 
-fn run_code(lua: &mut Lua, code: &str) -> Result<(), StaticError> {
-    let thread = lua.try_run(|ctx| {
+fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), StaticError> {
+    lua.try_run(|ctx| {
         let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
             Err(err) => {
@@ -38,18 +38,20 @@ fn run_code(lua: &mut Lua, code: &str) -> Result<(), StaticError> {
                 .into(),
             ],
         );
-        let thread = Thread::new(&ctx);
+        let thread = ctx.state.registry.fetch(thread);
+        thread.reset(&ctx)?;
         thread.start(ctx, function, ())?;
         Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
     lua.finish_thread(&thread);
 
-    lua.try_run(|ctx| Ok(ctx.state.registry.fetch(&thread).take_return::<()>(ctx)??))
+    lua.try_run(|ctx| Ok(ctx.state.registry.fetch(thread).take_return::<()>(ctx)??))
 }
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let mut editor = DefaultEditor::new()?;
+    let thread = lua.run(|ctx| ctx.state.registry.stash(&ctx, Thread::new(&ctx)));
 
     loop {
         let mut prompt = "> ";
@@ -58,7 +60,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
         loop {
             line.push_str(&editor.readline(prompt)?);
 
-            match run_code(lua, &line) {
+            match run_code(lua, &thread, &line) {
                 Err(StaticError::Runtime(err))
                     if matches!(
                         err.downcast::<ProtoCompileError>(),
