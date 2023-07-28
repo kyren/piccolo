@@ -89,7 +89,7 @@ impl<'gc> FunctionProto<'gc> {
         impl<'gc> compiler::StringInterner for Interner<'gc> {
             type String = String<'gc>;
 
-            fn intern(&self, s: &[u8]) -> Self::String {
+            fn intern(&mut self, s: &[u8]) -> Self::String {
                 self.0.state.strings.intern(&self.0, s)
             }
         }

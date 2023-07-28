@@ -1077,9 +1077,13 @@ mod tests {
 
     #[test]
     fn test_function_call() {
-        let interner = BasicInterner::default();
+        let mut interner = BasicInterner::default();
         assert_eq!(
-            parse_chunk("print(10, 20);print'foo';print{30.0}".as_bytes(), &interner,).unwrap(),
+            parse_chunk(
+                "print(10, 20);print'foo';print{30.0}".as_bytes(),
+                &mut interner
+            )
+            .unwrap(),
             Chunk {
                 block: Block {
                     statements: vec![

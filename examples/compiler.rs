@@ -66,14 +66,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
-    let interner = BasicInterner::default();
+    let mut interner = BasicInterner::default();
 
     if matches.contains_id("parse") {
-        let chunk = compiler::parse_chunk(file, &interner)?;
+        let chunk = compiler::parse_chunk(file, &mut interner)?;
         println!("{:#?}", chunk);
     } else {
-        let chunk = compiler::parse_chunk(file, &interner)?;
-        let prototype = compiler::compile_chunk(&chunk, &interner)?;
+        let chunk = compiler::parse_chunk(file, &mut interner)?;
+        let prototype = compiler::compile_chunk(&chunk, &mut interner)?;
         print_function(&prototype);
     }
 
