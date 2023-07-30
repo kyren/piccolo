@@ -23,10 +23,28 @@ impl Fuel {
         }
     }
 
+    /// Refills fuel up to a given maximum and also clears the fuel interrupt flag.
+    ///
+    /// This is a convenience method that is intended to be called outside the outermost call to
+    /// `Thread::step` in some loop. It does the operations that all loops that would *re-use* a
+    /// fuel container from one tick to another would need to do.
+    ///
+    /// It credits the running thread with fuel while also preventing available fuel from growing to
+    /// an unbounded level, and also clears the interrupt flag since we are now on the "outside" of
+    /// whatever lua code is being run and this is where we would want to interrupt to.
+    pub fn refill(&mut self, fuel: i32, max_fuel: i32) {
+        self.fuel = self.fuel.saturating_add(fuel).min(max_fuel);
+        self.interrupted = false;
+    }
+
+    /// Add to or subtract from the current remaining fuel.
     pub fn adjust_fuel(&mut self, fuel: i32) {
         self.fuel = self.fuel.saturating_add(fuel);
     }
 
+    /// Subtract from the current remaining fuel.
+    ///
+    /// This is a convenience method that is equivalent to `self.adjust_fuel(-fuel)`.
     pub fn consume_fuel(&mut self, fuel: i32) {
         self.adjust_fuel(fuel.saturating_neg());
     }
