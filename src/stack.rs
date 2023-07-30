@@ -54,6 +54,10 @@ impl<'gc> Stack<'gc> {
         self.0.clear();
     }
 
+    pub fn resize(&mut self, size: usize) {
+        self.0.resize(size, Value::Nil);
+    }
+
     pub fn drain<R: RangeBounds<usize>>(
         &mut self,
         range: R,

@@ -19,5 +19,27 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
+    table
+        .set(
+            ctx,
+            "unpack",
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                let (table, start, end): (Table<'gc>, Option<i64>, Option<i64>) =
+                    stack.consume(ctx)?;
+                let start = start.unwrap_or(1);
+                let end = end.unwrap_or_else(|| table.length());
+
+                if start <= end {
+                    stack.resize((end - start + 1) as usize);
+                    for i in start..=end {
+                        stack[(i - start) as usize] = table.get_value(i.into());
+                    }
+                }
+
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
     ctx.state.globals.set(ctx, "table", table).unwrap();
 }
