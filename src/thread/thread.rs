@@ -50,16 +50,16 @@ impl<'gc> Hash for Thread<'gc> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
-    // No frames are on the thread and there are no available results, the thread can be started.
+    /// No frames are on the thread and there are no available results, the thread can be started.
     Stopped,
-    // The thread has an error or has returned (or yielded) values that must be taken to move the
-    // thread back to the `Stopped` (or `Suspended`) state.
+    /// The thread has an error or has returned (or yielded) values that must be taken to move the
+    /// thread back to the `Stopped` (or `Suspended`) state.
     Result,
-    // Thread has an active Lua frame or is waiting for a callback or sequence to finish.
+    /// Thread has an active Lua frame or is waiting for a callback or sequence to finish.
     Normal,
-    // Thread is currently inside its own `Thread::step` function.
+    /// Thread is currently inside its own `Thread::step` function.
     Running,
-    // Thread has yielded and is waiting on being resumed.
+    /// Thread has yielded and is waiting on being resumed.
     Suspended,
 }
 
