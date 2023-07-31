@@ -47,6 +47,8 @@ pub enum Operation {
     },
     NewTable {
         dest: RegisterIndex,
+        array_size: u8,
+        map_size: u8,
     },
     GetTable {
         dest: RegisterIndex,
@@ -304,7 +306,15 @@ impl OpCode {
                 skip_next,
             },
             Operation::LoadNil { dest, count } => OpCodeRepr::LoadNil { dest, count },
-            Operation::NewTable { dest } => OpCodeRepr::NewTable { dest },
+            Operation::NewTable {
+                dest,
+                array_size,
+                map_size,
+            } => OpCodeRepr::NewTable {
+                dest,
+                array_size,
+                map_size,
+            },
             Operation::GetTable { dest, table, key } => match key {
                 RCIndex::Register(key) => OpCodeRepr::GetTableR { dest, table, key },
                 RCIndex::Constant(key) => OpCodeRepr::GetTableC { dest, table, key },
@@ -662,7 +672,15 @@ impl OpCode {
                 skip_next,
             },
             OpCodeRepr::LoadNil { dest, count } => Operation::LoadNil { dest, count },
-            OpCodeRepr::NewTable { dest } => Operation::NewTable { dest },
+            OpCodeRepr::NewTable {
+                dest,
+                array_size,
+                map_size,
+            } => Operation::NewTable {
+                dest,
+                array_size,
+                map_size,
+            },
             OpCodeRepr::GetTableR { dest, table, key } => Operation::GetTable {
                 dest,
                 table,
@@ -1159,6 +1177,8 @@ enum OpCodeRepr {
     },
     NewTable {
         dest: RegisterIndex,
+        array_size: u8,
+        map_size: u8,
     },
     GetTableR {
         dest: RegisterIndex,

@@ -6,6 +6,7 @@ use crate::{
     meta_ops::{self, MetaResult},
     opcode::{Operation, RCIndex},
     raw_ops,
+    table::TableEntries,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
     Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
 };
@@ -71,8 +72,16 @@ pub(crate) fn run_vm<'gc>(
                 }
             }
 
-            Operation::NewTable { dest } => {
-                registers.stack_frame[dest.0 as usize] = Value::Table(Table::new(&ctx));
+            Operation::NewTable {
+                dest,
+                array_size,
+                map_size,
+            } => {
+                let mut entries = TableEntries::new(&ctx);
+                entries.reserve_array(array_size as usize);
+                entries.reserve_map(map_size as usize);
+                let table = Table::from_parts(&ctx, entries, None);
+                registers.stack_frame[dest.0 as usize] = Value::Table(table);
             }
 
             Operation::GetTable { dest, table, key } => {

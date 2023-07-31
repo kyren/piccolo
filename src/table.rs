@@ -48,13 +48,15 @@ impl<'gc> Hash for Table<'gc> {
 
 impl<'gc> Table<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Table<'gc> {
-        Table(Gc::new(
-            mc,
-            RefLock::new(TableState {
-                entries: TableEntries::new(mc),
-                metatable: None,
-            }),
-        ))
+        Self::from_parts(mc, TableEntries::new(mc), None)
+    }
+
+    pub fn from_parts(
+        mc: &Mutation<'gc>,
+        entries: TableEntries<'gc>,
+        metatable: Option<Table<'gc>>,
+    ) -> Table<'gc> {
+        Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
     }
 
     pub fn get<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> Value<'gc> {
@@ -434,6 +436,16 @@ impl<'gc> TableEntries<'gc> {
         }
 
         NextValue::NotFound
+    }
+
+    pub fn reserve_array(&mut self, additional: usize) {
+        self.array.reserve(additional);
+    }
+
+    pub fn reserve_map(&mut self, additional: usize) {
+        self.map
+            .raw_table_mut()
+            .reserve(additional, |(k, _)| key_hash(*k));
     }
 }
 

@@ -1863,9 +1863,11 @@ impl<S: StringInterner> Compiler<S> {
                     .push(1)
                     .ok_or(CompilerError::Registers)?;
 
-                self.current_function
-                    .operations
-                    .push(Operation::NewTable { dest: table });
+                self.current_function.operations.push(Operation::NewTable {
+                    dest: table,
+                    array_size: array_fields.len().try_into().unwrap_or(u8::MAX),
+                    map_size: record_fields.len().try_into().unwrap_or(u8::MAX),
+                });
 
                 for (key, value) in record_fields {
                     self.set_rtable(table, key, value)?;
