@@ -34,11 +34,14 @@ pub struct FunctionProto<'gc> {
 }
 
 impl<'gc> FunctionProto<'gc> {
-    pub fn new(mc: &Mutation<'gc>, compiled_function: &CompiledPrototype<String<'gc>>) -> Self {
-        Self::new_map_strings(mc, compiled_function, |s| *s)
+    pub fn from_compiled(
+        mc: &Mutation<'gc>,
+        compiled_function: &CompiledPrototype<String<'gc>>,
+    ) -> Self {
+        Self::from_compiled_map_strings(mc, compiled_function, |s| *s)
     }
 
-    pub fn new_map_strings<S>(
+    pub fn from_compiled_map_strings<S>(
         mc: &Mutation<'gc>,
         compiled_function: &CompiledPrototype<S>,
         map_string: impl Fn(&S) -> String<'gc> + Copy,
@@ -103,7 +106,7 @@ impl<'gc> FunctionProto<'gc> {
         let chunk = compiler::parse_chunk(source, interner)?;
         let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionProto::new(&ctx, &compiled_function))
+        Ok(FunctionProto::from_compiled(&ctx, &compiled_function))
     }
 }
 
