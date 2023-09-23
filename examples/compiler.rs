@@ -21,7 +21,8 @@ fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>) {
             println!(
                 "{}: {:?}",
                 i,
-                c.map_string(|s| String::from_utf8_lossy(s.as_ref()).into_owned())
+                c.as_string_ref()
+                    .map_string(|s| String::from_utf8_lossy(s.as_ref()))
             );
         }
     }

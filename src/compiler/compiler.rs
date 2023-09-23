@@ -57,7 +57,7 @@ pub enum CompilerError {
     JumpOverflow,
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct CompiledPrototype<S> {
     pub fixed_params: u8,
@@ -67,6 +67,28 @@ pub struct CompiledPrototype<S> {
     pub opcodes: Vec<OpCode>,
     pub upvalues: Vec<UpValueDescriptor>,
     pub prototypes: Vec<Box<CompiledPrototype<S>>>,
+}
+
+impl<S> CompiledPrototype<S> {
+    pub fn map_string<S2>(self, f: impl Fn(S) -> S2 + Copy) -> CompiledPrototype<S2> {
+        CompiledPrototype {
+            fixed_params: self.fixed_params,
+            has_varargs: self.has_varargs,
+            stack_size: self.stack_size,
+            constants: self
+                .constants
+                .into_iter()
+                .map(|c| c.map_string(f))
+                .collect(),
+            opcodes: self.opcodes,
+            upvalues: self.upvalues,
+            prototypes: self
+                .prototypes
+                .into_iter()
+                .map(|p| Box::new(p.map_string(f)))
+                .collect(),
+        }
+    }
 }
 
 pub fn compile_chunk<S: StringInterner>(

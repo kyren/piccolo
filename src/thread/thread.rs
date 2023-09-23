@@ -15,12 +15,13 @@ use gc_arena::{
 use crate::{
     closure::{UpValue, UpValueState},
     meta_ops,
-    thread::run_vm,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
     FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, TypeError,
     Value,
 };
+
+use super::run_vm;
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
@@ -475,7 +476,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             ref mut is_variable,
             stack_size,
             ..
-        }) = self.state.frames.last_mut() else {
+        }) = self.state.frames.last_mut()
+        else {
             panic!("top frame is not lua frame");
         };
 
@@ -487,7 +489,11 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         let start_ind = table_ind + 1;
         let table = self.state.stack[table_ind];
         let Value::Table(table) = table else {
-            return Err(TypeError { expected: "table", found: table.type_name() }.into());
+            return Err(TypeError {
+                expected: "table",
+                found: table.type_name(),
+            }
+            .into());
         };
 
         let set_count = count
@@ -498,8 +504,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         let Value::Integer(mut start) = self.state.stack[start_ind] else {
             return Err(TypeError {
                 expected: "integer",
-                found: self.state.stack[start_ind].type_name()
-            }.into());
+                found: self.state.stack[start_ind].type_name(),
+            }
+            .into());
         };
 
         for i in 0..set_count {

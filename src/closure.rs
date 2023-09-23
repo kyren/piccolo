@@ -34,25 +34,15 @@ pub struct FunctionProto<'gc> {
 }
 
 impl<'gc> FunctionProto<'gc> {
-    pub fn new<S>(
-        mc: &Mutation<'gc>,
-        compiled_function: &CompiledPrototype<S>,
-        mk_string: impl Fn(&S) -> String<'gc>,
-    ) -> Self {
-        fn new<'gc, S>(
+    pub fn new(mc: &Mutation<'gc>, compiled_function: &CompiledPrototype<String<'gc>>) -> Self {
+        fn new<'gc>(
             mc: &Mutation<'gc>,
-            compiled_function: &CompiledPrototype<S>,
-            mk_string: &impl Fn(&S) -> String<'gc>,
+            compiled_function: &CompiledPrototype<String<'gc>>,
         ) -> FunctionProto<'gc> {
             let alloc = MetricsAlloc::new(mc);
 
             let mut constants = vec::Vec::new_in(alloc.clone());
-            constants.extend(
-                compiled_function
-                    .constants
-                    .iter()
-                    .map(|c| c.map_string(mk_string)),
-            );
+            constants.extend(compiled_function.constants.iter());
 
             let opcodes = SliceExt::to_vec_in(compiled_function.opcodes.as_slice(), alloc.clone());
             let upvalues =
@@ -63,7 +53,7 @@ impl<'gc> FunctionProto<'gc> {
                 compiled_function
                     .prototypes
                     .iter()
-                    .map(|cf| Gc::new(mc, new(mc, cf, mk_string))),
+                    .map(|cf| Gc::new(mc, new(mc, cf))),
             );
 
             FunctionProto {
@@ -76,7 +66,7 @@ impl<'gc> FunctionProto<'gc> {
             }
         }
 
-        new(mc, compiled_function, &mk_string)
+        new(mc, compiled_function)
     }
 
     pub fn compile(
@@ -99,7 +89,7 @@ impl<'gc> FunctionProto<'gc> {
         let chunk = compiler::parse_chunk(source, interner)?;
         let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionProto::new(&ctx, &compiled_function, |s| *s))
+        Ok(FunctionProto::new(&ctx, &compiled_function))
     }
 }
 
