@@ -70,7 +70,7 @@ pub struct CompiledPrototype<S> {
 }
 
 impl<S> CompiledPrototype<S> {
-    pub fn map_string<S2>(self, f: impl Fn(S) -> S2 + Copy) -> CompiledPrototype<S2> {
+    pub fn map_strings<S2>(self, f: impl Fn(S) -> S2 + Copy) -> CompiledPrototype<S2> {
         CompiledPrototype {
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
@@ -85,7 +85,7 @@ impl<S> CompiledPrototype<S> {
             prototypes: self
                 .prototypes
                 .into_iter()
-                .map(|p| Box::new(p.map_string(f)))
+                .map(|p| Box::new(p.map_strings(f)))
                 .collect(),
         }
     }
