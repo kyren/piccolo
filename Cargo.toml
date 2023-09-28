@@ -22,6 +22,9 @@ rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
 thiserror = "1.0"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
 [dev-dependencies]
 clap = { version = "4.3", features = ["cargo"] }
 rustyline = "11.0"
