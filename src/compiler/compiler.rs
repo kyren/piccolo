@@ -904,23 +904,26 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         local_function: &LocalFunctionStatement<S::String>,
     ) -> Result<(), CompilerError> {
-        let proto = self.new_prototype(
-            &local_function.definition.parameters,
-            local_function.definition.has_varargs,
-            &local_function.definition.body,
-        )?;
-
+        // Make sure that the local function is declared as a local variable in the body of
+        // the function, declare it before compiling the inner function prototype.
         let dest = self
             .current_function
             .register_allocator
             .push(1)
             .ok_or(CompilerError::Registers)?;
         self.current_function
-            .operations
-            .push(Operation::Closure { proto, dest });
-        self.current_function
             .locals
             .push((local_function.name.clone(), dest));
+
+        let proto = self.new_prototype(
+            &local_function.definition.parameters,
+            local_function.definition.has_varargs,
+            &local_function.definition.body,
+        )?;
+
+        self.current_function
+            .operations
+            .push(Operation::Closure { proto, dest });
 
         Ok(())
     }
