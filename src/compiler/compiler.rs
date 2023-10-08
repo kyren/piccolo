@@ -2129,8 +2129,8 @@ impl<S: StringInterner> Compiler<S> {
         })
     }
 
-    // Evaluates the given expression and tests it, skipping the following instruction if the boolean
-    // result is equal to `skip_if`
+    // Evaluates the given expression and tests it, skipping the following instruction if the
+    // boolean result is equal to `skip_if`
     fn expr_test(
         &mut self,
         expr: ExprDescriptor<S::String>,
