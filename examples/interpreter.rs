@@ -41,7 +41,7 @@ fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), Stat
         let thread = ctx.state.registry.fetch(thread);
         thread.reset(&ctx)?;
         thread.start(ctx, function, ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(())
     })?;
 
     lua.finish_thread(&thread);
