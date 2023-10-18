@@ -1,3 +1,5 @@
+pub use gc_arena;
+
 pub mod any;
 pub mod callback;
 pub mod closure;
