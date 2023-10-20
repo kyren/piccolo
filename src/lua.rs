@@ -105,7 +105,7 @@ impl Lua {
     ///
     /// This is equivalent to `self.gc_metrics().total_allocation()`. This counts all `Gc`
     /// allocated memory and also all data Lua datastructures held inside `Gc`, as they are tracked
-    /// as "external allocations" in via gc-arena.
+    /// as "external allocations" in gc-arena.
     pub fn total_memory(&self) -> usize {
         self.gc_metrics().total_allocation()
     }

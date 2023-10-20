@@ -74,6 +74,11 @@ impl<'gc> String<'gc> {
     }
 
     pub fn from_slice(mc: &Mutation<'gc>, s: impl AsRef<[u8]>) -> String<'gc> {
+        // TODO: This is an extremely silly way to allocate a dynamically sized, inline string.
+        // Since gc-arena does not support variable sized allocations, we try a set of static
+        // sizes to inline small strings. All larger strings are instead allocated with an indirect
+        // buffer. This can be improved when gc-arena learns to allocate variable sizes.
+
         fn create<'gc, const N: usize>(mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -108,8 +113,7 @@ impl<'gc> String<'gc> {
                 })*
             };
         }
-
-        try_sizes!(0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024);
+        try_sizes!(0, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256);
 
         Self::from_buffer(mc, s.into())
     }
