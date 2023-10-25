@@ -1,5 +1,4 @@
 use std::{
-    cell::RefMut,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     mem,
@@ -79,11 +78,7 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn mode(self) -> ThreadMode {
-        if let Ok(state) = self.0.try_borrow() {
-            state.mode()
-        } else {
-            ThreadMode::Running
-        }
+        self.0.borrow().mode()
     }
 
     /// If this thread is `Stopped`, start a new function with the given arguments.
@@ -93,7 +88,8 @@ impl<'gc> Thread<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(&ctx, Some(ThreadMode::Stopped))?;
+        let mut state = self.0.borrow_mut(&ctx);
+        state.check_mode(ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -109,7 +105,8 @@ impl<'gc> Thread<'gc> {
         mc: &Mutation<'gc>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(mc, Some(ThreadMode::Stopped))?;
+        let mut state = self.0.borrow_mut(mc);
+        state.check_mode(ThreadMode::Stopped)?;
         state.frames.push(Frame::StartCoroutine(function));
         Ok(())
     }
@@ -120,7 +117,9 @@ impl<'gc> Thread<'gc> {
         self,
         ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let mut state = self.write_state(&ctx, Some(ThreadMode::Result))?;
+        let mut state = self.0.borrow_mut(&ctx);
+        state.check_mode(ThreadMode::Result)?;
+
         assert!(matches!(state.frames.pop(), Some(Frame::HasResult)));
 
         Ok(if let Some(error) = state.error.take() {
@@ -137,7 +136,8 @@ impl<'gc> Thread<'gc> {
         ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(&ctx, Some(ThreadMode::Suspended))?;
+        let mut state = self.0.borrow_mut(&ctx);
+        state.check_mode(ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -169,7 +169,9 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in `Suspended` mode, cause an error wherever the thread was suspended.
     pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(mc, Some(ThreadMode::Suspended))?;
+        let mut state = self.0.borrow_mut(mc);
+        state.check_mode(ThreadMode::Suspended)?;
+
         assert!(state.external_stack.is_empty());
         state.unwind(mc, error);
         Ok(())
@@ -187,7 +189,9 @@ impl<'gc> Thread<'gc> {
     /// *additional* fuel by consuming it from the provided `&mut Fuel` that they are given on all
     /// calls.
     pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(&ctx, Some(ThreadMode::Normal))?;
+        let mut state = self.0.borrow_mut(&ctx);
+        state.check_mode(ThreadMode::Normal)?;
+
         while state.mode() == ThreadMode::Normal {
             match state.frames.pop().expect("no frame to step") {
                 Frame::Callback(callback) => {
@@ -289,7 +293,13 @@ impl<'gc> Thread<'gc> {
     /// If this thread is in any other mode than `Running`, reset the thread completely and restore
     /// it to the `Stopped` state.
     pub fn reset(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.write_state(mc, None)?;
+        let mut state = self.0.borrow_mut(mc);
+        if state.mode() == ThreadMode::Running {
+            return Err(BadThreadMode {
+                found: state.mode(),
+                expected: None,
+            });
+        }
 
         state.close_upvalues(mc, 0);
         assert!(state.open_upvalues.is_empty());
@@ -299,27 +309,6 @@ impl<'gc> Thread<'gc> {
         state.external_stack.clear();
         state.error = None;
         Ok(())
-    }
-
-    fn write_state<'a>(
-        &'a self,
-        mc: &Mutation<'gc>,
-        expected_mode: Option<ThreadMode>,
-    ) -> Result<RefMut<'a, ThreadState<'gc>>, BadThreadMode> {
-        assert!(expected_mode != Some(ThreadMode::Running));
-        let state = self.0.try_borrow_mut(mc).map_err(|_| BadThreadMode {
-            found: ThreadMode::Running,
-            expected: expected_mode,
-        })?;
-
-        if expected_mode.is_some_and(|mode| mode != state.mode()) {
-            Err(BadThreadMode {
-                found: state.mode(),
-                expected: expected_mode,
-            })
-        } else {
-            Ok(state)
-        }
     }
 }
 
@@ -1008,7 +997,7 @@ impl<'gc> ThreadState<'gc> {
     fn mode(&self) -> ThreadMode {
         match self.frames.last() {
             None => {
-                assert!(self.stack.is_empty() && self.open_upvalues.is_empty(),);
+                debug_assert!(self.stack.is_empty() && self.open_upvalues.is_empty(),);
                 ThreadMode::Stopped
             }
             Some(frame) => match frame {
@@ -1019,6 +1008,18 @@ impl<'gc> ThreadState<'gc> {
                 Frame::Calling => ThreadMode::Running,
                 Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
             },
+        }
+    }
+
+    fn check_mode(&self, expected_mode: ThreadMode) -> Result<(), BadThreadMode> {
+        let mode = self.mode();
+        if mode == expected_mode {
+            Ok(())
+        } else {
+            Err(BadThreadMode {
+                found: mode,
+                expected: Some(expected_mode),
+            })
         }
     }
 

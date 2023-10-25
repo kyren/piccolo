@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops, AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Context, Fuel, IntoValue,
-    Sequence, SequencePoll, Stack, Table, Thread, ThreadMode, Value, Variadic,
+    meta_ops, AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Context, Fuel, Sequence,
+    SequencePoll, Stack, Table, Thread, ThreadMode, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -30,9 +30,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (thread, args): (Thread, Variadic<Vec<Value>>) = stack.consume(ctx)?;
 
-                thread
-                    .resume(ctx, args)
-                    .map_err(|_| "cannot resume thread".into_value(ctx))?;
+                thread.resume(ctx, args)?;
 
                 #[derive(Collect)]
                 #[collect(require_static)]
