@@ -98,10 +98,10 @@ impl Fuel {
     /// endlessly.
     ///
     /// By default, the recursion level is automatically incremented whenever `Thread::step` is
-    /// about to trigger a callback, so this is should almost never be necessary to call explicitly.
+    /// about to trigger a callback, so this should almost never be necessary to call explicitly.
     ///
     /// With the normal stdlib, arbitrary recursion is only possible by (ab)using coroutines. Normal
-    /// Lua recursion and Rust code "calling" Lua code via a `Sequence` poll does not actually use
+    /// Lua recursion and Rust code "calling" Lua code via a `Sequence::poll` does not actually use
     /// the real Rust call stack, and cannot lead to using unbounded time or unbounded Rust stack
     /// space. Coroutines create their own inner `Thread`s and step them inside a `Sequence`, so
     /// they can eventually trigger a recursion limit in pathological cases.
