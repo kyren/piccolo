@@ -16,8 +16,7 @@ use crate::{
     meta_ops,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
-    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, ThreadError, TypeError,
-    Value,
+    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, TypeError, VMError, Value,
 };
 
 use super::run_vm;
@@ -195,13 +194,22 @@ impl<'gc> Thread<'gc> {
         while state.mode() == ThreadMode::Normal {
             match state.frames.pop().expect("no frame to step") {
                 Frame::Callback(callback) => {
-                    fuel.consume_fuel(FUEL_PER_CALLBACK);
+                    let mut rfuel = match fuel.recurse() {
+                        Ok(r) => r,
+                        Err(err) => {
+                            state.unwind(&ctx, err.into());
+                            continue;
+                        }
+                    };
+
+                    rfuel.consume_fuel(FUEL_PER_CALLBACK);
                     state.frames.push(Frame::Calling);
 
                     assert!(state.error.is_none());
                     let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
                     drop(state);
-                    let seq = callback.call(ctx, fuel, &mut stack);
+                    let seq = callback.call(ctx, &mut rfuel, &mut stack);
+                    drop(rfuel);
                     state = self.0.borrow_mut(&ctx);
                     state.external_stack = stack;
 
@@ -216,7 +224,15 @@ impl<'gc> Thread<'gc> {
                     }
                 }
                 Frame::Sequence(mut sequence) => {
-                    fuel.consume_fuel(FUEL_PER_SEQ_STEP);
+                    let mut rfuel = match fuel.recurse() {
+                        Ok(r) => r,
+                        Err(err) => {
+                            state.unwind(&ctx, err.into());
+                            continue;
+                        }
+                    };
+
+                    rfuel.consume_fuel(FUEL_PER_SEQ_STEP);
                     state.frames.push(Frame::Calling);
 
                     let mut stack = mem::replace(&mut state.external_stack, Stack::new(&ctx));
@@ -224,10 +240,11 @@ impl<'gc> Thread<'gc> {
                     drop(state);
                     let fin = if let Some(error) = error {
                         assert!(stack.is_empty());
-                        sequence.error(ctx, fuel, error, &mut stack)
+                        sequence.error(ctx, &mut rfuel, error, &mut stack)
                     } else {
-                        sequence.poll(ctx, fuel, &mut stack)
+                        sequence.poll(ctx, &mut rfuel, &mut stack)
                     };
+                    drop(rfuel);
                     state = self.0.borrow_mut(&ctx);
                     state.external_stack = stack;
 
@@ -414,11 +431,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Place the current frame's varargs at the given register, expecting the given count
-    pub(crate) fn varargs(
-        &mut self,
-        dest: RegisterIndex,
-        count: VarCount,
-    ) -> Result<(), ThreadError> {
+    pub(crate) fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), VMError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 bottom,
@@ -427,7 +440,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if *is_variable {
-                    return Err(ThreadError::ExpectedVariable(false));
+                    return Err(VMError::ExpectedVariableStack(false));
                 }
 
                 let varargs_start = *bottom + 1;
@@ -459,7 +472,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         mc: &Mutation<'gc>,
         table_base: RegisterIndex,
         count: VarCount,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         let Some(&mut Frame::Lua {
             base,
             ref mut is_variable,
@@ -471,7 +484,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         };
 
         if count.is_variable() != *is_variable {
-            return Err(ThreadError::ExpectedVariable(count.is_variable()));
+            return Err(VMError::ExpectedVariableStack(count.is_variable()));
         }
 
         let table_ind = base + table_base.0 as usize;
@@ -527,7 +540,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         func: RegisterIndex,
         args: VarCount,
         returns: VarCount,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 expected_return,
@@ -536,7 +549,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if *is_variable != args.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(args.is_variable()));
+                    return Err(VMError::ExpectedVariableStack(args.is_variable()));
                 }
 
                 *expected_return = Some(LuaReturn::Normal(returns));
@@ -598,7 +611,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         func: RegisterIndex,
         arg_count: u8,
         returns: VarCount,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 expected_return,
@@ -607,7 +620,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if *is_variable {
-                    return Err(ThreadError::ExpectedVariable(false));
+                    return Err(VMError::ExpectedVariableStack(false));
                 }
 
                 consume_call_fuel(self.fuel, arg_count as usize);
@@ -672,7 +685,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         func: Function<'gc>,
         args: &[Value<'gc>],
         ret_index: Option<RegisterIndex>,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 expected_return,
@@ -682,7 +695,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if *is_variable {
-                    return Err(ThreadError::ExpectedVariable(false));
+                    return Err(VMError::ExpectedVariableStack(false));
                 }
 
                 consume_call_fuel(self.fuel, args.len());
@@ -738,7 +751,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         ctx: Context<'gc>,
         func: RegisterIndex,
         args: VarCount,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         match self.state.frames.last() {
             Some(&Frame::Lua {
                 bottom,
@@ -747,7 +760,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if is_variable != args.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(args.is_variable()));
+                    return Err(VMError::ExpectedVariableStack(args.is_variable()));
                 }
 
                 self.state.close_upvalues(&ctx, bottom);
@@ -814,7 +827,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         mc: &Mutation<'gc>,
         start: RegisterIndex,
         count: VarCount,
-    ) -> Result<(), ThreadError> {
+    ) -> Result<(), VMError> {
         match self.state.frames.pop() {
             Some(Frame::Lua {
                 bottom,
@@ -823,7 +836,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 ..
             }) => {
                 if is_variable != count.is_variable() {
-                    return Err(ThreadError::ExpectedVariable(count.is_variable()));
+                    return Err(VMError::ExpectedVariableStack(count.is_variable()));
                 }
                 self.state.close_upvalues(mc, bottom);
 

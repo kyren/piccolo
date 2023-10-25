@@ -11,7 +11,7 @@ use crate::{
     Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
 };
 
-use super::{BinaryOperatorError, LuaFrame};
+use super::{BinaryOperatorError, LuaFrame, VMError};
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed.
@@ -221,7 +221,7 @@ pub(crate) fn run_vm<'gc>(
                 for &desc in proto.upvalues.iter() {
                     match desc {
                         UpValueDescriptor::Environment => {
-                            panic!("_ENV upvalue is only allowed on top-level closure");
+                            return Err(VMError::BadEnvUpValue.into());
                         }
                         UpValueDescriptor::ParentLocal(reg) => {
                             upvalues.push(registers.open_upvalue(&ctx, reg));

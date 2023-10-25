@@ -9,7 +9,8 @@ fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |_, fuel, stack| {
+            assert_eq!(fuel.recursion_level(), 1);
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
@@ -22,7 +23,9 @@ fn callback() -> Result<(), StaticError> {
             ctx,
             &br#"
                 local a, b, c = callback(1, 2)
-                return a == 1 and b == 2 and c == 42
+                assert(a == 1 and b == 2 and c == 42)
+                local d, e, f = callback(3, 4)
+                assert(d == 3 and e == 4 and f == 42)
             "#[..],
         )?;
 
@@ -31,7 +34,7 @@ fn callback() -> Result<(), StaticError> {
         Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    assert!(lua.run_thread::<bool>(&thread)?);
+    lua.run_thread::<()>(&thread)?;
     Ok(())
 }
 

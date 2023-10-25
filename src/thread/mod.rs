@@ -3,7 +3,7 @@ mod thread;
 mod vm;
 
 pub use self::{
-    error::{BadThreadMode, BinaryOperatorError, ThreadError},
+    error::{BadThreadMode, BinaryOperatorError, VMError},
     thread::{Thread, ThreadMode},
 };
 
