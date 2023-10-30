@@ -2,11 +2,11 @@
 name = "piccolo"
 version = "0.1.1"
 description = "Stackless Lua VM implemented in pure Rust"
-authors = ["kyren <catherine@triplehex.dev>"]
+authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/triplehex/piccolo"
+repository = "https://github.com/kyren/piccolo"
 
 [profile.release]
 opt-level = 3
