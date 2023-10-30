@@ -6,12 +6,13 @@
 
 **(After *four* years, now UN-paused!)**
 
-Project Goals:
+Project Goals, in roughly descending priority:
   * Be an arguably working, useful Lua interpreter.
-  * Be an easy way to confidently sandbox untrusted Lua scripts.
+  * Be an easy way to *confidently* sandbox untrusted Lua scripts.
   * Be resilient against DoS from untrusted scripts (scripts should not be able
     to cause the interpreter to panic or use an unbounded amount of memory and
-    should be guaranteed to pause in some bounded amount of time).
+    should be guaranteed to return control to the caller in some bounded amount
+    of time).
   * Be an easy way to bind Rust APIs to Lua safely, with a bindings system that is
     resilient against weirdness and edge cases, and with user types that can
     safely participate in runtime garbage collection.
@@ -44,7 +45,8 @@ The current primary sources of unsafety:
 
 *(`piccolo` makes no attempt yet to guard against side channel attacks like
 spectre, so even if the VM is memory safe, running untrusted scripts may carry
-additional risk)*.
+additional risk. With no JIT or callback API to accurately measure time, this
+might be practically impossible anwyay.)*.
 
 ## A unique system for Rust <-> GC interaction
 
@@ -71,12 +73,12 @@ problematic. No garbage collection can take place during a call to `mutate`, so
 we have to make sure to regularly return from the `mutate` call to allow garbage
 collection to take place.
 
-The VM in `piccolo` is thus written in what is sometimes called "stackless" or
-"trampoline" style. It does not rely on the rust stack for Lua -> Rust and Rust
--> Lua nesting, instead callbacks can either have some kind of immediate result
-(return values, yield values from a coroutine, error), or they can produce
-a `Sequence`. A `Sequence` is a bit like a `Future` in that it is a multi-
-step operation that the parent `Thread` will drive to completion. `Thread`
+The VM in `piccolo` is thus written in what is sometimes called "stackless"
+or "trampoline" style. It does not rely on the rust stack for Lua -> Rust and
+Rust -> Lua nesting, instead callbacks can either have some kind of immediate
+result (return values, yield values from a coroutine, error), or they can
+produce a `Sequence`. A `Sequence` is a bit like a `Future` in that it is a
+multi-step operation that the parent `Thread` will drive to completion. `Thread`
 will repeatedly call `Sequence::poll` until the sequence is complete, and the
 `Sequence` can yield values and call arbitrary Lua functions while it is being
 polled.
@@ -141,9 +143,9 @@ execution that can occur, bounding both the CPU time used and also the amount of
 memory allocation that can occur within a single `Thread::step` call (assuming
 certain rules are followed w.r.t. provided callbacks).
 
-The VM also now accurately tracks all memory allocated within its inner `gc-
-arena::Arena` using `gc-arena` memory tracking features. This can extend to
-userdata and userdata APIs, and assuming the correct rules are follwed in
+The VM also now accurately tracks all memory allocated within its inner
+`gc-arena::Arena` using `gc-arena` memory tracking features. This can extend
+to userdata and userdata APIs, and assuming the correct rules are follwed in
 exposed userdata and callbacks, allows for accurate memory reporting and memory
 limits.
 
@@ -184,8 +186,8 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
 * A large amount of the stdlib is not implemented yet. Most "peripheral" parts
   of the stdlib are this way, the `io`, `file`, `os`, `package`, `string`,
   `table`, and `utf8` libs are either missing or very sparsely implemented.
-* The garbage collector has no finalization support. Being compatible with PUC-
-  Rio Lua would require object finalization *with failure*, and even having
+* The garbage collector has no finalization support. Being compatible with
+  PUC-Rio Lua would require object finalization *with failure*, and even having
   finalization, let alone finalization with some kind of failure story is
   extremely low priority. Userdata types can currently implement `Drop` (just
   like any other rust type) to get something equivalent to finaliazation for

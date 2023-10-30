@@ -1,6 +1,6 @@
 [package]
 name = "piccolo"
-version = "0.1.1"
+version = "0.2.0"
 description = "Stackless Lua VM implemented in pure Rust"
 authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
@@ -23,5 +23,5 @@ rustc-hash = "1.1"
 thiserror = "1.0"
 
 [dev-dependencies]
-clap = { version = "4.3", features = ["cargo"] }
-rustyline = "11.0"
+clap = { version = "4.4", features = ["cargo"] }
+rustyline = "12.0"
