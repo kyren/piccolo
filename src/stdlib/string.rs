@@ -1,6 +1,6 @@
 use lua_patterns::LuaPattern;
 
-use crate::{AnyCallback, CallbackReturn, Context, IntoValue, Table, Value, String};
+use crate::{AnyCallback, CallbackReturn, Context, IntoValue, String, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -39,7 +39,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
 
                         if let Some(str_match) = m.match_maybe(s1.to_str()?) {
                             stack.replace(ctx, String::from_slice(&ctx, str_match));
-                            return Ok(CallbackReturn::Return)
+                            return Ok(CallbackReturn::Return);
                         }
                     }
                 }
