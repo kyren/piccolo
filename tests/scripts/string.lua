@@ -35,7 +35,14 @@ function test_len()
         string.len(-2147483648) == 11
 end
 
+function test_match()
+    return
+        string.match("a4b", "%d") == "4" and
+        string.match("hello world", "%a+") == "hello"
+end
+
 assert(
     test_concat() and
-    test_len()
+    test_len() and
+    test_match()
 )
