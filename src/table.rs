@@ -159,6 +159,29 @@ impl<'gc> TableEntries<'gc> {
         }
     }
 
+    pub fn remove(
+        &mut self,
+        index: usize,
+    ) -> Value<'gc> {
+        self.array.remove(index - 1)
+    }
+
+    pub fn insert(
+        &mut self,
+        index: usize,
+        value: Value<'gc>,
+    ) -> Result<(), InvalidTableKey> {
+        if index >= 1 && index <= self.array.len() {
+            self.array.reserve(1);
+            self.array.insert(index - 1, value);
+        } else {
+            let key = Value::Integer(index.try_into().unwrap());
+            self.set(key, value)?;
+        }
+
+        Ok(())
+    }
+
     pub fn get(&self, key: Value<'gc>) -> Value<'gc> {
         if let Some(index) = to_array_index(key) {
             if index < self.array.len() {
