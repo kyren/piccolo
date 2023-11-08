@@ -37,6 +37,29 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         .globals
         .set(
             ctx,
+            "tonumber",
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                if stack.is_empty() {
+                    Err("Bad argument to tonumber".into_value(ctx).into())
+                } else {
+                    let (v, base): (Value, Option<i64>) = stack.consume(ctx)?;
+
+                    if base.is_some() {
+                        // TODO
+                        return Err("tonumber does not currently support base parameter".into_value(ctx).into())
+                    }
+
+                    stack.replace(ctx, v.to_number());
+                    Ok(CallbackReturn::Return)
+                }
+            }),
+        )
+        .unwrap();
+
+    ctx.state
+        .globals
+        .set(
+            ctx,
             "error",
             AnyCallback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
         )
