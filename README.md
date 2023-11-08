@@ -1,6 +1,7 @@
 [![crates.io](https://img.shields.io/crates/v/piccolo)](https://crates.io/crates/piccolo)
 [![docs.rs](https://docs.rs/piccolo/badge.svg)](https://docs.rs/piccolo)
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/piccolo.svg)](https://circleci.com/gh/kyren/piccolo)
+[![Chat](https://img.shields.io/discord/865004050357682246)](https://discord.gg/vd2znX8e)
 
 ## piccolo - An experimental stackless Lua VM implemented in pure Rust
 
