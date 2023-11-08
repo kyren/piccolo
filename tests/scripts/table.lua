@@ -122,3 +122,48 @@ do
     assert(table.unpack(t, 4, 4) == nil)
     assert(table.unpack(t, 4, 2) == nil)
 end
+do
+    local t = {}
+    table.insert(t, 1)
+    assert(t[1] == 1)
+    assert(#t == 1)
+    table.insert(t, 2)
+    assert(t[1] == 1)
+    assert(t[2] == 2)
+    assert(#t == 2)
+    table.insert(t, 1, 4)
+    assert(#t == 3)
+    assert(t[1] == 4)
+    assert(t[2] == 1)
+    assert(t[3] == 2)
+    table.insert(t, 4, 5)
+    assert(#t == 4)
+    assert(t[1] == 4)
+    assert(t[2] == 1)
+    assert(t[3] == 2)
+    assert(t[4] == 5)
+    table.insert(t, 9, 8)
+    assert(#t == 4)
+    assert(t[1] == 4)
+    assert(t[2] == 1)
+    assert(t[3] == 2)
+    assert(t[4] == 5)
+    assert(t[9] == 8)
+end
+do
+    local t = {}
+    table.remove(t, 1)
+    assert(#t == 0)
+    t = {1, 2, 3}
+    table.remove(t, 1)
+    print(t[1])
+    print(t[2])
+    print(t[3])
+    assert(#t == 2)
+    assert(t[1] == 2)
+    assert(t[2] == 3)
+end
+do
+    local t = {"a", "b", "c"}
+    assert(table.concat(t) == "abc")
+end

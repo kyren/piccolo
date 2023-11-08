@@ -35,7 +35,14 @@ function test_len()
         string.len(-2147483648) == 11
 end
 
+function test_sub()
+    return string.sub("foo", 1) == "foo" and
+        string.sub("foo", 2) == "oo" and
+        string.sub("hello world", 3, 5) == "llo"
+end
+
 assert(
     test_concat() and
-    test_len()
+    test_len() and
+    test_sub()
 )
