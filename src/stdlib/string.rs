@@ -1,4 +1,4 @@
-use crate::{AnyCallback, CallbackReturn, Context, IntoValue, Table, Value, String};
+use crate::{AnyCallback, CallbackReturn, Context, IntoValue, String, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);

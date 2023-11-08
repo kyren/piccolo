@@ -1,4 +1,4 @@
-use crate::{AnyCallback, CallbackReturn, Context, Table, Value, IntoValue, String};
+use crate::{AnyCallback, CallbackReturn, Context, IntoValue, String, Table, Value};
 use std::string::String as StdString;
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -42,7 +42,6 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-
     table
         .set(
             ctx,
@@ -65,10 +64,11 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                     ),
                 };
 
-                table.0.borrow_mut(&ctx).entries.insert(
-                    insert_pos,
-                    new_value.into_value(ctx),
-                )?;
+                table
+                    .0
+                    .borrow_mut(&ctx)
+                    .entries
+                    .insert(insert_pos, new_value.into_value(ctx))?;
 
                 Ok(CallbackReturn::Return)
             }),
@@ -104,7 +104,8 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             ctx,
             "concat",
             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                let (table, sep, start, end): (Table, Option<String>, Option<i64>, Option<i64>) = stack.consume(ctx)?;
+                let (table, sep, start, end): (Table, Option<String>, Option<i64>, Option<i64>) =
+                    stack.consume(ctx)?;
 
                 let start = start.unwrap_or(1);
                 let end = end.unwrap_or(table.length());
@@ -126,12 +127,12 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                         }
                         Value::Integer(i) => result.push_str(&i.to_string()),
                         Value::Number(i) => result.push_str(&i.to_string()),
-                        Value::String(s) => {
-                            match s.to_str() {
-                                Ok(s) => result.push_str(s),
-                                Err(_) => return Err("Failed to convert given string".into_value(ctx).into()),
+                        Value::String(s) => match s.to_str() {
+                            Ok(s) => result.push_str(s),
+                            Err(_) => {
+                                return Err("Failed to convert given string".into_value(ctx).into())
                             }
-                        }
+                        },
                         _ => {
                             return Err("Invalid value within given range to table.concat"
                                 .into_value(ctx)

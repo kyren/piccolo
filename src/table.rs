@@ -159,18 +159,11 @@ impl<'gc> TableEntries<'gc> {
         }
     }
 
-    pub fn remove(
-        &mut self,
-        index: usize,
-    ) -> Value<'gc> {
+    pub fn remove(&mut self, index: usize) -> Value<'gc> {
         self.array.remove(index - 1)
     }
 
-    pub fn insert(
-        &mut self,
-        index: usize,
-        value: Value<'gc>,
-    ) -> Result<(), InvalidTableKey> {
+    pub fn insert(&mut self, index: usize, value: Value<'gc>) -> Result<(), InvalidTableKey> {
         if index >= 1 && index <= self.array.len() {
             self.array.reserve(1);
             self.array.insert(index - 1, value);

@@ -46,7 +46,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                     if base.is_some() {
                         // TODO
-                        return Err("tonumber does not currently support base parameter".into_value(ctx).into())
+                        return Err("tonumber does not currently support base parameter"
+                            .into_value(ctx)
+                            .into());
                     }
 
                     stack.replace(ctx, v.to_number());
