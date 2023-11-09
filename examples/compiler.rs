@@ -7,19 +7,20 @@ use piccolo::{
     io,
 };
 
-fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>) {
-    println!("=============");
-    println!("FunctionProto({:p})", function);
-    println!("=============");
+fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>, depth: usize) {
+    let indent = "  ".repeat(depth);
+    println!("{indent}=============");
+    println!("{indent}FunctionProto({:p})", function);
+    println!("{indent}=============");
     println!(
-        "fixed_params: {}, has_varargs: {}, stack_size: {}",
+        "{indent}fixed_params: {}, has_varargs: {}, stack_size: {}",
         function.fixed_params, function.has_varargs, function.stack_size
     );
     if function.constants.len() > 0 {
-        println!("constants:");
+        println!("{indent}constants:");
         for (i, c) in function.constants.iter().enumerate() {
             println!(
-                "{}: {:?}",
+                "{indent}{}: {:?}",
                 i,
                 c.as_string_ref()
                     .map_string(|s| String::from_utf8_lossy(s.as_ref()))
@@ -27,21 +28,21 @@ fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>) {
         }
     }
     if function.opcodes.len() > 0 {
-        println!("opcodes:");
+        println!("{indent}opcodes:");
         for (i, c) in function.opcodes.iter().enumerate() {
-            println!("{}: {:?}", i, c);
+            println!("{indent}{}: {:?}", i, c);
         }
     }
     if function.upvalues.len() > 0 {
-        println!("upvalues:");
+        println!("{indent}upvalues:");
         for (i, u) in function.upvalues.iter().enumerate() {
-            println!("{}: {:?}", i, u);
+            println!("{indent}{}: {:?}", i, u);
         }
     }
     if function.prototypes.len() > 0 {
-        println!("prototypes:");
+        println!("{indent}prototypes:");
         for p in &function.prototypes {
-            print_function(p);
+            print_function(p, depth + 1);
         }
     }
 }
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
     } else {
         let chunk = compiler::parse_chunk(file, &mut interner)?;
         let prototype = compiler::compile_chunk(&chunk, &mut interner)?;
-        print_function(&prototype);
+        print_function(&prototype, 0);
     }
 
     Ok(())
