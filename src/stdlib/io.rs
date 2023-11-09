@@ -52,7 +52,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                                     if self.mode == Mode::First {
                                         self.mode = Mode::Rest;
                                     } else {
-                                        stdout.write_all(&b" "[..])?;
+                                        stdout.write_all(&b"\t"[..])?;
                                     }
                                     v.display(&mut stdout)?
                                 }
