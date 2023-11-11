@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops, AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Context, Fuel, Sequence,
-    SequencePoll, Stack, Table, Thread, ThreadMode, Value, Variadic,
+    meta_ops, AnyCallback, AnySequence, CallbackReturn, Context, Fuel, Sequence, SequencePoll,
+    Stack, Table, Thread, ThreadMode, Value, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -48,30 +48,22 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                             _ => panic!("thread lost from stack"),
                         };
 
-                        match thread.mode() {
-                            ThreadMode::Result => {
-                                match thread
-                                    .take_return::<Variadic<Vec<Value<'gc>>>>(ctx)
-                                    .unwrap()
-                                {
-                                    Ok(res) => {
-                                        stack.replace(ctx, (true, res));
-                                    }
-                                    Err(err) => {
-                                        stack.replace(ctx, (false, err.to_value(ctx)));
-                                    }
+                        if thread.mode() == ThreadMode::Result {
+                            match thread
+                                .take_return::<Variadic<Vec<Value<'gc>>>>(ctx)
+                                .unwrap()
+                            {
+                                Ok(res) => {
+                                    stack.replace(ctx, (true, res));
                                 }
-                                Ok(SequencePoll::Return)
+                                Err(err) => {
+                                    stack.replace(ctx, (false, err.to_value(ctx)));
+                                }
                             }
-                            ThreadMode::Normal => {
-                                thread.step(ctx, fuel).unwrap();
-                                Ok(SequencePoll::Pending)
-                            }
-                            mode => Err(BadThreadMode {
-                                found: mode,
-                                expected: Some(ThreadMode::Normal),
-                            }
-                            .into()),
+                            Ok(SequencePoll::Return)
+                        } else {
+                            thread.step(ctx, fuel)?;
+                            Ok(SequencePoll::Pending)
                         }
                     }
                 }

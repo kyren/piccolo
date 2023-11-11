@@ -10,20 +10,32 @@ use gc_arena::{
     lock::{Lock, RefLock},
     Collect, Gc, Mutation,
 };
+use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
     meta_ops,
     types::{RegisterIndex, VarCount},
-    AnyCallback, AnySequence, BadThreadMode, CallbackReturn, Closure, Context, Error,
-    FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll, Stack, TypeError, VMError, Value,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, FromMultiValue, Fuel,
+    Function, IntoMultiValue, SequencePoll, Stack, TypeError, VMError, Value,
 };
 
-use super::run_vm;
+use super::vm::run_vm;
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(pub(crate) Gc<'gc, RefLock<ThreadState<'gc>>>);
+
+#[derive(Debug, Copy, Clone, Error)]
+#[error("bad thread mode: {found:?}{}", if let Some(expected) = *.expected {
+        format!(", expected {:?}", expected)
+    } else {
+        format!("")
+    })]
+pub struct BadThreadMode {
+    pub found: ThreadMode,
+    pub expected: Option<ThreadMode>,
+}
 
 impl<'gc> Debug for Thread<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
