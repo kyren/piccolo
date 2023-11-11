@@ -7,7 +7,7 @@ use crate::{
     meta_ops::{self, MetaResult},
     opcode::{Operation, RCIndex},
     raw_ops,
-    table::TableEntries,
+    table::RawTable,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
     Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
 };
@@ -114,7 +114,7 @@ pub(crate) fn run_vm<'gc>(
                 array_size,
                 map_size,
             } => {
-                let mut entries = TableEntries::new(&ctx);
+                let mut entries = RawTable::new(&ctx);
                 entries.reserve_array(array_size as usize);
                 entries.reserve_map(map_size as usize);
                 let table = Table::from_parts(&ctx, entries, None);

@@ -48,12 +48,12 @@ impl<'gc> Hash for Table<'gc> {
 
 impl<'gc> Table<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Table<'gc> {
-        Self::from_parts(mc, TableEntries::new(mc), None)
+        Self::from_parts(mc, RawTable::new(mc), None)
     }
 
     pub fn from_parts(
         mc: &Mutation<'gc>,
-        entries: TableEntries<'gc>,
+        entries: RawTable<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Table<'gc> {
         Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
@@ -126,18 +126,18 @@ impl<'gc> Table<'gc> {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct TableState<'gc> {
-    pub entries: TableEntries<'gc>,
+    pub entries: RawTable<'gc>,
     pub metatable: Option<Table<'gc>>,
 }
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct TableEntries<'gc> {
+pub struct RawTable<'gc> {
     array: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     map: HashMap<Value<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
 }
 
-impl<'gc> fmt::Debug for TableEntries<'gc> {
+impl<'gc> fmt::Debug for RawTable<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map()
             .entries(
@@ -151,7 +151,7 @@ impl<'gc> fmt::Debug for TableEntries<'gc> {
     }
 }
 
-impl<'gc> TableEntries<'gc> {
+impl<'gc> RawTable<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             array: vec::Vec::new_in(MetricsAlloc::new(mc)),
