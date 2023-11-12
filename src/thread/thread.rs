@@ -266,23 +266,25 @@ impl<'gc> Thread<'gc> {
                     );
 
                     match fin {
-                        Ok(SequencePoll::Pending) => {
-                            state.return_ext(fuel, CallbackReturn::Sequence(sequence))
-                        }
-                        Ok(SequencePoll::Return) => state.return_ext(fuel, CallbackReturn::Return),
-                        Ok(SequencePoll::Yield { is_tail: tail }) => state.return_ext(
+                        Ok(ret) => state.return_ext(
                             fuel,
-                            CallbackReturn::Yield(if tail { None } else { Some(sequence) }),
-                        ),
-                        Ok(SequencePoll::Call {
-                            function,
-                            is_tail: tail,
-                        }) => state.return_ext(
-                            fuel,
-                            CallbackReturn::TailCall(
-                                function,
-                                if tail { None } else { Some(sequence) },
-                            ),
+                            match ret {
+                                SequencePoll::Pending => CallbackReturn::Sequence(sequence),
+                                SequencePoll::Return => CallbackReturn::Return,
+                                SequencePoll::Yield { is_tail } => {
+                                    CallbackReturn::Yield(if is_tail {
+                                        None
+                                    } else {
+                                        Some(sequence)
+                                    })
+                                }
+                                SequencePoll::Call { function, is_tail } => {
+                                    CallbackReturn::TailCall(
+                                        function,
+                                        if is_tail { None } else { Some(sequence) },
+                                    )
+                                }
+                            },
                         ),
                         Err(error) => state.unwind(&ctx, error),
                     }

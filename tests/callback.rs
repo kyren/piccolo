@@ -138,15 +138,8 @@ fn loopy_callback() -> Result<(), StaticError> {
         Ok(ctx.state.registry.stash(&ctx, thread))
     })?;
 
-    lua.finish_thread(&thread);
-    lua.try_run(|ctx| {
-        assert!(ctx
-            .state
-            .registry
-            .fetch(&thread)
-            .take_return::<bool>(ctx)??);
-        Ok(())
-    })
+    assert!(lua.run_thread::<bool>(&thread)?);
+    Ok(())
 }
 
 #[test]

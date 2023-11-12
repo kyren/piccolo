@@ -174,10 +174,10 @@ pub enum SequencePoll<'gc> {
     /// finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
     /// resumed, or `Sequence::error` if the coroutine is resumed with an error.
     Yield { is_tail: bool },
-    /// Call the given function with the arguments in the stack. If `is_tail` is true, then this is
-    /// a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called with
-    /// the results of the function call, or if the function errors, `Sequence::error` will be called
-    /// with the function error.
+    /// Call the given function with the arguments in the stack. If `is_tail` is true, then this
+    /// is a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called
+    /// with the results of the function call, or if the function errors, `Sequence::error` will be
+    /// called with the function error.
     Call {
         function: Function<'gc>,
         is_tail: bool,

@@ -44,9 +44,7 @@ fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), Stat
         Ok(())
     })?;
 
-    lua.finish_thread(&thread);
-
-    lua.try_run(|ctx| Ok(ctx.state.registry.fetch(thread).take_return::<()>(ctx)??))
+    lua.run_thread::<()>(&thread)
 }
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
