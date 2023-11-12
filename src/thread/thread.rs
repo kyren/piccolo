@@ -29,7 +29,8 @@ pub enum ThreadMode {
     /// The thread has an error or has returned (or yielded) values that must be taken to move the
     /// thread back to the `Stopped` (or `Suspended`) state.
     Result,
-    /// Thread has an active Lua frame or is waiting for a callback or sequence to finish.
+    /// Thread has an active Lua frame or is waiting for a callback, sequence, or separate thread
+    /// to finish.
     Normal,
     /// Thread is currently inside its own `Thread::step` function.
     Running,
@@ -118,7 +119,7 @@ impl<'gc> Thread<'gc> {
     ) -> Result<(), BadThreadMode> {
         let mut state = self.0.borrow_mut(mc);
         state.check_mode(ThreadMode::Stopped)?;
-        state.frames.push(Frame::StartCoroutine(function));
+        state.frames.push(Frame::Start(function));
         Ok(())
     }
 
@@ -154,7 +155,7 @@ impl<'gc> Thread<'gc> {
         state.external_stack.replace(ctx, args);
 
         match state.frames.pop().expect("no frame to resume") {
-            Frame::StartCoroutine(function) => {
+            Frame::Start(function) => {
                 assert!(
                     state.stack.is_empty()
                         && state.open_upvalues.is_empty()
@@ -163,7 +164,7 @@ impl<'gc> Thread<'gc> {
                 );
                 state.ext_call_function(function);
             }
-            Frame::ResumeCoroutine => match state.frames.last_mut() {
+            Frame::Yielded => match state.frames.last_mut() {
                 Some(Frame::Sequence { .. }) => {}
                 Some(Frame::Lua { .. }) => {
                     state.return_to_lua();
@@ -171,9 +172,9 @@ impl<'gc> Thread<'gc> {
                 None => {
                     state.frames.push(Frame::HasResult);
                 }
-                _ => panic!("resume coroutine frame must be above a sequence or lua frame"),
+                _ => panic!("yielded frame must be above a sequence or lua frame"),
             },
-            _ => panic!("top frame not a suspended coroutine"),
+            _ => panic!("top frame not a suspended thread"),
         }
         Ok(())
     }
@@ -278,15 +279,44 @@ impl<'gc> Thread<'gc> {
                                         Some(sequence)
                                     })
                                 }
-                                SequencePoll::Call { function, is_tail } => {
-                                    CallbackReturn::TailCall(
-                                        function,
-                                        if is_tail { None } else { Some(sequence) },
-                                    )
-                                }
+                                SequencePoll::Call { function, is_tail } => CallbackReturn::Call(
+                                    function,
+                                    if is_tail { None } else { Some(sequence) },
+                                ),
+                                SequencePoll::Resume { thread, is_tail } => CallbackReturn::Resume(
+                                    thread,
+                                    if is_tail { None } else { Some(sequence) },
+                                ),
                             },
                         ),
                         Err(error) => state.unwind(&ctx, error),
+                    }
+                }
+                Frame::RunThread(thread) => {
+                    if thread.mode() == ThreadMode::Result {
+                        assert!(state.external_stack.is_empty());
+                        assert!(state.error.is_none());
+
+                        let mut other_state = thread.0.borrow_mut(&ctx);
+                        assert!(matches!(other_state.frames.pop(), Some(Frame::HasResult)));
+
+                        if let Some(error) = other_state.error.take() {
+                            state.unwind(&ctx, error);
+                        } else {
+                            state
+                                .external_stack
+                                .extend(other_state.external_stack.drain(..));
+                            state.return_ext(fuel, CallbackReturn::Return);
+                        }
+                    } else {
+                        drop(state);
+                        let ret = thread.step(ctx, fuel);
+                        state = self.0.borrow_mut(&ctx);
+                        if let Err(err) = ret {
+                            state.unwind(&ctx, err.into());
+                        } else {
+                            state.frames.push(Frame::RunThread(thread));
+                        }
                     }
                 }
                 frame @ Frame::Lua { .. } => {
@@ -392,16 +422,18 @@ enum Frame<'gc> {
         stack_size: usize,
         expected_return: Option<LuaReturn>,
     },
-    // A suspended coroutine that has not yet been run.
-    StartCoroutine(Function<'gc>),
-    // A coroutine that has yielded and is waiting resume.
-    ResumeCoroutine,
+    // A function call that has not yet been run.
+    Start(Function<'gc>),
+    // Thread has yielded and is waiting resume.
+    Yielded,
     // A callback that has been queued but not called yet. Arguments will be in the external stack.
     Callback(AnyCallback<'gc>),
     // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
     // will be called on the next call to `Thread::step`, depending on whether there is a pending
     // error.
     Sequence(AnySequence<'gc>),
+    // We are waiting on a different thread to finish.
+    RunThread(Thread<'gc>),
     // A marker frame that marks the thread as having available return values or an error that must
     // be taken.
     HasResult,
@@ -1033,11 +1065,12 @@ impl<'gc> ThreadState<'gc> {
             }
             Some(frame) => match frame {
                 Frame::HasResult => ThreadMode::Result,
-                Frame::Lua { .. } | Frame::Callback { .. } | Frame::Sequence { .. } => {
-                    ThreadMode::Normal
-                }
+                Frame::Lua { .. }
+                | Frame::Callback { .. }
+                | Frame::Sequence { .. }
+                | Frame::RunThread(_) => ThreadMode::Normal,
                 Frame::Calling => ThreadMode::Running,
-                Frame::StartCoroutine(_) | Frame::ResumeCoroutine => ThreadMode::Suspended,
+                Frame::Start(_) | Frame::Yielded => ThreadMode::Suspended,
             },
         }
     }
@@ -1181,10 +1214,10 @@ impl<'gc> ThreadState<'gc> {
                 if let Some(sequence) = sequence {
                     self.frames.push(Frame::Sequence(sequence));
                 }
-                self.frames.push(Frame::ResumeCoroutine);
+                self.frames.push(Frame::Yielded);
                 self.frames.push(Frame::HasResult);
             }
-            CallbackReturn::TailCall(function, sequence) => {
+            CallbackReturn::Call(function, sequence) => {
                 if let Some(sequence) = sequence {
                     self.frames.push(Frame::Sequence(sequence));
                 }
@@ -1193,6 +1226,12 @@ impl<'gc> ThreadState<'gc> {
                     consume_call_fuel(fuel, self.external_stack.len());
                 }
                 self.ext_call_function(function);
+            }
+            CallbackReturn::Resume(thread, sequence) => {
+                if let Some(sequence) = sequence {
+                    self.frames.push(Frame::Sequence(sequence));
+                }
+                self.frames.push(Frame::RunThread(thread))
             }
         }
     }

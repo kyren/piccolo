@@ -25,7 +25,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         }
                         MetaResult::Call(call) => {
                             stack.replace(ctx, Variadic(call.args));
-                            Ok(CallbackReturn::TailCall(call.function, None))
+                            Ok(CallbackReturn::Call(call.function, None))
                         }
                     }
                 }
@@ -95,7 +95,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 let function = meta_ops::call(ctx, stack.get(0))?;
                 stack.pop_front();
-                Ok(CallbackReturn::TailCall(
+                Ok(CallbackReturn::Call(
                     function,
                     Some(AnySequence::new(&ctx, PCall)),
                 ))
@@ -239,7 +239,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     if !pairs.is_nil() {
                         let f = meta_ops::call(ctx, pairs)?;
                         stack.replace(ctx, (table, Value::Nil));
-                        return Ok(CallbackReturn::TailCall(f, None));
+                        return Ok(CallbackReturn::Call(f, None));
                     }
                 }
 
@@ -279,7 +279,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.extend(call.args);
-                CallbackReturn::TailCall(
+                CallbackReturn::Call(
                     call.function,
                     Some(AnySequence::new(&ctx, INext(next_index))),
                 )

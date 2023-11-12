@@ -95,7 +95,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 }
             }
 
-            Ok(CallbackReturn::TailCall(
+            Ok(CallbackReturn::Call(
                 AnyCallback::from_fn(&ctx, |_, _, stack| {
                     stack.push_back(3.into());
                     Ok(CallbackReturn::Yield(None))

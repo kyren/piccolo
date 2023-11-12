@@ -29,7 +29,7 @@ fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), Stat
                     Ok(if stack.is_empty() {
                         CallbackReturn::Return
                     } else {
-                        CallbackReturn::TailCall(
+                        CallbackReturn::Call(
                             meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
                             None,
                         )

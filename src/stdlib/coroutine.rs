@@ -29,50 +29,39 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             "resume",
             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
                 let (thread, args): (Thread, Variadic<Vec<Value>>) = stack.consume(ctx)?;
-
                 thread.resume(ctx, args)?;
 
                 #[derive(Collect)]
                 #[collect(require_static)]
-                struct ThreadSequence;
+                struct ResumeHandler;
 
-                impl<'gc> Sequence<'gc> for ThreadSequence {
+                impl<'gc> Sequence<'gc> for ResumeHandler {
                     fn poll(
                         &mut self,
                         ctx: Context<'gc>,
-                        fuel: &mut Fuel,
+                        _fuel: &mut Fuel,
                         stack: &mut Stack<'gc>,
                     ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
-                        let thread = match stack.get(0) {
-                            Value::Thread(thread) => thread,
-                            _ => panic!("thread lost from stack"),
-                        };
+                        stack.into_front(ctx, true);
+                        Ok(SequencePoll::Return)
+                    }
 
-                        if thread.mode() == ThreadMode::Result {
-                            match thread
-                                .take_return::<Variadic<Vec<Value<'gc>>>>(ctx)
-                                .unwrap()
-                            {
-                                Ok(res) => {
-                                    stack.replace(ctx, (true, res));
-                                }
-                                Err(err) => {
-                                    stack.replace(ctx, (false, err.to_value(ctx)));
-                                }
-                            }
-                            Ok(SequencePoll::Return)
-                        } else {
-                            thread.step(ctx, fuel)?;
-                            Ok(SequencePoll::Pending)
-                        }
+                    fn error(
+                        &mut self,
+                        ctx: Context<'gc>,
+                        _fuel: &mut Fuel,
+                        error: crate::Error<'gc>,
+                        stack: &mut Stack<'gc>,
+                    ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
+                        stack.replace(ctx, (false, error.to_value(ctx)));
+                        Ok(SequencePoll::Return)
                     }
                 }
 
-                stack.push_front(thread.into());
-                Ok(CallbackReturn::Sequence(AnySequence::new(
-                    &ctx,
-                    ThreadSequence,
-                )))
+                Ok(CallbackReturn::Resume(
+                    thread,
+                    Some(AnySequence::new(&ctx, ResumeHandler)),
+                ))
             }),
         )
         .unwrap();
