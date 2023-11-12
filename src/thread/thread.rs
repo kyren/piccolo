@@ -22,9 +22,20 @@ use crate::{
 
 use super::vm::run_vm;
 
-#[derive(Clone, Copy, Collect)]
-#[collect(no_drop)]
-pub struct Thread<'gc>(pub(crate) Gc<'gc, RefLock<ThreadState<'gc>>>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadMode {
+    /// No frames are on the thread and there are no available results, the thread can be started.
+    Stopped,
+    /// The thread has an error or has returned (or yielded) values that must be taken to move the
+    /// thread back to the `Stopped` (or `Suspended`) state.
+    Result,
+    /// Thread has an active Lua frame or is waiting for a callback or sequence to finish.
+    Normal,
+    /// Thread is currently inside its own `Thread::step` function.
+    Running,
+    /// Thread has yielded and is waiting on being resumed.
+    Suspended,
+}
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("bad thread mode: {found:?}{}", if let Some(expected) = *.expected {
@@ -36,6 +47,10 @@ pub struct BadThreadMode {
     pub found: ThreadMode,
     pub expected: Option<ThreadMode>,
 }
+
+#[derive(Clone, Copy, Collect)]
+#[collect(no_drop)]
+pub struct Thread<'gc>(pub(crate) Gc<'gc, RefLock<ThreadState<'gc>>>);
 
 impl<'gc> Debug for Thread<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -57,21 +72,6 @@ impl<'gc> Hash for Thread<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.as_ptr().hash(state)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadMode {
-    /// No frames are on the thread and there are no available results, the thread can be started.
-    Stopped,
-    /// The thread has an error or has returned (or yielded) values that must be taken to move the
-    /// thread back to the `Stopped` (or `Suspended`) state.
-    Result,
-    /// Thread has an active Lua frame or is waiting for a callback or sequence to finish.
-    Normal,
-    /// Thread is currently inside its own `Thread::step` function.
-    Running,
-    /// Thread has yielded and is waiting on being resumed.
-    Suspended,
 }
 
 impl<'gc> Thread<'gc> {
@@ -361,6 +361,7 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
     pub pc: &'a mut usize,
     pub stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
+    bottom: usize,
     base: usize,
     open_upvalues: &'a mut vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
     thread: Thread<'gc>,
@@ -380,7 +381,7 @@ enum LuaReturn {
 #[derive(Collect)]
 #[collect(no_drop)]
 enum Frame<'gc> {
-    // An running Lua frame.
+    // A running Lua frame.
     Lua {
         bottom: usize,
         base: usize,
@@ -427,12 +428,15 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // returns a view of the Lua frame's registers
     pub(crate) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
         match self.state.frames.last_mut() {
-            Some(Frame::Lua { base, pc, .. }) => {
+            Some(Frame::Lua {
+                bottom, base, pc, ..
+            }) => {
                 let (upper_stack, stack_frame) = self.state.stack.split_at_mut(*base);
                 LuaRegisters {
                     pc,
                     stack_frame,
                     upper_stack,
+                    bottom: *bottom,
                     base: *base,
                     open_upvalues: &mut self.state.open_upvalues,
                     thread: self.thread,
@@ -950,11 +954,11 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         match upvalue.0.get() {
             UpValueState::Open(upvalue_thread, ind) => {
                 if upvalue_thread == self.thread {
-                    if ind < self.base {
-                        self.upper_stack[ind]
-                    } else {
-                        self.stack_frame[ind - self.base]
-                    }
+                    assert!(
+                        ind < self.bottom,
+                        "upvalues must be above the current Lua frame"
+                    );
+                    self.upper_stack[ind]
                 } else {
                     upvalue_thread.0.borrow().stack[ind]
                 }
@@ -972,11 +976,11 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         match upvalue.0.get() {
             UpValueState::Open(upvalue_thread, ind) => {
                 if upvalue_thread == self.thread {
-                    if ind < self.base {
-                        self.upper_stack[ind] = value;
-                    } else {
-                        self.stack_frame[ind - self.base] = value;
-                    }
+                    assert!(
+                        ind < self.bottom,
+                        "upvalues must be above the current Lua frame"
+                    );
+                    self.upper_stack[ind] = value;
                 } else {
                     upvalue_thread.0.borrow_mut(mc).stack[ind] = value;
                 }

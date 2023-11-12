@@ -131,8 +131,8 @@ impl<'gc, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc> {
     }
 }
 
-impl<'gc> IndexMut<usize> for Stack<'gc> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+impl<'gc, I: SliceIndex<[Value<'gc>]>> IndexMut<I> for Stack<'gc> {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
         &mut self.0[index]
     }
 }
