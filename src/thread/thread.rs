@@ -297,6 +297,14 @@ impl<'gc> Thread<'gc> {
                     }
                 }
                 Frame::RunThread(thread) => {
+                    let mut rfuel = match fuel.recurse() {
+                        Ok(r) => r,
+                        Err(err) => {
+                            state.unwind(&ctx, err.into());
+                            continue;
+                        }
+                    };
+
                     if thread.mode() == ThreadMode::Result {
                         assert!(state.external_stack.is_empty());
                         assert!(state.error.is_none());
@@ -310,11 +318,11 @@ impl<'gc> Thread<'gc> {
                             state
                                 .external_stack
                                 .extend(other_state.external_stack.drain(..));
-                            state.return_ext(fuel, CallbackReturn::Return);
+                            state.return_ext(&mut rfuel, CallbackReturn::Return);
                         }
                     } else {
                         drop(state);
-                        let ret = thread.step(ctx, fuel);
+                        let ret = thread.step(ctx, &mut rfuel);
                         state = self.0.borrow_mut(&ctx);
                         if let Err(err) = ret {
                             state.unwind(&ctx, err.into());
