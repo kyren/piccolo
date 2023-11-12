@@ -377,13 +377,13 @@ impl<'gc> Thread<'gc> {
     }
 }
 
-pub(crate) struct LuaFrame<'gc, 'a> {
+pub(super) struct LuaFrame<'gc, 'a> {
     thread: Thread<'gc>,
     state: &'a mut ThreadState<'gc>,
     fuel: &'a mut Fuel,
 }
 
-pub(crate) struct LuaRegisters<'gc, 'a> {
+pub(super) struct LuaRegisters<'gc, 'a> {
     pub pc: &'a mut usize,
     pub stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
@@ -453,7 +453,7 @@ enum Frame<'gc> {
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Returns the active closure for this Lua frame
-    pub(crate) fn closure(&self) -> Closure<'gc> {
+    pub(super) fn closure(&self) -> Closure<'gc> {
         match self.state.frames.last() {
             Some(Frame::Lua { bottom, .. }) => match self.state.stack[*bottom] {
                 Value::Function(Function::Closure(c)) => c,
@@ -464,7 +464,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // returns a view of the Lua frame's registers
-    pub(crate) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
+    pub(super) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 bottom, base, pc, ..
@@ -485,7 +485,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Place the current frame's varargs at the given register, expecting the given count
-    pub(crate) fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), VMError> {
+    pub(super) fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), VMError> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
                 bottom,
@@ -521,7 +521,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    pub(crate) fn set_table_list(
+    pub(super) fn set_table_list(
         &mut self,
         mc: &Mutation<'gc>,
         table_base: RegisterIndex,
@@ -588,7 +588,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     // Call the function at the given register with the given arguments. On return, results will be
     // placed starting at the function register.
-    pub(crate) fn call_function(
+    pub(super) fn call_function(
         self,
         ctx: Context<'gc>,
         func: RegisterIndex,
@@ -659,7 +659,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Calls the function at the given index with a constant number of arguments without
     // invalidating the function or its arguments. Returns are placed *after* the function and its
     // aruments, and all registers past this are invalidated as normal.
-    pub(crate) fn call_function_keep(
+    pub(super) fn call_function_keep(
         self,
         ctx: Context<'gc>,
         func: RegisterIndex,
@@ -733,7 +733,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // places an optional single result of this function call at the given register.
     //
     // Nothing at all in the frame is invalidated, other than optionally placing the return value.
-    pub(crate) fn call_meta_function(
+    pub(super) fn call_meta_function(
         self,
         ctx: Context<'gc>,
         func: Function<'gc>,
@@ -800,7 +800,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     // Tail-call the function at the given register with the given arguments. Pops the current Lua
     // frame, pushing a new frame for the given function.
-    pub(crate) fn tail_call_function(
+    pub(super) fn tail_call_function(
         self,
         ctx: Context<'gc>,
         func: RegisterIndex,
@@ -876,7 +876,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     }
 
     // Return to the upper frame with results starting at the given register index.
-    pub(crate) fn return_upper(
+    pub(super) fn return_upper(
         self,
         mc: &Mutation<'gc>,
         start: RegisterIndex,
@@ -973,7 +973,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 }
 
 impl<'gc, 'a> LuaRegisters<'gc, 'a> {
-    pub(crate) fn open_upvalue(&mut self, mc: &Mutation<'gc>, reg: RegisterIndex) -> UpValue<'gc> {
+    pub(super) fn open_upvalue(&mut self, mc: &Mutation<'gc>, reg: RegisterIndex) -> UpValue<'gc> {
         let ind = self.base + reg.0 as usize;
         match self
             .open_upvalues
@@ -988,7 +988,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub(crate) fn get_upvalue(&self, upvalue: UpValue<'gc>) -> Value<'gc> {
+    pub(super) fn get_upvalue(&self, upvalue: UpValue<'gc>) -> Value<'gc> {
         match upvalue.0.get() {
             UpValueState::Open(upvalue_thread, ind) => {
                 if upvalue_thread == self.thread {
@@ -1005,7 +1005,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub(crate) fn set_upvalue(
+    pub(super) fn set_upvalue(
         &mut self,
         mc: &Mutation<'gc>,
         upvalue: UpValue<'gc>,
@@ -1029,7 +1029,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         }
     }
 
-    pub(crate) fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom_register: RegisterIndex) {
+    pub(super) fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom_register: RegisterIndex) {
         let bottom = self.base + bottom_register.0 as usize;
         let start = match self
             .open_upvalues
