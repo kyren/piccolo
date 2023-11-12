@@ -51,6 +51,10 @@ impl<'gc> Table<'gc> {
         Self::from_parts(mc, RawTable::new(mc), None)
     }
 
+    pub fn as_ptr(&self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
+    }
+
     pub fn from_parts(
         mc: &Mutation<'gc>,
         entries: RawTable<'gc>,

@@ -45,10 +45,10 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => write!(w, "{}", i),
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
-            Value::Table(t) => write!(w, "<table {:p}>", t.0),
-            Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.0),
+            Value::Table(t) => write!(w, "<table {:p}>", t.as_ptr()),
+            Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.as_ptr()),
             Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.as_ptr()),
-            Value::Thread(t) => write!(w, "<thread {:p}>", t.0),
+            Value::Thread(t) => write!(w, "<thread {:p}>", t.as_ptr()),
             Value::UserData(t) => write!(w, "<userdata {:p}>", t.as_ptr()),
         }
     }

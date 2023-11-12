@@ -51,7 +51,7 @@ pub struct BadThreadMode {
 
 #[derive(Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct Thread<'gc>(pub(crate) Gc<'gc, RefLock<ThreadState<'gc>>>);
+pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);
 
 impl<'gc> Debug for Thread<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -87,6 +87,10 @@ impl<'gc> Thread<'gc> {
                 error: None,
             }),
         ))
+    }
+
+    pub fn as_ptr(&self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
     }
 
     pub fn mode(self) -> ThreadMode {
@@ -373,16 +377,6 @@ impl<'gc> Thread<'gc> {
     }
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
-pub(crate) struct ThreadState<'gc> {
-    stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
-    open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
-    external_stack: Stack<'gc>,
-    error: Option<Error<'gc>>,
-}
-
 pub(crate) struct LuaFrame<'gc, 'a> {
     thread: Thread<'gc>,
     state: &'a mut ThreadState<'gc>,
@@ -397,6 +391,16 @@ pub(crate) struct LuaRegisters<'gc, 'a> {
     base: usize,
     open_upvalues: &'a mut vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
     thread: Thread<'gc>,
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+struct ThreadState<'gc> {
+    stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
+    open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    external_stack: Stack<'gc>,
+    error: Option<Error<'gc>>,
 }
 
 #[derive(Collect)]

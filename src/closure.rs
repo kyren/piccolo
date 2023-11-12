@@ -180,6 +180,10 @@ impl<'gc> Closure<'gc> {
         Ok(Closure(Gc::new(mc, ClosureState { proto, upvalues })))
     }
 
+    pub fn as_ptr(&self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
+    }
+
     /// Compile a top-level closure from source, using the globals table as the `_ENV` table.
     pub fn load(ctx: Context<'gc>, source: impl Read) -> Result<Closure<'gc>, ProtoCompileError> {
         Self::load_with_env(ctx, source, ctx.state.globals)
