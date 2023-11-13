@@ -109,7 +109,11 @@ pub fn index<'gc>(
                     }
                     MetaResult::Call(call) => {
                         stack.extend(call.args);
-                        Ok(CallbackReturn::Call(call.function, None).into())
+                        Ok(CallbackReturn::Call {
+                            function: call.function,
+                            then: None,
+                        }
+                        .into())
                     }
                 }
             })
@@ -185,7 +189,11 @@ pub fn new_index<'gc>(
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
-                    Ok(CallbackReturn::Call(call.function, None).into())
+                    Ok(CallbackReturn::Call {
+                        function: call.function,
+                        then: None,
+                    }
+                    .into())
                 } else {
                     Ok(CallbackReturn::Return)
                 }
@@ -216,7 +224,11 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Type
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
             AnyCallback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, stack| {
                 stack.push_front(v);
-                Ok(CallbackReturn::Call(call(ctx, f)?, None).into())
+                Ok(CallbackReturn::Call {
+                    function: call(ctx, f)?,
+                    then: None,
+                }
+                .into())
             })
             .into(),
         ),

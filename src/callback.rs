@@ -13,9 +13,18 @@ use crate::{Context, Error, Fuel, Function, Stack, Thread};
 pub enum CallbackReturn<'gc> {
     Return,
     Sequence(AnySequence<'gc>),
-    Yield(Option<AnySequence<'gc>>),
-    Call(Function<'gc>, Option<AnySequence<'gc>>),
-    Resume(Thread<'gc>, Option<AnySequence<'gc>>),
+    Yield {
+        to_thread: Option<Thread<'gc>>,
+        then: Option<AnySequence<'gc>>,
+    },
+    Call {
+        function: Function<'gc>,
+        then: Option<AnySequence<'gc>>,
+    },
+    Resume {
+        thread: Thread<'gc>,
+        then: Option<AnySequence<'gc>>,
+    },
 }
 
 pub trait Callback<'gc>: Collect {
@@ -175,6 +184,7 @@ pub enum SequencePoll<'gc> {
     /// finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
     /// resumed, or `Sequence::error` if the coroutine is resumed with an error.
     Yield {
+        to_thread: Option<Thread<'gc>>,
         is_tail: bool,
     },
     /// Call the given function with the arguments in the stack. If `is_tail` is true, then this

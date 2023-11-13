@@ -1,10 +1,10 @@
-use piccolo::{AnyCallback, CallbackReturn, Function, Lua, StaticError, Thread, Variadic};
+use piccolo::{AnyCallback, CallbackReturn, Executor, Function, Lua, StaticError, Variadic};
 
 #[test]
 fn function_compose_bind() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let composed_functions = Function::compose(
             &ctx,
             [
@@ -36,11 +36,12 @@ fn function_compose_bind() -> Result<(), StaticError> {
         )
         .bind(&ctx, 1)
         .bind(&ctx, (2, 1));
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, composed_functions, 1)?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, composed_functions, 1)))
     })?;
 
-    assert_eq!(lua.run_thread::<i64>(&thread)?, 33);
+    assert_eq!(lua.execute::<i64>(&executor)?, 33);
     Ok(())
 }

@@ -1,15 +1,15 @@
 use std::error::Error as StdError;
 use std::fs::File;
 
-use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
+use clap::{crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Function,
-    FunctionProto, Lua, ProtoCompileError, StaticError, StaticThread, Thread,
+    compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function,
+    FunctionProto, Lua, ProtoCompileError, StaticError, StaticExecutor,
 };
 
-fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), StaticError> {
+fn run_code(lua: &mut Lua, executor: &StaticExecutor, code: &str) -> Result<(), StaticError> {
     lua.try_run(|ctx| {
         let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
@@ -29,27 +29,29 @@ fn run_code(lua: &mut Lua, thread: &StaticThread, code: &str) -> Result<(), Stat
                     Ok(if stack.is_empty() {
                         CallbackReturn::Return
                     } else {
-                        CallbackReturn::Call(
-                            meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
-                            None,
-                        )
+                        CallbackReturn::Call {
+                            function: meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                            then: None,
+                        }
                     })
                 })
                 .into(),
             ],
         );
-        let thread = ctx.state.registry.fetch(thread);
-        thread.reset(&ctx)?;
-        thread.start(ctx, function, ())?;
+        let executor = ctx.state.registry.fetch(executor);
+        executor.restart(ctx, function, ());
         Ok(())
     })?;
 
-    lua.run_thread::<()>(&thread)
+    lua.execute::<()>(executor)
 }
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let mut editor = DefaultEditor::new()?;
-    let thread = lua.run(|ctx| ctx.state.registry.stash(&ctx, Thread::new(&ctx)));
+    let executor = lua.run(|ctx| {
+        let executor = Executor::new(&ctx);
+        ctx.state.registry.stash(&ctx, executor)
+    });
 
     loop {
         let mut prompt = "> ";
@@ -58,7 +60,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
         loop {
             line.push_str(&editor.readline(prompt)?);
 
-            match run_code(lua, &thread, &line) {
+            match run_code(lua, &executor, &line) {
                 Err(StaticError::Runtime(err))
                     if matches!(
                         err.downcast::<ProtoCompileError>(),
@@ -96,7 +98,6 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let matches = Command::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())
-        .author(crate_authors!(", "))
         .arg(
             Arg::new("repl")
                 .short('r')
@@ -115,18 +116,19 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::new(
             &ctx,
             FunctionProto::compile(ctx, file)?,
             Some(ctx.state.globals),
         )?;
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.run_thread(&thread)?;
+    lua.execute(&executor)?;
 
     if matches.contains_id("repl") {
         run_repl(&mut lua)?;

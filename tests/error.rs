@@ -1,13 +1,13 @@
 mod sizes;
 
-use piccolo::{error::LuaError, AnyCallback, Closure, Error, Lua, StaticError, Thread, Value};
+use piccolo::{error::LuaError, AnyCallback, Closure, Error, Executor, Lua, StaticError, Value};
 use thiserror::Error;
 
 #[test]
 fn error_unwind() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -18,16 +18,17 @@ fn error_unwind() -> Result<(), StaticError> {
                 do_error()
             "#[..],
         )?;
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.finish_thread(&thread);
+    lua.finish(&executor);
     lua.try_run(|ctx| {
-        match ctx.state.registry.fetch(&thread).take_return::<()>(ctx)? {
+        match ctx.state.registry.fetch(&executor).take_return::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
-            _ => panic!(),
+            _ => panic!("wrong error returned"),
         }
         Ok(())
     })
@@ -41,7 +42,7 @@ fn error_tostring() -> Result<(), StaticError> {
     #[error("test error")]
     struct TestError;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
         ctx.state.globals.set(ctx, "callback", callback)?;
 
@@ -54,10 +55,11 @@ fn error_tostring() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.run_thread(&thread)
+    lua.execute(&executor)
 }

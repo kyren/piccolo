@@ -363,14 +363,10 @@ pub(super) fn run_vm<'gc>(
                 source,
                 count,
             } => {
-                registers.stack_frame[dest.0 as usize] = Value::String(
-                    String::concat(
-                        ctx,
-                        &registers.stack_frame
-                            [source.0 as usize..source.0 as usize + count as usize],
-                    )
-                    .unwrap(),
-                );
+                registers.stack_frame[dest.0 as usize] = Value::String(String::concat(
+                    ctx,
+                    &registers.stack_frame[source.0 as usize..source.0 as usize + count as usize],
+                )?);
             }
 
             Operation::GetUpValue { source, dest } => {

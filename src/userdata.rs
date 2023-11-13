@@ -49,26 +49,26 @@ impl<'gc> AnyUserData<'gc> {
         Self::new::<StaticRoot<R>>(mc, StaticRoot { root: val })
     }
 
-    pub fn is<R>(&self) -> bool
+    pub fn is<R>(self) -> bool
     where
         R: for<'a> Rootable<'a>,
     {
         self.0.is::<R>()
     }
 
-    pub fn is_static<R: 'static>(&self) -> bool {
+    pub fn is_static<R: 'static>(self) -> bool {
         self.is::<StaticRoot<R>>()
     }
 
-    pub fn downcast<'a, R>(&'a self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
+    pub fn downcast<R>(self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
     where
         R: for<'b> Rootable<'b>,
     {
         self.0.downcast::<R>().ok_or(BadUserDataType)
     }
 
-    pub fn downcast_write<'a, R>(
-        &'a self,
+    pub fn downcast_write<R>(
+        self,
         mc: &Mutation<'gc>,
     ) -> Result<&'gc barrier::Write<Root<'gc, R>>, BadUserDataType>
     where
@@ -77,26 +77,26 @@ impl<'gc> AnyUserData<'gc> {
         self.0.downcast_write::<R>(mc).ok_or(BadUserDataType)
     }
 
-    pub fn downcast_static<'a, R: 'static>(&'a self) -> Result<&'gc R, BadUserDataType> {
+    pub fn downcast_static<R: 'static>(self) -> Result<&'gc R, BadUserDataType> {
         self.0
             .downcast::<StaticRoot<R>>()
             .map(|r| &r.root)
             .ok_or(BadUserDataType)
     }
 
-    pub fn metatable(&self) -> Option<Table<'gc>> {
+    pub fn metatable(self) -> Option<Table<'gc>> {
         self.0.metadata().get()
     }
 
     pub fn set_metatable(
-        &self,
+        self,
         mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
         self.0.write_metadata(mc).unlock().replace(metatable)
     }
 
-    pub fn as_ptr(&self) -> *const () {
+    pub fn as_ptr(self) -> *const () {
         self.0.as_ptr()
     }
 }

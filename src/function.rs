@@ -77,7 +77,10 @@ impl<'gc> Function<'gc> {
             |(f, args), ctx, fuel, stack| {
                 stack.into_front(ctx, args.clone());
                 match *f {
-                    Function::Closure(c) => Ok(CallbackReturn::Call(c.into(), None)),
+                    Function::Closure(c) => Ok(CallbackReturn::Call {
+                        function: c.into(),
+                        then: None,
+                    }),
                     Function::Callback(c) => c.call(ctx, fuel, stack),
                 }
             },

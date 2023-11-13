@@ -1,9 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
-use thiserror::Error;
-
-pub const RECURSION_LIMIT: u8 = u8::MAX;
-
 /// A counter for tracking the amount of time spent in `Thread::step` and in callbacks.
 ///
 /// The fuel unit is *approximately* one VM instruction, but this is just a rough estimate
@@ -15,7 +9,6 @@ pub const RECURSION_LIMIT: u8 = u8::MAX;
 pub struct Fuel {
     fuel: i32,
     interrupted: bool,
-    recursion_level: u8,
 }
 
 impl Fuel {
@@ -27,7 +20,6 @@ impl Fuel {
         Self {
             fuel,
             interrupted: false,
-            recursion_level: 0,
         }
     }
 
@@ -86,62 +78,5 @@ impl Fuel {
     /// Returns true if we have positive fuel remaining *and* we have not been interrupted.
     pub fn should_continue(&self) -> bool {
         self.fuel > 0 && !self.interrupted
-    }
-
-    /// Mark that we are about to run a Rust callback that is potentially controlled by untrusted
-    /// code.
-    ///
-    /// Increments the current recursion level if it is below `RECURSION_LIMIT`. If the recursion
-    /// level would rise above the limit, this returns a recursion error, otherwise returns a
-    /// guard that restores the previous recursion level on drop. This prevents untrusted code from
-    /// consuming arbitrary Rust stack depth and execution time by tricking Rust code into recursing
-    /// endlessly.
-    ///
-    /// By default, the recursion level is automatically incremented whenever `Thread::step` is
-    /// about to trigger a callback, so this should almost never be necessary to call explicitly.
-    ///
-    /// With the normal stdlib, arbitrary recursion is only possible by (ab)using coroutines. Normal
-    /// Lua recursion and Rust code "calling" Lua code via a `Sequence::poll` does not actually use
-    /// the real Rust call stack, and cannot lead to using unbounded time or unbounded Rust stack
-    /// space. Coroutines create their own inner `Thread`s and step them inside a `Sequence`, so
-    /// they can eventually trigger a recursion limit in pathological cases.
-    pub fn recurse(&mut self) -> Result<Recurse<'_>, RecursionLimit> {
-        if self.recursion_level == RECURSION_LIMIT {
-            return Err(RecursionLimit);
-        }
-
-        self.recursion_level += 1;
-        Ok(Recurse(self))
-    }
-
-    /// Returns the current Rust callback recursion level.
-    pub fn recursion_level(&self) -> u8 {
-        self.recursion_level
-    }
-}
-
-#[derive(Debug, Copy, Clone, Error)]
-#[error("callback recursion limit reached")]
-pub struct RecursionLimit;
-
-pub struct Recurse<'a>(&'a mut Fuel);
-
-impl<'a> Drop for Recurse<'a> {
-    fn drop(&mut self) {
-        self.recursion_level -= 1;
-    }
-}
-
-impl<'a> Deref for Recurse<'a> {
-    type Target = Fuel;
-
-    fn deref(&self) -> &Fuel {
-        self.0
-    }
-}
-
-impl<'a> DerefMut for Recurse<'a> {
-    fn deref_mut(&mut self) -> &mut Fuel {
-        self.0
     }
 }

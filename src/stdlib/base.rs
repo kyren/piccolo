@@ -25,7 +25,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         }
                         MetaResult::Call(call) => {
                             stack.replace(ctx, Variadic(call.args));
-                            Ok(CallbackReturn::Call(call.function, None))
+                            Ok(CallbackReturn::Call {
+                                function: call.function,
+                                then: None,
+                            })
                         }
                     }
                 }
@@ -95,10 +98,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 let function = meta_ops::call(ctx, stack.get(0))?;
                 stack.pop_front();
-                Ok(CallbackReturn::Call(
+                Ok(CallbackReturn::Call {
                     function,
-                    Some(AnySequence::new(&ctx, PCall)),
-                ))
+                    then: Some(AnySequence::new(&ctx, PCall)),
+                })
             }),
         )
         .unwrap();
@@ -237,9 +240,12 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 } {
                     let pairs = mt.get(ctx, MetaMethod::Pairs);
                     if !pairs.is_nil() {
-                        let f = meta_ops::call(ctx, pairs)?;
+                        let function = meta_ops::call(ctx, pairs)?;
                         stack.replace(ctx, (table, Value::Nil));
-                        return Ok(CallbackReturn::Call(f, None));
+                        return Ok(CallbackReturn::Call {
+                            function,
+                            then: None,
+                        });
                     }
                 }
 
@@ -279,10 +285,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
 
                 stack.extend(call.args);
-                CallbackReturn::Call(
-                    call.function,
-                    Some(AnySequence::new(&ctx, INext(next_index))),
-                )
+                CallbackReturn::Call {
+                    function: call.function,
+                    then: Some(AnySequence::new(&ctx, INext(next_index))),
+                }
             }
         })
     });

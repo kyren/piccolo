@@ -1,5 +1,7 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{AnyCallback, AnyUserData, CallbackReturn, Closure, Lua, StaticError, Thread, Value};
+use piccolo::{
+    AnyCallback, AnyUserData, CallbackReturn, Closure, Executor, Lua, StaticError, Value,
+};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -31,7 +33,7 @@ fn userdata() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -39,18 +41,19 @@ fn userdata() -> Result<(), StaticError> {
                 return userdata, type(userdata) == "userdata" and type(callback) == "function"
             "#[..],
         )?;
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.finish_thread(&thread);
+    lua.finish(&executor);
 
     lua.try_run(|ctx| {
         let (ud, res) = ctx
             .state
             .registry
-            .fetch(&thread)
+            .fetch(&executor)
             .take_return::<(AnyUserData, bool)>(ctx)??;
         assert!(res);
         let data = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();

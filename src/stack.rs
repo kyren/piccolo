@@ -117,7 +117,19 @@ impl<'gc> Extend<Value<'gc>> for Stack<'gc> {
     }
 }
 
+impl<'a, 'gc> Extend<Value<'gc>> for &'a mut Stack<'gc> {
+    fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
 impl<'a, 'gc: 'a> Extend<&'a Value<'gc>> for Stack<'gc> {
+    fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
+impl<'a, 'b, 'gc: 'a> Extend<&'a Value<'gc>> for &'b mut Stack<'gc> {
     fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
         self.0.extend(iter);
     }

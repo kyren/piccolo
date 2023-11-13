@@ -97,30 +97,30 @@ impl<'gc, M> AnyValue<'gc, M> {
         Self(unsafe { Gc::cast::<Header<M>>(val) })
     }
 
-    pub fn metadata(&self) -> &'gc M {
+    pub fn metadata(self) -> &'gc M {
         &self.0.as_ref().metadata
     }
 
-    pub fn write_metadata(&self, mc: &Mutation<'gc>) -> &'gc Write<M> {
+    pub fn write_metadata(self, mc: &Mutation<'gc>) -> &'gc Write<M> {
         gc_arena::barrier::field!(Gc::write(mc, self.0), Header, metadata)
     }
 
-    pub fn as_ptr(&self) -> *const () {
+    pub fn as_ptr(self) -> *const () {
         Gc::as_ptr(self.0) as *const ()
     }
 
-    pub fn type_id(&self) -> TypeId {
+    pub fn type_id(self) -> TypeId {
         self.0.type_id
     }
 
-    pub fn is<R>(&self) -> bool
+    pub fn is<R>(self) -> bool
     where
         R: for<'b> Rootable<'b>,
     {
         TypeId::of::<R>() == self.0.type_id
     }
 
-    pub fn downcast<R>(&self) -> Option<&'gc Root<'gc, R>>
+    pub fn downcast<R>(self) -> Option<&'gc Root<'gc, R>>
     where
         R: for<'b> Rootable<'b>,
     {
@@ -132,7 +132,7 @@ impl<'gc, M> AnyValue<'gc, M> {
         }
     }
 
-    pub fn downcast_write<R>(&self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
+    pub fn downcast_write<R>(self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
     where
         R: for<'b> Rootable<'b>,
     {

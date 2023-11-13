@@ -8,8 +8,8 @@ use hashbrown::{hash_map, HashMap};
 use rustc_hash::FxHasher;
 
 use crate::{
-    any::AnyValue, AnyCallback, AnyUserData, Closure, Context, Function, String, Table, Thread,
-    Value,
+    any::AnyValue, AnyCallback, AnyUserData, Closure, Context, Executor, Function, String, Table,
+    Thread, Value,
 };
 
 #[derive(Clone)]
@@ -73,6 +73,17 @@ pub struct StaticString(pub DynamicRoot<Rootable![String<'_>]>);
 impl fmt::Debug for StaticString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("StaticString")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct StaticExecutor(pub DynamicRoot<Rootable![Executor<'_>]>);
+
+impl fmt::Debug for StaticExecutor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StaticExecutor")
             .field(&self.0.as_ptr())
             .finish()
     }
@@ -277,6 +288,7 @@ reg_type!(Closure, StaticClosure);
 reg_type!(AnyCallback, StaticCallback);
 reg_type!(Thread, StaticThread);
 reg_type!(AnyUserData, StaticUserData);
+reg_type!(Executor, StaticExecutor);
 
 macro_rules! fetch_type {
     ($r:ident, $t:ident) => {
@@ -296,6 +308,7 @@ fetch_type!(StaticClosure, Closure);
 fetch_type!(StaticCallback, AnyCallback);
 fetch_type!(StaticThread, Thread);
 fetch_type!(StaticUserData, AnyUserData);
+fetch_type!(StaticExecutor, Executor);
 
 impl<'gc> Stashable<'gc> for Function<'gc> {
     type Stashed = StaticFunction;

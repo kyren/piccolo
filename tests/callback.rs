@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Error, Function, IntoValue, Lua, Sequence,
-    SequencePoll, StaticError, String, Thread, Value,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Error, Executor, Function, IntoValue, Lua,
+    Sequence, SequencePoll, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -9,8 +9,7 @@ fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, fuel, stack| {
-            assert_eq!(fuel.recursion_level(), 1);
+        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
@@ -18,7 +17,7 @@ fn callback() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -29,12 +28,13 @@ fn callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.run_thread::<()>(&thread)?;
+    lua.execute::<()>(&executor)?;
     Ok(())
 }
 
@@ -51,7 +51,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -59,12 +59,13 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    assert_eq!(lua.run_thread::<(i64, i64, i64)>(&thread)?, (1, 2, 3));
+    assert_eq!(lua.execute::<(i64, i64, i64)>(&executor)?, (1, 2, 3));
     Ok(())
 }
 
@@ -95,20 +96,23 @@ fn loopy_callback() -> Result<(), StaticError> {
                 }
             }
 
-            Ok(CallbackReturn::Call(
-                AnyCallback::from_fn(&ctx, |_, _, stack| {
+            Ok(CallbackReturn::Call {
+                function: AnyCallback::from_fn(&ctx, |_, _, stack| {
                     stack.push_back(3.into());
-                    Ok(CallbackReturn::Yield(None))
+                    Ok(CallbackReturn::Yield {
+                        to_thread: None,
+                        then: None,
+                    })
                 })
                 .into(),
-                Some(AnySequence::new(&ctx, Cont(4))),
-            ))
+                then: Some(AnySequence::new(&ctx, Cont(4))),
+            })
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -133,12 +137,13 @@ fn loopy_callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    assert!(lua.run_thread::<bool>(&thread)?);
+    assert!(lua.execute::<bool>(&executor)?);
     Ok(())
 }
 
@@ -165,7 +170,10 @@ fn yield_sequence() -> Result<(), StaticError> {
                             assert_eq!((a, b), (5, 6));
                             stack.extend([Value::Integer(7), Value::Integer(8)]);
                             self.0 = 1;
-                            Ok(SequencePoll::Yield { is_tail: false })
+                            Ok(SequencePoll::Yield {
+                                to_thread: None,
+                                is_tail: false,
+                            })
                         }
                         1 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
@@ -182,13 +190,16 @@ fn yield_sequence() -> Result<(), StaticError> {
             let (a, b): (i32, i32) = stack.consume(ctx)?;
             assert_eq!((a, b), (1, 2));
             stack.extend([Value::Integer(3), Value::Integer(4)]);
-            Ok(CallbackReturn::Yield(Some(AnySequence::new(&ctx, Cont(0)))))
+            Ok(CallbackReturn::Yield {
+                to_thread: None,
+                then: Some(AnySequence::new(&ctx, Cont(0))),
+            })
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
             &br#"
@@ -208,19 +219,20 @@ fn yield_sequence() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.run_thread(&thread)
+    lua.execute(&executor)
 }
 
 #[test]
 fn resume_with_err() {
     let mut lua = Lua::core();
 
-    let thread = lua.run(|ctx| {
+    let executor = lua.run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -250,7 +262,10 @@ fn resume_with_err() {
             assert!(stack.len() == 1);
             assert_eq!(stack.consume::<String>(ctx)?, "resume");
             stack.replace(ctx, "return");
-            Ok(CallbackReturn::Yield(Some(AnySequence::new(&ctx, Cont))))
+            Ok(CallbackReturn::Yield {
+                to_thread: None,
+                then: Some(AnySequence::new(&ctx, Cont)),
+            })
         });
 
         let thread = Thread::new(&ctx);
@@ -260,28 +275,28 @@ fn resume_with_err() {
 
         thread.resume(ctx, "resume").unwrap();
 
-        ctx.state.registry.stash(&ctx, thread)
+        ctx.state.registry.stash(&ctx, Executor::run(&ctx, thread))
     });
 
-    lua.finish_thread(&thread);
+    lua.finish(&executor);
 
     lua.run(|ctx| {
-        let thread = ctx.state.registry.fetch(&thread);
-        assert!(thread.take_return::<String>(ctx).unwrap().unwrap() == "return");
-        thread
+        let executor = ctx.state.registry.fetch(&executor);
+        assert!(executor.take_return::<String>(ctx).unwrap().unwrap() == "return");
+        executor
             .resume_err(&ctx, "an error".into_value(ctx).into())
             .unwrap();
     });
 
-    lua.finish_thread(&thread);
+    lua.finish(&executor);
 
     lua.run(|ctx| {
-        let thread = ctx.state.registry.fetch(&thread);
-        match thread.take_return::<()>(ctx).unwrap() {
+        let executor = ctx.state.registry.fetch(&executor);
+        match executor.take_return::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
                 assert!(matches!(val.0, Value::String(s) if s == "a different error"))
             }
-            _ => panic!(),
+            _ => panic!("wrong error returned"),
         }
     });
 }

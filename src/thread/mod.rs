@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::TypeError;
 
 pub use self::{
-    thread::{BadThreadMode, Thread, ThreadMode},
+    thread::{BadThreadMode, Executor, Thread, ThreadMode},
     vm::BinaryOperatorError,
 };
 

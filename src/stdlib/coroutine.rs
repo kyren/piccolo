@@ -2,7 +2,7 @@ use gc_arena::Collect;
 
 use crate::{
     meta_ops, AnyCallback, AnySequence, CallbackReturn, Context, Fuel, Sequence, SequencePoll,
-    Stack, Table, Thread, ThreadMode, Value, Variadic,
+    Stack, Table, Thread, ThreadMode, Variadic,
 };
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
@@ -28,8 +28,8 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             ctx,
             "resume",
             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                let (thread, args): (Thread, Variadic<Vec<Value>>) = stack.consume(ctx)?;
-                thread.resume(ctx, args)?;
+                let thread: Thread = stack.from_front(ctx)?;
+                thread.resume(ctx, Variadic(stack.drain(..)))?;
 
                 #[derive(Collect)]
                 #[collect(require_static)]
@@ -58,10 +58,23 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                     }
                 }
 
-                Ok(CallbackReturn::Resume(
+                Ok(CallbackReturn::Resume {
                     thread,
-                    Some(AnySequence::new(&ctx, ResumeHandler)),
-                ))
+                    then: Some(AnySequence::new(&ctx, ResumeHandler)),
+                })
+            }),
+        )
+        .unwrap();
+
+    coroutine
+        .set(
+            ctx,
+            "continue",
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                let thread: Thread = stack.from_front(ctx)?;
+                thread.resume(ctx, Variadic(stack.into_iter()))?;
+
+                Ok(CallbackReturn::Resume { thread, then: None })
             }),
         )
         .unwrap();
@@ -75,10 +88,10 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                 stack.replace(
                     ctx,
                     match thread.mode() {
-                        ThreadMode::Stopped | ThreadMode::Result => "dead",
-                        ThreadMode::Running => "running",
+                        ThreadMode::Stopped => "dead",
+                        ThreadMode::Running | ThreadMode::Waiting => "running",
                         ThreadMode::Normal => "normal",
-                        ThreadMode::Suspended => "suspended",
+                        ThreadMode::Result | ThreadMode::Suspended => "suspended",
                     },
                 );
                 Ok(CallbackReturn::Return)
@@ -90,7 +103,26 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "yield",
-            AnyCallback::from_fn(&ctx, |_, _, _| Ok(CallbackReturn::Yield(None))),
+            AnyCallback::from_fn(&ctx, |_, _, _| {
+                Ok(CallbackReturn::Yield {
+                    to_thread: None,
+                    then: None,
+                })
+            }),
+        )
+        .unwrap();
+
+    coroutine
+        .set(
+            ctx,
+            "yieldto",
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                let thread: Thread = stack.from_front(ctx)?;
+                Ok(CallbackReturn::Yield {
+                    to_thread: Some(thread),
+                    then: None,
+                })
+            }),
         )
         .unwrap();
 

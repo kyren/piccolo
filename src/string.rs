@@ -128,11 +128,11 @@ impl<'gc> String<'gc> {
         ))
     }
 
-    pub fn stored_hash(&self) -> u64 {
+    pub fn stored_hash(self) -> u64 {
         self.0.hash
     }
 
-    pub fn as_bytes(&self) -> &'gc [u8] {
+    pub fn as_bytes(self) -> &'gc [u8] {
         // SAFETY: `&'gc [u8]` has the correct lifetime because `Gc::as_ref` also returns `&'gc T`.
         unsafe {
             match self.0.buffer {
@@ -150,11 +150,11 @@ impl<'gc> String<'gc> {
         }
     }
 
-    pub fn to_str(&self) -> Result<&'gc str, Utf8Error> {
+    pub fn to_str(self) -> Result<&'gc str, Utf8Error> {
         str::from_utf8(self.as_bytes())
     }
 
-    pub fn to_str_lossy(&self) -> Cow<'gc, str> {
+    pub fn to_str_lossy(self) -> Cow<'gc, str> {
         StdString::from_utf8_lossy(self.as_bytes())
     }
 }
@@ -215,7 +215,7 @@ impl<'gc> String<'gc> {
         Ok(ctx.state.strings.intern(&ctx, &bytes))
     }
 
-    pub fn len(&self) -> i64 {
+    pub fn len(self) -> i64 {
         self.as_bytes().len().try_into().unwrap()
     }
 }
@@ -300,7 +300,7 @@ impl<'gc> InternedDynStrings<'gc> {
         ))
     }
 
-    fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
+    fn intern(self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
         // SAFETY: If a new string is added, we call the write barrier.
         let mut dyn_strings = unsafe { self.0 .0.unlock_unchecked() }.borrow_mut();
 
@@ -360,7 +360,7 @@ impl<'gc> InternedStaticStrings<'gc> {
         ))
     }
 
-    fn intern(&self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
+    fn intern(self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
         let key = StaticCollect(s as *const _);
 
         // SAFETY: If a new string is added, we call the write barrier.
@@ -392,11 +392,11 @@ impl<'gc> InternedStringSet<'gc> {
         }
     }
 
-    pub fn intern(&self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
+    pub fn intern(self, mc: &Mutation<'gc>, s: &[u8]) -> String<'gc> {
         self.dyn_strings.intern(mc, s)
     }
 
-    pub fn intern_static(&self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
+    pub fn intern_static(self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
         self.static_strings.intern(mc, s)
     }
 }

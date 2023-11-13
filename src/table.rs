@@ -51,7 +51,7 @@ impl<'gc> Table<'gc> {
         Self::from_parts(mc, RawTable::new(mc), None)
     }
 
-    pub fn as_ptr(&self) -> *const () {
+    pub fn as_ptr(self) -> *const () {
         Gc::as_ptr(self.0) as *const ()
     }
 
@@ -63,12 +63,12 @@ impl<'gc> Table<'gc> {
         Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
     }
 
-    pub fn get<K: IntoValue<'gc>>(&self, ctx: Context<'gc>, key: K) -> Value<'gc> {
+    pub fn get<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
         self.get_value(key.into_value(ctx))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
-        &self,
+        self,
         ctx: Context<'gc>,
         key: K,
         value: V,
@@ -76,12 +76,12 @@ impl<'gc> Table<'gc> {
         self.set_value(&ctx, key.into_value(ctx), value.into_value(ctx))
     }
 
-    pub fn get_value(&self, key: Value<'gc>) -> Value<'gc> {
+    pub fn get_value(self, key: Value<'gc>) -> Value<'gc> {
         self.0.borrow().entries.get(key)
     }
 
     pub fn set_value(
-        &self,
+        self,
         mc: &Mutation<'gc>,
         key: Value<'gc>,
         value: Value<'gc>,
@@ -96,7 +96,7 @@ impl<'gc> Table<'gc> {
     ///
     /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
     /// length.
-    pub fn length(&self) -> i64 {
+    pub fn length(self) -> i64 {
         self.0.borrow().entries.length()
     }
 
@@ -110,16 +110,16 @@ impl<'gc> Table<'gc> {
     /// If given Nil, it will return the first pair in the table. If given a key that is present
     /// in the table, it will return the next pair in iteration order. If given a key that is not
     /// present in the table, the behavior is unspecified.
-    pub fn next(&self, key: Value<'gc>) -> NextValue<'gc> {
+    pub fn next(self, key: Value<'gc>) -> NextValue<'gc> {
         self.0.borrow().entries.next(key)
     }
 
-    pub fn metatable(&self) -> Option<Table<'gc>> {
+    pub fn metatable(self) -> Option<Table<'gc>> {
         self.0.borrow().metatable
     }
 
     pub fn set_metatable(
-        &self,
+        self,
         mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {

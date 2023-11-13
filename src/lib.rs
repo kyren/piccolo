@@ -33,13 +33,13 @@ pub use self::{
     lua::{Context, Lua, State},
     meta_ops::MetaMethod,
     registry::{
-        Registry, Singleton, StaticCallback, StaticClosure, StaticFunction, StaticTable,
-        StaticThread, StaticUserData, StaticValue,
+        Registry, Singleton, StaticCallback, StaticClosure, StaticExecutor, StaticFunction,
+        StaticTable, StaticThread, StaticUserData, StaticValue,
     },
     stack::Stack,
     string::{String, StringError},
     table::{InvalidTableKey, Table},
-    thread::{BadThreadMode, Thread, ThreadMode, VMError},
+    thread::{BadThreadMode, Executor, Thread, ThreadMode, VMError},
     userdata::{AnyUserData, BadUserDataType},
     value::Value,
 };

@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use piccolo::{io, Closure, Lua, Thread};
+use piccolo::{io, Closure, Executor, Lua};
 
 #[test]
 fn test_scripts() {
@@ -24,11 +24,12 @@ fn test_scripts() {
                 if let Err(err) = lua
                     .try_run(|ctx| {
                         let closure = Closure::load(ctx, file)?;
-                        let thread = Thread::new(&ctx);
-                        thread.start(ctx, closure.into(), ())?;
-                        Ok(ctx.state.registry.stash(&ctx, thread))
+                        Ok(ctx
+                            .state
+                            .registry
+                            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
                     })
-                    .and_then(|thread| lua.run_thread::<()>(&thread))
+                    .and_then(|executor| lua.execute::<()>(&executor))
                 {
                     let _ = writeln!(stdout(), "error encountered running: {:?}", err);
                     file_failed = true;

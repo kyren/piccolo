@@ -1,4 +1,4 @@
-use piccolo::{AnyCallback, CallbackReturn, Closure, Lua, StaticError, Thread, ThreadMode};
+use piccolo::{AnyCallback, CallbackReturn, Closure, Executor, Fuel, Lua, StaticError, ThreadMode};
 
 #[test]
 fn test_interrupt() -> Result<(), StaticError> {
@@ -13,17 +13,20 @@ fn test_interrupt() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let thread = lua.try_run(|ctx| {
+    let executor = lua.try_run(|ctx| {
         let closure = Closure::load(ctx, &b"callback(); abort()"[..])?;
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, closure.into(), ())?;
-        Ok(ctx.state.registry.stash(&ctx, thread))
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.finish_thread(&thread);
-
     lua.run(|ctx| {
-        assert!(ctx.state.registry.fetch(&thread).mode() == ThreadMode::Normal);
+        let executor = ctx.state.registry.fetch(&executor);
+        let mut fuel = Fuel::with_fuel(i32::MAX);
+        assert!(!executor.step(ctx, &mut fuel));
+        assert!(fuel.is_interrupted());
+        assert!(executor.mode() == ThreadMode::Normal)
     });
 
     Ok(())

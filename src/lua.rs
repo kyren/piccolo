@@ -3,10 +3,9 @@ use std::ops;
 use gc_arena::{metrics::Metrics, Arena, Collect, Mutation, Rootable};
 
 use crate::{
-    error::RuntimeError,
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, Fuel, Registry, StaticError, StaticThread, Table, ThreadMode,
+    Error, FromMultiValue, Fuel, Registry, StaticError, StaticExecutor, Table,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -139,45 +138,28 @@ impl Lua {
         self.run(move |ctx| f(ctx).map_err(Error::into_static))
     }
 
-    /// Will run the thread until it is out fo the `ThreadMode::Normal` state *or* a callback
-    /// interrupts it (via `Fuel`).
-    pub fn finish_thread(&mut self, thread: &StaticThread) {
+    /// Run the given executor to completion.
+    pub fn finish(&mut self, executor: &StaticExecutor) {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
             let mut fuel = Fuel::with_fuel(FUEL_PER_GC);
 
             if self.run(|ctx| {
-                let thread = ctx.state.registry.fetch(thread);
-                match thread.mode() {
-                    ThreadMode::Normal => {
-                        thread.step(ctx, &mut fuel).unwrap();
-                        false
-                    }
-                    _ => true,
-                }
+                let executor = ctx.state.registry.fetch(executor);
+                executor.step(ctx, &mut fuel)
             }) {
-                break;
-            }
-
-            if fuel.is_interrupted() {
                 break;
             }
         }
     }
 
-    pub fn run_thread<R: for<'gc> FromMultiValue<'gc>>(
+    /// Run the given executor to completion and then take return values from the returning thread.
+    pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
-        thread: &StaticThread,
+        executor: &StaticExecutor,
     ) -> Result<R, StaticError> {
-        self.finish_thread(thread);
-        self.run(|ctx| {
-            ctx.state
-                .registry
-                .fetch(thread)
-                .take_return::<R>(ctx)
-                .map_err(RuntimeError::from)?
-                .map_err(Error::into_static)
-        })
+        self.finish(executor);
+        self.try_run(|ctx| ctx.state.registry.fetch(executor).take_return::<R>(ctx)?)
     }
 }
