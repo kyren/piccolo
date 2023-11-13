@@ -396,12 +396,21 @@ impl<'gc> Executor<'gc> {
                                 }
                                 CallbackReturn::Resume { thread, then } => {
                                     top_state.return_ext(fuel, ExternalReturn::Resume(then));
-                                    if top_state.frames.len() == 1 {
-                                        // Tail call the thread resume if we can.
-                                        assert!(matches!(top_state.frames[0], Frame::WaitThread));
-                                        thread_stack.pop();
+                                    if let Err(err) = thread
+                                        .resume(ctx, Variadic(top_state.take_return().unwrap()))
+                                    {
+                                        top_state.unwind(&ctx, err.into());
+                                    } else {
+                                        if top_state.frames.len() == 1 {
+                                            // Tail call the thread resume if we can.
+                                            assert!(matches!(
+                                                top_state.frames[0],
+                                                Frame::WaitThread
+                                            ));
+                                            thread_stack.pop();
+                                        }
+                                        thread_stack.push(thread);
                                     }
-                                    thread_stack.push(thread);
                                 }
                             },
 
@@ -477,12 +486,21 @@ impl<'gc> Executor<'gc> {
                                             Some(sequence)
                                         }),
                                     );
-                                    if top_state.frames.len() == 1 {
-                                        // Tail call the thread resume if we can.
-                                        assert!(matches!(top_state.frames[0], Frame::WaitThread));
-                                        thread_stack.pop();
+                                    if let Err(err) = thread
+                                        .resume(ctx, Variadic(top_state.take_return().unwrap()))
+                                    {
+                                        top_state.unwind(&ctx, err.into());
+                                    } else {
+                                        if top_state.frames.len() == 1 {
+                                            // Tail call the thread resume if we can.
+                                            assert!(matches!(
+                                                top_state.frames[0],
+                                                Frame::WaitThread
+                                            ));
+                                            thread_stack.pop();
+                                        }
+                                        thread_stack.push(thread);
                                     }
-                                    thread_stack.push(thread);
                                 }
                             },
                             Err(error) => top_state.unwind(&ctx, error),
@@ -1452,7 +1470,8 @@ impl<'gc> ThreadState<'gc> {
                 if let Some(sequence) = sequence {
                     self.frames.push(Frame::Sequence(sequence));
                 }
-                self.frames.push(Frame::WaitThread)
+                self.frames.push(Frame::WaitThread);
+                self.frames.push(Frame::HasResult);
             }
         }
     }
