@@ -1,4 +1,5 @@
 use std::{
+    cell::RefMut,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     mem,
@@ -227,7 +228,7 @@ impl<'gc> Thread<'gc> {
 /// it is run on the same executor calling the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Executor<'gc>(Gc<'gc, RefLock<vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>>>);
+pub struct Executor<'gc>(Gc<'gc, RefLock<ExecutorState<'gc>>>);
 
 impl<'gc> PartialEq for Executor<'gc> {
     fn eq(&self, other: &Executor<'gc>) -> bool {
@@ -247,7 +248,7 @@ impl<'gc> Executor<'gc> {
     pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Self {
         let mut thread_stack = vec::Vec::new_in(MetricsAlloc::new(mc));
         thread_stack.push(thread);
-        Executor(Gc::new(mc, RefLock::new(thread_stack)))
+        Executor(Gc::new(mc, RefLock::new(ExecutorState { thread_stack })))
     }
 
     /// Creates a new `Executor` with a new `Thread` running the given function.
@@ -262,11 +263,11 @@ impl<'gc> Executor<'gc> {
     }
 
     pub fn mode(self) -> ThreadMode {
-        if let Ok(thread_stack) = self.0.try_borrow() {
-            if thread_stack.len() > 1 {
+        if let Ok(state) = self.0.try_borrow() {
+            if state.thread_stack.len() > 1 {
                 ThreadMode::Normal
             } else {
-                thread_stack[0].mode()
+                state.thread_stack[0].mode()
             }
         } else {
             ThreadMode::Running
@@ -282,10 +283,10 @@ impl<'gc> Executor<'gc> {
     /// `true` is returned, there is only one thread remaining on the execution stack and it is no
     /// longer in the 'Normal' state.
     pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
+        let mut state = self.0.borrow_mut(&ctx);
 
         loop {
-            let mut top_thread = thread_stack.last().copied().unwrap();
+            let mut top_thread = state.thread_stack.last().copied().unwrap();
             let mut res_thread = None;
             match top_thread.mode() {
                 ThreadMode::Normal => {}
@@ -293,12 +294,12 @@ impl<'gc> Executor<'gc> {
                     panic!("`Executor` thread already running")
                 }
                 _ => {
-                    if thread_stack.len() == 1 {
+                    if state.thread_stack.len() == 1 {
                         break true;
                     } else {
-                        thread_stack.pop();
+                        state.thread_stack.pop();
                         res_thread = Some(top_thread);
-                        top_thread = thread_stack.last().copied().unwrap();
+                        top_thread = state.thread_stack.last().copied().unwrap();
                     }
                 }
             }
@@ -319,7 +320,7 @@ impl<'gc> Executor<'gc> {
                             match res_state.take_return() {
                                 Ok(vals) => {
                                     top_state.external_stack.extend(vals);
-                                    top_state.return_ext(fuel, ExternalReturn::Return);
+                                    top_state.return_ext(fuel);
                                 }
                                 Err(err) => {
                                     top_state.unwind(&ctx, err);
@@ -370,50 +371,7 @@ impl<'gc> Executor<'gc> {
                         );
 
                         match seq {
-                            Ok(ret) => match ret {
-                                CallbackReturn::Return => {
-                                    top_state.return_ext(fuel, ExternalReturn::Return);
-                                }
-                                CallbackReturn::Sequence(s) => {
-                                    top_state.return_ext(fuel, ExternalReturn::Sequence(s));
-                                }
-                                CallbackReturn::Yield { to_thread, then } => {
-                                    top_state.return_ext(fuel, ExternalReturn::Yield(then));
-                                    if let Some(to_thread) = to_thread {
-                                        if let Err(err) = to_thread
-                                            .resume(ctx, Variadic(top_state.take_return().unwrap()))
-                                        {
-                                            top_state.unwind(&ctx, err.into());
-                                        } else {
-                                            thread_stack.pop();
-                                            thread_stack.push(to_thread);
-                                        }
-                                    }
-                                }
-                                CallbackReturn::Call { function, then } => {
-                                    top_state
-                                        .return_ext(fuel, ExternalReturn::Call(function, then));
-                                }
-                                CallbackReturn::Resume { thread, then } => {
-                                    top_state.return_ext(fuel, ExternalReturn::Resume(then));
-                                    if let Err(err) = thread
-                                        .resume(ctx, Variadic(top_state.take_return().unwrap()))
-                                    {
-                                        top_state.unwind(&ctx, err.into());
-                                    } else {
-                                        if top_state.frames.len() == 1 {
-                                            // Tail call the thread resume if we can.
-                                            assert!(matches!(
-                                                top_state.frames[0],
-                                                Frame::WaitThread
-                                            ));
-                                            thread_stack.pop();
-                                        }
-                                        thread_stack.push(thread);
-                                    }
-                                }
-                            },
-
+                            Ok(ret) => state.callback_ret(ctx, fuel, top_state, ret),
                             Err(error) => top_state.unwind(&ctx, error),
                         }
                     }
@@ -440,69 +398,33 @@ impl<'gc> Executor<'gc> {
                         );
 
                         match fin {
-                            Ok(ret) => match ret {
-                                SequencePoll::Pending => {
-                                    top_state.return_ext(fuel, ExternalReturn::Sequence(sequence));
-                                }
-                                SequencePoll::Return => {
-                                    top_state.return_ext(fuel, ExternalReturn::Return);
-                                }
-                                SequencePoll::Yield { to_thread, is_tail } => {
-                                    top_state.return_ext(
-                                        fuel,
-                                        ExternalReturn::Yield(if is_tail {
-                                            None
-                                        } else {
-                                            Some(sequence)
-                                        }),
-                                    );
-
-                                    if let Some(to_thread) = to_thread {
-                                        if let Err(err) = to_thread
-                                            .resume(ctx, Variadic(top_state.take_return().unwrap()))
-                                        {
-                                            top_state.unwind(&ctx, err.into());
-                                        } else {
-                                            thread_stack.pop();
-                                            thread_stack.push(to_thread);
+                            Ok(ret) => state.callback_ret(
+                                ctx,
+                                fuel,
+                                top_state,
+                                match ret {
+                                    SequencePoll::Pending => CallbackReturn::Sequence(sequence),
+                                    SequencePoll::Return => CallbackReturn::Return,
+                                    SequencePoll::Yield { to_thread, is_tail } => {
+                                        CallbackReturn::Yield {
+                                            to_thread,
+                                            then: if is_tail { None } else { Some(sequence) },
                                         }
                                     }
-                                }
-                                SequencePoll::Call { function, is_tail } => {
-                                    top_state.return_ext(
-                                        fuel,
-                                        ExternalReturn::Call(
+                                    SequencePoll::Call { function, is_tail } => {
+                                        CallbackReturn::Call {
                                             function,
-                                            if is_tail { None } else { Some(sequence) },
-                                        ),
-                                    );
-                                }
-                                SequencePoll::Resume { thread, is_tail } => {
-                                    top_state.return_ext(
-                                        fuel,
-                                        ExternalReturn::Resume(if is_tail {
-                                            None
-                                        } else {
-                                            Some(sequence)
-                                        }),
-                                    );
-                                    if let Err(err) = thread
-                                        .resume(ctx, Variadic(top_state.take_return().unwrap()))
-                                    {
-                                        top_state.unwind(&ctx, err.into());
-                                    } else {
-                                        if top_state.frames.len() == 1 {
-                                            // Tail call the thread resume if we can.
-                                            assert!(matches!(
-                                                top_state.frames[0],
-                                                Frame::WaitThread
-                                            ));
-                                            thread_stack.pop();
+                                            then: if is_tail { None } else { Some(sequence) },
                                         }
-                                        thread_stack.push(thread);
                                     }
-                                }
-                            },
+                                    SequencePoll::Resume { thread, is_tail } => {
+                                        CallbackReturn::Resume {
+                                            thread,
+                                            then: if is_tail { None } else { Some(sequence) },
+                                        }
+                                    }
+                                },
+                            ),
                             Err(error) => top_state.unwind(&ctx, error),
                         }
                     }
@@ -541,14 +463,14 @@ impl<'gc> Executor<'gc> {
         self,
         ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
+        let state = self.0.borrow();
+        if state.thread_stack.len() > 1 {
             Err(BadThreadMode {
                 found: ThreadMode::Normal,
                 expected: Some(ThreadMode::Result),
             })
         } else {
-            thread_stack[0].take_return(ctx)
+            state.thread_stack[0].take_return(ctx)
         }
     }
 
@@ -557,34 +479,34 @@ impl<'gc> Executor<'gc> {
         ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
+        let state = self.0.borrow();
+        if state.thread_stack.len() > 1 {
             Err(BadThreadMode {
                 found: ThreadMode::Normal,
                 expected: Some(ThreadMode::Suspended),
             })
         } else {
-            thread_stack[0].resume(ctx, args)
+            state.thread_stack[0].resume(ctx, args)
         }
     }
 
     pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
+        let state = self.0.borrow();
+        if state.thread_stack.len() > 1 {
             Err(BadThreadMode {
                 found: ThreadMode::Normal,
                 expected: Some(ThreadMode::Suspended),
             })
         } else {
-            thread_stack[0].resume_err(mc, error)
+            state.thread_stack[0].resume_err(mc, error)
         }
     }
 
     /// Reset this `Executor` entirely and begins running the given thread.
     pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
-        let mut thread_stack = self.0.borrow_mut(mc);
-        thread_stack.clear();
-        thread_stack.push(thread);
+        let mut state = self.0.borrow_mut(mc);
+        state.thread_stack.clear();
+        state.thread_stack.push(thread);
     }
 
     /// Reset this `Executor` entirely and begins running the given function.
@@ -594,10 +516,10 @@ impl<'gc> Executor<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
-        thread_stack.truncate(1);
-        thread_stack[0].reset(&ctx).unwrap();
-        thread_stack[0].start(ctx, function, args).unwrap();
+        let mut state = self.0.borrow_mut(&ctx);
+        state.thread_stack.truncate(1);
+        state.thread_stack[0].reset(&ctx).unwrap();
+        state.thread_stack[0].start(ctx, function, args).unwrap();
     }
 }
 
@@ -1229,14 +1151,6 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
     }
 }
 
-enum ExternalReturn<'gc> {
-    Return,
-    Sequence(AnySequence<'gc>),
-    Yield(Option<AnySequence<'gc>>),
-    Call(Function<'gc>, Option<AnySequence<'gc>>),
-    Resume(Option<AnySequence<'gc>>),
-}
-
 #[derive(Collect)]
 #[collect(require_static)]
 enum LuaReturn {
@@ -1432,47 +1346,18 @@ impl<'gc> ThreadState<'gc> {
         self.frames.push(Frame::HasResult);
     }
 
-    fn return_ext(&mut self, fuel: &mut Fuel, ret: ExternalReturn<'gc>) {
-        match ret {
-            ExternalReturn::Return => match self.frames.last_mut() {
-                Some(Frame::Sequence { .. }) => {}
-                Some(Frame::Lua { .. }) => {
-                    // Consume the per-return fuel for pushing the returns back to Lua.
-                    consume_call_fuel(fuel, self.external_stack.len());
-                    self.return_to_lua();
-                }
-                None => {
-                    self.frames.push(Frame::HasResult);
-                }
-                _ => panic!("frame above callback must be sequence or lua frame"),
-            },
-            ExternalReturn::Sequence(sequence) => {
-                self.frames.push(Frame::Sequence(sequence));
+    fn return_ext(&mut self, fuel: &mut Fuel) {
+        match self.frames.last_mut() {
+            Some(Frame::Sequence { .. }) => {}
+            Some(Frame::Lua { .. }) => {
+                // Consume the per-return fuel for pushing the returns back to Lua.
+                consume_call_fuel(fuel, self.external_stack.len());
+                self.return_to_lua();
             }
-            ExternalReturn::Yield(sequence) => {
-                if let Some(sequence) = sequence {
-                    self.frames.push(Frame::Sequence(sequence));
-                }
-                self.frames.push(Frame::Yielded);
+            None => {
                 self.frames.push(Frame::HasResult);
             }
-            ExternalReturn::Call(function, sequence) => {
-                if let Some(sequence) = sequence {
-                    self.frames.push(Frame::Sequence(sequence));
-                }
-                if matches!(function, Function::Closure(_)) {
-                    // Consume the per-call fuel for pushing the arguments back to lua.
-                    consume_call_fuel(fuel, self.external_stack.len());
-                }
-                self.ext_call_function(function);
-            }
-            ExternalReturn::Resume(sequence) => {
-                if let Some(sequence) = sequence {
-                    self.frames.push(Frame::Sequence(sequence));
-                }
-                self.frames.push(Frame::WaitThread);
-                self.frames.push(Frame::HasResult);
-            }
+            _ => panic!("frame above callback must be sequence or lua frame"),
         }
     }
 
@@ -1507,6 +1392,77 @@ impl<'gc> ThreadState<'gc> {
         }
 
         self.open_upvalues.truncate(start);
+    }
+}
+
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+struct ExecutorState<'gc> {
+    thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+}
+
+impl<'gc> ExecutorState<'gc> {
+    fn callback_ret(
+        &mut self,
+        ctx: Context<'gc>,
+        fuel: &mut Fuel,
+        mut top_thread: RefMut<ThreadState<'gc>>,
+        ret: CallbackReturn<'gc>,
+    ) {
+        match ret {
+            CallbackReturn::Return => {
+                top_thread.return_ext(fuel);
+            }
+            CallbackReturn::Sequence(s) => {
+                top_thread.frames.push(Frame::Sequence(s));
+            }
+            CallbackReturn::Yield { to_thread, then } => {
+                if let Some(sequence) = then {
+                    top_thread.frames.push(Frame::Sequence(sequence));
+                }
+                top_thread.frames.push(Frame::Yielded);
+                top_thread.frames.push(Frame::HasResult);
+
+                if let Some(to_thread) = to_thread {
+                    if let Err(err) =
+                        to_thread.resume(ctx, Variadic(top_thread.take_return().unwrap()))
+                    {
+                        top_thread.unwind(&ctx, err.into());
+                    } else {
+                        self.thread_stack.pop();
+                        self.thread_stack.push(to_thread);
+                    }
+                }
+            }
+            CallbackReturn::Call { function, then } => {
+                if let Some(sequence) = then {
+                    top_thread.frames.push(Frame::Sequence(sequence));
+                }
+                if matches!(function, Function::Closure(_)) {
+                    // Consume the per-call fuel for pushing the arguments back to lua.
+                    consume_call_fuel(fuel, top_thread.external_stack.len());
+                }
+                top_thread.ext_call_function(function);
+            }
+            CallbackReturn::Resume { thread, then } => {
+                if let Some(sequence) = then {
+                    top_thread.frames.push(Frame::Sequence(sequence));
+                }
+                top_thread.frames.push(Frame::WaitThread);
+                top_thread.frames.push(Frame::HasResult);
+
+                if let Err(err) = thread.resume(ctx, Variadic(top_thread.take_return().unwrap())) {
+                    top_thread.unwind(&ctx, err.into());
+                } else {
+                    if top_thread.frames.len() == 1 {
+                        // Tail call the thread resume if we can.
+                        assert!(matches!(top_thread.frames[0], Frame::WaitThread));
+                        self.thread_stack.pop();
+                    }
+                    self.thread_stack.push(thread);
+                }
+            }
+        }
     }
 }
 
