@@ -82,7 +82,7 @@ impl<'gc> Thread<'gc> {
             mc,
             RefLock::new(ThreadState {
                 frames: vec::Vec::new_in(MetricsAlloc::new(mc)),
-                lua_stack: Stack::new(mc),
+                lua_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
                 open_upvalues: vec::Vec::new_in(MetricsAlloc::new(mc)),
                 external_stack: Stack::new(mc),
                 error: None,
@@ -583,7 +583,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     }
                 } else {
                     *is_variable = true;
-                    self.state.lua_stack.resize(dest + varargs_len);
+                    self.state.lua_stack.resize(dest + varargs_len, Value::Nil);
                     for i in 0..varargs_len {
                         self.state.lua_stack[dest + i] = self.state.lua_stack[varargs_start + i];
                     }
@@ -652,7 +652,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         self.state.lua_stack[start_ind] = Value::Integer(start);
 
         if count.is_variable() {
-            self.state.lua_stack.resize(base + stack_size);
+            self.state.lua_stack.resize(base + stack_size, Value::Nil);
             *is_variable = false;
         }
 
@@ -695,14 +695,16 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            self.state.lua_stack.resize(function_index + 1 + arg_count);
+                            self.state
+                                .lua_stack
+                                .truncate(function_index + 1 + arg_count);
                             self.state.lua_stack[function_index + 1..].rotate_left(fixed_params);
                             function_index + 1 + (arg_count - fixed_params)
                         } else {
                             function_index + 1
                         };
 
-                        self.state.lua_stack.resize(base + stack_size);
+                        self.state.lua_stack.resize(base + stack_size, Value::Nil);
 
                         self.state.frames.push(Frame::Lua {
                             bottom: function_index,
@@ -721,7 +723,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                                 [function_index + 1..function_index + 1 + arg_count],
                         );
                         self.state.frames.push(Frame::Callback(callback));
-                        self.state.lua_stack.resize(function_index);
+                        self.state.lua_stack.resize(function_index, Value::Nil);
                         Ok(())
                     }
                 }
@@ -760,7 +762,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
                 match meta_ops::call(ctx, self.state.lua_stack[function_index])? {
                     Function::Closure(closure) => {
-                        self.state.lua_stack.resize(top + 1 + arg_count);
+                        self.state.lua_stack.resize(top + 1 + arg_count, Value::Nil);
                         for i in 1..arg_count + 1 {
                             self.state.lua_stack[top + i] =
                                 self.state.lua_stack[function_index + i];
@@ -777,7 +779,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             top + 1
                         };
 
-                        self.state.lua_stack.resize(base + stack_size);
+                        self.state.lua_stack.resize(base + stack_size, Value::Nil);
 
                         self.state.frames.push(Frame::Lua {
                             bottom: top,
@@ -794,7 +796,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state
                             .external_stack
                             .extend(&self.state.lua_stack[function_index + 1..top]);
-                        self.state.lua_stack.resize(top);
+                        self.state.lua_stack.resize(top, Value::Nil);
                         self.state.frames.push(Frame::Callback(callback));
                         Ok(())
                     }
@@ -834,7 +836,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
                 match meta_ops::call(ctx, func.into())? {
                     Function::Closure(closure) => {
-                        self.state.lua_stack.resize(top + 1 + args.len());
+                        self.state
+                            .lua_stack
+                            .resize(top + 1 + args.len(), Value::Nil);
                         self.state.lua_stack[top] = closure.into();
                         self.state.lua_stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
 
@@ -848,7 +852,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             top + 1
                         };
 
-                        self.state.lua_stack.resize(base + stack_size);
+                        self.state.lua_stack.resize(base + stack_size, Value::Nil);
 
                         self.state.frames.push(Frame::Lua {
                             bottom: top,
@@ -863,7 +867,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     Function::Callback(callback) => {
                         assert!(self.state.external_stack.is_empty());
                         self.state.external_stack.extend(args);
-                        self.state.lua_stack.resize(top);
+                        self.state.lua_stack.resize(top, Value::Nil);
                         self.state.frames.push(Frame::Callback(callback));
                         Ok(())
                     }
@@ -914,14 +918,14 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         let stack_size = closure.0.proto.stack_size as usize;
 
                         let base = if arg_count > fixed_params {
-                            self.state.lua_stack.resize(bottom + 1 + arg_count);
+                            self.state.lua_stack.truncate(bottom + 1 + arg_count);
                             self.state.lua_stack[bottom + 1..].rotate_left(fixed_params);
                             bottom + 1 + (arg_count - fixed_params)
                         } else {
                             bottom + 1
                         };
 
-                        self.state.lua_stack.resize(base + stack_size);
+                        self.state.lua_stack.resize(base + stack_size, Value::Nil);
 
                         self.state.frames.pop();
                         self.state.frames.push(Frame::Lua {
@@ -942,7 +946,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         );
                         self.state.frames.pop();
                         self.state.frames.push(Frame::Callback(callback));
-                        self.state.lua_stack.resize(bottom);
+                        self.state.lua_stack.truncate(bottom);
                         Ok(())
                     }
                 }
@@ -984,7 +988,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         self.state
                             .external_stack
                             .extend(&self.state.lua_stack[start..start + count]);
-                        self.state.lua_stack.resize(bottom);
+                        self.state.lua_stack.truncate(bottom);
                     }
                     Some(Frame::Lua {
                         expected_return,
@@ -1003,7 +1007,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                                 self.state.lua_stack[bottom + i] = self.state.lua_stack[start + i]
                             }
 
-                            self.state.lua_stack.resize(bottom + returning);
+                            self.state.lua_stack.resize(bottom + returning, Value::Nil);
                             for i in count..returning {
                                 self.state.lua_stack[bottom + i] = Value::Nil;
                             }
@@ -1011,7 +1015,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             if expected_return.is_variable() {
                                 *is_variable = true;
                             } else {
-                                self.state.lua_stack.resize(*base + *stack_size);
+                                self.state.lua_stack.resize(*base + *stack_size, Value::Nil);
                                 *is_variable = false;
                             }
                         }
@@ -1021,7 +1025,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                             } else {
                                 Value::Nil
                             };
-                            self.state.lua_stack.resize(*base + *stack_size);
+                            self.state.lua_stack.resize(*base + *stack_size, Value::Nil);
                             *is_variable = false;
                             if let Some(meta_ind) = meta_ind {
                                 self.state.lua_stack[*base + meta_ind.0 as usize] = meta_ret;
@@ -1190,7 +1194,7 @@ enum Frame<'gc> {
 #[collect(no_drop)]
 struct ThreadState<'gc> {
     frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
-    lua_stack: Stack<'gc>,
+    lua_stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
     external_stack: Stack<'gc>,
     error: Option<Error<'gc>>,
@@ -1228,7 +1232,7 @@ impl<'gc> ThreadState<'gc> {
                 let bottom = self.lua_stack.len();
                 let base = bottom + 1 + var_params;
 
-                self.lua_stack.resize(base + stack_size);
+                self.lua_stack.resize(base + stack_size, Value::Nil);
 
                 self.lua_stack[bottom] = Value::Function(Function::Closure(closure));
                 for i in 0..fixed_params {
@@ -1271,7 +1275,7 @@ impl<'gc> ThreadState<'gc> {
                         .unwrap_or(self.external_stack.len());
 
                     let bottom = self.lua_stack.len();
-                    self.lua_stack.resize(bottom + return_len);
+                    self.lua_stack.resize(bottom + return_len, Value::Nil);
 
                     for i in 0..return_len.min(self.external_stack.len()) {
                         self.lua_stack[bottom + i] = self.external_stack.get(i);
@@ -1281,13 +1285,13 @@ impl<'gc> ThreadState<'gc> {
 
                     *is_variable = ret_count.is_variable();
                     if !ret_count.is_variable() {
-                        self.lua_stack.resize(*base + *stack_size);
+                        self.lua_stack.resize(*base + *stack_size, Value::Nil);
                     }
                 }
                 Some(LuaReturn::Meta(meta_ind)) => {
                     let meta_ret = self.external_stack.get(0);
                     self.external_stack.clear();
-                    self.lua_stack.resize(*base + *stack_size);
+                    self.lua_stack.resize(*base + *stack_size, Value::Nil);
                     *is_variable = false;
                     if let Some(meta_ind) = meta_ind {
                         self.lua_stack[*base + meta_ind.0 as usize] = meta_ret;
@@ -1307,7 +1311,7 @@ impl<'gc> ThreadState<'gc> {
             match frame {
                 Frame::Lua { bottom, .. } => {
                     self.close_upvalues(mc, bottom);
-                    self.lua_stack.resize(bottom);
+                    self.lua_stack.truncate(bottom);
                 }
                 Frame::Sequence(sequence) => {
                     self.frames.push(Frame::Sequence(sequence));
