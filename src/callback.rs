@@ -32,7 +32,7 @@ pub trait Callback<'gc>: Collect {
         &self,
         ctx: Context<'gc>,
         fuel: &mut Fuel,
-        stack: &mut Stack<'gc>,
+        stack: Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
 }
 
@@ -46,7 +46,7 @@ struct Header<'gc> {
         *const (),
         Context<'gc>,
         &mut Fuel,
-        &mut Stack<'gc>,
+        Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
 }
 
@@ -93,7 +93,7 @@ impl<'gc> AnyCallback<'gc> {
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> AnyCallback<'gc>
     where
         F: 'static
-            + Fn(Context<'gc>, &mut Fuel, &mut Stack<'gc>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(Context<'gc>, &mut Fuel, Stack<'gc, '_>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         Self::from_fn_with(mc, (), move |_, ctx, fuel, stack| call(ctx, fuel, stack))
     }
@@ -106,7 +106,7 @@ impl<'gc> AnyCallback<'gc> {
                 &R,
                 Context<'gc>,
                 &mut Fuel,
-                &mut Stack<'gc>,
+                Stack<'gc, '_>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
         #[derive(Collect)]
@@ -125,14 +125,14 @@ impl<'gc> AnyCallback<'gc> {
                     &R,
                     Context<'gc>,
                     &mut Fuel,
-                    &mut Stack<'gc>,
+                    Stack<'gc, '_>,
                 ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         {
             fn call(
                 &self,
                 ctx: Context<'gc>,
                 fuel: &mut Fuel,
-                stack: &mut Stack<'gc>,
+                stack: Stack<'gc, '_>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
                 (self.call)(&self.root, ctx, fuel, stack)
             }
@@ -149,7 +149,7 @@ impl<'gc> AnyCallback<'gc> {
         self,
         ctx: Context<'gc>,
         fuel: &mut Fuel,
-        stack: &mut Stack<'gc>,
+        stack: Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
         unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), ctx, fuel, stack) }
     }
@@ -214,7 +214,7 @@ pub trait Sequence<'gc>: Collect {
         &mut self,
         ctx: Context<'gc>,
         fuel: &mut Fuel,
-        stack: &mut Stack<'gc>,
+        stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>>;
 
     /// Called if a sub-function errors to handle the error, or if a `Sequence` has yielded and the
@@ -224,7 +224,7 @@ pub trait Sequence<'gc>: Collect {
         _ctx: Context<'gc>,
         _fuel: &mut Fuel,
         error: Error<'gc>,
-        _stack: &mut Stack<'gc>,
+        _stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         Err(error)
     }
@@ -248,7 +248,7 @@ impl<'gc> AnySequence<'gc> {
         &mut self,
         ctx: Context<'gc>,
         fuel: &mut Fuel,
-        stack: &mut Stack<'gc>,
+        stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         self.0.poll(ctx, fuel, stack)
     }
@@ -258,7 +258,7 @@ impl<'gc> AnySequence<'gc> {
         ctx: Context<'gc>,
         fuel: &mut Fuel,
         error: Error<'gc>,
-        stack: &mut Stack<'gc>,
+        stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         self.0.error(ctx, fuel, error, stack)
     }
@@ -266,9 +266,10 @@ impl<'gc> AnySequence<'gc> {
 
 #[cfg(test)]
 mod tests {
+    use allocator_api2::vec;
     use gc_arena::{Arena, Rootable};
 
-    use crate::{CallbackReturn, State};
+    use crate::{CallbackReturn, State, Value};
 
     use super::*;
 
@@ -283,7 +284,7 @@ mod tests {
                 &self,
                 ctx: Context<'gc>,
                 _fuel: &mut Fuel,
-                stack: &mut Stack<'gc>,
+                mut stack: Stack<'gc, '_>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
                 stack.into_front(ctx, self.0);
                 Ok(CallbackReturn::Return)
@@ -294,10 +295,12 @@ mod tests {
         arena.mutate(|mc, state| {
             let ctx = state.ctx(mc);
             let dyn_callback = AnyCallback::new(mc, CB(17));
-            let mut stack = Stack::new(mc);
+            let mut values = vec::Vec::new_in(MetricsAlloc::new(mc));
             let mut fuel = Fuel::empty();
-            assert!(dyn_callback.call(ctx, &mut fuel, &mut stack).is_ok());
-            assert!(matches!(stack.from_front(ctx).unwrap(), 17));
+            assert!(dyn_callback
+                .call(ctx, &mut fuel, Stack::new(&mut values, 0))
+                .is_ok());
+            assert!(matches!(values[0], Value::Integer(17)));
         });
     }
 }

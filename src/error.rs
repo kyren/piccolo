@@ -157,7 +157,7 @@ impl<'gc> Error<'gc> {
                             .set(
                                 ctx,
                                 MetaMethod::ToString,
-                                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                                AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
                                     let ud = stack.consume::<AnyUserData>(ctx)?;
                                     let error = ud.downcast_static::<RuntimeError>()?;
                                     stack.replace(ctx, error.to_string());

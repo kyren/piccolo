@@ -7,7 +7,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "pack",
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
                 let t = Table::new(&ctx);
                 for i in 0..stack.len() {
                     t.set(ctx, i as i64 + 1, stack[i]).unwrap();
@@ -23,7 +23,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "unpack",
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
                 let (table, start, end): (Table<'gc>, Option<i64>, Option<i64>) =
                     stack.consume(ctx)?;
                 let start = start.unwrap_or(1);

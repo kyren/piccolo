@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Error, Executor, Function, IntoValue, Lua,
-    Sequence, SequencePoll, StaticError, String, Thread, Value,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Executor, Fuel, Function,
+    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -9,7 +9,7 @@ fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
@@ -43,7 +43,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
@@ -82,9 +82,9 @@ fn loopy_callback() -> Result<(), StaticError> {
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
-                    _ctx: piccolo::Context<'gc>,
-                    _fuel: &mut piccolo::Fuel,
-                    stack: &mut piccolo::Stack<'gc>,
+                    _ctx: Context<'gc>,
+                    _fuel: &mut Fuel,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     stack.push_back(self.0.into());
                     self.0 += 1;
@@ -97,7 +97,7 @@ fn loopy_callback() -> Result<(), StaticError> {
             }
 
             Ok(CallbackReturn::Call {
-                function: AnyCallback::from_fn(&ctx, |_, _, stack| {
+                function: AnyCallback::from_fn(&ctx, |_, _, mut stack| {
                     stack.push_back(3.into());
                     Ok(CallbackReturn::Yield {
                         to_thread: None,
@@ -152,7 +152,7 @@ fn yield_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont(i8);
@@ -160,9 +160,9 @@ fn yield_sequence() -> Result<(), StaticError> {
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
-                    ctx: piccolo::Context<'gc>,
-                    _fuel: &mut piccolo::Fuel,
-                    stack: &mut piccolo::Stack<'gc>,
+                    ctx: Context<'gc>,
+                    _fuel: &mut Fuel,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     match self.0 {
                         0 => {
@@ -233,7 +233,7 @@ fn resume_with_err() {
     let mut lua = Lua::core();
 
     let executor = lua.run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+        let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont;
@@ -241,19 +241,19 @@ fn resume_with_err() {
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
-                    _ctx: piccolo::Context<'gc>,
-                    _fuel: &mut piccolo::Fuel,
-                    _stack: &mut piccolo::Stack<'gc>,
+                    _ctx: Context<'gc>,
+                    _fuel: &mut Fuel,
+                    _stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     panic!("did not error");
                 }
 
                 fn error(
                     &mut self,
-                    ctx: piccolo::Context<'gc>,
-                    _fuel: &mut piccolo::Fuel,
+                    ctx: Context<'gc>,
+                    _fuel: &mut Fuel,
                     _error: Error<'gc>,
-                    _stack: &mut piccolo::Stack<'gc>,
+                    _stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     Err("a different error".into_value(ctx).into())
                 }

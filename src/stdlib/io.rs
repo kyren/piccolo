@@ -14,7 +14,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "print",
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
                 #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
                 #[collect(require_static)]
                 enum Mode {
@@ -35,7 +35,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                         &mut self,
                         ctx: Context<'gc>,
                         _fuel: &mut Fuel,
-                        stack: &mut Stack<'gc>,
+                        mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         let mut stdout = io::stdout();
 

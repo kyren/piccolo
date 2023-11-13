@@ -1,73 +1,98 @@
 use std::{
     iter,
-    ops::{Index, IndexMut, RangeBounds},
+    ops::{Bound, Index, IndexMut, RangeBounds},
     slice::{self, SliceIndex},
 };
 
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
+use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
-#[derive(Clone, Collect)]
-#[collect(no_drop)]
-pub struct Stack<'gc>(vec::Vec<Value<'gc>, MetricsAlloc<'gc>>);
+pub struct Stack<'gc, 'a> {
+    values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    bottom: usize,
+}
 
-impl<'gc> Stack<'gc> {
-    pub fn new(mc: &Mutation<'gc>) -> Self {
-        Self(vec::Vec::new_in(MetricsAlloc::new(mc)))
+impl<'gc, 'a> Stack<'gc, 'a> {
+    pub fn new(values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>, bottom: usize) -> Self {
+        Self { values, bottom }
+    }
+
+    pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
+        Stack {
+            values: self.values,
+            bottom: self.bottom + bottom,
+        }
     }
 
     pub fn get(&self, i: usize) -> Value<'gc> {
-        self.0.get(i).copied().unwrap_or_default()
+        self.values
+            .get(self.bottom + i)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn push_back(&mut self, value: Value<'gc>) {
-        self.0.push(value);
+        self.values.push(value);
     }
 
     pub fn push_front(&mut self, value: Value<'gc>) {
-        self.0.insert(0, value);
+        self.values.insert(self.bottom, value);
     }
 
     pub fn pop_back(&mut self) -> Value<'gc> {
-        self.0.pop().unwrap_or_default()
+        if self.values.len() > self.bottom {
+            self.values.pop().unwrap()
+        } else {
+            Value::Nil
+        }
     }
 
     pub fn pop_front(&mut self) -> Value<'gc> {
-        if self.0.is_empty() {
+        if self.values.len() == self.bottom {
             Value::Nil
         } else {
-            self.0.remove(0)
+            self.values.remove(self.bottom)
         }
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.values.len() - self.bottom
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.values.len() == self.bottom
     }
 
     pub fn clear(&mut self) {
-        self.0.clear();
+        self.values.truncate(self.bottom);
     }
 
     pub fn resize(&mut self, size: usize) {
-        self.0.resize(size, Value::Nil);
+        self.values.resize(self.bottom + size, Value::Nil);
     }
 
     pub fn drain<R: RangeBounds<usize>>(
         &mut self,
         range: R,
     ) -> vec::Drain<Value<'gc>, MetricsAlloc<'gc>> {
-        self.0.drain(range)
+        let start = match range.start_bound().cloned() {
+            Bound::Included(r) => Bound::Included(r + self.bottom),
+            Bound::Excluded(r) => Bound::Excluded(r + self.bottom),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let end = match range.end_bound().cloned() {
+            Bound::Included(r) => Bound::Included(r + self.bottom),
+            Bound::Excluded(r) => Bound::Excluded(r + self.bottom),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        self.values.drain((start, end))
     }
 
     pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         for v in v.into_multi_value(ctx) {
-            self.0.push(v.into_value(ctx));
+            self.values.push(v.into_value(ctx));
         }
     }
 
@@ -75,76 +100,72 @@ impl<'gc> Stack<'gc> {
         let mut c = 0;
         for v in v.into_multi_value(ctx) {
             c += 1;
-            self.0.push(v.into_value(ctx));
+            self.values.push(v.into_value(ctx));
         }
-        self.0.rotate_right(c);
+        self.values[self.bottom..].rotate_right(c);
     }
 
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.0.pop().unwrap_or_default())
+        V::from_value(ctx, self.pop_back())
     }
 
     pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        if self.0.is_empty() {
-            V::from_value(ctx, Value::Nil)
-        } else {
-            V::from_value(ctx, self.0.remove(0))
-        }
+        V::from_value(ctx, self.pop_front())
     }
 
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
-        self.0.clear();
-        self.0.extend(v.into_multi_value(ctx));
+        self.clear();
+        self.extend(v.into_multi_value(ctx));
     }
 
     pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_multi_value(ctx, self.0.drain(..))
+        V::from_multi_value(ctx, self.drain(..))
     }
 }
 
-impl<'a, 'gc: 'a> IntoIterator for &'a Stack<'gc> {
+impl<'gc: 'b, 'a, 'b> IntoIterator for &'b Stack<'gc, 'a> {
     type Item = Value<'gc>;
-    type IntoIter = iter::Copied<slice::Iter<'a, Value<'gc>>>;
+    type IntoIter = iter::Copied<slice::Iter<'b, Value<'gc>>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter().copied()
+        self.values[self.bottom..].iter().copied()
     }
 }
 
-impl<'gc> Extend<Value<'gc>> for Stack<'gc> {
+impl<'gc, 'a> Extend<Value<'gc>> for Stack<'gc, 'a> {
     fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
-        self.0.extend(iter);
+        self.values.extend(iter);
     }
 }
 
-impl<'a, 'gc> Extend<Value<'gc>> for &'a mut Stack<'gc> {
+impl<'gc, 'a, 'b> Extend<Value<'gc>> for &'b mut Stack<'gc, 'a> {
     fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
-        self.0.extend(iter);
+        self.values.extend(iter);
     }
 }
 
-impl<'a, 'gc: 'a> Extend<&'a Value<'gc>> for Stack<'gc> {
+impl<'gc: 'b, 'a, 'b> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
     fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
-        self.0.extend(iter);
+        self.values.extend(iter);
     }
 }
 
-impl<'a, 'b, 'gc: 'a> Extend<&'a Value<'gc>> for &'b mut Stack<'gc> {
-    fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
-        self.0.extend(iter);
+impl<'gc: 'b, 'a, 'b, 'c> Extend<&'b Value<'gc>> for &'c mut Stack<'gc, 'a> {
+    fn extend<T: IntoIterator<Item = &'b Value<'gc>>>(&mut self, iter: T) {
+        self.values.extend(iter);
     }
 }
 
-impl<'gc, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc> {
+impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc, 'a> {
     type Output = <Vec<Value<'gc>> as Index<I>>::Output;
 
     fn index(&self, index: I) -> &Self::Output {
-        &self.0[index]
+        &self.values[index]
     }
 }
 
-impl<'gc, I: SliceIndex<[Value<'gc>]>> IndexMut<I> for Stack<'gc> {
+impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> IndexMut<I> for Stack<'gc, 'a> {
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        &mut self.0[index]
+        &mut self.values[self.bottom..][index]
     }
 }

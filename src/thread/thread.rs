@@ -84,7 +84,7 @@ impl<'gc> Thread<'gc> {
                 frames: vec::Vec::new_in(MetricsAlloc::new(mc)),
                 lua_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
                 open_upvalues: vec::Vec::new_in(MetricsAlloc::new(mc)),
-                external_stack: Stack::new(mc),
+                external_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
                 error: None,
             }),
         ))
@@ -111,7 +111,7 @@ impl<'gc> Thread<'gc> {
         let mut state = self.check_mode(&ctx, ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.replace(ctx, args);
+        state.external_stack.extend(args.into_multi_value(ctx));
 
         state.ext_call_function(function);
 
@@ -150,7 +150,7 @@ impl<'gc> Thread<'gc> {
         let mut state = self.check_mode(&ctx, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
-        state.external_stack.replace(ctx, args);
+        state.external_stack.extend(args.into_multi_value(ctx));
 
         match state.frames.pop().expect("no frame to resume") {
             Frame::Start(function) => {
@@ -376,7 +376,8 @@ impl<'gc> Executor<'gc> {
                     Frame::Callback(callback) => {
                         fuel.consume_fuel(FUEL_PER_CALLBACK);
                         assert!(top_state.error.is_none());
-                        match callback.call(ctx, fuel, &mut top_state.external_stack) {
+                        match callback.call(ctx, fuel, Stack::new(&mut top_state.external_stack, 0))
+                        {
                             Ok(ret) => state.callback_ret(ctx, fuel, top_state, ret),
                             Err(error) => top_state.unwind(&ctx, error),
                         }
@@ -387,9 +388,14 @@ impl<'gc> Executor<'gc> {
                         let error = top_state.error.take();
                         let fin = if let Some(error) = error {
                             assert!(top_state.external_stack.is_empty());
-                            sequence.error(ctx, fuel, error, &mut top_state.external_stack)
+                            sequence.error(
+                                ctx,
+                                fuel,
+                                error,
+                                Stack::new(&mut top_state.external_stack, 0),
+                            )
                         } else {
-                            sequence.poll(ctx, fuel, &mut top_state.external_stack)
+                            sequence.poll(ctx, fuel, Stack::new(&mut top_state.external_stack, 0))
                         };
 
                         match fin {
@@ -1196,7 +1202,7 @@ struct ThreadState<'gc> {
     frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
     lua_stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
-    external_stack: Stack<'gc>,
+    external_stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     error: Option<Error<'gc>>,
 }
 
@@ -1236,10 +1242,15 @@ impl<'gc> ThreadState<'gc> {
 
                 self.lua_stack[bottom] = Value::Function(Function::Closure(closure));
                 for i in 0..fixed_params {
-                    self.lua_stack[base + i] = self.external_stack.get(i);
+                    self.lua_stack[base + i] =
+                        self.external_stack.get(i).copied().unwrap_or_default();
                 }
                 for i in 0..var_params {
-                    self.lua_stack[bottom + 1 + i] = self.external_stack.get(fixed_params + i)
+                    self.lua_stack[bottom + 1 + i] = self
+                        .external_stack
+                        .get(fixed_params + i)
+                        .copied()
+                        .unwrap_or_default();
                 }
 
                 self.external_stack.clear();
@@ -1278,7 +1289,8 @@ impl<'gc> ThreadState<'gc> {
                     self.lua_stack.resize(bottom + return_len, Value::Nil);
 
                     for i in 0..return_len.min(self.external_stack.len()) {
-                        self.lua_stack[bottom + i] = self.external_stack.get(i);
+                        self.lua_stack[bottom + i] =
+                            self.external_stack.get(i).copied().unwrap_or_default();
                     }
 
                     self.external_stack.clear();
@@ -1289,7 +1301,7 @@ impl<'gc> ThreadState<'gc> {
                     }
                 }
                 Some(LuaReturn::Meta(meta_ind)) => {
-                    let meta_ret = self.external_stack.get(0);
+                    let meta_ret = self.external_stack.get(0).copied().unwrap_or_default();
                     self.external_stack.clear();
                     self.lua_stack.resize(*base + *stack_size, Value::Nil);
                     *is_variable = false;
