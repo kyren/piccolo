@@ -187,6 +187,27 @@ impl<'gc> Thread<'gc> {
         state.unwind(mc, error);
         Ok(())
     }
+
+    /// If this thread is in any other mode than `Running`, reset the thread completely and restore
+    /// it to the `Stopped` state.
+    pub fn reset(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
+        let mut state = self.0.borrow_mut(mc);
+        if state.mode() == ThreadMode::Running {
+            Err(BadThreadMode {
+                found: ThreadMode::Running,
+                expected: None,
+            })
+        } else {
+            state.close_upvalues(mc, 0);
+            assert!(state.open_upvalues.is_empty());
+
+            state.lua_stack.clear();
+            state.frames.clear();
+            state.external_stack.clear();
+            state.error = None;
+            Ok(())
+        }
+    }
 }
 
 /// The entry-point for the Lua VM.
@@ -240,13 +261,26 @@ impl<'gc> Executor<'gc> {
         Self::run(&ctx, thread)
     }
 
+    pub fn mode(self) -> ThreadMode {
+        if let Ok(thread_stack) = self.0.try_borrow() {
+            if thread_stack.len() > 1 {
+                ThreadMode::Normal
+            } else {
+                thread_stack[0].mode()
+            }
+        } else {
+            ThreadMode::Running
+        }
+    }
+
     /// Runs the VM for a period of time controlled by the `fuel` parameter.
     ///
     /// The VM and callbacks will consume fuel as they run, and `Executor::step` will return as soon
     /// as `Fuel::can_continue()` returns false *and some minimal positive progress has been made*.
     ///
-    /// Returns `true` as soon as there is no more work to do, or in other words, there is only one
-    /// thread remaining on the execution stack and it is no longer in the 'Normal' state.
+    /// Returns `false` if the method has exhausted its fuel, but there is more work to do. If
+    /// `true` is returned, there is only one thread remaining on the execution stack and it is no
+    /// longer in the 'Normal' state.
     pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
         let mut thread_stack = self.0.borrow_mut(&ctx);
 
@@ -260,7 +294,7 @@ impl<'gc> Executor<'gc> {
                 }
                 _ => {
                     if thread_stack.len() == 1 {
-                        break;
+                        break true;
                     } else {
                         thread_stack.pop();
                         res_thread = Some(top_thread);
@@ -271,8 +305,10 @@ impl<'gc> Executor<'gc> {
 
             let mut top_state = top_thread.0.borrow_mut(&ctx);
             if let Some(res_thread) = res_thread {
-                match top_state.frames.pop() {
-                    Some(Frame::WaitThread) => match res_thread.mode() {
+                let mode = top_state.mode();
+                if mode == ThreadMode::Waiting {
+                    assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
+                    match res_thread.mode() {
                         ThreadMode::Result => {
                             assert!(top_state.external_stack.is_empty());
                             assert!(top_state.error.is_none());
@@ -300,10 +336,17 @@ impl<'gc> Executor<'gc> {
                             }
                             .into(),
                         ),
-                    },
-                    _ => panic!(
-                        "top frame of thread below a coroutine thread is not `Frame::RunThread`"
-                    ),
+                    }
+                } else {
+                    // Shenanigans have happened and the upper thread has had its state changed.
+                    top_state.unwind(
+                        &ctx,
+                        BadThreadMode {
+                            found: mode,
+                            expected: None,
+                        }
+                        .into(),
+                    );
                 }
             }
 
@@ -471,23 +514,8 @@ impl<'gc> Executor<'gc> {
             }
 
             if !fuel.should_continue() {
-                break;
+                break false;
             }
-        }
-
-        assert!(thread_stack.len() >= 1);
-        thread_stack.len() == 1 && thread_stack[0].mode() != ThreadMode::Normal
-    }
-
-    pub fn mode(self) -> ThreadMode {
-        if let Ok(thread_stack) = self.0.try_borrow() {
-            if thread_stack.len() > 1 {
-                ThreadMode::Normal
-            } else {
-                thread_stack[0].mode()
-            }
-        } else {
-            ThreadMode::Running
         }
     }
 
@@ -550,18 +578,8 @@ impl<'gc> Executor<'gc> {
     ) {
         let mut thread_stack = self.0.borrow_mut(&ctx);
         thread_stack.truncate(1);
-        let main_thread = &mut thread_stack[0];
-        // Resetting threads is dangerous and can lead to panics. Refuse to reset a thread if it is
-        // in a mode with a strict invariant not to be modified.
-        if matches!(
-            main_thread.mode(),
-            ThreadMode::Waiting | ThreadMode::Running
-        ) {
-            *main_thread = Thread::new(&ctx);
-        } else {
-            main_thread.0.borrow_mut(&ctx).reset(&ctx);
-        }
-        main_thread.start(ctx, function, args).unwrap();
+        thread_stack[0].reset(&ctx).unwrap();
+        thread_stack[0].start(ctx, function, args).unwrap();
     }
 }
 
@@ -1470,16 +1488,6 @@ impl<'gc> ThreadState<'gc> {
         }
 
         self.open_upvalues.truncate(start);
-    }
-
-    fn reset(&mut self, mc: &Mutation<'gc>) {
-        self.close_upvalues(mc, 0);
-        assert!(self.open_upvalues.is_empty());
-
-        self.lua_stack.clear();
-        self.frames.clear();
-        self.external_stack.clear();
-        self.error = None;
     }
 }
 
