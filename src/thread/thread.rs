@@ -312,9 +312,7 @@ impl<'gc> Executor<'gc> {
             let mut res_thread = None;
             match top_thread.mode() {
                 ThreadMode::Normal => {}
-                ThreadMode::Running => {
-                    panic!("`Executor` thread already running")
-                }
+                ThreadMode::Running => unreachable!(),
                 _ => {
                     if state.thread_stack.len() == 1 {
                         break true;
