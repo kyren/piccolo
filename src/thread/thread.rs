@@ -2,7 +2,6 @@ use std::{
     cell::RefMut,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    mem,
 };
 
 use allocator_api2::vec;
@@ -96,7 +95,10 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn mode(self) -> ThreadMode {
-        self.0.borrow().mode()
+        match self.0.try_borrow() {
+            Ok(state) => state.mode(),
+            Err(_) => ThreadMode::Running,
+        }
     }
 
     /// If this thread is `Stopped`, start a new function with the given arguments.
@@ -106,8 +108,7 @@ impl<'gc> Thread<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.0.borrow_mut(&ctx);
-        state.check_mode(ThreadMode::Stopped)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Stopped)?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -123,8 +124,7 @@ impl<'gc> Thread<'gc> {
         mc: &Mutation<'gc>,
         function: Function<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.0.borrow_mut(mc);
-        state.check_mode(ThreadMode::Stopped)?;
+        let mut state = self.check_mode(mc, ThreadMode::Stopped)?;
         state.frames.push(Frame::Start(function));
         Ok(())
     }
@@ -135,8 +135,7 @@ impl<'gc> Thread<'gc> {
         self,
         ctx: Context<'gc>,
     ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let mut state = self.0.borrow_mut(&ctx);
-        state.check_mode(ThreadMode::Result)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Result)?;
         Ok(state
             .take_return()
             .and_then(|vals| Ok(T::from_multi_value(ctx, vals)?)))
@@ -148,8 +147,7 @@ impl<'gc> Thread<'gc> {
         ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Result<(), BadThreadMode> {
-        let mut state = self.0.borrow_mut(&ctx);
-        state.check_mode(ThreadMode::Suspended)?;
+        let mut state = self.check_mode(&ctx, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
         state.external_stack.replace(ctx, args);
@@ -181,8 +179,7 @@ impl<'gc> Thread<'gc> {
 
     /// If the thread is in `Suspended` mode, cause an error wherever the thread was suspended.
     pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.0.borrow_mut(mc);
-        state.check_mode(ThreadMode::Suspended)?;
+        let mut state = self.check_mode(mc, ThreadMode::Suspended)?;
 
         assert!(state.external_stack.is_empty());
         state.unwind(mc, error);
@@ -192,21 +189,45 @@ impl<'gc> Thread<'gc> {
     /// If this thread is in any other mode than `Running`, reset the thread completely and restore
     /// it to the `Stopped` state.
     pub fn reset(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
-        let mut state = self.0.borrow_mut(mc);
-        if state.mode() == ThreadMode::Running {
-            Err(BadThreadMode {
+        match self.0.try_borrow_mut(mc) {
+            Ok(mut state) => {
+                state.close_upvalues(mc, 0);
+                assert!(state.open_upvalues.is_empty());
+
+                state.lua_stack.clear();
+                state.frames.clear();
+                state.external_stack.clear();
+                state.error = None;
+                Ok(())
+            }
+            Err(_) => Err(BadThreadMode {
                 found: ThreadMode::Running,
                 expected: None,
-            })
-        } else {
-            state.close_upvalues(mc, 0);
-            assert!(state.open_upvalues.is_empty());
+            }),
+        }
+    }
 
-            state.lua_stack.clear();
-            state.frames.clear();
-            state.external_stack.clear();
-            state.error = None;
-            Ok(())
+    fn check_mode(
+        &self,
+        mc: &Mutation<'gc>,
+        expected: ThreadMode,
+    ) -> Result<RefMut<ThreadState<'gc>>, BadThreadMode> {
+        assert!(expected != ThreadMode::Running);
+        if let Ok(state) = self.0.try_borrow_mut(mc) {
+            let found = state.mode();
+            if found == expected {
+                Ok(state)
+            } else {
+                Err(BadThreadMode {
+                    found,
+                    expected: Some(expected),
+                })
+            }
+        } else {
+            Err(BadThreadMode {
+                found: ThreadMode::Running,
+                expected: Some(expected),
+            })
         }
     }
 }
@@ -221,7 +242,8 @@ impl<'gc> Thread<'gc> {
 ///
 /// `Executor` is dangerous to use from within any kind of Lua callback. It has no protection
 /// against re-entrency, and calling `Executor` methods from within a callback that it is running
-/// (other than `Executor::mode`) will panic.
+/// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
+/// used, cross-thread upvalues may cause a panic if one `Executor` is used within the other.
 ///
 /// `Executor`s are not meant to be used from or available to callbacks at all, and `Executor`s
 /// should not be nested. Instead, use the normal mechanisms for callbacks to call Lua code so that
@@ -355,47 +377,22 @@ impl<'gc> Executor<'gc> {
                 match top_state.frames.pop().expect("no frame to step") {
                     Frame::Callback(callback) => {
                         fuel.consume_fuel(FUEL_PER_CALLBACK);
-                        top_state.frames.push(Frame::Calling);
-
                         assert!(top_state.error.is_none());
-                        let mut stack =
-                            mem::replace(&mut top_state.external_stack, Stack::new(&ctx));
-                        drop(top_state);
-                        let seq = callback.call(ctx, fuel, &mut stack);
-                        top_state = top_thread.0.borrow_mut(&ctx);
-                        top_state.external_stack = stack;
-
-                        assert!(
-                            matches!(top_state.frames.pop(), Some(Frame::Calling)),
-                            "thread state has changed while callback was run"
-                        );
-
-                        match seq {
+                        match callback.call(ctx, fuel, &mut top_state.external_stack) {
                             Ok(ret) => state.callback_ret(ctx, fuel, top_state, ret),
                             Err(error) => top_state.unwind(&ctx, error),
                         }
                     }
                     Frame::Sequence(mut sequence) => {
                         fuel.consume_fuel(FUEL_PER_SEQ_STEP);
-                        top_state.frames.push(Frame::Calling);
 
-                        let mut stack =
-                            mem::replace(&mut top_state.external_stack, Stack::new(&ctx));
                         let error = top_state.error.take();
-                        drop(top_state);
                         let fin = if let Some(error) = error {
-                            assert!(stack.is_empty());
-                            sequence.error(ctx, fuel, error, &mut stack)
+                            assert!(top_state.external_stack.is_empty());
+                            sequence.error(ctx, fuel, error, &mut top_state.external_stack)
                         } else {
-                            sequence.poll(ctx, fuel, &mut stack)
+                            sequence.poll(ctx, fuel, &mut top_state.external_stack)
                         };
-                        top_state = top_thread.0.borrow_mut(&ctx);
-                        top_state.external_stack = stack;
-
-                        assert!(
-                            matches!(top_state.frames.pop(), Some(Frame::Calling)),
-                            "thread state has changed while callback was run"
-                        );
 
                         match fin {
                             Ok(ret) => state.callback_ret(
@@ -1189,14 +1186,6 @@ enum Frame<'gc> {
     // A marker frame that marks the thread as having available return values or an error that must
     // be taken.
     HasResult,
-    // A marker frame that marks the thread as *actively* calling some external function, a callback
-    // or sequence.
-    //
-    // The thread must be unlocked during external calls to permit cross-thread upvalue handling,
-    // but this presents a danger if methods on this thread were to be recursively called at this
-    // time. This frame keeps the thread in the `Running` mode during external calls, ensuring the
-    // thread cannot be mutated.
-    Calling,
 }
 
 #[derive(Collect)]
@@ -1222,21 +1211,8 @@ impl<'gc> ThreadState<'gc> {
                     ThreadMode::Normal
                 }
                 Frame::WaitThread => ThreadMode::Waiting,
-                Frame::Calling => ThreadMode::Running,
                 Frame::Start(_) | Frame::Yielded => ThreadMode::Suspended,
             },
-        }
-    }
-
-    fn check_mode(&self, expected_mode: ThreadMode) -> Result<(), BadThreadMode> {
-        let mode = self.mode();
-        if mode == expected_mode {
-            Ok(())
-        } else {
-            Err(BadThreadMode {
-                found: mode,
-                expected: Some(expected_mode),
-            })
         }
     }
 

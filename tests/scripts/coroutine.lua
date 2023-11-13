@@ -1,8 +1,13 @@
 do
+    -- Test cross-thread upvalues
+    local a = 1
+    local b = 2
+    local c = 3
+
     local function test_coroutine()
-        coroutine.yield(1)
-        coroutine.yield(2)
-        coroutine.yield(3)
+        coroutine.yield(a)
+        coroutine.yield(b)
+        coroutine.yield(c)
     end
 
     local co = coroutine.create(test_coroutine)
