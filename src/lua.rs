@@ -5,7 +5,7 @@ use gc_arena::{metrics::Metrics, Arena, Collect, Mutation, Rootable};
 use crate::{
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, Fuel, Registry, StaticError, StaticExecutor, Table,
+    Error, FromMultiValue, Fuel, Registry, StashedExecutor, StaticError, Table,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -139,7 +139,7 @@ impl Lua {
     }
 
     /// Run the given executor to completion.
-    pub fn finish(&mut self, executor: &StaticExecutor) {
+    pub fn finish(&mut self, executor: &StashedExecutor) {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
@@ -157,7 +157,7 @@ impl Lua {
     /// Run the given executor to completion and then take return values from the returning thread.
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
-        executor: &StaticExecutor,
+        executor: &StashedExecutor,
     ) -> Result<R, StaticError> {
         self.finish(executor);
         self.try_run(|ctx| ctx.state.registry.fetch(executor).take_result::<R>(ctx)?)

@@ -6,10 +6,10 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function,
-    FunctionProto, Lua, ProtoCompileError, StaticError, StaticExecutor,
+    FunctionProto, Lua, ProtoCompileError, StashedExecutor, StaticError,
 };
 
-fn run_code(lua: &mut Lua, executor: &StaticExecutor, code: &str) -> Result<(), StaticError> {
+fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
     lua.try_run(|ctx| {
         let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,

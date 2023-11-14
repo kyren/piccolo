@@ -33,8 +33,8 @@ pub use self::{
     lua::{Context, Lua, State},
     meta_ops::MetaMethod,
     registry::{
-        Registry, Singleton, StaticCallback, StaticClosure, StaticExecutor, StaticFunction,
-        StaticTable, StaticThread, StaticUserData, StaticValue,
+        Registry, Singleton, StashedCallback, StashedClosure, StashedExecutor, StashedFunction,
+        StashedTable, StashedThread, StashedUserData, StaticValue,
     },
     stack::Stack,
     string::{String, StringError},

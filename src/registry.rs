@@ -13,96 +13,96 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct StaticTable(pub DynamicRoot<Rootable![Table<'_>]>);
+pub struct StashedTable(pub DynamicRoot<Rootable![Table<'_>]>);
 
-impl fmt::Debug for StaticTable {
+impl fmt::Debug for StashedTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticTable")
+        f.debug_tuple("StashedTable")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticClosure(pub DynamicRoot<Rootable![Closure<'_>]>);
+pub struct StashedClosure(pub DynamicRoot<Rootable![Closure<'_>]>);
 
-impl fmt::Debug for StaticClosure {
+impl fmt::Debug for StashedClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticClosure")
+        f.debug_tuple("StashedClosure")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticCallback(pub DynamicRoot<Rootable![AnyCallback<'_>]>);
+pub struct StashedCallback(pub DynamicRoot<Rootable![AnyCallback<'_>]>);
 
-impl fmt::Debug for StaticCallback {
+impl fmt::Debug for StashedCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticCallback")
+        f.debug_tuple("StashedCallback")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticThread(pub DynamicRoot<Rootable![Thread<'_>]>);
+pub struct StashedThread(pub DynamicRoot<Rootable![Thread<'_>]>);
 
-impl fmt::Debug for StaticThread {
+impl fmt::Debug for StashedThread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticThread")
+        f.debug_tuple("StashedThread")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticUserData(pub DynamicRoot<Rootable![AnyUserData<'_>]>);
+pub struct StashedUserData(pub DynamicRoot<Rootable![AnyUserData<'_>]>);
 
-impl fmt::Debug for StaticUserData {
+impl fmt::Debug for StashedUserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticUserData")
+        f.debug_tuple("StashedUserData")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticString(pub DynamicRoot<Rootable![String<'_>]>);
+pub struct StashedString(pub DynamicRoot<Rootable![String<'_>]>);
 
-impl fmt::Debug for StaticString {
+impl fmt::Debug for StashedString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticString")
+        f.debug_tuple("StashedString")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Clone)]
-pub struct StaticExecutor(pub DynamicRoot<Rootable![Executor<'_>]>);
+pub struct StashedExecutor(pub DynamicRoot<Rootable![Executor<'_>]>);
 
-impl fmt::Debug for StaticExecutor {
+impl fmt::Debug for StashedExecutor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("StaticExecutor")
+        f.debug_tuple("StashedExecutor")
             .field(&self.0.as_ptr())
             .finish()
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum StaticFunction {
-    Closure(StaticClosure),
-    Callback(StaticCallback),
+pub enum StashedFunction {
+    Closure(StashedClosure),
+    Callback(StashedCallback),
 }
 
-impl From<StaticClosure> for StaticFunction {
-    fn from(closure: StaticClosure) -> Self {
+impl From<StashedClosure> for StashedFunction {
+    fn from(closure: StashedClosure) -> Self {
         Self::Closure(closure)
     }
 }
 
-impl From<StaticCallback> for StaticFunction {
-    fn from(callback: StaticCallback) -> Self {
+impl From<StashedCallback> for StashedFunction {
+    fn from(callback: StashedCallback) -> Self {
         Self::Callback(callback)
     }
 }
@@ -113,11 +113,11 @@ pub enum StaticValue {
     Boolean(bool),
     Integer(i64),
     Number(f64),
-    String(StaticString),
-    Table(StaticTable),
-    Function(StaticFunction),
-    Thread(StaticThread),
-    UserData(StaticUserData),
+    String(StashedString),
+    Table(StashedTable),
+    Function(StashedFunction),
+    Thread(StashedThread),
+    UserData(StashedUserData),
 }
 
 impl StaticValue {
@@ -158,38 +158,38 @@ impl From<f64> for StaticValue {
     }
 }
 
-impl From<StaticString> for StaticValue {
-    fn from(v: StaticString) -> StaticValue {
+impl From<StashedString> for StaticValue {
+    fn from(v: StashedString) -> StaticValue {
         StaticValue::String(v)
     }
 }
 
-impl From<StaticTable> for StaticValue {
-    fn from(v: StaticTable) -> StaticValue {
+impl From<StashedTable> for StaticValue {
+    fn from(v: StashedTable) -> StaticValue {
         StaticValue::Table(v)
     }
 }
 
-impl From<StaticFunction> for StaticValue {
-    fn from(v: StaticFunction) -> StaticValue {
+impl From<StashedFunction> for StaticValue {
+    fn from(v: StashedFunction) -> StaticValue {
         StaticValue::Function(v)
     }
 }
 
-impl From<StaticClosure> for StaticValue {
-    fn from(v: StaticClosure) -> StaticValue {
-        StaticValue::Function(StaticFunction::Closure(v))
+impl From<StashedClosure> for StaticValue {
+    fn from(v: StashedClosure) -> StaticValue {
+        StaticValue::Function(StashedFunction::Closure(v))
     }
 }
 
-impl From<StaticCallback> for StaticValue {
-    fn from(v: StaticCallback) -> StaticValue {
-        StaticValue::Function(StaticFunction::Callback(v))
+impl From<StashedCallback> for StaticValue {
+    fn from(v: StashedCallback) -> StaticValue {
+        StaticValue::Function(StashedFunction::Callback(v))
     }
 }
 
-impl From<StaticUserData> for StaticValue {
-    fn from(v: StaticUserData) -> StaticValue {
+impl From<StashedUserData> for StaticValue {
+    fn from(v: StashedUserData) -> StaticValue {
         StaticValue::UserData(v)
     }
 }
@@ -282,13 +282,13 @@ macro_rules! reg_type {
     };
 }
 
-reg_type!(String, StaticString);
-reg_type!(Table, StaticTable);
-reg_type!(Closure, StaticClosure);
-reg_type!(AnyCallback, StaticCallback);
-reg_type!(Thread, StaticThread);
-reg_type!(AnyUserData, StaticUserData);
-reg_type!(Executor, StaticExecutor);
+reg_type!(String, StashedString);
+reg_type!(Table, StashedTable);
+reg_type!(Closure, StashedClosure);
+reg_type!(AnyCallback, StashedCallback);
+reg_type!(Thread, StashedThread);
+reg_type!(AnyUserData, StashedUserData);
+reg_type!(Executor, StashedExecutor);
 
 macro_rules! fetch_type {
     ($r:ident, $t:ident) => {
@@ -302,32 +302,32 @@ macro_rules! fetch_type {
     };
 }
 
-fetch_type!(StaticString, String);
-fetch_type!(StaticTable, Table);
-fetch_type!(StaticClosure, Closure);
-fetch_type!(StaticCallback, AnyCallback);
-fetch_type!(StaticThread, Thread);
-fetch_type!(StaticUserData, AnyUserData);
-fetch_type!(StaticExecutor, Executor);
+fetch_type!(StashedString, String);
+fetch_type!(StashedTable, Table);
+fetch_type!(StashedClosure, Closure);
+fetch_type!(StashedCallback, AnyCallback);
+fetch_type!(StashedThread, Thread);
+fetch_type!(StashedUserData, AnyUserData);
+fetch_type!(StashedExecutor, Executor);
 
 impl<'gc> Stashable<'gc> for Function<'gc> {
-    type Stashed = StaticFunction;
+    type Stashed = StashedFunction;
 
     fn stash(self, roots: &DynamicRootSet<'gc>, mc: &Mutation<'gc>) -> Self::Stashed {
         match self {
-            Function::Closure(closure) => StaticFunction::Closure(closure.stash(roots, mc)),
-            Function::Callback(callback) => StaticFunction::Callback(callback.stash(roots, mc)),
+            Function::Closure(closure) => StashedFunction::Closure(closure.stash(roots, mc)),
+            Function::Callback(callback) => StashedFunction::Callback(callback.stash(roots, mc)),
         }
     }
 }
 
-impl<'gc> Fetchable<'gc> for StaticFunction {
+impl<'gc> Fetchable<'gc> for StashedFunction {
     type Fetched = Function<'gc>;
 
     fn fetch(&self, roots: &DynamicRootSet<'gc>) -> Self::Fetched {
         match self {
-            StaticFunction::Closure(closure) => Function::Closure(closure.fetch(roots)),
-            StaticFunction::Callback(callback) => Function::Callback(callback.fetch(roots)),
+            StashedFunction::Closure(closure) => Function::Closure(closure.fetch(roots)),
+            StashedFunction::Callback(callback) => Function::Callback(callback.fetch(roots)),
         }
     }
 }
