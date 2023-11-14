@@ -160,6 +160,6 @@ impl Lua {
         executor: &StaticExecutor,
     ) -> Result<R, StaticError> {
         self.finish(executor);
-        self.try_run(|ctx| ctx.state.registry.fetch(executor).take_return::<R>(ctx)?)
+        self.try_run(|ctx| ctx.state.registry.fetch(executor).take_result::<R>(ctx)?)
     }
 }

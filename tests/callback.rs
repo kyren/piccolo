@@ -6,7 +6,7 @@ use piccolo::{
 
 #[test]
 fn callback() -> Result<(), StaticError> {
-    let mut lua = Lua::core();
+    let mut lua = Lua::full();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
@@ -282,7 +282,7 @@ fn resume_with_err() {
 
     lua.run(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
-        assert!(executor.take_return::<String>(ctx).unwrap().unwrap() == "return");
+        assert!(executor.take_result::<String>(ctx).unwrap().unwrap() == "return");
         executor
             .resume_err(&ctx, "an error".into_value(ctx).into())
             .unwrap();
@@ -292,7 +292,7 @@ fn resume_with_err() {
 
     lua.run(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
-        match executor.take_return::<()>(ctx).unwrap() {
+        match executor.take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
                 assert!(matches!(val.0, Value::String(s) if s == "a different error"))
             }

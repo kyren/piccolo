@@ -48,6 +48,7 @@ where
         fmt.debug_struct("AnyValue")
             .field("metadata", self.metadata())
             .field("type_id", &(self.type_id()))
+            .field("value", &(self.as_ptr()))
             .finish()
     }
 }
@@ -64,7 +65,7 @@ struct Header<M> {
 #[repr(C)]
 struct Value<M, V> {
     header: Header<M>,
-    data: V,
+    value: V,
 }
 
 impl<'gc, M> Copy for AnyValue<'gc, M> {}
@@ -88,7 +89,7 @@ impl<'gc, M> AnyValue<'gc, M> {
                     metadata,
                     type_id: TypeId::of::<R>(),
                 },
-                data,
+                value: data,
             },
         );
 
@@ -126,7 +127,7 @@ impl<'gc, M> AnyValue<'gc, M> {
     {
         if TypeId::of::<R>() == self.0.type_id {
             let ptr = unsafe { Gc::cast::<Value<M, Root<'gc, R>>>(self.0) };
-            Some(&ptr.as_ref().data)
+            Some(&ptr.as_ref().value)
         } else {
             None
         }

@@ -54,7 +54,7 @@ fn userdata() -> Result<(), StaticError> {
             .state
             .registry
             .fetch(&executor)
-            .take_return::<(AnyUserData, bool)>(ctx)??;
+            .take_result::<(AnyUserData, bool)>(ctx)??;
         assert!(res);
         let data = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
         assert_eq!(data.0.get(), 23);

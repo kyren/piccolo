@@ -234,6 +234,14 @@ pub trait Sequence<'gc>: Collect {
 #[collect(no_drop)]
 pub struct AnySequence<'gc>(pub boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
 
+impl<'gc> fmt::Debug for AnySequence<'gc> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_tuple("Sequence")
+            .field(&(self.0.as_ref() as *const _))
+            .finish()
+    }
+}
+
 impl<'gc> AnySequence<'gc> {
     pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
         let b = boxed::Box::new_in(sequence, MetricsAlloc::new(mc));

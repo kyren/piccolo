@@ -26,7 +26,7 @@ fn error_unwind() -> Result<(), StaticError> {
 
     lua.finish(&executor);
     lua.try_run(|ctx| {
-        match ctx.state.registry.fetch(&executor).take_return::<()>(ctx)? {
+        match ctx.state.registry.fetch(&executor).take_result::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
             _ => panic!("wrong error returned"),
         }
