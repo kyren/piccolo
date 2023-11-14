@@ -273,6 +273,11 @@ struct PendingJump<S> {
     close_upvalues: bool,
 }
 
+enum CallMode {
+    Call { returns: VarCount },
+    TailCall,
+}
+
 impl<S: StringInterner> Compiler<S> {
     fn block(&mut self, block: &Block<S::String>) -> Result<(), CompilerError> {
         self.enter_block();
@@ -406,13 +411,15 @@ impl<S: StringInterner> Compiler<S> {
         if returns.len() == 1 {
             match returns.pop().unwrap() {
                 ExprDescriptor::FunctionCall { func, args } => {
-                    let func = self.expr_discharge(*func, ExprDestination::PushNew)?;
-                    let args = self.push_arguments(args)?;
-                    self.current_function
-                        .operations
-                        .push(Operation::TailCall { func, args });
-                    self.current_function.register_allocator.free(func);
-
+                    self.call_function(*func, args, CallMode::TailCall)?;
+                    return Ok(());
+                }
+                ExprDescriptor::MethodCall {
+                    table,
+                    method,
+                    args,
+                } => {
+                    self.call_method(*table, *method, args, CallMode::TailCall)?;
                     return Ok(());
                 }
                 other => {
@@ -804,7 +811,13 @@ impl<S: StringInterner> Compiler<S> {
                     .iter()
                     .map(|arg| self.expression(arg))
                     .collect::<Result<_, CompilerError>>()?;
-                self.call_function(head_expr, arg_exprs, VarCount::constant(0))?;
+                self.call_function(
+                    head_expr,
+                    arg_exprs,
+                    CallMode::Call {
+                        returns: VarCount::constant(0),
+                    },
+                )?;
             }
             CallSuffix::Method(method, args) => {
                 let arg_exprs = args
@@ -815,7 +828,9 @@ impl<S: StringInterner> Compiler<S> {
                     head_expr,
                     ExprDescriptor::Constant(Constant::String(method.clone())),
                     arg_exprs,
-                    VarCount::constant(0),
+                    CallMode::Call {
+                        returns: VarCount::constant(0),
+                    },
                 )?;
             }
         }
@@ -1498,16 +1513,25 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         func: ExprDescriptor<S::String>,
         args: Vec<ExprDescriptor<S::String>>,
-        returns: VarCount,
+        mode: CallMode,
     ) -> Result<RegisterIndex, CompilerError> {
         let func = self.expr_discharge(func, ExprDestination::PushNew)?;
         let args = self.push_arguments(args)?;
 
-        self.current_function.operations.push(Operation::Call {
-            func,
-            args,
-            returns,
-        });
+        match mode {
+            CallMode::Call { returns } => {
+                self.current_function.operations.push(Operation::Call {
+                    func,
+                    args,
+                    returns,
+                });
+            }
+            CallMode::TailCall => {
+                self.current_function
+                    .operations
+                    .push(Operation::TailCall { func, args });
+            }
+        }
 
         // Operation::Call places returns at the previous location of the function
         self.current_function.register_allocator.free(func);
@@ -1521,7 +1545,7 @@ impl<S: StringInterner> Compiler<S> {
         table: ExprDescriptor<S::String>,
         method: ExprDescriptor<S::String>,
         args: Vec<ExprDescriptor<S::String>>,
-        returns: VarCount,
+        mode: CallMode,
     ) -> Result<RegisterIndex, CompilerError> {
         let (table, table_is_temp) = self.expr_any_register(table)?;
         let (method, method_to_free) = self.expr_any_register_or_constant(method)?;
@@ -1553,11 +1577,20 @@ impl<S: StringInterner> Compiler<S> {
                 .ok_or(CompilerError::Registers)?,
             None => VarCount::variable(),
         };
-        self.current_function.operations.push(Operation::Call {
-            func: base,
-            args,
-            returns,
-        });
+        match mode {
+            CallMode::Call { returns } => {
+                self.current_function.operations.push(Operation::Call {
+                    func: base,
+                    args,
+                    returns,
+                });
+            }
+            CallMode::TailCall => {
+                self.current_function
+                    .operations
+                    .push(Operation::TailCall { func: base, args });
+            }
+        }
 
         self.current_function
             .register_allocator
@@ -1584,7 +1617,28 @@ impl<S: StringInterner> Compiler<S> {
 
             let arg_count = match last_arg {
                 ExprDescriptor::FunctionCall { func, args } => {
-                    self.call_function(*func, args, VarCount::variable())?;
+                    self.call_function(
+                        *func,
+                        args,
+                        CallMode::Call {
+                            returns: VarCount::variable(),
+                        },
+                    )?;
+                    VarCount::variable()
+                }
+                ExprDescriptor::MethodCall {
+                    table,
+                    method,
+                    args,
+                } => {
+                    self.call_method(
+                        *table,
+                        *method,
+                        args,
+                        CallMode::Call {
+                            returns: VarCount::variable(),
+                        },
+                    )?;
                     VarCount::variable()
                 }
                 ExprDescriptor::VarArgs => {
@@ -1980,7 +2034,13 @@ impl<S: StringInterner> Compiler<S> {
             }
 
             ExprDescriptor::FunctionCall { func, args } => {
-                let source = self.call_function(*func, args, VarCount::constant(1))?;
+                let source = self.call_function(
+                    *func,
+                    args,
+                    CallMode::Call {
+                        returns: VarCount::constant(1),
+                    },
+                )?;
                 match dest {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
@@ -2007,7 +2067,14 @@ impl<S: StringInterner> Compiler<S> {
                 method,
                 args,
             } => {
-                let source = self.call_method(*table, *method, args, VarCount::constant(1))?;
+                let source = self.call_method(
+                    *table,
+                    *method,
+                    args,
+                    CallMode::Call {
+                        returns: VarCount::constant(1),
+                    },
+                )?;
                 match dest {
                     ExprDestination::Register(dest) => {
                         assert_ne!(dest, source);
@@ -2080,7 +2147,28 @@ impl<S: StringInterner> Compiler<S> {
                 let dest = self.call_function(
                     *func,
                     args,
-                    VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                    CallMode::Call {
+                        returns: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                    },
+                )?;
+                self.current_function
+                    .register_allocator
+                    .push(count)
+                    .ok_or(CompilerError::Registers)?;
+                dest
+            }
+            ExprDescriptor::MethodCall {
+                table,
+                method,
+                args,
+            } => {
+                let dest = self.call_method(
+                    *table,
+                    *method,
+                    args,
+                    CallMode::Call {
+                        returns: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                    },
                 )?;
                 self.current_function
                     .register_allocator

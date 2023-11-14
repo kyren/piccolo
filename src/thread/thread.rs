@@ -1003,12 +1003,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                                 self.state.lua_stack[bottom + i] = self.state.lua_stack[start + i]
                             }
 
+                            self.state.lua_stack.resize(bottom + returning);
                             for i in count..returning {
                                 self.state.lua_stack[bottom + i] = Value::Nil;
                             }
 
                             if expected_return.is_variable() {
-                                self.state.lua_stack.resize(bottom + returning);
                                 *is_variable = true;
                             } else {
                                 self.state.lua_stack.resize(*base + *stack_size);
