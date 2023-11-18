@@ -13,7 +13,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             ctx,
             "create",
             AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                let thread = Thread::new(&ctx);
+                let thread = Thread::new(ctx);
                 thread
                     .start_suspended(&ctx, meta_ops::call(ctx, stack.get(0))?)
                     .unwrap();

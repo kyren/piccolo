@@ -158,7 +158,8 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::GetUpTable { dest, table, key } => {
-                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let table =
+                    registers.get_upvalue(&ctx, current_function.0.upvalues[table.0 as usize]);
                 let key = get_rc(
                     &registers.stack_frame,
                     &current_function.0.proto.constants,
@@ -176,7 +177,8 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::SetUpTable { table, key, value } => {
-                let table = registers.get_upvalue(current_function.0.upvalues[table.0 as usize]);
+                let table =
+                    registers.get_upvalue(&ctx, current_function.0.upvalues[table.0 as usize]);
                 let key = get_rc(
                     &registers.stack_frame,
                     &current_function.0.proto.constants,
@@ -371,7 +373,7 @@ pub(super) fn run_vm<'gc>(
 
             Operation::GetUpValue { source, dest } => {
                 registers.stack_frame[dest.0 as usize] =
-                    registers.get_upvalue(current_function.0.upvalues[source.0 as usize]);
+                    registers.get_upvalue(&ctx, current_function.0.upvalues[source.0 as usize]);
             }
 
             Operation::SetUpValue { source, dest } => {

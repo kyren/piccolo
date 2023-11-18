@@ -1,8 +1,9 @@
 use std::ops;
 
-use gc_arena::{metrics::Metrics, Arena, Collect, Mutation, Rootable};
+use gc_arena::{metrics::Metrics, Arena, Collect, CollectorPhase, Mutation, Rootable};
 
 use crate::{
+    finalizers::Finalizers,
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
     Error, FromMultiValue, Fuel, Registry, StashedExecutor, StaticError, Table,
@@ -14,6 +15,7 @@ pub struct State<'gc> {
     pub globals: Table<'gc>,
     pub registry: Registry<'gc>,
     pub strings: InternedStringSet<'gc>,
+    pub(crate) finalizers: Finalizers<'gc>,
 }
 
 impl<'gc> State<'gc> {
@@ -22,6 +24,7 @@ impl<'gc> State<'gc> {
             globals: Table::new(mc),
             registry: Registry::new(mc),
             strings: InternedStringSet::new(mc),
+            finalizers: Finalizers::new(mc),
         }
     }
 
@@ -47,7 +50,10 @@ impl<'gc> ops::Deref for Context<'gc> {
     }
 }
 
-pub struct Lua(Arena<Rootable![State<'_>]>);
+pub struct Lua {
+    arena: Arena<Rootable![State<'_>]>,
+    finalized_this_cycle: bool,
+}
 
 impl Default for Lua {
     fn default() -> Self {
@@ -58,7 +64,10 @@ impl Default for Lua {
 impl Lua {
     /// Create a new `Lua` instance with no parts of the stdlib loaded.
     pub fn empty() -> Self {
-        Lua(Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)))
+        Lua {
+            arena: Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)),
+            finalized_this_cycle: false,
+        }
     }
 
     /// Create a new `Lua` instance with the core stdlib loaded.
@@ -111,11 +120,22 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        self.0.collect_all();
+        if self.arena.phase() == CollectorPhase::Sleep {
+            self.finalized_this_cycle = false;
+        }
+
+        if let Some(marked) = self.arena.mark_all() {
+            marked.finalize(|fc, root| {
+                root.finalizers.finalize(fc);
+            });
+            self.finalized_this_cycle = true;
+        }
+
+        self.arena.collect_all();
     }
 
     pub fn gc_metrics(&self) -> &Metrics {
-        self.0.metrics()
+        self.arena.metrics()
     }
 
     pub fn run<F, T>(&mut self, f: F) -> T
@@ -124,9 +144,22 @@ impl Lua {
     {
         const COLLECTOR_GRANULARITY: f64 = 1024.0;
 
-        let r = self.0.mutate(move |mc, state| f(state.ctx(mc)));
-        if self.0.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            self.0.collect_debt();
+        let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
+        if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
+            if self.arena.phase() == CollectorPhase::Sleep {
+                self.finalized_this_cycle = false;
+            }
+
+            if self.finalized_this_cycle {
+                self.arena.collect_debt();
+            } else {
+                if let Some(marked) = self.arena.mark_debt() {
+                    marked.finalize(|fc, root| {
+                        root.finalizers.finalize(fc);
+                    });
+                    self.finalized_this_cycle = true;
+                }
+            }
         }
         r
     }

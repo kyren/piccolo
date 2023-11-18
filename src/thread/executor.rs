@@ -47,8 +47,8 @@ impl<'gc> Executor<'gc> {
     const FUEL_PER_STEP: i32 = 4;
 
     /// Creates a new `Executor` with a stopped main thread.
-    pub fn new(mc: &Mutation<'gc>) -> Self {
-        Self::run(mc, Thread::new(mc))
+    pub fn new(ctx: Context<'gc>) -> Self {
+        Self::run(&ctx, Thread::new(ctx))
     }
 
     /// Creates a new `Executor` that begins running the given thread.
@@ -64,7 +64,7 @@ impl<'gc> Executor<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) -> Self {
-        let thread = Thread::new(&ctx);
+        let thread = Thread::new(ctx);
         thread.start(ctx, function, args).unwrap();
         Self::run(&ctx, thread)
     }

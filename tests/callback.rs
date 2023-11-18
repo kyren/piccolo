@@ -6,7 +6,7 @@ use piccolo::{
 
 #[test]
 fn callback() -> Result<(), StaticError> {
-    let mut lua = Lua::full();
+    let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
@@ -268,7 +268,7 @@ fn resume_with_err() {
             })
         });
 
-        let thread = Thread::new(&ctx);
+        let thread = Thread::new(ctx);
         thread
             .start_suspended(&ctx, Function::Callback(callback))
             .unwrap();

@@ -7,12 +7,13 @@ use allocator_api2::vec;
 use gc_arena::{
     allocator_api::MetricsAlloc,
     lock::{Lock, RefLock},
-    Collect, Gc, Mutation,
+    unsize, Collect, Gc, GcWeak, Mutation,
 };
 use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
+    finalizers::{Finalize, FinalizeWrite},
     meta_ops,
     types::{RegisterIndex, VarCount},
     AnyCallback, AnySequence, Closure, Context, Error, FromMultiValue, Fuel, Function,
@@ -66,15 +67,19 @@ impl<'gc> Hash for Thread<'gc> {
 }
 
 impl<'gc> Thread<'gc> {
-    pub fn new(mc: &Mutation<'gc>) -> Thread<'gc> {
-        Thread(Gc::new(
-            mc,
+    pub fn new(ctx: Context<'gc>) -> Thread<'gc> {
+        let p = Gc::new(
+            &ctx,
             RefLock::new(ThreadState {
-                frames: vec::Vec::new_in(MetricsAlloc::new(mc)),
-                stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
-                open_upvalues: vec::Vec::new_in(MetricsAlloc::new(mc)),
+                frames: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
+                stack: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
+                open_upvalues: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
             }),
-        ))
+        );
+        ctx.state
+            .finalizers
+            .add(&ctx, unsize!(Gc::downgrade(p) => dyn Finalize));
+        Thread(p)
     }
 
     pub fn as_ptr(self) -> *const () {
@@ -165,10 +170,7 @@ impl<'gc> Thread<'gc> {
     pub fn reset(self, mc: &Mutation<'gc>) -> Result<(), BadThreadMode> {
         match self.0.try_borrow_mut(mc) {
             Ok(mut state) => {
-                state.close_upvalues(mc, 0);
-                assert!(state.open_upvalues.is_empty());
-                state.stack.clear();
-                state.frames.clear();
+                state.reset(mc);
                 Ok(())
             }
             Err(_) => Err(BadThreadMode {
@@ -200,6 +202,39 @@ impl<'gc> Thread<'gc> {
                 expected: Some(expected),
             })
         }
+    }
+}
+
+impl<'gc> FinalizeWrite<'gc> for RefLock<ThreadState<'gc>> {
+    fn finalize_write(this: &gc_arena::barrier::Write<Self>, mc: &Mutation<'gc>) {
+        this.unlock().borrow_mut().reset(mc);
+    }
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub struct OpenUpValue<'gc> {
+    thread: GcWeak<'gc, RefLock<ThreadState<'gc>>>,
+    stack_index: usize,
+}
+
+impl<'gc> OpenUpValue<'gc> {
+    const UPGRADE_ERR: &str = "thread not finalized: upvalues not closed";
+
+    pub fn get(self, mc: &Mutation<'gc>) -> Value<'gc> {
+        self.thread
+            .upgrade(mc)
+            .expect(Self::UPGRADE_ERR)
+            .borrow()
+            .stack[self.stack_index]
+    }
+
+    pub fn set(self, mc: &Mutation<'gc>, v: Value<'gc>) {
+        self.thread
+            .upgrade(mc)
+            .expect(Self::UPGRADE_ERR)
+            .borrow_mut(mc)
+            .stack[self.stack_index] = v;
     }
 }
 
@@ -398,15 +433,25 @@ impl<'gc> ThreadState<'gc> {
         let this_ptr = self as *mut _;
         for &upval in &self.open_upvalues[start..] {
             match upval.0.get() {
-                UpValueState::Open(upvalue_thread, ind) => {
-                    assert!(upvalue_thread.0.as_ptr() == this_ptr);
-                    upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
+                UpValueState::Open(open_upvalue) => {
+                    assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
+                    upval.0.set(
+                        mc,
+                        UpValueState::Closed(self.stack[open_upvalue.stack_index]),
+                    );
                 }
                 UpValueState::Closed(_) => panic!("upvalue is not open"),
             }
         }
 
         self.open_upvalues.truncate(start);
+    }
+
+    fn reset(&mut self, mc: &Mutation<'gc>) {
+        self.close_upvalues(mc, 0);
+        assert!(self.open_upvalues.is_empty());
+        self.stack.clear();
+        self.frames.clear();
     }
 }
 
@@ -973,24 +1018,30 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         {
             Ok(i) => self.open_upvalues[i],
             Err(i) => {
-                let uv = UpValue(Gc::new(mc, Lock::new(UpValueState::Open(self.thread, ind))));
+                let uv = UpValue(Gc::new(
+                    mc,
+                    Lock::new(UpValueState::Open(OpenUpValue {
+                        thread: Gc::downgrade(self.thread.0),
+                        stack_index: ind,
+                    })),
+                ));
                 self.open_upvalues.insert(i, uv);
                 uv
             }
         }
     }
 
-    pub(super) fn get_upvalue(&self, upvalue: UpValue<'gc>) -> Value<'gc> {
+    pub(super) fn get_upvalue(&self, mc: &Mutation<'gc>, upvalue: UpValue<'gc>) -> Value<'gc> {
         match upvalue.0.get() {
-            UpValueState::Open(upvalue_thread, ind) => {
-                if upvalue_thread == self.thread {
+            UpValueState::Open(open_upvalue) => {
+                if open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0) {
                     assert!(
-                        ind < self.bottom,
+                        open_upvalue.stack_index < self.bottom,
                         "upvalues must be above the current Lua frame"
                     );
-                    self.upper_stack[ind]
+                    self.upper_stack[open_upvalue.stack_index]
                 } else {
-                    upvalue_thread.0.borrow().stack[ind]
+                    open_upvalue.get(mc)
                 }
             }
             UpValueState::Closed(v) => v,
@@ -1004,19 +1055,19 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         value: Value<'gc>,
     ) {
         match upvalue.0.get() {
-            UpValueState::Open(upvalue_thread, ind) => {
-                if upvalue_thread == self.thread {
+            UpValueState::Open(open_upvalue) => {
+                if open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0) {
                     assert!(
-                        ind < self.bottom,
+                        open_upvalue.stack_index < self.bottom,
                         "upvalues must be above the current Lua frame"
                     );
-                    self.upper_stack[ind] = value;
+                    self.upper_stack[open_upvalue.stack_index] = value;
                 } else {
-                    upvalue_thread.0.borrow_mut(mc).stack[ind] = value;
+                    open_upvalue.set(mc, value);
                 }
             }
-            UpValueState::Closed(v) => {
-                upvalue.0.set(mc, UpValueState::Closed(v));
+            UpValueState::Closed(_) => {
+                upvalue.0.set(mc, UpValueState::Closed(value));
             }
         }
     }
@@ -1033,14 +1084,14 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
         for &upval in &self.open_upvalues[start..] {
             match upval.0.get() {
-                UpValueState::Open(upvalue_thread, ind) => {
-                    assert!(upvalue_thread == self.thread);
+                UpValueState::Open(open_upvalue) => {
+                    assert!(open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0));
                     upval.0.set(
                         mc,
-                        UpValueState::Closed(if ind < self.base {
-                            self.upper_stack[ind]
+                        UpValueState::Closed(if open_upvalue.stack_index < self.base {
+                            self.upper_stack[open_upvalue.stack_index]
                         } else {
-                            self.stack_frame[ind - self.base]
+                            self.stack_frame[open_upvalue.stack_index - self.base]
                         }),
                     );
                 }
@@ -1060,7 +1111,7 @@ fn count_fuel(per_item: i32, len: usize) -> i32 {
 
 fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
     match u.0.get() {
-        UpValueState::Open(_, ind) => ind,
+        UpValueState::Open(open_upvalue) => open_upvalue.stack_index,
         UpValueState::Closed(_) => panic!("upvalue is not open"),
     }
 }

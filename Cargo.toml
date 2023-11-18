@@ -16,7 +16,7 @@ codegen-units = 1
 [dependencies]
 allocator-api2 = "0.2"
 anyhow = "1.0"
-gc-arena = { version = "0.4" , features = ["allocator-api2", "hashbrown"] }
+gc-arena = { git = "https://github.com/kyren/gc-arena", branch = "piccolo", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"

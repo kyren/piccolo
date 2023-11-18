@@ -49,7 +49,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let mut editor = DefaultEditor::new()?;
     let executor = lua.run(|ctx| {
-        let executor = Executor::new(&ctx);
+        let executor = Executor::new(ctx);
         ctx.state.registry.stash(&ctx, executor)
     });
 

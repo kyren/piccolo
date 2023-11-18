@@ -5,6 +5,7 @@ pub mod compiler;
 pub mod constant;
 pub mod conversion;
 pub mod error;
+pub(crate) mod finalizers;
 pub mod fuel;
 pub mod function;
 pub mod io;

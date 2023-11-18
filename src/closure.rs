@@ -10,8 +10,9 @@ use thiserror::Error;
 use crate::{
     compiler::{self, CompiledPrototype},
     opcode::OpCode,
+    thread::OpenUpValue,
     types::UpValueDescriptor,
-    Constant, Context, String, Table, Thread, Value,
+    Constant, Context, String, Table, Value,
 };
 
 #[derive(Debug, Error)]
@@ -110,10 +111,10 @@ impl<'gc> FunctionProto<'gc> {
     }
 }
 
-#[derive(Debug, Collect, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum UpValueState<'gc> {
-    Open(Thread<'gc>, usize),
+    Open(OpenUpValue<'gc>),
     Closed(Value<'gc>),
 }
 
