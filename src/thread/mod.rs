@@ -1,3 +1,4 @@
+mod executor;
 mod thread;
 mod vm;
 
@@ -6,7 +7,8 @@ use thiserror::Error;
 use crate::TypeError;
 
 pub use self::{
-    thread::{BadThreadMode, Executor, Thread, ThreadMode},
+    executor::Executor,
+    thread::{BadThreadMode, Thread, ThreadMode},
     vm::BinaryOperatorError,
 };
 

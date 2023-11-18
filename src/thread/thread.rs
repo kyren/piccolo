@@ -15,11 +15,9 @@ use crate::{
     closure::{UpValue, UpValueState},
     meta_ops,
     types::{RegisterIndex, VarCount},
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, FromMultiValue, Fuel,
-    Function, IntoMultiValue, SequencePoll, Stack, TypeError, VMError, Value, Variadic,
+    AnyCallback, AnySequence, Closure, Context, Error, FromMultiValue, Fuel, Function,
+    IntoMultiValue, TypeError, VMError, Value,
 };
-
-use super::vm::run_vm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
@@ -51,7 +49,7 @@ pub struct BadThreadMode {
 
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);
+pub struct Thread<'gc>(pub(super) Gc<'gc, RefLock<ThreadState<'gc>>>);
 
 impl<'gc> PartialEq for Thread<'gc> {
     fn eq(&self, other: &Thread<'gc>) -> bool {
@@ -205,409 +203,217 @@ impl<'gc> Thread<'gc> {
     }
 }
 
-/// The entry-point for the Lua VM.
-///
-/// `Executor` runs networks of `Threads` that may depend on each other and may pass control
-/// back and forth. All Lua code that is run is done so directly or indirectly by calling
-/// `Executor::step`.
-///
-/// # Panics
-///
-/// `Executor` is dangerous to use from within any kind of Lua callback. It has no protection
-/// against re-entrency, and calling `Executor` methods from within a callback that it is running
-/// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
-/// used, cross-thread upvalues may cause a panic if one `Executor` is used within the other.
-///
-/// `Executor`s are not meant to be used from or available to callbacks at all, and `Executor`s
-/// should not be nested. Instead, use the normal mechanisms for callbacks to call Lua code so that
-/// it is run on the same executor calling the callback.
-#[derive(Debug, Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub struct Executor<'gc>(Gc<'gc, RefLock<vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>>>);
-
-impl<'gc> PartialEq for Executor<'gc> {
-    fn eq(&self, other: &Executor<'gc>) -> bool {
-        Gc::ptr_eq(self.0, other.0)
-    }
+#[derive(Debug, Collect)]
+#[collect(require_static)]
+pub(super) enum LuaReturn {
+    // Normal function call, place return values at the bottom of the returning function's stack,
+    // as normal.
+    Normal(VarCount),
+    // Synthetic metamethod call, place an optional single return value at an index relative to the
+    // returned to function's bottom.
+    Meta(Option<RegisterIndex>),
 }
 
-impl<'gc> Eq for Executor<'gc> {}
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+pub(super) enum Frame<'gc> {
+    // A running Lua frame.
+    Lua {
+        bottom: usize,
+        base: usize,
+        is_variable: bool,
+        pc: usize,
+        stack_size: usize,
+        expected_return: Option<LuaReturn>,
+    },
+    // A suspended function call that has not yet been run. Must be the only frame in the stack.
+    Start(Function<'gc>),
+    // Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
+    // below a results frame.
+    Yielded,
+    // A callback that has been queued but not called yet. Must be the top frame of the stack.
+    Callback {
+        bottom: usize,
+        callback: AnyCallback<'gc>,
+    },
+    // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
+    // will be called on the next call to `Thread::step`, depending on whether there is a pending
+    // error.
+    Sequence {
+        bottom: usize,
+        sequence: AnySequence<'gc>,
+        // Will be set when unwinding has stopped at this frame. If set, this must be the top frame
+        // of the stack.
+        pending_error: Option<Error<'gc>>,
+    },
+    // We are waiting on an upper thread to finish. Must be the top frame of the stack.
+    WaitThread,
+    // Results are waiting to be taken. Must be the top frame of the stack.
+    Result {
+        bottom: usize,
+    },
+    // An error is currently unwinding. Must be the top frame of the stack.
+    Error(Error<'gc>),
+}
 
-impl<'gc> Executor<'gc> {
-    const FUEL_PER_CALLBACK: i32 = 8;
-    const FUEL_PER_SEQ_STEP: i32 = 4;
-    const FUEL_PER_STEP: i32 = 4;
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+pub(super) struct ThreadState<'gc> {
+    pub(super) frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
+    pub(super) stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    pub(super) open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+}
 
-    /// Creates a new `Executor` with a stopped main thread.
-    pub fn new(mc: &Mutation<'gc>) -> Self {
-        Self::run(mc, Thread::new(mc))
-    }
-
-    /// Creates a new `Executor` that begins running the given thread.
-    pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Self {
-        let mut thread_stack = vec::Vec::new_in(MetricsAlloc::new(mc));
-        thread_stack.push(thread);
-        Executor(Gc::new(mc, RefLock::new(thread_stack)))
-    }
-
-    /// Creates a new `Executor` with a new `Thread` running the given function.
-    pub fn start(
-        ctx: Context<'gc>,
-        function: Function<'gc>,
-        args: impl IntoMultiValue<'gc>,
-    ) -> Self {
-        let thread = Thread::new(&ctx);
-        thread.start(ctx, function, args).unwrap();
-        Self::run(&ctx, thread)
-    }
-
-    pub fn mode(self) -> ThreadMode {
-        if let Ok(thread_stack) = self.0.try_borrow() {
-            if thread_stack.len() > 1 {
-                ThreadMode::Normal
-            } else {
-                thread_stack[0].mode()
+impl<'gc> ThreadState<'gc> {
+    pub(super) fn mode(&self) -> ThreadMode {
+        match self.frames.last() {
+            None => {
+                debug_assert!(self.stack.is_empty() && self.open_upvalues.is_empty());
+                ThreadMode::Stopped
             }
-        } else {
-            ThreadMode::Running
-        }
-    }
-
-    /// Runs the VM for a period of time controlled by the `fuel` parameter.
-    ///
-    /// The VM and callbacks will consume fuel as they run, and `Executor::step` will return as soon
-    /// as `Fuel::can_continue()` returns false *and some minimal positive progress has been made*.
-    ///
-    /// Returns `false` if the method has exhausted its fuel, but there is more work to do. If
-    /// `true` is returned, there is only one thread remaining on the execution stack and it is no
-    /// longer in the 'Normal' state.
-    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
-
-        loop {
-            let mut top_thread = thread_stack.last().copied().unwrap();
-            let mut res_thread = None;
-            match top_thread.mode() {
-                ThreadMode::Normal => {}
-                ThreadMode::Running => {
-                    panic!("`Executor` thread already running")
+            Some(frame) => match frame {
+                Frame::Lua { .. } | Frame::Callback { .. } | Frame::Sequence { .. } => {
+                    ThreadMode::Normal
                 }
-                _ => {
-                    if thread_stack.len() == 1 {
-                        break true;
+                Frame::Start(_) | Frame::Yielded => ThreadMode::Suspended,
+                Frame::WaitThread => ThreadMode::Waiting,
+                Frame::Result { .. } => ThreadMode::Result,
+                Frame::Error(_) => {
+                    if self.frames.len() == 1 {
+                        ThreadMode::Result
                     } else {
-                        thread_stack.pop();
-                        res_thread = Some(top_thread);
-                        top_thread = thread_stack.last().copied().unwrap();
+                        ThreadMode::Normal
                     }
                 }
-            }
+            },
+        }
+    }
 
-            let mut top_state = top_thread.0.borrow_mut(&ctx);
-            if let Some(res_thread) = res_thread {
-                let mode = top_state.mode();
-                if mode == ThreadMode::Waiting {
-                    assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
-                    match res_thread.mode() {
-                        ThreadMode::Result => {
-                            // Take the results from the res_thread and return them to our top
-                            // thread.
-                            let mut res_state = res_thread.0.borrow_mut(&ctx);
-                            match res_state.take_result() {
-                                Ok(vals) => {
-                                    let bottom = top_state.stack.len();
-                                    top_state.stack.extend(vals);
-                                    top_state.return_to(bottom);
-                                }
-                                Err(err) => {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                }
-                            }
-                            drop(res_state);
-                        }
-                        ThreadMode::Normal => unreachable!(),
-                        res_mode => top_state.frames.push(Frame::Error(
-                            BadThreadMode {
-                                found: res_mode,
-                                expected: None,
-                            }
-                            .into(),
-                        )),
-                    }
+    // Pushes a function call frame, arguments start at the given stack bottom.
+    pub(super) fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
+        match function {
+            Function::Closure(closure) => {
+                let fixed_params = closure.0.proto.fixed_params as usize;
+                let stack_size = closure.0.proto.stack_size as usize;
+                let given_params = self.stack.len() - bottom;
+
+                let var_params = if given_params > fixed_params {
+                    given_params - fixed_params
                 } else {
-                    // Shenanigans have happened and the upper thread has had its state externally
-                    // changed.
-                    top_state.frames.push(Frame::Error(
-                        BadThreadMode {
-                            found: mode,
-                            expected: None,
-                        }
-                        .into(),
-                    ));
-                }
+                    0
+                };
+                self.stack.insert(bottom, closure.into());
+                self.stack[bottom + 1..].rotate_right(var_params);
+                let base = bottom + 1 + var_params;
+
+                self.stack.resize(base + stack_size, Value::Nil);
+
+                self.frames.push(Frame::Lua {
+                    bottom,
+                    base,
+                    is_variable: false,
+                    pc: 0,
+                    stack_size,
+                    expected_return: None,
+                });
             }
-
-            if top_state.mode() == ThreadMode::Normal {
-                fn callback_ret<'gc>(
-                    ctx: Context<'gc>,
-                    thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
-                    mut top_state: RefMut<ThreadState<'gc>>,
-                    stack_bottom: usize,
-                    ret: CallbackReturn<'gc>,
-                ) {
-                    match ret {
-                        CallbackReturn::Return => {
-                            top_state.return_to(stack_bottom);
-                        }
-                        CallbackReturn::Sequence(sequence) => {
-                            top_state.frames.push(Frame::Sequence {
-                                bottom: stack_bottom,
-                                sequence,
-                                pending_error: None,
-                            });
-                        }
-                        CallbackReturn::Yield { to_thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.frames.push(Frame::Yielded);
-
-                            if let Some(to_thread) = to_thread {
-                                if let Err(err) = to_thread
-                                    .resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                                {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                } else {
-                                    thread_stack.pop();
-                                    thread_stack.push(to_thread);
-                                }
-                            } else {
-                                top_state.frames.push(Frame::Result {
-                                    bottom: stack_bottom,
-                                });
-                            }
-                        }
-                        CallbackReturn::Call { function, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.push_call(stack_bottom, function);
-                        }
-                        CallbackReturn::Resume { thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.frames.push(Frame::WaitThread);
-
-                            if let Err(err) =
-                                thread.resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                            {
-                                top_state.frames.push(Frame::Error(err.into()));
-                            } else {
-                                if top_state.frames.len() == 1 {
-                                    // Tail call the thread resume if we can.
-                                    assert!(matches!(top_state.frames[0], Frame::WaitThread));
-                                    thread_stack.pop();
-                                }
-                                thread_stack.push(thread);
-                            }
-                        }
-                    }
-                }
-
-                match top_state.frames.pop() {
-                    Some(Frame::Callback { bottom, callback }) => {
-                        fuel.consume_fuel(Self::FUEL_PER_CALLBACK);
-                        match callback.call(ctx, fuel, Stack::new(&mut top_state.stack, bottom)) {
-                            Ok(ret) => {
-                                callback_ret(ctx, &mut *thread_stack, top_state, bottom, ret)
-                            }
-                            Err(err) => top_state.frames.push(Frame::Error(err)),
-                        }
-                    }
-                    Some(Frame::Sequence {
-                        bottom,
-                        mut sequence,
-                        pending_error,
-                    }) => {
-                        fuel.consume_fuel(Self::FUEL_PER_SEQ_STEP);
-                        let fin = if let Some(err) = pending_error {
-                            sequence.error(ctx, fuel, err, Stack::new(&mut top_state.stack, bottom))
-                        } else {
-                            sequence.poll(ctx, fuel, Stack::new(&mut top_state.stack, bottom))
-                        };
-
-                        match fin {
-                            Ok(ret) => callback_ret(
-                                ctx,
-                                &mut *thread_stack,
-                                top_state,
-                                bottom,
-                                match ret {
-                                    SequencePoll::Pending => CallbackReturn::Sequence(sequence),
-                                    SequencePoll::Return => CallbackReturn::Return,
-                                    SequencePoll::Yield { to_thread, is_tail } => {
-                                        CallbackReturn::Yield {
-                                            to_thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Call { function, is_tail } => {
-                                        CallbackReturn::Call {
-                                            function,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Resume { thread, is_tail } => {
-                                        CallbackReturn::Resume {
-                                            thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                },
-                            ),
-                            Err(error) => {
-                                top_state.frames.push(Frame::Error(error));
-                            }
-                        }
-                    }
-                    Some(frame @ Frame::Lua { .. }) => {
-                        top_state.frames.push(frame);
-
-                        const VM_GRANULARITY: u32 = 64;
-
-                        let lua_frame = LuaFrame {
-                            state: &mut top_state,
-                            thread: top_thread,
-                            fuel,
-                        };
-                        match run_vm(ctx, lua_frame, VM_GRANULARITY) {
-                            Err(err) => {
-                                top_state.frames.push(Frame::Error(err.into()));
-                            }
-                            Ok(instructions_run) => {
-                                fuel.consume_fuel(instructions_run.try_into().unwrap());
-                            }
-                        }
-                    }
-                    Some(Frame::Error(err)) => {
-                        match top_state
-                            .frames
-                            .pop()
-                            .expect("normal thread must have frame above error")
-                        {
-                            Frame::Lua { bottom, .. } => {
-                                top_state.close_upvalues(&ctx, bottom);
-                                top_state.stack.truncate(bottom);
-                                top_state.frames.push(Frame::Error(err));
-                            }
-                            Frame::Sequence {
-                                bottom,
-                                sequence,
-                                pending_error: error,
-                            } => {
-                                assert!(error.is_none());
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom,
-                                    sequence,
-                                    pending_error: Some(err),
-                                });
-                            }
-                            _ => top_state.frames.push(Frame::Error(err)),
-                        }
-                    }
-                    _ => panic!("tried to step invalid frame type"),
-                }
-            }
-
-            fuel.consume_fuel(Self::FUEL_PER_STEP);
-
-            if !fuel.should_continue() {
-                break false;
+            Function::Callback(callback) => {
+                self.frames.push(Frame::Callback { bottom, callback });
             }
         }
     }
 
-    pub fn take_result<T: FromMultiValue<'gc>>(
-        self,
-        ctx: Context<'gc>,
-    ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Result),
-            })
-        } else {
-            thread_stack[0].take_result(ctx)
+    // Return to the current top frame from a popped frame. The current top frame must be a
+    // sequence, lua frame, or there must be no frames at all.
+    pub(super) fn return_to(&mut self, bottom: usize) {
+        match self.frames.last_mut() {
+            Some(Frame::Sequence {
+                bottom: seq_bottom, ..
+            }) => assert_eq!(bottom, *seq_bottom),
+            Some(Frame::Lua {
+                expected_return,
+                is_variable,
+                base,
+                stack_size,
+                ..
+            }) => {
+                let return_len = self.stack.len() - bottom;
+                match expected_return {
+                    Some(LuaReturn::Normal(ret_count)) => {
+                        let return_len = ret_count
+                            .to_constant()
+                            .map(|c| c as usize)
+                            .unwrap_or(return_len);
+
+                        self.stack.truncate(bottom + return_len);
+
+                        *is_variable = ret_count.is_variable();
+                        if !ret_count.is_variable() {
+                            self.stack.resize(*base + *stack_size, Value::Nil);
+                        }
+                    }
+                    Some(LuaReturn::Meta(meta_ind)) => {
+                        let meta_ret = self.stack.get(bottom).copied().unwrap_or_default();
+                        self.stack.truncate(bottom);
+                        self.stack.resize(*base + *stack_size, Value::Nil);
+                        *is_variable = false;
+                        if let Some(meta_ind) = meta_ind {
+                            self.stack[*base + meta_ind.0 as usize] = meta_ret;
+                        }
+                    }
+                    None => panic!("no expected return set for returned to lua frame"),
+                }
+            }
+            None => {
+                self.frames.push(Frame::Result { bottom });
+            }
+            _ => panic!("return frame must be sequence or lua frame"),
         }
     }
 
-    pub fn resume<T: FromMultiValue<'gc>>(
-        self,
-        ctx: Context<'gc>,
-        args: impl IntoMultiValue<'gc>,
-    ) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Suspended),
-            })
-        } else {
-            thread_stack[0].resume(ctx, args)
+    pub(super) fn take_result(
+        &mut self,
+    ) -> Result<impl Iterator<Item = Value<'gc>> + '_, Error<'gc>> {
+        match self.frames.pop() {
+            Some(Frame::Result { bottom }) => Ok(self.stack.drain(bottom..)),
+            Some(Frame::Error(err)) => {
+                assert!(self.stack.is_empty());
+                assert!(self.frames.is_empty());
+                assert!(self.open_upvalues.is_empty());
+                Err(err)
+            }
+            _ => panic!("no results available to take"),
         }
     }
 
-    pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Suspended),
-            })
-        } else {
-            thread_stack[0].resume_err(mc, error)
+    pub(super) fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom: usize) {
+        let start = match self
+            .open_upvalues
+            .binary_search_by(|&u| open_upvalue_ind(u).cmp(&bottom))
+        {
+            Ok(i) => i,
+            Err(i) => i,
+        };
+
+        let this_ptr = self as *mut _;
+        for &upval in &self.open_upvalues[start..] {
+            match upval.0.get() {
+                UpValueState::Open(upvalue_thread, ind) => {
+                    assert!(upvalue_thread.0.as_ptr() == this_ptr);
+                    upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
+                }
+                UpValueState::Closed(_) => panic!("upvalue is not open"),
+            }
         }
-    }
 
-    /// Reset this `Executor` entirely and begins running the given thread.
-    pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
-        let mut thread_stack = self.0.borrow_mut(mc);
-        thread_stack.clear();
-        thread_stack.push(thread);
-    }
-
-    /// Reset this `Executor` entirely and begins running the given function.
-    pub fn restart(
-        self,
-        ctx: Context<'gc>,
-        function: Function<'gc>,
-        args: impl IntoMultiValue<'gc>,
-    ) {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
-        thread_stack.truncate(1);
-        thread_stack[0].reset(&ctx).unwrap();
-        thread_stack[0].start(ctx, function, args).unwrap();
+        self.open_upvalues.truncate(start);
     }
 }
 
 pub(super) struct LuaFrame<'gc, 'a> {
-    thread: Thread<'gc>,
-    state: &'a mut ThreadState<'gc>,
-    fuel: &'a mut Fuel,
+    pub(super) thread: Thread<'gc>,
+    pub(super) state: &'a mut ThreadState<'gc>,
+    pub(super) fuel: &'a mut Fuel,
 }
 
 impl<'gc, 'a> LuaFrame<'gc, 'a> {
@@ -1237,211 +1043,6 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
                             self.stack_frame[ind - self.base]
                         }),
                     );
-                }
-                UpValueState::Closed(_) => panic!("upvalue is not open"),
-            }
-        }
-
-        self.open_upvalues.truncate(start);
-    }
-}
-
-#[derive(Debug, Collect)]
-#[collect(require_static)]
-enum LuaReturn {
-    // Normal function call, place return values at the bottom of the returning function's stack,
-    // as normal.
-    Normal(VarCount),
-    // Synthetic metamethod call, place an optional single return value at an index relative to the
-    // returned to function's bottom.
-    Meta(Option<RegisterIndex>),
-}
-
-#[derive(Debug, Collect)]
-#[collect(no_drop)]
-enum Frame<'gc> {
-    // A running Lua frame.
-    Lua {
-        bottom: usize,
-        base: usize,
-        is_variable: bool,
-        pc: usize,
-        stack_size: usize,
-        expected_return: Option<LuaReturn>,
-    },
-    // A suspended function call that has not yet been run. Must be the only frame in the stack.
-    Start(Function<'gc>),
-    // Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
-    // below a results frame.
-    Yielded,
-    // A callback that has been queued but not called yet. Must be the top frame of the stack.
-    Callback {
-        bottom: usize,
-        callback: AnyCallback<'gc>,
-    },
-    // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
-    // will be called on the next call to `Thread::step`, depending on whether there is a pending
-    // error.
-    Sequence {
-        bottom: usize,
-        sequence: AnySequence<'gc>,
-        // Will be set when unwinding has stopped at this frame. If set, this must be the top frame
-        // of the stack.
-        pending_error: Option<Error<'gc>>,
-    },
-    // We are waiting on an upper thread to finish. Must be the top frame of the stack.
-    WaitThread,
-    // Results are waiting to be taken. Must be the top frame of the stack.
-    Result {
-        bottom: usize,
-    },
-    // An error is currently unwinding. Must be the top frame of the stack.
-    Error(Error<'gc>),
-}
-
-#[derive(Debug, Collect)]
-#[collect(no_drop)]
-struct ThreadState<'gc> {
-    frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
-    stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
-}
-
-impl<'gc> ThreadState<'gc> {
-    fn mode(&self) -> ThreadMode {
-        match self.frames.last() {
-            None => {
-                debug_assert!(self.stack.is_empty() && self.open_upvalues.is_empty());
-                ThreadMode::Stopped
-            }
-            Some(frame) => match frame {
-                Frame::Lua { .. } | Frame::Callback { .. } | Frame::Sequence { .. } => {
-                    ThreadMode::Normal
-                }
-                Frame::Start(_) | Frame::Yielded => ThreadMode::Suspended,
-                Frame::WaitThread => ThreadMode::Waiting,
-                Frame::Result { .. } => ThreadMode::Result,
-                Frame::Error(_) => {
-                    if self.frames.len() == 1 {
-                        ThreadMode::Result
-                    } else {
-                        ThreadMode::Normal
-                    }
-                }
-            },
-        }
-    }
-
-    // Pushes a function call frame, arguments start at the given stack bottom.
-    fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
-        match function {
-            Function::Closure(closure) => {
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
-                let given_params = self.stack.len() - bottom;
-
-                let var_params = if given_params > fixed_params {
-                    given_params - fixed_params
-                } else {
-                    0
-                };
-                self.stack.insert(bottom, closure.into());
-                self.stack[bottom + 1..].rotate_right(var_params);
-                let base = bottom + 1 + var_params;
-
-                self.stack.resize(base + stack_size, Value::Nil);
-
-                self.frames.push(Frame::Lua {
-                    bottom,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.frames.push(Frame::Callback { bottom, callback });
-            }
-        }
-    }
-
-    // Return to the current top frame from a popped frame. The current top frame must be a
-    // sequence, lua frame, or there must be no frames at all.
-    fn return_to(&mut self, bottom: usize) {
-        match self.frames.last_mut() {
-            Some(Frame::Sequence {
-                bottom: seq_bottom, ..
-            }) => assert_eq!(bottom, *seq_bottom),
-            Some(Frame::Lua {
-                expected_return,
-                is_variable,
-                base,
-                stack_size,
-                ..
-            }) => {
-                let return_len = self.stack.len() - bottom;
-                match expected_return {
-                    Some(LuaReturn::Normal(ret_count)) => {
-                        let return_len = ret_count
-                            .to_constant()
-                            .map(|c| c as usize)
-                            .unwrap_or(return_len);
-
-                        self.stack.truncate(bottom + return_len);
-
-                        *is_variable = ret_count.is_variable();
-                        if !ret_count.is_variable() {
-                            self.stack.resize(*base + *stack_size, Value::Nil);
-                        }
-                    }
-                    Some(LuaReturn::Meta(meta_ind)) => {
-                        let meta_ret = self.stack.get(bottom).copied().unwrap_or_default();
-                        self.stack.truncate(bottom);
-                        self.stack.resize(*base + *stack_size, Value::Nil);
-                        *is_variable = false;
-                        if let Some(meta_ind) = meta_ind {
-                            self.stack[*base + meta_ind.0 as usize] = meta_ret;
-                        }
-                    }
-                    None => panic!("no expected return set for returned to lua frame"),
-                }
-            }
-            None => {
-                self.frames.push(Frame::Result { bottom });
-            }
-            _ => panic!("return frame must be sequence or lua frame"),
-        }
-    }
-
-    fn take_result(&mut self) -> Result<impl Iterator<Item = Value<'gc>> + '_, Error<'gc>> {
-        match self.frames.pop() {
-            Some(Frame::Result { bottom }) => Ok(self.stack.drain(bottom..)),
-            Some(Frame::Error(err)) => {
-                assert!(self.stack.is_empty());
-                assert!(self.frames.is_empty());
-                assert!(self.open_upvalues.is_empty());
-                Err(err)
-            }
-            _ => panic!("no results available to take"),
-        }
-    }
-
-    fn close_upvalues(&mut self, mc: &Mutation<'gc>, bottom: usize) {
-        let start = match self
-            .open_upvalues
-            .binary_search_by(|&u| open_upvalue_ind(u).cmp(&bottom))
-        {
-            Ok(i) => i,
-            Err(i) => i,
-        };
-
-        let this_ptr = self as *mut _;
-        for &upval in &self.open_upvalues[start..] {
-            match upval.0.get() {
-                UpValueState::Open(upvalue_thread, ind) => {
-                    assert!(upvalue_thread.0.as_ptr() == this_ptr);
-                    upval.0.set(mc, UpValueState::Closed(self.stack[ind]));
                 }
                 UpValueState::Closed(_) => panic!("upvalue is not open"),
             }
