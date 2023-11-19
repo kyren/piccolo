@@ -77,20 +77,20 @@ collection to take place.
 The VM in `piccolo` is thus written in what is sometimes called "stackless"
 or "trampoline" style. It does not rely on the rust stack for Lua -> Rust and
 Rust -> Lua nesting, instead callbacks can either have some kind of immediate
-result (return values, yield values from a coroutine, error), or they can
-produce a `Sequence`. A `Sequence` is a bit like a `Future` in that it is a
-multi-step operation that the parent `Thread` will drive to completion. `Thread`
-will repeatedly call `Sequence::poll` until the sequence is complete, and the
-`Sequence` can yield values and call arbitrary Lua functions while it is being
-polled.
+result (return values, yield values from a coroutine, resume a thread, error),
+or they can produce a `Sequence`. A `Sequence` is a bit like a `Future` in
+that it is a multi-step operation that the parent `Executor` will drive to
+completion. `Executor` will repeatedly call `Sequence::poll` until the sequence
+is complete, and the `Sequence` can yield values and call arbitrary Lua
+functions while it is being polled.
 
 As an example, it is of course possible for Lua to call a Rust callback, which
 then in turn creates a new Lua coroutine and runs it. In order to do so, a
 callback would take a Lua function as a parameter, then create a new coroutine
-Lua thread and return a `Sequence` impl that will run it. The outer main Lua
-thread will step the created `Sequence`, which will in turn step the inner
-Lua thread. This is exactly how the `coroutine.resume` Lua stdlib function is
-implemented.
+`Thread` from it and return `SequencePoll:Resume` to run it. The outer main
+`Executor` will run the created `Thread`, and when it is finished it will
+"return" via `Sequence::poll` (or `Sequence::error`). This is exactly how the
+`coroutine.resume` Lua stdlib function is implemented.
 
 As another example, `pcall` is easy to implement here, a callback can call the
 provided function with a `Sequence` underneath it, and the sequence can catch
@@ -113,7 +113,7 @@ With any number of nested Lua threads and `Sequence`s, control will always
 continuously return outside the GC arena and to the outer Rust code driving
 everything. This is the "trampoline" here, when using this interpreter,
 somewhere there is a loop that is continuously calling `Arena::mutate` and
-`Thread::step`, and it can stop or pause or change tasks at any time, not
+`Executor::step`, and it can stop or pause or change tasks at any time, not
 requiring unwinding the Rust stack.
 
 This "stackless" style has many benefits, it allows for concurrency patterns
@@ -134,14 +134,13 @@ driving everything, and how often this happens can be controlled using the
 "fuel" system.
 
 Lua and Lua driven callback code *always* happens within some call to
-`Thread::step` (either directly or recursively through an outer `Thread::step`
-in the case of coroutines). `Thread::step` has a `fuel` parameter which controls
-how long the VM should run before pausing, with fuel measured (roughly) in units
-of VM instructions.
+`Executor::step`. This method takes a `fuel` parameter which controls how long
+the VM should run before pausing, with fuel measured (roughly) in units of VM
+instructions.
 
-Different amounts of fuel provided to `Thread::step` bound the amount of Lua
+Different amounts of fuel provided to `Executor::step` bound the amount of Lua
 execution that can occur, bounding both the CPU time used and also the amount of
-memory allocation that can occur within a single `Thread::step` call (assuming
+memory allocation that can occur within a single `Executor::step` call (assuming
 certain rules are followed w.r.t. provided callbacks).
 
 The VM also now accurately tracks all memory allocated within its inner
@@ -187,15 +186,10 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
 * A large amount of the stdlib is not implemented yet. Most "peripheral" parts
   of the stdlib are this way, the `io`, `file`, `os`, `package`, `string`,
   `table`, and `utf8` libs are either missing or very sparsely implemented.
-* The garbage collector has no finalization support. Being compatible with
-  PUC-Rio Lua would require object finalization *with failure*, and even having
-  finalization, let alone finalization with some kind of failure story is
-  extremely low priority. Userdata types can currently implement `Drop` (just
-  like any other rust type) to get something equivalent to finaliazation for
-  userdata. This means the `__gc` metamethod currently has no effect.
-* There is no support for other magic garbage collector stuff that PUC-Rio Lua
-  has, like tables with weak keys / values, "ephemeron" tables, finalization
-  with object resurrection, etc...
+* There is no support yet for finalization. `gc-arena` supports finalization in
+  such a way now that it should be possible to implement `__gc` metamethods with
+  resurrection and tables with weak keys / values and ephemeron tables fully,
+  but it has not been done yet. Currently, the `__gc` metamethod has no effect.
 * The compiled VM code is in a couple of ways worse than what PUC-Rio Lua will
   generate. Notably, there is a JMP chaining optimization that is not yet
   implemented that makes most loops much slower than in PUC-Rio Lua.
@@ -230,8 +224,8 @@ consider *almost definite* non-goals.
 * Compatibility with PUC-Rio Lua bytecode
 * `os.setlocale` and other weirdness inherited from C
 * `package.loadlib` and all functionality which allows loading C libraries.
-* Perfectly matching all of the (sometimes exotic and weird!) garbage collector
-  behavior in PUC-Rio Lua.
+* Perfectly matching all of the (sometimes quite exotic) garbage collector
+  corner case behavior in PUC-Rio Lua.
 
 ## Why is it called 'piccolo'?
 
