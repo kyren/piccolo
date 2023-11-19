@@ -1,6 +1,6 @@
 use std::ops;
 
-use gc_arena::{metrics::Metrics, Arena, Collect, CollectorPhase, Mutation, Rootable};
+use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Rootable};
 
 use crate::{
     finalizers::Finalizers,
@@ -120,13 +120,14 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        if self.arena.phase() == CollectorPhase::Sleep {
+        if self.arena.collection_phase() == CollectionPhase::Sleeping {
             self.finalized_this_cycle = false;
         }
 
-        if let Some(marked) = self.arena.mark_all() {
-            marked.finalize(|fc, root| {
-                root.finalizers.finalize(fc);
+        self.arena.mark_all();
+        if self.arena.collection_phase() == CollectionPhase::Marked {
+            self.arena.mutate(|mc, root| {
+                root.finalizers.finalize(mc);
             });
             self.finalized_this_cycle = true;
         }
@@ -146,16 +147,17 @@ impl Lua {
 
         let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
         if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            if self.arena.phase() == CollectorPhase::Sleep {
+            if self.arena.collection_phase() == CollectionPhase::Sleeping {
                 self.finalized_this_cycle = false;
             }
 
             if self.finalized_this_cycle {
                 self.arena.collect_debt();
             } else {
-                if let Some(marked) = self.arena.mark_debt() {
-                    marked.finalize(|fc, root| {
-                        root.finalizers.finalize(fc);
+                self.arena.mark_debt();
+                if self.arena.collection_phase() == CollectionPhase::Marked {
+                    self.arena.mutate(|mc, root| {
+                        root.finalizers.finalize(mc);
                     });
                     self.finalized_this_cycle = true;
                 }
