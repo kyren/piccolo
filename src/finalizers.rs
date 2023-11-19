@@ -1,4 +1,4 @@
-use gc_arena::{barrier::Write, lock::RefLock, Collect, Gc, GcWeak, Mutation};
+use gc_arena::{barrier::Write, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation};
 
 pub trait Finalize<'gc> {
     fn finalize(&self, mc: &Mutation<'gc>);
@@ -37,14 +37,14 @@ impl<'gc> Finalizers<'gc> {
         self.0.borrow_mut(mc).push(ptr);
     }
 
-    pub(crate) fn finalize(&self, mc: &Mutation<'gc>) {
-        self.0.borrow_mut(mc).retain(|&w| {
-            if let Some(s) = w.upgrade(mc) {
-                if !w.is_marked() {
+    pub(crate) fn finalize(&self, fc: &Finalization<'gc>) {
+        self.0.borrow_mut(fc).retain(|&w| {
+            if let Some(s) = w.upgrade(fc) {
+                if w.is_dead(fc) {
                     if s.needs_write_barrier() {
-                        Gc::write(mc, s);
+                        Gc::write(fc, s);
                     }
-                    s.finalize(mc);
+                    s.finalize(fc);
                     false
                 } else {
                     true

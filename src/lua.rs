@@ -52,7 +52,7 @@ impl<'gc> ops::Deref for Context<'gc> {
 
 pub struct Lua {
     arena: Arena<Rootable![State<'_>]>,
-    finalized_this_cycle: bool,
+    finalized: bool,
 }
 
 impl Default for Lua {
@@ -66,7 +66,7 @@ impl Lua {
     pub fn empty() -> Self {
         Lua {
             arena: Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)),
-            finalized_this_cycle: false,
+            finalized: false,
         }
     }
 
@@ -120,19 +120,15 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        if self.arena.collection_phase() == CollectionPhase::Sleeping {
-            self.finalized_this_cycle = false;
-        }
-
-        self.arena.mark_all();
-        if self.arena.collection_phase() == CollectionPhase::Marked {
-            self.arena.mutate(|mc, root| {
-                root.finalizers.finalize(mc);
+        if !self.finalized {
+            self.arena.mark_all().unwrap().finalize(|fc, root| {
+                root.finalizers.finalize(fc);
             });
-            self.finalized_this_cycle = true;
         }
 
         self.arena.collect_all();
+        assert!(self.arena.collection_phase() == CollectionPhase::Sleeping);
+        self.finalized = false;
     }
 
     pub fn gc_metrics(&self) -> &Metrics {
@@ -147,19 +143,18 @@ impl Lua {
 
         let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
         if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            if self.arena.collection_phase() == CollectionPhase::Sleeping {
-                self.finalized_this_cycle = false;
-            }
-
-            if self.finalized_this_cycle {
+            if self.finalized {
                 self.arena.collect_debt();
+
+                if self.arena.collection_phase() == CollectionPhase::Sleeping {
+                    self.finalized = false;
+                }
             } else {
-                self.arena.mark_debt();
-                if self.arena.collection_phase() == CollectionPhase::Marked {
-                    self.arena.mutate(|mc, root| {
-                        root.finalizers.finalize(mc);
+                if let Some(marked) = self.arena.mark_debt() {
+                    marked.finalize(|fc, root| {
+                        root.finalizers.finalize(fc);
                     });
-                    self.finalized_this_cycle = true;
+                    self.finalized = true;
                 }
             }
         }

@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.4.0"
-source = "git+https://github.com/kyren/gc-arena?branch=piccolo#6daf48f7b05d8907049f69b34b64888006f23037"
+source = "git+https://github.com/kyren/gc-arena#fe5bdb6a56940972e4ceeb1bd11eed59daf1257f"
 dependencies = [
  "allocator-api2",
  "gc-arena-derive",
@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.4.0"
-source = "git+https://github.com/kyren/gc-arena?branch=piccolo#6daf48f7b05d8907049f69b34b64888006f23037"
+source = "git+https://github.com/kyren/gc-arena#fe5bdb6a56940972e4ceeb1bd11eed59daf1257f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -362,9 +362,9 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustix"
-version = "0.38.24"
+version = "0.38.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ad981d6c340a49cdc40a1028d9c6084ec7e9fa33fcb839cab656a267071e234"
+checksum = "dc99bc2d4f1fed22595588a013687477aedf3cdcfb26558c559edb67b4d9b22e"
 dependencies = [
  "bitflags 2.4.1",
  "errno",
