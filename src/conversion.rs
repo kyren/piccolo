@@ -468,56 +468,36 @@ impl<'gc, I: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for Variadic<[I
 }
 
 macro_rules! impl_tuple {
-    () => (
-        impl<'gc> IntoMultiValue<'gc> for () {
-            type Iter = iter::Empty<Value<'gc>>;
-
-            fn into_multi_value(self, _: Context<'gc>) -> Self::Iter {
-                iter::empty()
-            }
-        }
-
-        impl<'gc> FromMultiValue<'gc> for () {
-            fn from_multi_value(
-                _: Context<'gc>,
-                _: impl Iterator<Item = Value<'gc>>,
-            ) -> Result<Self, TypeError> {
-                Ok(())
-            }
-        }
-    );
-
-    ($last:ident $(,$name:ident)* $(,)?) => (
-        impl<'gc, $($name,)* $last> IntoMultiValue<'gc> for ($($name,)* $last,)
+    ($($name:ident),* $(,)?) => (
+        impl<'gc, $($name,)*> IntoMultiValue<'gc> for ($($name,)*)
         where
-            $($name: IntoValue<'gc>,)*
-            $last: IntoMultiValue<'gc>,
+            $($name: IntoMultiValue<'gc>,)*
         {
             type Iter = vec::IntoIter<Value<'gc>>;
 
+            #[allow(unused_variables)]
+            #[allow(unused_mut)]
             #[allow(non_snake_case)]
             fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
-                let ($($name,)* $last,) = self;
+                let ($($name,)*) = self;
                 let mut results = Vec::new();
-                $(results.push($name.into_value(ctx));)*
-                results.extend($last.into_multi_value(ctx));
+                $(results.extend($name.into_multi_value(ctx));)*
                 results.into_iter()
             }
         }
 
-        impl<'gc, $($name,)* $last> FromMultiValue<'gc> for ($($name,)* $last,)
-            where $($name: FromValue<'gc>,)*
-                  $last: FromMultiValue<'gc>
+        impl<'gc, $($name,)*> FromMultiValue<'gc> for ($($name,)*)
+            where $($name: FromMultiValue<'gc>,)*
         {
+            #[allow(unused_variables)]
             #[allow(unused_mut)]
             #[allow(non_snake_case)]
             fn from_multi_value(
                 ctx: Context<'gc>,
                 mut values: impl Iterator<Item = Value<'gc>>,
             ) -> Result<Self, TypeError> {
-                $(let $name = FromValue::from_value(ctx, values.next().unwrap_or(Value::Nil))?;)*
-                let $last = FromMultiValue::from_multi_value(ctx, values)?;
-                Ok(($($name,)* $last,))
+                $(let $name = FromMultiValue::from_multi_value(ctx, &mut values)?;)*
+                Ok(($($name,)*))
             }
         }
     );
