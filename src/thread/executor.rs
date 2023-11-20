@@ -273,7 +273,10 @@ impl<'gc> Executor<'gc> {
                             Ok(ret) => {
                                 callback_ret(ctx, &mut *thread_stack, top_state, bottom, ret)
                             }
-                            Err(err) => top_state.frames.push(Frame::Error(err)),
+                            Err(err) => {
+                                top_state.stack.truncate(bottom);
+                                top_state.frames.push(Frame::Error(err))
+                            }
                         }
                     }
                     Some(Frame::Sequence {
@@ -318,6 +321,7 @@ impl<'gc> Executor<'gc> {
                                 },
                             ),
                             Err(error) => {
+                                top_state.stack.truncate(bottom);
                                 top_state.frames.push(Frame::Error(error));
                             }
                         }
