@@ -140,6 +140,19 @@ where
     }
 }
 
+impl<'gc, T, const N: usize> IntoValue<'gc> for [T; N]
+where
+    T: IntoValue<'gc>,
+{
+    fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
+        let table = Table::new(&ctx);
+        for (i, v) in self.into_iter().enumerate() {
+            table.set(ctx, i64::try_from(i).unwrap() + 1, v).unwrap();
+        }
+        table.into()
+    }
+}
+
 pub trait FromValue<'gc>: Sized {
     fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError>;
 }
@@ -169,7 +182,27 @@ impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Vec<T> {
                 .collect()
         } else {
             Err(TypeError {
-                expected: "sequence table",
+                expected: "sequence",
+                found: value.type_name(),
+            })
+        }
+    }
+}
+
+impl<'gc, T: FromValue<'gc>, const N: usize> FromValue<'gc> for [T; N] {
+    fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        if let Value::Table(table) = value {
+            let mut res: [Option<T>; N] = array::from_fn(|_| None);
+            for i in 0..N {
+                res[i] = Some(T::from_value(
+                    ctx,
+                    table.get(ctx, i64::try_from(i).unwrap() + 1),
+                )?);
+            }
+            Ok(res.map(|r| r.unwrap()))
+        } else {
+            Err(TypeError {
+                expected: "sequence",
                 found: value.type_name(),
             })
         }
