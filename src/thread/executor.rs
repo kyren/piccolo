@@ -391,14 +391,24 @@ impl<'gc> Executor<'gc> {
         }
     }
 
-    /// Reset this `Executor` entirely and begins running the given thread.
+    /// Reset this `Executor` entirely, leaving it with a stopped main thread. Equivalent to
+    /// creating a new executor with `Executor::new`.
+    pub fn stop(self, mc: &Mutation<'gc>) {
+        let mut thread_stack = self.0.borrow_mut(mc);
+        thread_stack.truncate(1);
+        thread_stack[0].reset(mc).unwrap();
+    }
+
+    /// Reset this `Executor` entirely and begins running the given thread. Equivalent to
+    /// creating a new executor with `Executor::run`.
     pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
         let mut thread_stack = self.0.borrow_mut(mc);
         thread_stack.clear();
         thread_stack.push(thread);
     }
 
-    /// Reset this `Executor` entirely and begins running the given function.
+    /// Reset this `Executor` entirely and begins running the given function, equivalent to
+    /// creating a new executor with `Executor::start`.
     pub fn restart(
         self,
         ctx: Context<'gc>,
