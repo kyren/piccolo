@@ -1,4 +1,6 @@
-use piccolo::{AnyCallback, CallbackReturn, Closure, Executor, Fuel, Lua, StaticError, ThreadMode};
+use piccolo::{
+    AnyCallback, CallbackReturn, Closure, Executor, ExecutorMode, Fuel, Lua, StaticError,
+};
 
 #[test]
 fn test_interrupt() -> Result<(), StaticError> {
@@ -26,7 +28,7 @@ fn test_interrupt() -> Result<(), StaticError> {
         let mut fuel = Fuel::with_fuel(i32::MAX);
         assert!(!executor.step(ctx, &mut fuel));
         assert!(fuel.is_interrupted());
-        assert!(executor.mode() == ThreadMode::Normal)
+        assert!(executor.mode() == ExecutorMode::Normal)
     });
 
     Ok(())

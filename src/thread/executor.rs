@@ -2,6 +2,7 @@ use std::cell::RefMut;
 
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
+use thiserror::Error;
 
 use crate::{
     BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
@@ -12,6 +13,29 @@ use super::{
     thread::{Frame, LuaFrame, ThreadState},
     vm::run_vm,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorMode {
+    /// There are no threads being run and the `Executor` must be restarted to do any work.
+    Stopped,
+    /// Lua has errored or returned (or yielded) values that must be taken to move the `Executor` to
+    /// the `Stopped` (or `Suspended`) state.
+    Result,
+    /// There is an active thread in the `ThreadMode::Normal` state and it is can be run with
+    /// `Executor::step`.
+    Normal,
+    /// The main thread has yielded and is waiting on being resumed.
+    Suspended,
+    /// The `Executor` is currently inside its own `Executor::step` function.
+    Running,
+}
+
+#[derive(Debug, Copy, Clone, Error)]
+#[error("bad executor mode: {found:?}, expected {expected:?}")]
+pub struct BadExecutorMode {
+    pub found: ExecutorMode,
+    pub expected: ExecutorMode,
+}
 
 /// The entry-point for the Lua VM.
 ///
@@ -69,15 +93,22 @@ impl<'gc> Executor<'gc> {
         Self::run(&ctx, thread)
     }
 
-    pub fn mode(self) -> ThreadMode {
+    pub fn mode(self) -> ExecutorMode {
         if let Ok(thread_stack) = self.0.try_borrow() {
             if thread_stack.len() > 1 {
-                ThreadMode::Normal
+                ExecutorMode::Normal
             } else {
-                thread_stack[0].mode()
+                match thread_stack[0].mode() {
+                    ThreadMode::Stopped => ExecutorMode::Stopped,
+                    ThreadMode::Result => ExecutorMode::Result,
+                    ThreadMode::Normal => ExecutorMode::Normal,
+                    ThreadMode::Suspended => ExecutorMode::Suspended,
+                    ThreadMode::Waiting => unreachable!(),
+                    ThreadMode::Running => ExecutorMode::Running,
+                }
             }
         } else {
-            ThreadMode::Running
+            ExecutorMode::Running
         }
     }
 
@@ -86,9 +117,9 @@ impl<'gc> Executor<'gc> {
     /// The VM and callbacks will consume fuel as they run, and `Executor::step` will return as soon
     /// as `Fuel::can_continue()` returns false *and some minimal positive progress has been made*.
     ///
-    /// Returns `false` if the method has exhausted its fuel, but there is more work to do. If
-    /// `true` is returned, there is only one thread remaining on the execution stack and it is no
-    /// longer in the 'Normal' state.
+    /// Returns `false` if the method has exhausted its fuel, but there is more work to
+    /// do, and returns `true` if no more progress can be made. If `true` is returned, then
+    /// `Executor::mode()` will no longer be `ExecutorMode::Normal`.
     pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
         let mut thread_stack = self.0.borrow_mut(&ctx);
 
@@ -351,43 +382,48 @@ impl<'gc> Executor<'gc> {
     pub fn take_result<T: FromMultiValue<'gc>>(
         self,
         ctx: Context<'gc>,
-    ) -> Result<Result<T, Error<'gc>>, BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Result),
-            })
+    ) -> Result<Result<T, Error<'gc>>, BadExecutorMode> {
+        let mode = self.mode();
+        if mode == ExecutorMode::Result {
+            let thread_stack = self.0.borrow();
+            Ok(thread_stack[0].take_result(ctx).unwrap())
         } else {
-            thread_stack[0].take_result(ctx)
+            Err(BadExecutorMode {
+                found: mode,
+                expected: ExecutorMode::Result,
+            })
         }
     }
 
-    pub fn resume<T: FromMultiValue<'gc>>(
+    pub fn resume(
         self,
         ctx: Context<'gc>,
         args: impl IntoMultiValue<'gc>,
-    ) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Suspended),
-            })
+    ) -> Result<(), BadExecutorMode> {
+        let mode = self.mode();
+        if mode == ExecutorMode::Suspended {
+            let thread_stack = self.0.borrow();
+            thread_stack[0].resume(ctx, args).unwrap();
+            Ok(())
         } else {
-            thread_stack[0].resume(ctx, args)
+            Err(BadExecutorMode {
+                found: mode,
+                expected: ExecutorMode::Suspended,
+            })
         }
     }
 
-    pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadThreadMode> {
-        let thread_stack = self.0.borrow();
-        if thread_stack.len() > 1 {
-            Err(BadThreadMode {
-                found: ThreadMode::Normal,
-                expected: Some(ThreadMode::Suspended),
-            })
+    pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadExecutorMode> {
+        let mode = self.mode();
+        if mode == ExecutorMode::Suspended {
+            let thread_stack = self.0.borrow();
+            thread_stack[0].resume_err(mc, error).unwrap();
+            Ok(())
         } else {
-            thread_stack[0].resume_err(mc, error)
+            Err(BadExecutorMode {
+                found: mode,
+                expected: ExecutorMode::Suspended,
+            })
         }
     }
 

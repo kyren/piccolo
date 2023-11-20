@@ -33,7 +33,7 @@ pub enum ThreadMode {
     Suspended,
     /// The thread is waiting on another thread to finish.
     Waiting,
-    /// Thread is currently inside its own `Thread::step` function.
+    /// A callback or sequence that this thread owns is currently being run.
     Running,
 }
 

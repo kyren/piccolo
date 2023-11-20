@@ -40,7 +40,7 @@ pub use self::{
     stack::Stack,
     string::{String, StringError},
     table::{InvalidTableKey, Table},
-    thread::{BadThreadMode, Executor, Thread, ThreadMode, VMError},
+    thread::{BadExecutorMode, BadThreadMode, Executor, ExecutorMode, Thread, ThreadMode, VMError},
     userdata::{AnyUserData, BadUserDataType},
     value::Value,
 };
