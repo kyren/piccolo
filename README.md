@@ -69,7 +69,7 @@ that are usable from safe Rust. It achieves this by combining two things:
    
 ## Stackless VM
 
-The `mutate` based GC api means that long running calls to `mutate` can be
+The `mutate` based GC API means that long running calls to `mutate` can be
 problematic. No garbage collection can take place during a call to `mutate`, so
 we have to make sure to regularly return from the `mutate` call to allow garbage
 collection to take place.
@@ -127,7 +127,7 @@ allow for painlessly implementing `Sequence`, but there are *several* current
 compiler limitations that make this currently infeasible or so unergonomic that
 it is no longer worth it.
 
-## Thread "fuel" and VM memory tracking
+## Executor "fuel" and VM memory tracking
 
 The stackless VM style "periodically" returns control to the outer Rust code
 driving everything, and how often this happens can be controlled using the
