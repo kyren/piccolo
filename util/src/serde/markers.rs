@@ -18,7 +18,7 @@ impl<'gc> lua::Singleton<'gc> for UnitSingleton<'gc> {
             }),
         )
         .unwrap();
-        ud.set_metatable(&ctx, Some(mt));
+        ud.set_metatable(&ctx, Option::Some(mt));
         UnitSingleton(ud)
     }
 }
@@ -53,7 +53,7 @@ impl<'gc> lua::Singleton<'gc> for NoneSingleton<'gc> {
             }),
         )
         .unwrap();
-        ud.set_metatable(&ctx, Some(mt));
+        ud.set_metatable(&ctx, Option::Some(mt));
         NoneSingleton(ud)
     }
 }
@@ -69,7 +69,7 @@ pub fn is_none<'gc>(ud: lua::AnyUserData<'gc>) -> bool {
     ud.is_static::<None>()
 }
 
-pub fn global_markers<'gc>(ctx: lua::Context<'gc>) {
+pub fn set_globals<'gc>(ctx: lua::Context<'gc>) {
     ctx.state.globals.set(ctx, "unit", unit(ctx)).unwrap();
     ctx.state.globals.set(ctx, "none", none(ctx)).unwrap();
 }

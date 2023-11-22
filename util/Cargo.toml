@@ -13,3 +13,6 @@ serde = { workspace = true, optional = true }
 thiserror.workspace = true
 gc-arena.workspace = true
 piccolo.workspace = true
+
+[features]
+default = ["serde"]
