@@ -30,7 +30,7 @@ jobs:
           name: Check Formatting
           command: |
               rustfmt --version
-              cargo fmt --workspace -- --check --color=auto
+              cargo fmt --all -- --check --color=auto
       - run:
           name: Build all targets
           command: cargo build --workspace --all-targets --all-features
