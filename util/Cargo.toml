@@ -1,0 +1,15 @@
+[package]
+name = "piccolo-util"
+description = "Utilities for the `piccolo` library"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true, optional = true }
+thiserror.workspace = true
+gc-arena.workspace = true
+piccolo.workspace = true

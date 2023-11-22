@@ -1,26 +1,49 @@
-[package]
-name = "piccolo"
+[workspace]
+resolver = "2"
+members = [
+    "util",
+]
+default-members = [
+    "util",
+]
+
+[workspace.package]
 version = "0.2.0"
-description = "Stackless Lua VM implemented in pure Rust"
-authors = ["kyren <catherine@kyju.org>"]
 edition = "2021"
+authors = ["kyren <catherine@kyju.org>"]
 license = "MIT"
-readme = "README.md"
 repository = "https://github.com/kyren/piccolo"
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
-[dependencies]
+[workspace.dependencies]
 allocator-api2 = "0.2"
 anyhow = "1.0"
 gc-arena = { git = "https://github.com/kyren/gc-arena", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "1.1"
+serde = "1.0"
 thiserror = "1.0"
+
+piccolo = { path = "./", version = "0.2.0" }
+
+[package]
+name = "piccolo"
+description = "Stackless Lua VM implemented in pure Rust"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+allocator-api2.workspace = true
+anyhow.workspace = true
+gc-arena.workspace = true
+hashbrown.workspace = true
+rand.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 clap = { version = "4.4", features = ["cargo"] }

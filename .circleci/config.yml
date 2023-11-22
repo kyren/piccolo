@@ -3,7 +3,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: cimg/rust:1.70.0
+      - image: cimg/rust:1.74.0
     steps:
       - checkout
       - run:
@@ -30,13 +30,13 @@ jobs:
           name: Check Formatting
           command: |
               rustfmt --version
-              cargo fmt --all -- --check --color=auto
+              cargo fmt --workspace -- --check --color=auto
       - run:
           name: Build all targets
-          command: cargo build --workspace --all-targets
+          command: cargo build --workspace --all-targets --all-features
       - run:
           name: Run all tests
-          command: cargo test --all
+          command: cargo test --workspace --all-features
       - run:
           name: Run tests under miri
           command: |
