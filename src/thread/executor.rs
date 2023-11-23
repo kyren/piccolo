@@ -1,4 +1,7 @@
-use std::cell::RefMut;
+use std::{
+    cell::RefMut,
+    hash::{Hash, Hasher},
+};
 
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
@@ -65,6 +68,12 @@ impl<'gc> PartialEq for Executor<'gc> {
 
 impl<'gc> Eq for Executor<'gc> {}
 
+impl<'gc> Hash for Executor<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.as_ptr().hash(state)
+    }
+}
+
 impl<'gc> Executor<'gc> {
     const FUEL_PER_CALLBACK: i32 = 8;
     const FUEL_PER_SEQ_STEP: i32 = 4;
@@ -91,6 +100,10 @@ impl<'gc> Executor<'gc> {
         let thread = Thread::new(ctx);
         thread.start(ctx, function, args).unwrap();
         Self::run(&ctx, thread)
+    }
+
+    pub fn as_ptr(self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
     }
 
     pub fn mode(self) -> ExecutorMode {
@@ -274,7 +287,8 @@ impl<'gc> Executor<'gc> {
                             Execution {
                                 fuel,
                                 current_thread: top_thread,
-                                is_main: thread_stack.len() == 1,
+                                is_main_thread: thread_stack.len() == 1,
+                                executor: self,
                             },
                             Stack::new(&mut top_state.stack, bottom),
                         ) {
@@ -297,7 +311,8 @@ impl<'gc> Executor<'gc> {
                         let exec = Execution {
                             fuel,
                             current_thread: top_thread,
-                            is_main: thread_stack.len() == 1,
+                            is_main_thread: thread_stack.len() == 1,
+                            executor: self,
                         };
                         let fin = if let Some(err) = pending_error {
                             sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))

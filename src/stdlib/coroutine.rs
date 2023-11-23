@@ -128,7 +128,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             ctx,
             "running",
             AnyCallback::from_fn(&ctx, |ctx, exec, mut stack| {
-                stack.replace(ctx, (exec.current_thread, exec.is_main));
+                stack.replace(ctx, (exec.current_thread, exec.is_main_thread));
                 Ok(CallbackReturn::Return)
             }),
         )
