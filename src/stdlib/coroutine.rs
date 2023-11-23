@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops, AnyCallback, AnySequence, CallbackReturn, Context, Fuel, Sequence, SequencePoll,
+    meta_ops, AnyCallback, AnySequence, CallbackReturn, Context, Execution, Sequence, SequencePoll,
     Stack, Table, Thread, ThreadMode,
 };
 
@@ -38,7 +38,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
                         stack.into_front(ctx, true);
@@ -48,7 +48,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                     fn error(
                         &mut self,
                         ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         error: crate::Error<'gc>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
@@ -119,6 +119,17 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
                     to_thread: Some(thread),
                     then: None,
                 })
+            }),
+        )
+        .unwrap();
+
+    coroutine
+        .set(
+            ctx,
+            "running",
+            AnyCallback::from_fn(&ctx, |ctx, exec, mut stack| {
+                stack.replace(ctx, (exec.current_thread, exec.is_main));
+                Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();

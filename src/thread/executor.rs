@@ -5,8 +5,8 @@ use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation
 use thiserror::Error;
 
 use crate::{
-    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    SequencePoll, Stack, Thread, ThreadMode, Variadic,
+    BadThreadMode, CallbackReturn, Context, Error, Execution, FromMultiValue, Fuel, Function,
+    IntoMultiValue, SequencePoll, Stack, Thread, ThreadMode, Variadic,
 };
 
 use super::{
@@ -269,7 +269,15 @@ impl<'gc> Executor<'gc> {
                 match top_state.frames.pop() {
                     Some(Frame::Callback { bottom, callback }) => {
                         fuel.consume_fuel(Self::FUEL_PER_CALLBACK);
-                        match callback.call(ctx, fuel, Stack::new(&mut top_state.stack, bottom)) {
+                        match callback.call(
+                            ctx,
+                            Execution {
+                                fuel,
+                                current_thread: top_thread,
+                                is_main: thread_stack.len() == 1,
+                            },
+                            Stack::new(&mut top_state.stack, bottom),
+                        ) {
                             Ok(ret) => {
                                 callback_ret(ctx, &mut *thread_stack, top_state, bottom, ret)
                             }
@@ -285,10 +293,16 @@ impl<'gc> Executor<'gc> {
                         pending_error,
                     }) => {
                         fuel.consume_fuel(Self::FUEL_PER_SEQ_STEP);
+
+                        let exec = Execution {
+                            fuel,
+                            current_thread: top_thread,
+                            is_main: thread_stack.len() == 1,
+                        };
                         let fin = if let Some(err) = pending_error {
-                            sequence.error(ctx, fuel, err, Stack::new(&mut top_state.stack, bottom))
+                            sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))
                         } else {
-                            sequence.poll(ctx, fuel, Stack::new(&mut top_state.stack, bottom))
+                            sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, bottom))
                         };
 
                         match fin {

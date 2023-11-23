@@ -3,7 +3,7 @@ use gc_arena::Collect;
 use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
-    AnyCallback, AnySequence, CallbackReturn, Context, Error, Fuel, IntoValue, MetaMethod,
+    AnyCallback, AnySequence, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
     Sequence, SequencePoll, Stack, String, Table, Value, Variadic,
 };
 
@@ -76,7 +76,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         stack.push_front(Value::Boolean(true));
@@ -86,7 +86,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn error(
                         &mut self,
                         ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         error: Error<'gc>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
@@ -274,7 +274,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         _ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         if !stack.get(0).is_nil() {

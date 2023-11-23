@@ -8,6 +8,15 @@ use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
 
 use crate::{Context, Error, Fuel, Function, Stack, Thread};
 
+pub struct Execution<'gc, 'a> {
+    /// The fuel parameter passed to `Executor::step`.
+    pub fuel: &'a mut Fuel,
+    /// The curently executing Thread.
+    pub current_thread: Thread<'gc>,
+    /// `true` if this thread is at the top of the execution stack.
+    pub is_main: bool,
+}
+
 #[derive(Collect)]
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
@@ -31,7 +40,7 @@ pub trait Callback<'gc>: Collect {
     fn call(
         &self,
         ctx: Context<'gc>,
-        fuel: &mut Fuel,
+        exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
 }
@@ -45,7 +54,7 @@ struct Header<'gc> {
     call: unsafe fn(
         *const (),
         Context<'gc>,
-        &mut Fuel,
+        Execution<'gc, '_>,
         Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
 }
@@ -78,9 +87,9 @@ impl<'gc> AnyCallback<'gc> {
             mc,
             HeaderCallback {
                 header: Header {
-                    call: |ptr, ctx, fuel, stack| unsafe {
+                    call: |ptr, ctx, exec, stack| unsafe {
                         let hc = ptr as *const HeaderCallback<C>;
-                        ((*hc).callback).call(ctx, fuel, stack)
+                        ((*hc).callback).call(ctx, exec, stack)
                     },
                 },
                 callback,
@@ -93,9 +102,13 @@ impl<'gc> AnyCallback<'gc> {
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> AnyCallback<'gc>
     where
         F: 'static
-            + Fn(Context<'gc>, &mut Fuel, Stack<'gc, '_>) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+            + Fn(
+                Context<'gc>,
+                Execution<'gc, '_>,
+                Stack<'gc, '_>,
+            ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
-        Self::from_fn_with(mc, (), move |_, ctx, fuel, stack| call(ctx, fuel, stack))
+        Self::from_fn_with(mc, (), move |_, ctx, exec, stack| call(ctx, exec, stack))
     }
 
     pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> AnyCallback<'gc>
@@ -105,7 +118,7 @@ impl<'gc> AnyCallback<'gc> {
             + Fn(
                 &R,
                 Context<'gc>,
-                &mut Fuel,
+                Execution<'gc, '_>,
                 Stack<'gc, '_>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
     {
@@ -124,17 +137,17 @@ impl<'gc> AnyCallback<'gc> {
                 + Fn(
                     &R,
                     Context<'gc>,
-                    &mut Fuel,
+                    Execution<'gc, '_>,
                     Stack<'gc, '_>,
                 ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
         {
             fn call(
                 &self,
                 ctx: Context<'gc>,
-                fuel: &mut Fuel,
+                exec: Execution<'gc, '_>,
                 stack: Stack<'gc, '_>,
             ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                (self.call)(&self.root, ctx, fuel, stack)
+                (self.call)(&self.root, ctx, exec, stack)
             }
         }
 
@@ -148,10 +161,10 @@ impl<'gc> AnyCallback<'gc> {
     pub fn call(
         self,
         ctx: Context<'gc>,
-        fuel: &mut Fuel,
+        exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), ctx, fuel, stack) }
+        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), ctx, exec, stack) }
     }
 }
 
@@ -213,7 +226,7 @@ pub trait Sequence<'gc>: Collect {
     fn poll(
         &mut self,
         ctx: Context<'gc>,
-        fuel: &mut Fuel,
+        exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>>;
 
@@ -222,7 +235,7 @@ pub trait Sequence<'gc>: Collect {
     fn error(
         &mut self,
         _ctx: Context<'gc>,
-        _fuel: &mut Fuel,
+        _exec: Execution<'gc, '_>,
         error: Error<'gc>,
         _stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
@@ -255,60 +268,19 @@ impl<'gc> AnySequence<'gc> {
     pub fn poll(
         &mut self,
         ctx: Context<'gc>,
-        fuel: &mut Fuel,
+        exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.0.poll(ctx, fuel, stack)
+        self.0.poll(ctx, exec, stack)
     }
 
     pub fn error(
         &mut self,
         ctx: Context<'gc>,
-        fuel: &mut Fuel,
+        exec: Execution<'gc, '_>,
         error: Error<'gc>,
         stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.0.error(ctx, fuel, error, stack)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use allocator_api2::vec;
-    use gc_arena::{Arena, Rootable};
-
-    use crate::{CallbackReturn, State, Value};
-
-    use super::*;
-
-    #[test]
-    fn test_dyn_callback() {
-        #[derive(Collect)]
-        #[collect(require_static)]
-        struct CB(i64);
-
-        impl<'gc> Callback<'gc> for CB {
-            fn call(
-                &self,
-                ctx: Context<'gc>,
-                _fuel: &mut Fuel,
-                mut stack: Stack<'gc, '_>,
-            ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-                stack.into_front(ctx, self.0);
-                Ok(CallbackReturn::Return)
-            }
-        }
-
-        let arena = Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc));
-        arena.mutate(|mc, state| {
-            let ctx = state.ctx(mc);
-            let dyn_callback = AnyCallback::new(mc, CB(17));
-            let mut values = vec::Vec::new_in(MetricsAlloc::new(mc));
-            let mut fuel = Fuel::empty();
-            assert!(dyn_callback
-                .call(ctx, &mut fuel, Stack::new(&mut values, 0))
-                .is_ok());
-            assert!(matches!(values[0], Value::Integer(17)));
-        });
+        self.0.error(ctx, exec, error, stack)
     }
 }

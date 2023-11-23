@@ -4,6 +4,7 @@ members = [
     "util",
 ]
 default-members = [
+    ".",
     "util",
 ]
 

@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Executor, Fuel, Function,
-    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Execution, Executor,
+    Function, IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -83,7 +83,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 fn poll(
                     &mut self,
                     _ctx: Context<'gc>,
-                    _fuel: &mut Fuel,
+                    _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     stack.push_back(self.0.into());
@@ -161,7 +161,7 @@ fn yield_sequence() -> Result<(), StaticError> {
                 fn poll(
                     &mut self,
                     ctx: Context<'gc>,
-                    _fuel: &mut Fuel,
+                    _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     match self.0 {
@@ -242,7 +242,7 @@ fn resume_with_err() {
                 fn poll(
                     &mut self,
                     _ctx: Context<'gc>,
-                    _fuel: &mut Fuel,
+                    _exec: Execution<'gc, '_>,
                     _stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                     panic!("did not error");
@@ -251,7 +251,7 @@ fn resume_with_err() {
                 fn error(
                     &mut self,
                     ctx: Context<'gc>,
-                    _fuel: &mut Fuel,
+                    _exec: Execution<'gc, '_>,
                     _error: Error<'gc>,
                     _stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {

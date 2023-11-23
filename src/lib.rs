@@ -24,7 +24,9 @@ pub mod userdata;
 pub mod value;
 
 pub use self::{
-    callback::{AnyCallback, AnySequence, Callback, CallbackReturn, Sequence, SequencePoll},
+    callback::{
+        AnyCallback, AnySequence, Callback, CallbackReturn, Execution, Sequence, SequencePoll,
+    },
     closure::{Closure, ClosureError, FunctionProto, ProtoCompileError},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},

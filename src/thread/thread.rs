@@ -219,7 +219,7 @@ pub struct OpenUpValue<'gc> {
 }
 
 impl<'gc> OpenUpValue<'gc> {
-    const UPGRADE_ERR: &str = "thread not finalized: upvalues not closed";
+    const UPGRADE_ERR: &'static str = "thread not finalized: upvalues not closed";
 
     pub fn get(self, mc: &Mutation<'gc>) -> Value<'gc> {
         self.thread

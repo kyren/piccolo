@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use gc_arena::{barrier, Mutation, Root, Rootable};
 use piccolo::{
-    AnyCallback, AnyUserData, CallbackReturn, Context, Error, FromMultiValue, Fuel, IntoMultiValue,
-    IntoValue, MetaMethod, Table, Value,
+    AnyCallback, AnyUserData, CallbackReturn, Context, Error, Execution, FromMultiValue,
+    IntoMultiValue, IntoValue, MetaMethod, Table, Value,
 };
 
 pub struct UserMethods<'gc, U: for<'a> Rootable<'a>> {
@@ -29,15 +29,16 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
 
     pub fn add<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
     where
-        F: Fn(&Root<'gc, U>, Context<'gc>, &mut Fuel, A) -> Result<R, Error<'gc>> + 'static,
+        F: Fn(&Root<'gc, U>, Context<'gc>, Execution<'gc, '_>, A) -> Result<R, Error<'gc>>
+            + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, fuel, mut stack| {
+        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
             let userdata: AnyUserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let this = userdata.downcast::<U>()?;
-            let ret = method(&this, ctx, fuel, args)?;
+            let ret = method(&this, ctx, exec, args)?;
             stack.replace(ctx, ret);
             Ok(CallbackReturn::Return)
         });
@@ -47,16 +48,21 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
 
     pub fn add_write<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
     where
-        F: Fn(&barrier::Write<Root<'gc, U>>, Context<'gc>, &mut Fuel, A) -> Result<R, Error<'gc>>
+        F: Fn(
+                &barrier::Write<Root<'gc, U>>,
+                Context<'gc>,
+                Execution<'gc, '_>,
+                A,
+            ) -> Result<R, Error<'gc>>
             + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, fuel, mut stack| {
+        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
             let userdata: AnyUserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let mut this = userdata.downcast_write::<U>(&ctx)?;
-            let ret = method(&mut this, ctx, fuel, args)?;
+            let ret = method(&mut this, ctx, exec, args)?;
             stack.replace(ctx, ret);
             Ok(CallbackReturn::Return)
         });
@@ -106,15 +112,15 @@ impl<'gc, U: 'static> StaticUserMethods<'gc, U> {
 
     pub fn add<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
     where
-        F: Fn(&U, Context<'gc>, &mut Fuel, A) -> Result<R, Error<'gc>> + 'static,
+        F: Fn(&U, Context<'gc>, Execution<'gc, '_>, A) -> Result<R, Error<'gc>> + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, fuel, mut stack| {
+        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
             let userdata: AnyUserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let this = userdata.downcast_static::<U>()?;
-            let ret = method(&this, ctx, fuel, args)?;
+            let ret = method(&this, ctx, exec, args)?;
             stack.replace(ctx, ret);
             Ok(CallbackReturn::Return)
         });

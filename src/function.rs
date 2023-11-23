@@ -1,7 +1,7 @@
 use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Fuel, IntoMultiValue,
+    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Execution, IntoMultiValue,
     Sequence, SequencePoll, Stack,
 };
 
@@ -40,7 +40,7 @@ impl<'gc> Function<'gc> {
             fn poll(
                 &mut self,
                 _: Context<'gc>,
-                _: &mut Fuel,
+                _: Execution<'gc, '_>,
                 _: Stack<'gc, '_>,
             ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                 let fns = (*self.0).as_ref();
@@ -74,14 +74,14 @@ impl<'gc> Function<'gc> {
         Self::Callback(AnyCallback::from_fn_with(
             mc,
             (self, args),
-            |(f, args), ctx, fuel, mut stack| {
+            |(f, args), ctx, exec, mut stack| {
                 stack.into_front(ctx, args.clone());
                 match *f {
                     Function::Closure(c) => Ok(CallbackReturn::Call {
                         function: c.into(),
                         then: None,
                     }),
-                    Function::Callback(c) => c.call(ctx, fuel, stack),
+                    Function::Callback(c) => c.call(ctx, exec, stack),
                 }
             },
         ))

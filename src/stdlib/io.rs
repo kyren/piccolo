@@ -4,8 +4,8 @@ use gc_arena::Collect;
 
 use crate::{
     meta_ops::{self, MetaResult},
-    AnyCallback, AnySequence, CallbackReturn, Context, Error, Fuel, Sequence, SequencePoll, Stack,
-    Value,
+    AnyCallback, AnySequence, CallbackReturn, Context, Error, Execution, Sequence, SequencePoll,
+    Stack, Value,
 };
 
 pub fn load_io<'gc>(ctx: Context<'gc>) {
@@ -34,7 +34,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     fn poll(
                         &mut self,
                         ctx: Context<'gc>,
-                        _fuel: &mut Fuel,
+                        _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
                         let mut stdout = io::stdout();
