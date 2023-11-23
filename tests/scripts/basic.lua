@@ -54,6 +54,16 @@ local function test_short_circuit_large()
     return (a + 2 + (a == 1 and (d or (c + (b + 2))))) == 10
 end
 
+local function test_tonumber()
+    return tonumber("1") == 1 and 
+      tonumber("1.1") == 1.1 and 
+      tonumber("0x1A") == 26 and 
+      -- TODO
+      -- tonumber("1010", 2) == 10 and  -- binary to decimal
+      -- tonumber("12", 8) and  -- octal to decimal
+      tonumber("foo") == nil
+end
+
 assert(
     test1() and
     test2() and
@@ -61,5 +71,6 @@ assert(
     test4() and
     test5() and
     test6() and
-    test_short_circuit_large()
+    test_short_circuit_large() and
+    test_tonumber()
 )
