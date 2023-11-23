@@ -53,9 +53,9 @@ pub struct BadExecutorMode {
 /// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
 /// used, cross-thread upvalues may cause a panic if one `Executor` is used within the other.
 ///
-/// `Executor`s are not meant to be used from or available to callbacks at all, and `Executor`s
-/// should not be nested. Instead, use the normal mechanisms for callbacks to call Lua code so that
-/// it is run on the same executor calling the callback.
+/// `Executor`s are not meant to be used from callbacks at all, and `Executor`s should not be
+/// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that it is run on
+/// the same executor calling the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Executor<'gc>(Gc<'gc, RefLock<vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>>>);
