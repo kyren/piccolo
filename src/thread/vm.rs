@@ -8,6 +8,7 @@ use crate::{
     opcode::{Operation, RCIndex},
     raw_ops,
     table::RawTable,
+    thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
     Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
 };
@@ -133,7 +134,12 @@ pub(super) fn run_vm<'gc>(
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(call) => {
-                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
                         break;
                     }
                 }
@@ -152,7 +158,12 @@ pub(super) fn run_vm<'gc>(
                     value,
                 );
                 if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
-                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    lua_frame.call_meta_function(
+                        ctx,
+                        call.function,
+                        &call.args,
+                        MetaReturn::None,
+                    )?;
                     break;
                 }
             }
@@ -170,7 +181,12 @@ pub(super) fn run_vm<'gc>(
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(call) => {
-                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
                         break;
                     }
                 }
@@ -190,7 +206,12 @@ pub(super) fn run_vm<'gc>(
                     value,
                 );
                 if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
-                    lua_frame.call_meta_function(ctx, call.function, &call.args, None)?;
+                    lua_frame.call_meta_function(
+                        ctx,
+                        call.function,
+                        &call.args,
+                        MetaReturn::None,
+                    )?;
                     break;
                 }
             }
@@ -354,7 +375,12 @@ pub(super) fn run_vm<'gc>(
                         registers.stack_frame[base.0 as usize] = v;
                     }
                     MetaResult::Call(call) => {
-                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(base))?;
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(base),
+                        )?;
                         break;
                     }
                 }
@@ -390,7 +416,12 @@ pub(super) fn run_vm<'gc>(
                         registers.stack_frame[dest.0 as usize] = v;
                     }
                     MetaResult::Call(call) => {
-                        lua_frame.call_meta_function(ctx, call.function, &call.args, Some(dest))?;
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
                         break;
                     }
                 }
@@ -411,8 +442,21 @@ pub(super) fn run_vm<'gc>(
                     &current_function.0.proto.constants,
                     right,
                 );
-                if raw_ops::equal(left, right) == skip_if {
-                    *registers.pc += 1;
+                match meta_ops::equal(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 

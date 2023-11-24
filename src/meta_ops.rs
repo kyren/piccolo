@@ -1,7 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    AnyCallback, CallbackReturn, Context, Function, IntoValue, RuntimeError, TypeError, Value,
+    AnyCallback, AnyUserData, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table,
+    TypeError, Value,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -13,6 +14,7 @@ pub enum MetaMethod {
     Call,
     Pairs,
     ToString,
+    Eq,
 }
 
 impl MetaMethod {
@@ -24,6 +26,7 @@ impl MetaMethod {
             MetaMethod::Call => "__call",
             MetaMethod::Pairs => "__pairs",
             MetaMethod::ToString => "__tostring",
+            MetaMethod::Eq => "__eq",
         }
     }
 }
@@ -46,6 +49,18 @@ pub struct MetaCall<'gc, const N: usize> {
 pub enum MetaResult<'gc, const N: usize> {
     Value(Value<'gc>),
     Call(MetaCall<'gc, N>),
+}
+
+impl<'gc, const N: usize> From<Value<'gc>> for MetaResult<'gc, N> {
+    fn from(value: Value<'gc>) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl<'gc, const N: usize> From<MetaCall<'gc, N>> for MetaResult<'gc, N> {
+    fn from(call: MetaCall<'gc, N>) -> Self {
+        MetaResult::Call(call)
+    }
 }
 
 pub fn index<'gc>(
@@ -287,5 +302,102 @@ pub fn tostring<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc,
                 .intern(&ctx, v.to_string().as_bytes())
                 .into(),
         ),
+    })
+}
+
+pub fn equal<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, TypeError> {
+    Ok(match (lhs, rhs) {
+        (Value::Nil, Value::Nil) => Value::Boolean(true).into(),
+        (Value::Nil, _) => Value::Boolean(false).into(),
+
+        (Value::Boolean(a), Value::Boolean(b)) => Value::Boolean(a == b).into(),
+        (Value::Boolean(_), _) => Value::Boolean(false).into(),
+
+        (Value::Integer(a), Value::Integer(b)) => Value::Boolean(a == b).into(),
+        (Value::Integer(a), Value::Number(b)) => Value::Boolean(a as f64 == b).into(),
+        (Value::Integer(_), _) => Value::Boolean(false).into(),
+
+        (Value::Number(a), Value::Number(b)) => Value::Boolean(a == b).into(),
+        (Value::Number(a), Value::Integer(b)) => Value::Boolean(b as f64 == a).into(),
+        (Value::Number(_), _) => Value::Boolean(false).into(),
+
+        (Value::String(a), Value::String(b)) => Value::Boolean(a == b).into(),
+        (Value::String(_), _) => Value::Boolean(false).into(),
+
+        (Value::Function(a), Value::Function(b)) => Value::Boolean(a == b).into(),
+        (Value::Function(_), _) => Value::Boolean(false).into(),
+
+        (Value::Thread(a), Value::Thread(b)) => Value::Boolean(a == b).into(),
+        (Value::Thread(_), _) => Value::Boolean(false).into(),
+
+        (Value::Table(a), Value::Table(b)) if a == b => Value::Boolean(true).into(),
+        (Value::Table(a), Value::Table(b)) => {
+            if a == b {
+                Value::Boolean(true).into()
+            } else {
+                let get_eq = |t: Table<'gc>| {
+                    let eq = t
+                        .metatable()
+                        .map(|t| t.get(ctx, MetaMethod::Eq))
+                        .unwrap_or_default();
+                    if eq.is_nil() {
+                        None
+                    } else {
+                        Some(eq)
+                    }
+                };
+                if let Some(a_eq) = get_eq(a) {
+                    MetaResult::Call(MetaCall {
+                        function: call(ctx, a_eq)?,
+                        args: [a.into(), b.into()],
+                    })
+                } else if let Some(b_eq) = get_eq(b) {
+                    MetaResult::Call(MetaCall {
+                        function: call(ctx, b_eq)?,
+                        args: [a.into(), b.into()],
+                    })
+                } else {
+                    Value::Boolean(false).into()
+                }
+            }
+        }
+        (Value::Table(_), _) => Value::Boolean(false).into(),
+
+        (Value::UserData(a), Value::UserData(b)) if a == b => Value::Boolean(true).into(),
+        (Value::UserData(a), Value::UserData(b)) => {
+            if a == b {
+                Value::Boolean(true).into()
+            } else {
+                let get_eq = |u: AnyUserData<'gc>| {
+                    let eq = u
+                        .metatable()
+                        .map(|t| t.get(ctx, MetaMethod::Eq))
+                        .unwrap_or_default();
+                    if eq.is_nil() {
+                        None
+                    } else {
+                        Some(eq)
+                    }
+                };
+                if let Some(a_eq) = get_eq(a) {
+                    MetaResult::Call(MetaCall {
+                        function: call(ctx, a_eq)?,
+                        args: [a.into(), b.into()],
+                    })
+                } else if let Some(b_eq) = get_eq(b) {
+                    MetaResult::Call(MetaCall {
+                        function: call(ctx, b_eq)?,
+                        args: [a.into(), b.into()],
+                    })
+                } else {
+                    Value::Boolean(false).into()
+                }
+            }
+        }
+        (Value::UserData(_), _) => Value::Boolean(false).into(),
     })
 }

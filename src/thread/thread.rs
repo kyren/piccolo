@@ -238,15 +238,25 @@ impl<'gc> OpenUpValue<'gc> {
     }
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(require_static)]
+pub(super) enum MetaReturn {
+    // No return value is expected.
+    None,
+    // Place a single return value at an index relative to the returned to function's stack bottom.
+    Register(RegisterIndex),
+    // Increment the PC by one if the returned value converted to a boolean is equal to this.
+    SkipIf(bool),
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
 pub(super) enum LuaReturn {
     // Normal function call, place return values at the bottom of the returning function's stack,
     // as normal.
     Normal(VarCount),
-    // Synthetic metamethod call, place an optional single return value at an index relative to the
-    // returned to function's bottom.
-    Meta(Option<RegisterIndex>),
+    // Synthetic metamethod call, do the operation specified in MetaReturn.
+    Meta(MetaReturn),
 }
 
 #[derive(Debug, Collect)]
@@ -370,10 +380,11 @@ impl<'gc> ThreadState<'gc> {
                 is_variable,
                 base,
                 stack_size,
+                pc,
                 ..
             }) => {
                 let return_len = self.stack.len() - bottom;
-                match expected_return {
+                match expected_return.take() {
                     Some(LuaReturn::Normal(ret_count)) => {
                         let return_len = ret_count
                             .to_constant()
@@ -387,13 +398,21 @@ impl<'gc> ThreadState<'gc> {
                             self.stack.resize(*base + *stack_size, Value::Nil);
                         }
                     }
-                    Some(LuaReturn::Meta(meta_ind)) => {
-                        let meta_ret = self.stack.get(bottom).copied().unwrap_or_default();
+                    Some(LuaReturn::Meta(meta_ret)) => {
+                        let meta_val = self.stack.get(bottom).copied().unwrap_or_default();
                         self.stack.truncate(bottom);
                         self.stack.resize(*base + *stack_size, Value::Nil);
                         *is_variable = false;
-                        if let Some(meta_ind) = meta_ind {
-                            self.stack[*base + meta_ind.0 as usize] = meta_ret;
+                        match meta_ret {
+                            MetaReturn::None => {}
+                            MetaReturn::Register(reg) => {
+                                self.stack[*base + reg.0 as usize] = meta_val;
+                            }
+                            MetaReturn::SkipIf(skip_if) => {
+                                if meta_val.to_bool() == skip_if {
+                                    *pc += 1;
+                                }
+                            }
                         }
                     }
                     None => panic!("no expected return set for returned to lua frame"),
@@ -766,7 +785,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         ctx: Context<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
-        ret_index: Option<RegisterIndex>,
+        meta_ret: MetaReturn,
     ) -> Result<(), VMError> {
         let Some(Frame::Lua {
             expected_return,
@@ -787,7 +806,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         self.fuel
             .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
-        *expected_return = Some(LuaReturn::Meta(ret_index));
+        *expected_return = Some(LuaReturn::Meta(meta_ret));
         let top = *base + *stack_size;
 
         match meta_ops::call(ctx, func.into())? {
@@ -947,8 +966,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 is_variable,
                 base,
                 stack_size,
+                pc,
                 ..
-            }) => match expected_return {
+            }) => match expected_return.take() {
                 Some(LuaReturn::Normal(expected_return)) => {
                     let returning = expected_return
                         .to_constant()
@@ -971,16 +991,25 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         *is_variable = false;
                     }
                 }
-                Some(LuaReturn::Meta(meta_ind)) => {
-                    let meta_ret = if count > 0 {
+                Some(LuaReturn::Meta(meta_ret)) => {
+                    let meta_val = if count > 0 {
                         self.state.stack[start]
                     } else {
                         Value::Nil
                     };
                     self.state.stack.resize(*base + *stack_size, Value::Nil);
                     *is_variable = false;
-                    if let Some(meta_ind) = meta_ind {
-                        self.state.stack[*base + meta_ind.0 as usize] = meta_ret;
+
+                    match meta_ret {
+                        MetaReturn::None => {}
+                        MetaReturn::Register(reg) => {
+                            self.state.stack[*base + reg.0 as usize] = meta_val;
+                        }
+                        MetaReturn::SkipIf(skip_if) => {
+                            if meta_val.to_bool() == skip_if {
+                                *pc += 1;
+                            }
+                        }
                     }
                 }
                 None => {
