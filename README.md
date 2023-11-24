@@ -170,11 +170,11 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
   * Gotos with label handling that matches Lua 5.3 / 5.4
   * Proper _ENV handling
   * Metatables and metamethods, including fully recursive metamethods that
-    trigger other metamethods (Not all metamethods implemented yet, and `__gc`
-    is an entirely separate can of worms).
-* A robust Rust callback system that allows for sequencing callbacks that don't
-  block the interpreter and reduced stack usage by safely tail calling back
-  into Lua.
+    trigger other metamethods (Not all metamethods implemented yet, particularly
+    `__gc` finalizers).
+* A robust Rust callback system with sequencing callbacks that don't block the
+  interpreter and allow calling into and returning from Lua without using the
+  Rust stack.
 * Garbage collected "userdata" with safe downcasting.
 * Some of the stdlib (most of the more core, fundamental parts of the stdlib are
   implemented, e.g. things like the `coroutine` library, `pcall`, `error`, most
