@@ -7,7 +7,7 @@ use crate::{
     meta_ops::{self, MetaResult},
     opcode::{Operation, RCIndex},
     raw_ops,
-    table::RawTable,
+    table::raw::RawTable,
     thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
     Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
