@@ -13,10 +13,10 @@ pub struct Fuel {
 
 impl Fuel {
     pub fn empty() -> Self {
-        Self::with_fuel(0)
+        Self::with(0)
     }
 
-    pub fn with_fuel(fuel: i32) -> Self {
+    pub fn with(fuel: i32) -> Self {
         Self {
             fuel,
             interrupted: false,
@@ -38,22 +38,22 @@ impl Fuel {
     }
 
     /// Add to or subtract from the current remaining fuel.
-    pub fn adjust_fuel(&mut self, fuel: i32) {
+    pub fn adjust(&mut self, fuel: i32) {
         self.fuel = self.fuel.saturating_add(fuel);
     }
 
     /// Subtract from the current remaining fuel.
     ///
     /// This is a convenience method that is equivalent to `self.adjust_fuel(-fuel)`.
-    pub fn consume_fuel(&mut self, fuel: i32) {
-        self.adjust_fuel(fuel.saturating_neg());
+    pub fn consume(&mut self, fuel: i32) {
+        self.adjust(fuel.saturating_neg());
     }
 
-    pub fn remaining_fuel(&self) -> i32 {
+    pub fn remaining(&self) -> i32 {
         self.fuel
     }
 
-    pub fn set_remaining_fuel(&mut self, fuel: i32) {
+    pub fn set_remaining(&mut self, fuel: i32) {
         self.fuel = fuel;
     }
 

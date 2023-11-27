@@ -535,9 +535,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         let varargs_start = *bottom + 1;
         let varargs_len = *base - varargs_start;
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
 
         let dest = *base + dest.0 as usize;
         if let Some(count) = count.to_constant() {
@@ -579,7 +579,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(count.is_variable()));
         }
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
 
         let table_ind = base + table_base.0 as usize;
         let start_ind = table_ind + 1;
@@ -606,7 +606,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         };
 
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, set_count));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, set_count));
         for i in 0..set_count {
             if let Some(inc) = start.checked_add(1) {
                 start = inc;
@@ -658,9 +658,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - function_index - 1);
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, arg_count));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
         match meta_ops::call(ctx, self.state.stack[function_index])? {
             Function::Closure(closure) => {
@@ -725,9 +725,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         let arg_count = arg_count as usize;
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, arg_count));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
         *expected_return = Some(LuaReturn::Normal(returns));
         let function_index = *base + func.0 as usize;
@@ -802,9 +802,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(false));
         }
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, args.len()));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
         *expected_return = Some(LuaReturn::Meta(meta_ret));
         let top = *base + *stack_size;
@@ -877,9 +877,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - function_index - 1);
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
+        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, arg_count));
+            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
         match meta_ops::call(ctx, self.state.stack[function_index])? {
             Function::Closure(closure) => {
@@ -949,9 +949,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - start);
 
-        self.fuel.consume_fuel(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume_fuel(count_fuel(Self::FUEL_PER_ITEM, count));
+        self.fuel.consume(Self::FUEL_PER_CALL);
+        self.fuel.consume(count_fuel(Self::FUEL_PER_ITEM, count));
 
         match self.state.frames.last_mut() {
             Some(Frame::Sequence {

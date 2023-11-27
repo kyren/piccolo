@@ -25,7 +25,7 @@ fn test_interrupt() -> Result<(), StaticError> {
 
     lua.run(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
-        let mut fuel = Fuel::with_fuel(i32::MAX);
+        let mut fuel = Fuel::with(i32::MAX);
         assert!(!executor.step(ctx, &mut fuel));
         assert!(fuel.is_interrupted());
         assert!(executor.mode() == ExecutorMode::Normal)

@@ -281,7 +281,7 @@ impl<'gc> Executor<'gc> {
 
                 match top_state.frames.pop() {
                     Some(Frame::Callback { bottom, callback }) => {
-                        fuel.consume_fuel(Self::FUEL_PER_CALLBACK);
+                        fuel.consume(Self::FUEL_PER_CALLBACK);
                         match callback.call(
                             ctx,
                             Execution {
@@ -306,7 +306,7 @@ impl<'gc> Executor<'gc> {
                         mut sequence,
                         pending_error,
                     }) => {
-                        fuel.consume_fuel(Self::FUEL_PER_SEQ_STEP);
+                        fuel.consume(Self::FUEL_PER_SEQ_STEP);
 
                         let exec = Execution {
                             fuel,
@@ -370,7 +370,7 @@ impl<'gc> Executor<'gc> {
                                 top_state.frames.push(Frame::Error(err.into()));
                             }
                             Ok(instructions_run) => {
-                                fuel.consume_fuel(instructions_run.try_into().unwrap());
+                                fuel.consume(instructions_run.try_into().unwrap());
                             }
                         }
                     }
@@ -404,7 +404,7 @@ impl<'gc> Executor<'gc> {
                 }
             }
 
-            fuel.consume_fuel(Self::FUEL_PER_STEP);
+            fuel.consume(Self::FUEL_PER_STEP);
 
             if !fuel.should_continue() {
                 break false;

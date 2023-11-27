@@ -173,7 +173,7 @@ impl Lua {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
-            let mut fuel = Fuel::with_fuel(FUEL_PER_GC);
+            let mut fuel = Fuel::with(FUEL_PER_GC);
 
             if self.run(|ctx| {
                 let executor = ctx.state.registry.fetch(executor);
