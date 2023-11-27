@@ -815,7 +815,7 @@ where
                     return Ok(Token::Integer(i));
                 }
             }
-            if let Some(i) = read_integer(&self.string_buffer) {
+            if let Some(i) = read_dec_integer(&self.string_buffer) {
                 return Ok(Token::Integer(i));
             }
         }
@@ -824,7 +824,7 @@ where
             if is_hex {
                 read_hex_float(&self.string_buffer)
             } else {
-                read_float(&self.string_buffer)
+                read_dec_float(&self.string_buffer)
             }
             .ok_or(LexerError::BadNumber)?,
         ))
@@ -871,6 +871,10 @@ where
 }
 
 pub fn read_integer(s: &[u8]) -> Option<i64> {
+    read_hex_integer(s).or_else(|| read_dec_integer(s))
+}
+
+pub fn read_dec_integer(s: &[u8]) -> Option<i64> {
     let (is_neg, s) = read_neg(s);
 
     let mut i: i64 = 0;
@@ -883,11 +887,7 @@ pub fn read_integer(s: &[u8]) -> Option<i64> {
         i = i.checked_neg()?;
     }
 
-    if i == i64::MIN {
-        None
-    } else {
-        Some(i)
-    }
+    Some(i)
 }
 
 pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
@@ -907,14 +907,14 @@ pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
         i = i.checked_neg()?;
     }
 
-    if i == i64::MIN {
-        None
-    } else {
-        Some(i)
-    }
+    Some(i)
 }
 
 pub fn read_float(s: &[u8]) -> Option<f64> {
+    read_hex_float(s).or_else(|| read_dec_float(s))
+}
+
+pub fn read_dec_float(s: &[u8]) -> Option<f64> {
     let s = str::from_utf8(s).ok()?;
     str::parse(s).ok()
 }

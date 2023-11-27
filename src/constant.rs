@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::Collect;
 
-use crate::compiler::lexer::{read_float, read_hex_float};
+use crate::compiler::lexer::{read_float, read_integer};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -54,13 +54,7 @@ impl<S: AsRef<[u8]>> Constant<S> {
         match self {
             &Self::Integer(a) => Some(a as f64),
             &Self::Number(a) => Some(a),
-            Self::String(a) => {
-                if let Some(f) = read_hex_float(a.as_ref()) {
-                    Some(f)
-                } else {
-                    read_float(a.as_ref())
-                }
-            }
+            Self::String(a) => read_float(a.as_ref()),
             _ => None,
         }
     }
@@ -76,20 +70,19 @@ impl<S: AsRef<[u8]>> Constant<S> {
                     None
                 }
             }
-            Self::String(a) => match if let Some(f) = read_hex_float(a.as_ref()) {
-                Some(f)
-            } else {
-                read_float(a.as_ref())
-            } {
-                Some(f) => {
-                    if ((f as i64) as f64) == f {
-                        Some(f as i64)
+            Self::String(a) => {
+                if let Some(i) = read_integer(a.as_ref()) {
+                    Some(i)
+                } else if let Some(n) = read_float(a.as_ref()) {
+                    if ((n as i64) as f64) == n {
+                        Some(n as i64)
                     } else {
                         None
                     }
+                } else {
+                    None
                 }
-                _ => None,
-            },
+            }
             _ => None,
         }
     }
