@@ -4,7 +4,10 @@ pub mod ser;
 
 use piccolo::Lua;
 
-pub use self::{de::from_value, ser::to_value};
+pub use self::{
+    de::from_value,
+    ser::{to_value, to_value_with, Options as SerOptions},
+};
 
 pub trait LuaSerdeExt {
     fn load_serde(&mut self);

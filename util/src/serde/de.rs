@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt};
 
-use piccolo as lua;
+use piccolo::{table::NextValue, Table, Value};
 use serde::de;
 use thiserror::Error;
 
@@ -23,16 +23,16 @@ impl de::Error for Error {
     }
 }
 
-pub fn from_value<'gc, T: de::Deserialize<'gc>>(value: lua::Value<'gc>) -> Result<T, Error> {
+pub fn from_value<'gc, T: de::Deserialize<'gc>>(value: Value<'gc>) -> Result<T, Error> {
     T::deserialize(Deserializer::from_value(value))
 }
 
 pub struct Deserializer<'gc> {
-    value: lua::Value<'gc>,
+    value: Value<'gc>,
 }
 
 impl<'gc> Deserializer<'gc> {
-    pub fn from_value(value: lua::Value<'gc>) -> Self {
+    pub fn from_value(value: Value<'gc>) -> Self {
         Self { value }
     }
 }
@@ -42,21 +42,21 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
 
     fn deserialize_any<V: de::Visitor<'gc>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.value {
-            lua::Value::Nil => self.deserialize_unit(visitor),
-            lua::Value::Boolean(_) => self.deserialize_bool(visitor),
-            lua::Value::Integer(_) => self.deserialize_i64(visitor),
-            lua::Value::Number(_) => self.deserialize_f64(visitor),
-            lua::Value::String(_) => self.deserialize_bytes(visitor),
-            lua::Value::Table(t) => {
+            Value::Nil => self.deserialize_unit(visitor),
+            Value::Boolean(_) => self.deserialize_bool(visitor),
+            Value::Integer(_) => self.deserialize_i64(visitor),
+            Value::Number(_) => self.deserialize_f64(visitor),
+            Value::String(_) => self.deserialize_bytes(visitor),
+            Value::Table(t) => {
                 if is_sequence(t) {
                     self.deserialize_seq(visitor)
                 } else {
                     self.deserialize_map(visitor)
                 }
             }
-            lua::Value::Function(_) => Err(de::Error::custom("cannot deserialize from function")),
-            lua::Value::Thread(_) => Err(de::Error::custom("cannot deserialize from thread")),
-            lua::Value::UserData(_) => Err(de::Error::custom("cannot deserialize from userdata")),
+            Value::Function(_) => Err(de::Error::custom("cannot deserialize from function")),
+            Value::Thread(_) => Err(de::Error::custom("cannot deserialize from thread")),
+            Value::UserData(_) => Err(de::Error::custom("cannot deserialize from userdata")),
         }
     }
 
@@ -162,7 +162,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
     where
         V: de::Visitor<'gc>,
     {
-        if let lua::Value::String(s) = self.value {
+        if let Value::String(s) = self.value {
             match s.to_str_lossy() {
                 Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
                 Cow::Owned(s) => visitor.visit_string(s),
@@ -183,7 +183,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
     where
         V: de::Visitor<'gc>,
     {
-        if let lua::Value::String(s) = self.value {
+        if let Value::String(s) = self.value {
             visitor.visit_borrowed_bytes(s.as_bytes())
         } else {
             Err(Error::TypeError {
@@ -205,8 +205,8 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         match self.value {
-            lua::Value::Nil => visitor.visit_none(),
-            lua::Value::UserData(ud) if is_none(ud) => visitor.visit_none(),
+            Value::Nil => visitor.visit_none(),
+            Value::UserData(ud) if is_none(ud) => visitor.visit_none(),
             _ => visitor.visit_some(self),
         }
     }
@@ -216,8 +216,8 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         match self.value {
-            lua::Value::Nil => visitor.visit_unit(),
-            lua::Value::UserData(ud) if is_unit(ud) => visitor.visit_unit(),
+            Value::Nil => visitor.visit_unit(),
+            Value::UserData(ud) if is_unit(ud) => visitor.visit_unit(),
             v => Err(Error::TypeError {
                 expected: "nil or unit",
                 found: v.type_name(),
@@ -247,7 +247,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
     where
         V: de::Visitor<'gc>,
     {
-        if let lua::Value::Table(table) = self.value {
+        if let Value::Table(table) = self.value {
             visitor.visit_seq(Seq::new(table))
         } else {
             Err(Error::TypeError {
@@ -261,7 +261,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
     where
         V: de::Visitor<'gc>,
     {
-        if let lua::Value::Table(table) = self.value {
+        if let Value::Table(table) = self.value {
             visitor.visit_seq(Tuple::new(
                 table,
                 len.try_into()
@@ -291,7 +291,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
     where
         V: de::Visitor<'gc>,
     {
-        if let lua::Value::Table(table) = self.value {
+        if let Value::Table(table) = self.value {
             visitor.visit_map(Map::new(table))
         } else {
             Err(Error::TypeError {
@@ -323,12 +323,10 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         match self.value {
-            lua::Value::Table(table) => match table.next(lua::Value::Nil) {
-                lua::table::NextValue::Found { key, value } => {
-                    visitor.visit_enum(Enum::new(key, value))
-                }
-                lua::table::NextValue::Last => Err(de::Error::custom("enum table has no entries")),
-                lua::table::NextValue::NotFound => unreachable!(),
+            Value::Table(table) => match table.next(Value::Nil) {
+                NextValue::Found { key, value } => visitor.visit_enum(Enum::new(key, value)),
+                NextValue::Last => Err(de::Error::custom("enum table has no entries")),
+                NextValue::NotFound => unreachable!(),
             },
             v => visitor.visit_enum(UnitEnum::new(v)),
         }
@@ -350,12 +348,12 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
 }
 
 pub struct Seq<'gc> {
-    table: lua::Table<'gc>,
+    table: Table<'gc>,
     ind: i64,
 }
 
 impl<'gc> Seq<'gc> {
-    fn new(table: lua::Table<'gc>) -> Self {
+    fn new(table: Table<'gc>) -> Self {
         Self { table, ind: 1 }
     }
 }
@@ -367,7 +365,7 @@ impl<'gc> de::SeqAccess<'gc> for Seq<'gc> {
     where
         T: de::DeserializeSeed<'gc>,
     {
-        let v = self.table.get_value(lua::Value::Integer(self.ind));
+        let v = self.table.get_value(Value::Integer(self.ind));
         if v.is_nil() {
             Ok(None)
         } else {
@@ -382,13 +380,13 @@ impl<'gc> de::SeqAccess<'gc> for Seq<'gc> {
 }
 
 pub struct Tuple<'gc> {
-    table: lua::Table<'gc>,
+    table: Table<'gc>,
     len: i64,
     ind: i64,
 }
 
 impl<'gc> Tuple<'gc> {
-    fn new(table: lua::Table<'gc>, len: i64) -> Self {
+    fn new(table: Table<'gc>, len: i64) -> Self {
         Self { table, len, ind: 1 }
     }
 }
@@ -403,7 +401,7 @@ impl<'gc> de::SeqAccess<'gc> for Tuple<'gc> {
         if self.ind > self.len {
             Ok(None)
         } else {
-            let v = self.table.get_value(lua::Value::Integer(self.ind));
+            let v = self.table.get_value(Value::Integer(self.ind));
             let res = Some(seed.deserialize(Deserializer::from_value(v))?);
             self.ind += 1;
             Ok(res)
@@ -412,17 +410,17 @@ impl<'gc> de::SeqAccess<'gc> for Tuple<'gc> {
 }
 
 pub struct Map<'gc> {
-    table: lua::Table<'gc>,
-    key: lua::Value<'gc>,
-    value: lua::Value<'gc>,
+    table: Table<'gc>,
+    key: Value<'gc>,
+    value: Value<'gc>,
 }
 
 impl<'gc> Map<'gc> {
-    fn new(table: lua::Table<'gc>) -> Self {
+    fn new(table: Table<'gc>) -> Self {
         Self {
             table,
-            key: lua::Value::Nil,
-            value: lua::Value::Nil,
+            key: Value::Nil,
+            value: Value::Nil,
         }
     }
 }
@@ -435,14 +433,14 @@ impl<'gc> de::MapAccess<'gc> for Map<'gc> {
         K: de::DeserializeSeed<'gc>,
     {
         match self.table.next(self.key) {
-            lua::table::NextValue::Found { key, value } => {
+            NextValue::Found { key, value } => {
                 self.key = key;
                 self.value = value;
                 seed.deserialize(Deserializer::from_value(self.key))
                     .map(Some)
             }
-            lua::table::NextValue::Last => Ok(None),
-            lua::table::NextValue::NotFound => unreachable!(),
+            NextValue::Last => Ok(None),
+            NextValue::NotFound => unreachable!(),
         }
     }
 
@@ -455,12 +453,12 @@ impl<'gc> de::MapAccess<'gc> for Map<'gc> {
 }
 
 pub struct Enum<'gc> {
-    key: lua::Value<'gc>,
-    value: lua::Value<'gc>,
+    key: Value<'gc>,
+    value: Value<'gc>,
 }
 
 impl<'gc> Enum<'gc> {
-    fn new(key: lua::Value<'gc>, value: lua::Value<'gc>) -> Self {
+    fn new(key: Value<'gc>, value: Value<'gc>) -> Self {
         Self { key, value }
     }
 }
@@ -481,11 +479,11 @@ impl<'gc> de::EnumAccess<'gc> for Enum<'gc> {
 }
 
 pub struct Variant<'gc> {
-    value: lua::Value<'gc>,
+    value: Value<'gc>,
 }
 
 impl<'gc> Variant<'gc> {
-    fn new(value: lua::Value<'gc>) -> Self {
+    fn new(value: Value<'gc>) -> Self {
         Self { value }
     }
 }
@@ -524,11 +522,11 @@ impl<'gc> de::VariantAccess<'gc> for Variant<'gc> {
 }
 
 pub struct UnitEnum<'gc> {
-    key: lua::Value<'gc>,
+    key: Value<'gc>,
 }
 
 impl<'gc> UnitEnum<'gc> {
-    fn new(key: lua::Value<'gc>) -> Self {
+    fn new(key: Value<'gc>) -> Self {
         Self { key }
     }
 }
@@ -598,16 +596,16 @@ impl<'de> de::VariantAccess<'de> for UnitVariant {
     }
 }
 
-fn is_sequence<'gc>(table: lua::Table<'gc>) -> bool {
-    let mut key = match table.next(lua::Value::Nil) {
-        lua::table::NextValue::Found { key, value: _ } => key,
-        lua::table::NextValue::Last => return true,
-        lua::table::NextValue::NotFound => unreachable!(),
+fn is_sequence<'gc>(table: Table<'gc>) -> bool {
+    let mut key = match table.next(Value::Nil) {
+        NextValue::Found { key, value: _ } => key,
+        NextValue::Last => return true,
+        NextValue::NotFound => unreachable!(),
     };
 
     let mut ind = 1;
     loop {
-        if !matches!(key, lua::Value::Integer(i) if i == ind) {
+        if !matches!(key, Value::Integer(i) if i == ind) {
             return false;
         }
 
@@ -618,9 +616,9 @@ fn is_sequence<'gc>(table: lua::Table<'gc>) -> bool {
         };
 
         key = match table.next(key) {
-            lua::table::NextValue::Found { key, value: _ } => key,
-            lua::table::NextValue::Last => return true,
-            lua::table::NextValue::NotFound => unreachable!(),
+            NextValue::Found { key, value: _ } => key,
+            NextValue::Last => return true,
+            NextValue::NotFound => unreachable!(),
         };
     }
 }
