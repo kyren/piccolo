@@ -47,7 +47,7 @@ The current primary sources of unsafety:
 *(`piccolo` makes no attempt yet to guard against side channel attacks like
 spectre, so even if the VM is memory safe, running untrusted scripts may carry
 additional risk. With no JIT or callback API to accurately measure time, this
-might be practically impossible anwyay.)*.
+might be practically impossible anwyay.)*
 
 ## A unique system for Rust <-> GC interaction
 
