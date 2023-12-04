@@ -6,8 +6,9 @@ use thiserror::Error;
 
 use crate::{
     compiler::{FunctionRef, LineNumber},
-    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, FunctionProto,
-    IntoMultiValue, SequencePoll, Stack, String, Thread, ThreadMode, Value, Variadic,
+    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function,
+    FunctionPrototype, IntoMultiValue, SequencePoll, Stack, String, Thread, ThreadMode, Value,
+    Variadic,
 };
 
 use super::{
@@ -520,7 +521,7 @@ impl<'gc> Executor<'gc> {
 pub struct Execution<'gc, 'a> {
     executor: Executor<'gc>,
     fuel: &'a mut Fuel,
-    upper_lua: Option<(Gc<'gc, FunctionProto<'gc>>, usize)>,
+    upper_lua: Option<(Gc<'gc, FunctionPrototype<'gc>>, usize)>,
     threads: &'a [Thread<'gc>],
 }
 

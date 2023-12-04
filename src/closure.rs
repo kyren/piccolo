@@ -25,7 +25,7 @@ pub enum PrototypeError {
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub struct FunctionProto<'gc> {
+pub struct FunctionPrototype<'gc> {
     pub chunk_name: String<'gc>,
     pub reference: FunctionRef<String<'gc>>,
     pub fixed_params: u8,
@@ -35,10 +35,10 @@ pub struct FunctionProto<'gc> {
     pub opcodes: boxed::Box<[OpCode], MetricsAlloc<'gc>>,
     pub opcode_line_numbers: boxed::Box<[(usize, LineNumber)], MetricsAlloc<'gc>>,
     pub upvalues: boxed::Box<[UpValueDescriptor], MetricsAlloc<'gc>>,
-    pub prototypes: boxed::Box<[Gc<'gc, FunctionProto<'gc>>], MetricsAlloc<'gc>>,
+    pub prototypes: boxed::Box<[Gc<'gc, FunctionPrototype<'gc>>], MetricsAlloc<'gc>>,
 }
 
-impl<'gc> FunctionProto<'gc> {
+impl<'gc> FunctionPrototype<'gc> {
     pub fn from_compiled(
         mc: &Mutation<'gc>,
         chunk_name: String<'gc>,
@@ -58,7 +58,7 @@ impl<'gc> FunctionProto<'gc> {
             chunk_name: String<'gc>,
             compiled_function: &CompiledPrototype<S>,
             map_string: impl Fn(&S) -> String<'gc> + Copy,
-        ) -> FunctionProto<'gc> {
+        ) -> FunctionPrototype<'gc> {
             let alloc = MetricsAlloc::new(mc);
 
             let mut constants = vec::Vec::new_in(alloc.clone());
@@ -85,7 +85,7 @@ impl<'gc> FunctionProto<'gc> {
                     .map(|cf| Gc::new(mc, new(mc, chunk_name, cf, map_string))),
             );
 
-            FunctionProto {
+            FunctionPrototype {
                 chunk_name,
                 reference: compiled_function
                     .reference
@@ -109,7 +109,7 @@ impl<'gc> FunctionProto<'gc> {
         ctx: Context<'gc>,
         source_name: &str,
         source: impl Read,
-    ) -> Result<FunctionProto<'gc>, PrototypeError> {
+    ) -> Result<FunctionPrototype<'gc>, PrototypeError> {
         #[derive(Copy, Clone)]
         struct Interner<'gc>(Context<'gc>);
 
@@ -126,7 +126,7 @@ impl<'gc> FunctionProto<'gc> {
         let chunk = compiler::parse_chunk(source, interner)?;
         let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionProto::from_compiled(
+        Ok(FunctionPrototype::from_compiled(
             &ctx,
             ctx.state.strings.intern(&ctx, source_name.as_bytes()),
             &compiled_function,
@@ -148,7 +148,7 @@ pub struct UpValue<'gc>(pub Gc<'gc, Lock<UpValueState<'gc>>>);
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ClosureState<'gc> {
-    pub proto: Gc<'gc, FunctionProto<'gc>>,
+    pub proto: Gc<'gc, FunctionPrototype<'gc>>,
     pub upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
 }
 
@@ -182,7 +182,7 @@ impl<'gc> Closure<'gc> {
     /// Create a top-level closure, prototype must not have any upvalues besides _ENV.
     pub fn new(
         mc: &Mutation<'gc>,
-        proto: FunctionProto<'gc>,
+        proto: FunctionPrototype<'gc>,
         environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, ClosureError> {
         let proto = Gc::new(mc, proto);
@@ -224,7 +224,7 @@ impl<'gc> Closure<'gc> {
         source: impl Read,
         env: Table<'gc>,
     ) -> Result<Closure<'gc>, PrototypeError> {
-        let proto = FunctionProto::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
+        let proto = FunctionPrototype::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }
 }
