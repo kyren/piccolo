@@ -277,7 +277,7 @@ pub enum RecordKey<S> {
 }
 
 #[derive(Debug, Error)]
-pub enum ParserError {
+pub enum ParseErrorKind {
     #[error("found {unexpected:?}, expected {expected:?}")]
     Unexpected {
         unexpected: String,
@@ -298,7 +298,14 @@ pub enum ParserError {
     LexerError(#[from] LexerError),
 }
 
-pub fn parse_chunk<R, S>(source: R, interner: S) -> Result<Chunk<S::String>, ParserError>
+#[derive(Debug, Error)]
+#[error("parse error at {line_number}: {kind}")]
+pub struct ParseError {
+    pub kind: ParseErrorKind,
+    pub line_number: LineNumber,
+}
+
+pub fn parse_chunk<R, S>(source: R, interner: S) -> Result<Chunk<S::String>, ParseError>
 where
     R: Read,
     S: StringInterner,
@@ -321,33 +328,44 @@ impl<R, S: StringInterner> Parser<R, S>
 where
     R: Read,
 {
-    fn parse_chunk(&mut self) -> Result<Chunk<S::String>, ParserError> {
+    fn parse_chunk(&mut self) -> Result<Chunk<S::String>, ParseError> {
         let block = self.parse_block()?;
         if !self.look_ahead(0)?.is_none() {
-            Err(ParserError::EndOfStream { expected: None })
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream { expected: None },
+                line_number: self.lexer.line_number(),
+            })
         } else {
             Ok(Chunk { block })
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block<S::String>, ParserError> {
+    fn parse_block(&mut self) -> Result<Block<S::String>, ParseError> {
         let mut statements = Vec::new();
         let mut return_statement = None;
 
         loop {
-            match self.look_ahead(0)?.map(AsRef::as_ref) {
-                Some(&Token::Else) | Some(&Token::ElseIf) | Some(&Token::End)
-                | Some(&Token::Until) => break,
-                Some(&Token::SemiColon) => {
+            let Some(next) = self.look_ahead(0)? else {
+                break;
+            };
+
+            match &next.inner {
+                Token::Else | Token::ElseIf | Token::End | Token::Until => break,
+                Token::SemiColon => {
                     self.take_next()?;
                 }
-                Some(&Token::Return) => {
-                    return_statement = Some(self.parse_return_statement()?);
+                Token::Return => {
+                    return_statement = Some(LineAnnotated::new(
+                        next.line_number,
+                        self.parse_return_statement()?,
+                    ));
                     break;
                 }
-                None => break,
                 _ => {
-                    statements.push(self.parse_statement()?);
+                    statements.push(LineAnnotated::new(
+                        next.line_number,
+                        self.parse_statement()?,
+                    ));
                 }
             }
         }
@@ -358,13 +376,10 @@ where
         })
     }
 
-    fn parse_statement(&mut self) -> Result<LineAnnotated<Statement<S::String>>, ParserError> {
+    fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
         let _recursion_guard = self.recursion_guard()?;
 
-        let next_token = self.get_next()?;
-        let statement_line = next_token.line_number;
-
-        let statement = match **next_token {
+        let statement = match &self.get_next()?.inner {
             Token::If => Statement::If(self.parse_if_statement()?),
             Token::While => Statement::While(self.parse_while_statement()?),
             Token::Do => {
@@ -393,13 +408,11 @@ where
             _ => self.parse_expression_statement()?,
         };
 
-        Ok(LineAnnotated::new(statement_line, statement))
+        Ok(statement)
     }
 
-    fn parse_return_statement(
-        &mut self,
-    ) -> Result<LineAnnotated<ReturnStatement<S::String>>, ParserError> {
-        let line_number = self.expect_next(Token::Return)?;
+    fn parse_return_statement(&mut self) -> Result<ReturnStatement<S::String>, ParseError> {
+        self.expect_next(Token::Return)?;
         let returns = match self.look_ahead(0)?.map(AsRef::as_ref) {
             None
             | Some(Token::End)
@@ -412,10 +425,10 @@ where
         if self.check_ahead(0, Token::SemiColon)? {
             self.take_next()?;
         }
-        Ok(LineAnnotated::new(line_number, ReturnStatement { returns }))
+        Ok(ReturnStatement { returns })
     }
 
-    fn parse_if_statement(&mut self) -> Result<IfStatement<S::String>, ParserError> {
+    fn parse_if_statement(&mut self) -> Result<IfStatement<S::String>, ParseError> {
         self.expect_next(Token::If)?;
         let if_cond = self.parse_expression()?;
         self.expect_next(Token::Then)?;
@@ -446,7 +459,7 @@ where
         })
     }
 
-    fn parse_while_statement(&mut self) -> Result<WhileStatement<S::String>, ParserError> {
+    fn parse_while_statement(&mut self) -> Result<WhileStatement<S::String>, ParseError> {
         self.expect_next(Token::While)?;
         let condition = self.parse_expression()?;
         self.expect_next(Token::Do)?;
@@ -456,11 +469,12 @@ where
         Ok(WhileStatement { condition, block })
     }
 
-    fn parse_for_statement(&mut self) -> Result<ForStatement<S::String>, ParserError> {
+    fn parse_for_statement(&mut self) -> Result<ForStatement<S::String>, ParseError> {
         self.expect_next(Token::For)?;
         let name = self.expect_name()?.inner;
 
-        match self.get_next()?.as_ref() {
+        let next = self.get_next()?;
+        match next.as_ref() {
             Token::Assign => {
                 self.take_next()?;
                 let initial = self.parse_expression()?;
@@ -507,14 +521,17 @@ where
                 })
             }
 
-            token => Err(ParserError::Unexpected {
-                unexpected: format!("{:?}", token),
-                expected: "'=' or 'in'".to_owned(),
+            token => Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: "'=' or 'in'".to_owned(),
+                },
+                line_number: next.line_number,
             }),
         }
     }
 
-    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S::String>, ParserError> {
+    fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S::String>, ParseError> {
         self.expect_next(Token::Repeat)?;
         let body = self.parse_block()?;
         self.expect_next(Token::Until)?;
@@ -522,7 +539,7 @@ where
         Ok(RepeatStatement { body, until })
     }
 
-    fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParserError> {
+    fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParseError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
@@ -555,7 +572,7 @@ where
 
     fn parse_local_function_statement(
         &mut self,
-    ) -> Result<LocalFunctionStatement<S::String>, ParserError> {
+    ) -> Result<LocalFunctionStatement<S::String>, ParseError> {
         self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
@@ -564,7 +581,7 @@ where
         Ok(LocalFunctionStatement { name, definition })
     }
 
-    fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParserError> {
+    fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParseError> {
         self.expect_next(Token::Local)?;
         let mut names = Vec::new();
         names.push(self.expect_name()?.inner);
@@ -583,21 +600,25 @@ where
         Ok(LocalStatement { names, values })
     }
 
-    fn parse_label_statement(&mut self) -> Result<LabelStatement<S::String>, ParserError> {
+    fn parse_label_statement(&mut self) -> Result<LabelStatement<S::String>, ParseError> {
         self.expect_next(Token::DoubleColon)?;
         let name = self.expect_name()?.inner;
         self.expect_next(Token::DoubleColon)?;
         Ok(LabelStatement { name })
     }
 
-    fn parse_goto_statement(&mut self) -> Result<GotoStatement<S::String>, ParserError> {
+    fn parse_goto_statement(&mut self) -> Result<GotoStatement<S::String>, ParseError> {
         self.expect_next(Token::Goto)?;
         let name = self.expect_name()?.inner;
         Ok(GotoStatement { name })
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Statement<S::String>, ParserError> {
+    fn parse_expression_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
         let mut suffixed_expression = self.parse_suffixed_expression()?;
+        let line_number = self
+            .look_ahead(0)?
+            .map(|t| t.line_number)
+            .unwrap_or_else(|| self.lexer.line_number());
         if self.check_ahead(0, Token::Assign)? || self.check_ahead(0, Token::Comma)? {
             let mut targets = Vec::new();
             loop {
@@ -607,13 +628,21 @@ where
                             AssignmentTarget::Field(suffixed_expression, field_suffix)
                         }
                         SuffixPart::Call(_) => {
-                            return Err(ParserError::AssignToExpression);
+                            return Err(ParseError {
+                                kind: ParseErrorKind::AssignToExpression,
+                                line_number,
+                            });
                         }
                     }
                 } else {
                     match suffixed_expression.primary {
                         PrimaryExpression::Name(name) => AssignmentTarget::Name(name),
-                        _ => return Err(ParserError::AssignToExpression),
+                        _ => {
+                            return Err(ParseError {
+                                kind: ParseErrorKind::AssignToExpression,
+                                line_number,
+                            })
+                        }
                     }
                 };
                 targets.push(assignment_target);
@@ -641,18 +670,24 @@ where
                         call: call_suffix,
                     }))
                 }
-                SuffixPart::Field(_) => Err(ParserError::ExpressionNotStatement),
+                SuffixPart::Field(_) => Err(ParseError {
+                    kind: ParseErrorKind::ExpressionNotStatement,
+                    line_number,
+                }),
             }
         } else {
-            Err(ParserError::ExpressionNotStatement)
+            Err(ParseError {
+                kind: ParseErrorKind::ExpressionNotStatement,
+                line_number,
+            })
         }
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<S::String>, ParserError> {
+    fn parse_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
         self.parse_sub_expression(MIN_PRIORITY)
     }
 
-    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S::String>>, ParserError> {
+    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S::String>>, ParseError> {
         let mut expressions = Vec::new();
         expressions.push(self.parse_expression()?);
         while self.check_ahead(0, Token::Comma)? {
@@ -665,7 +700,7 @@ where
     fn parse_sub_expression(
         &mut self,
         priority_limit: u8,
-    ) -> Result<Expression<S::String>, ParserError> {
+    ) -> Result<Expression<S::String>, ParseError> {
         let _recursion_guard = self.recursion_guard()?;
 
         let head = if let Some(unary_op) = get_unary_operator(self.get_next()?) {
@@ -693,7 +728,7 @@ where
         })
     }
 
-    fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S::String>, ParserError> {
+    fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S::String>, ParseError> {
         Ok(match **self.get_next()? {
             Token::Float(f) => {
                 self.take_next()?;
@@ -729,23 +764,28 @@ where
         })
     }
 
-    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S::String>, ParserError> {
-        match self.take_next()?.inner {
+    fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S::String>, ParseError> {
+        let next = self.take_next()?;
+        match next.inner {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
                 self.expect_next(Token::RightParen)?;
                 Ok(PrimaryExpression::GroupedExpression(expr))
             }
             Token::Name(n) => Ok(PrimaryExpression::Name(n)),
-            token => Err(ParserError::Unexpected {
-                unexpected: format!("{:?}", token),
-                expected: "grouped expression or name".to_owned(),
+            token => Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: "grouped expression or name".to_owned(),
+                },
+                line_number: next.line_number,
             }),
         }
     }
 
-    fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S::String>, ParserError> {
-        match self.get_next()?.as_ref() {
+    fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S::String>, ParseError> {
+        let next = self.get_next()?;
+        match &next.inner {
             Token::Dot => {
                 self.take_next()?;
                 Ok(FieldSuffix::Named(self.expect_name()?.inner))
@@ -756,14 +796,17 @@ where
                 self.expect_next(Token::RightBracket)?;
                 Ok(FieldSuffix::Indexed(expr))
             }
-            token => Err(ParserError::Unexpected {
-                unexpected: format!("{:?}", token),
-                expected: "field or suffix".to_owned(),
+            token => Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: "field or suffix".to_owned(),
+                },
+                line_number: next.line_number,
             }),
         }
     }
 
-    fn parse_call_suffix(&mut self) -> Result<CallSuffix<S::String>, ParserError> {
+    fn parse_call_suffix(&mut self) -> Result<CallSuffix<S::String>, ParseError> {
         let method_name = match **self.get_next()? {
             Token::Colon => {
                 self.take_next()?;
@@ -772,7 +815,8 @@ where
             _ => None,
         };
 
-        let args = match self.get_next()?.as_ref() {
+        let next = self.get_next()?;
+        let args = match &next.inner {
             Token::LeftParen => {
                 self.take_next()?;
                 let args = if !matches!(**self.get_next()?, Token::RightParen) {
@@ -796,9 +840,12 @@ where
                 tail: vec![],
             }],
             token => {
-                return Err(ParserError::Unexpected {
-                    unexpected: format!("{:?}", token),
-                    expected: "function arguments".to_owned(),
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: format!("{:?}", token),
+                        expected: "function arguments".to_owned(),
+                    },
+                    line_number: next.line_number,
                 });
             }
         };
@@ -810,20 +857,24 @@ where
         })
     }
 
-    fn parse_suffix_part(&mut self) -> Result<SuffixPart<S::String>, ParserError> {
-        match self.get_next()?.as_ref() {
+    fn parse_suffix_part(&mut self) -> Result<SuffixPart<S::String>, ParseError> {
+        let next = self.get_next()?;
+        match &next.inner {
             Token::Dot | Token::LeftBracket => Ok(SuffixPart::Field(self.parse_field_suffix()?)),
             Token::Colon | Token::LeftParen | Token::LeftBrace | Token::String(_) => {
                 Ok(SuffixPart::Call(self.parse_call_suffix()?))
             }
-            token => Err(ParserError::Unexpected {
-                unexpected: format!("{:?}", token),
-                expected: "expression suffix".to_owned(),
+            token => Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: format!("{:?}", token),
+                    expected: "expression suffix".to_owned(),
+                },
+                line_number: next.line_number,
             }),
         }
     }
 
-    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression<S::String>, ParserError> {
+    fn parse_suffixed_expression(&mut self) -> Result<SuffixedExpression<S::String>, ParseError> {
         let primary = self.parse_primary_expression()?;
         let mut suffixes = Vec::new();
         loop {
@@ -843,23 +894,27 @@ where
         Ok(SuffixedExpression { primary, suffixes })
     }
 
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S::String>, ParserError> {
+    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S::String>, ParseError> {
         self.expect_next(Token::LeftParen)?;
 
         let mut parameters = Vec::new();
         let mut has_varargs = false;
         if !self.check_ahead(0, Token::RightParen)? {
             loop {
-                match self.take_next()?.inner {
+                let next = self.take_next()?;
+                match next.inner {
                     Token::Name(name) => parameters.push(name),
                     Token::Dots => {
                         has_varargs = true;
                         break;
                     }
                     token => {
-                        return Err(ParserError::Unexpected {
-                            unexpected: format!("{:?}", token),
-                            expected: "parameter name or '...'".to_owned(),
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: format!("{:?}", token),
+                                expected: "parameter name or '...'".to_owned(),
+                            },
+                            line_number: next.line_number,
                         });
                     }
                 }
@@ -882,7 +937,7 @@ where
         })
     }
 
-    fn parse_table_constructor(&mut self) -> Result<TableConstructor<S::String>, ParserError> {
+    fn parse_table_constructor(&mut self) -> Result<TableConstructor<S::String>, ParseError> {
         self.expect_next(Token::LeftBrace)?;
         let mut fields = Vec::new();
         loop {
@@ -901,7 +956,7 @@ where
         Ok(TableConstructor { fields })
     }
 
-    fn parse_constructor_field(&mut self) -> Result<ConstructorField<S::String>, ParserError> {
+    fn parse_constructor_field(&mut self) -> Result<ConstructorField<S::String>, ParseError> {
         Ok(match **self.get_next()? {
             Token::Name(_) => {
                 if self.check_ahead(1, Token::Assign)? {
@@ -927,85 +982,112 @@ where
 
     // Error if we have more than MAX_RECURSION guards live, otherwise return a new recursion guard
     // (a recursion guard is just an Rc used solely for its live count).
-    fn recursion_guard(&self) -> Result<Rc<()>, ParserError> {
+    fn recursion_guard(&self) -> Result<Rc<()>, ParseError> {
         if Rc::strong_count(&self.recursion_guard) < MAX_RECURSION {
             Ok(self.recursion_guard.clone())
         } else {
-            Err(ParserError::RecursionLimit)
+            Err(ParseError {
+                kind: ParseErrorKind::RecursionLimit,
+                line_number: self.lexer.line_number(),
+            })
         }
     }
 
     // Return a reference to the next token in the stream, erroring if we are at the end.
-    fn get_next(&mut self) -> Result<&LineAnnotated<Token<S::String>>, ParserError> {
+    fn get_next(&mut self) -> Result<&LineAnnotated<Token<S::String>>, ParseError> {
         self.read_ahead(1)?;
         if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
         } else {
-            Err(ParserError::EndOfStream { expected: None })
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream { expected: None },
+                line_number: self.lexer.line_number(),
+            })
         }
     }
 
     // Consumes the next token, returning an error if it does not match the given token.
-    fn expect_next(&mut self, token: Token<S::String>) -> Result<LineNumber, ParserError> {
+    fn expect_next(&mut self, token: Token<S::String>) -> Result<LineNumber, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParserError::EndOfStream {
-                expected: Some(format!("{:?}", token)),
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream {
+                    expected: Some(format!("{:?}", token)),
+                },
+                line_number: self.lexer.line_number(),
             })
         } else {
             let next_token = self.read_buffer.remove(0);
             if *next_token == token {
                 Ok(next_token.line_number)
             } else {
-                Err(ParserError::Unexpected {
-                    unexpected: format!("{:?}", next_token),
-                    expected: format!("{:?}", token),
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: format!("{:?}", next_token),
+                        expected: format!("{:?}", token),
+                    },
+                    line_number: next_token.line_number,
                 })
             }
         }
     }
 
     // Consume the next token which should be a name, and return it, otherwise error.
-    fn expect_name(&mut self) -> Result<LineAnnotated<S::String>, ParserError> {
+    fn expect_name(&mut self) -> Result<LineAnnotated<S::String>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParserError::EndOfStream {
-                expected: Some("name".to_owned()),
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream {
+                    expected: Some("name".to_owned()),
+                },
+                line_number: self.lexer.line_number(),
             })
         } else {
             self.read_buffer.remove(0).try_map(|t| match t {
                 Token::Name(name) => Ok(name),
-                token => Err(ParserError::Unexpected {
-                    unexpected: format!("{:?}", token),
-                    expected: "name".to_owned(),
+                token => Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: format!("{:?}", token),
+                        expected: "name".to_owned(),
+                    },
+                    line_number: self.lexer.line_number(),
                 }),
             })
         }
     }
 
     // Consume the next token which should be a string, and return it, otherwise error.
-    fn expect_string(&mut self) -> Result<LineAnnotated<S::String>, ParserError> {
+    fn expect_string(&mut self) -> Result<LineAnnotated<S::String>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParserError::EndOfStream {
-                expected: Some("string".to_owned()),
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream {
+                    expected: Some("string".to_owned()),
+                },
+                line_number: self.lexer.line_number(),
             })
         } else {
             self.read_buffer.remove(0).try_map(|t| match t {
                 Token::String(string) => Ok(string),
-                token => Err(ParserError::Unexpected {
-                    unexpected: format!("{:?}", token),
-                    expected: "string".to_owned(),
+                token => Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: format!("{:?}", token),
+                        expected: "string".to_owned(),
+                    },
+                    line_number: self.lexer.line_number(),
                 }),
             })
         }
     }
 
     // Take the next token in the stream by value, erroring if we are at the end.
-    fn take_next(&mut self) -> Result<LineAnnotated<Token<S::String>>, ParserError> {
+    fn take_next(&mut self) -> Result<LineAnnotated<Token<S::String>>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParserError::EndOfStream { expected: None })
+            Err(ParseError {
+                kind: ParseErrorKind::EndOfStream { expected: None },
+                line_number: self.lexer.line_number(),
+            })
         } else {
             Ok(self.read_buffer.remove(0))
         }
@@ -1015,14 +1097,14 @@ where
     fn look_ahead(
         &mut self,
         n: usize,
-    ) -> Result<Option<&LineAnnotated<Token<S::String>>>, ParserError> {
+    ) -> Result<Option<&LineAnnotated<Token<S::String>>>, ParseError> {
         self.read_ahead(n + 1)?;
         Ok(self.read_buffer.get(n))
     }
 
     // Return true if the nth token ahead in the stream matches the given token. If this would read
     // past the end of the stream, this will simply return false.
-    fn check_ahead(&mut self, n: usize, token: Token<S::String>) -> Result<bool, ParserError> {
+    fn check_ahead(&mut self, n: usize, token: Token<S::String>) -> Result<bool, ParseError> {
         self.read_ahead(n)?;
         Ok(if let Some(t) = self.read_buffer.get(n) {
             **t == token
@@ -1033,11 +1115,17 @@ where
 
     // Read at least `n` tokens ahead in the stream, filling the read buffer up to size `n` (if
     // possible).
-    fn read_ahead(&mut self, n: usize) -> Result<(), ParserError> {
+    fn read_ahead(&mut self, n: usize) -> Result<(), ParseError> {
         while self.read_buffer.len() <= n {
-            self.lexer.skip_whitespace()?;
+            self.lexer.skip_whitespace().map_err(|e| ParseError {
+                kind: ParseErrorKind::LexerError(e),
+                line_number: self.lexer.line_number(),
+            })?;
             let line_number = self.lexer.line_number();
-            if let Some(token) = self.lexer.read_token()? {
+            if let Some(token) = self.lexer.read_token().map_err(|e| ParseError {
+                kind: ParseErrorKind::LexerError(e),
+                line_number: self.lexer.line_number(),
+            })? {
                 self.read_buffer
                     .push(LineAnnotated::new(line_number, token));
             } else {

@@ -5,21 +5,16 @@ use clap::{crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compiler::ParserError, io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function,
-    FunctionProto, Lua, ProtoCompileError, StashedExecutor, StaticError,
+    compiler::{ParseError, ParseErrorKind},
+    io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function, FunctionProto, Lua,
+    ProtoCompileError, StashedExecutor, StaticError,
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
     lua.try_run(|ctx| {
         let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
-            Err(err) => {
-                if let Ok(closure) = Closure::load(ctx, code.as_bytes()) {
-                    closure
-                } else {
-                    return Err(err.into());
-                }
-            }
+            Err(_) => Closure::load(ctx, code.as_bytes())?,
         };
         let function = Function::compose(
             &ctx,
@@ -58,27 +53,28 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
         let mut line = String::new();
 
         loop {
-            line.push_str(&editor.readline(prompt)?);
+            let read = editor.readline(prompt)?;
+            let read_empty = read.trim().is_empty();
+            if !read_empty {
+                if !line.is_empty() {
+                    // Separate input lines in the input to the parser
+                    line.push('\n');
+                }
+                line.push_str(&read);
+            }
 
             match run_code(lua, &executor, &line) {
                 Err(StaticError::Runtime(err))
-                    if matches!(
-                        err.downcast::<ProtoCompileError>(),
-                        Some(ProtoCompileError::Parser(ParserError::EndOfStream { .. }))
-                    ) =>
+                    if !read_empty
+                        && matches!(
+                            err.downcast::<ProtoCompileError>(),
+                            Some(ProtoCompileError::Parser(ParseError {
+                                kind: ParseErrorKind::EndOfStream { .. },
+                                ..
+                            }))
+                        ) =>
                 {
-                    match line.chars().last() {
-                        Some(c) => {
-                            if c == '\n' {
-                                editor.add_history_entry(line)?;
-                                eprintln!("{}", StaticError::from(err));
-                                break;
-                            }
-                            prompt = ">> ";
-                            line.push_str("\n"); // separate input lines
-                        }
-                        _ => {}
-                    }
+                    prompt = ">> ";
                 }
                 Err(e) => {
                     editor.add_history_entry(line)?;

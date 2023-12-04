@@ -9,5 +9,5 @@ pub use self::{
     compiler::{compile_chunk, CompiledPrototype, CompilerError},
     interning::StringInterner,
     parser::parse_chunk,
-    parser::ParserError,
+    parser::{ParseError, ParseErrorKind},
 };
