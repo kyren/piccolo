@@ -20,6 +20,7 @@ fn callback() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 local a, b, c = callback(1, 2)
                 assert(a == 1 and b == 2 and c == 42)
@@ -54,6 +55,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 return callback(1, 2)
             "#[..],
@@ -115,6 +117,7 @@ fn loopy_callback() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 local function cotest()
                     return callback(1, 2)
@@ -202,6 +205,7 @@ fn yield_sequence() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 local co = coroutine.create(callback)
 

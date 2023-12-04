@@ -29,15 +29,15 @@ fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>, depth: usize)
         println!("{indent}---opcodes---");
 
         let mut line_number_ind = 0;
-        println!("{indent}{}", function.opcode_lines[0].1);
+        println!("{indent}<line {}>", function.opcode_line_numbers[0].1);
 
         for (i, c) in function.opcodes.iter().enumerate() {
             if let Some(&(opcode_index, line_number)) =
-                function.opcode_lines.get(line_number_ind + 1)
+                function.opcode_line_numbers.get(line_number_ind + 1)
             {
                 if i >= opcode_index {
                     line_number_ind += 1;
-                    println!("{indent}{}", line_number);
+                    println!("{indent}<line {}>", line_number);
                 }
             }
             println!("{indent}{}: {:?}", i, c);

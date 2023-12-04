@@ -212,7 +212,7 @@ fn print_char(c: u8) -> char {
 }
 
 #[derive(Debug, Error)]
-pub enum LexerError {
+pub enum LexError {
     #[error("short string not finished, expected matching {}", print_char(*.0))]
     UnfinishedShortString(u8),
     #[error("unexpected character: {}", print_char(*.0))]
@@ -246,7 +246,7 @@ pub struct LineNumber(pub u64);
 
 impl fmt::Display for LineNumber {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<line {}>", u128::from(self.0) + 1)
+        write!(f, "{}", u128::from(self.0) + 1)
     }
 }
 
@@ -278,7 +278,7 @@ where
         LineNumber(self.line_number)
     }
 
-    pub fn skip_whitespace(&mut self) -> Result<(), LexerError> {
+    pub fn skip_whitespace(&mut self) -> Result<(), LexError> {
         let mut do_skip_whitespace = || {
             while let Some(c) = self.peek(0)? {
                 match c {
@@ -332,7 +332,7 @@ where
     }
 
     /// Reads the next token, or None if the end of the source has been reached.
-    pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexerError> {
+    pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexError> {
         self.skip_whitespace()?;
 
         let mut do_read_token = || {
@@ -479,7 +479,7 @@ where
                                 Token::Name(self.take_string())
                             }
                         } else {
-                            return Err(LexerError::UnexpectedCharacter(c));
+                            return Err(LexError::UnexpectedCharacter(c));
                         }
                     }
                 }))
@@ -506,7 +506,7 @@ where
 
     // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
     // number. If `append_buffer` is true, then appends the read newline to the string buffer.
-    fn read_line_end(&mut self, append_string: bool) -> Result<(), LexerError> {
+    fn read_line_end(&mut self, append_string: bool) -> Result<(), LexError> {
         let newline = self.peek(0).unwrap().unwrap();
         assert!(is_newline(newline));
         self.advance(1);
@@ -529,7 +529,7 @@ where
 
     // Read a string on a single line delimited by ' or " that allows for \ escaping of certain
     // characters. Always reads the contained string into the string buffer.
-    fn read_short_string(&mut self) -> Result<(), LexerError> {
+    fn read_short_string(&mut self) -> Result<(), LexError> {
         let start_quote = self.peek(0).unwrap().unwrap();
         assert!(start_quote == b'\'' || start_quote == b'"');
         self.advance(1);
@@ -540,18 +540,18 @@ where
             let c = if let Some(c) = self.peek(0)? {
                 c
             } else {
-                return Err(LexerError::UnfinishedShortString(start_quote));
+                return Err(LexError::UnfinishedShortString(start_quote));
             };
 
             if is_newline(c) {
-                return Err(LexerError::UnfinishedShortString(start_quote));
+                return Err(LexError::UnfinishedShortString(start_quote));
             }
 
             self.advance(1);
             if c == b'\\' {
                 match self
                     .peek(0)?
-                    .ok_or_else(|| LexerError::UnfinishedShortString(start_quote))?
+                    .ok_or_else(|| LexError::UnfinishedShortString(start_quote))?
                 {
                     b'a' => {
                         self.advance(1);
@@ -612,18 +612,18 @@ where
                         let first = self
                             .peek(0)?
                             .and_then(from_hex_digit)
-                            .ok_or(LexerError::HexDigitExpected)?;
+                            .ok_or(LexError::HexDigitExpected)?;
                         let second = self
                             .peek(1)?
                             .and_then(from_hex_digit)
-                            .ok_or(LexerError::HexDigitExpected)?;
+                            .ok_or(LexError::HexDigitExpected)?;
                         self.string_buffer.push(first << 4 | second);
                         self.advance(2);
                     }
 
                     b'u' => {
                         if self.peek(1)? != Some(b'{') {
-                            return Err(LexerError::EscapeUnicodeStart);
+                            return Err(LexError::EscapeUnicodeStart);
                         }
                         self.advance(2);
 
@@ -637,14 +637,14 @@ where
                                     u = (u << 4) | h as u32;
                                     self.advance(1);
                                 } else {
-                                    return Err(LexerError::EscapeUnicodeEnd);
+                                    return Err(LexError::EscapeUnicodeEnd);
                                 }
                             } else {
-                                return Err(LexerError::EscapeUnicodeEnd);
+                                return Err(LexError::EscapeUnicodeEnd);
                             }
                         }
 
-                        let c = char::from_u32(u).ok_or(LexerError::EscapeUnicodeInvalid)?;
+                        let c = char::from_u32(u).ok_or(LexError::EscapeUnicodeInvalid)?;
                         let mut buf = [0; 4];
                         for &b in c.encode_utf8(&mut buf).as_bytes() {
                             self.string_buffer.push(b);
@@ -676,12 +676,12 @@ where
                                 }
                             }
                             if u > 255 {
-                                return Err(LexerError::EscapeDecimalTooLarge);
+                                return Err(LexError::EscapeDecimalTooLarge);
                             }
 
                             self.string_buffer.push(u as u8);
                         } else {
-                            return Err(LexerError::InvalidEscape);
+                            return Err(LexError::InvalidEscape);
                         }
                     }
                 }
@@ -697,7 +697,7 @@ where
 
     // Read a [=*[...]=*] sequence with matching numbers of '='. If `into_string` is true, writes
     // the contained string into the string buffer.
-    fn read_long_string(&mut self, into_string: bool) -> Result<(), LexerError> {
+    fn read_long_string(&mut self, into_string: bool) -> Result<(), LexError> {
         assert_eq!(self.peek(0).unwrap().unwrap(), b'[');
         self.advance(1);
 
@@ -712,7 +712,7 @@ where
         }
 
         if self.peek(0)? != Some(b'[') {
-            return Err(LexerError::InvalidLongStringDelimiter);
+            return Err(LexError::InvalidLongStringDelimiter);
         }
         self.advance(1);
 
@@ -720,7 +720,7 @@ where
             let c = if let Some(c) = self.peek(0)? {
                 c
             } else {
-                return Err(LexerError::UnfinishedLongString);
+                return Err(LexError::UnfinishedLongString);
             };
 
             match c {
@@ -766,7 +766,7 @@ where
     // Reads a hex or decimal integer or floating point identifier. Allows decimal integers (123),
     // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
     // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
-    fn read_numeral(&mut self) -> Result<Token<S::String>, LexerError> {
+    fn read_numeral(&mut self) -> Result<Token<S::String>, LexError> {
         let p1 = self.peek(0).unwrap().unwrap();
         assert!(p1 == b'.' || is_digit(p1));
 
@@ -838,11 +838,11 @@ where
             } else {
                 read_dec_float(&self.string_buffer)
             }
-            .ok_or(LexerError::BadNumber)?,
+            .ok_or(LexError::BadNumber)?,
         ))
     }
 
-    fn peek(&mut self, n: usize) -> Result<Option<u8>, LexerError> {
+    fn peek(&mut self, n: usize) -> Result<Option<u8>, LexError> {
         if let Some(source) = self.source.as_mut() {
             while self.peek_buffer.len() <= n {
                 let mut c = [0];
@@ -857,7 +857,7 @@ where
                     Err(e) => {
                         if e.kind() != io::ErrorKind::Interrupted {
                             self.source = None;
-                            return Err(LexerError::IOError(e));
+                            return Err(LexError::IOError(e));
                         }
                     }
                 }

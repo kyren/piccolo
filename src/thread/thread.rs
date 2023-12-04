@@ -489,7 +489,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         match self.state.frames.last() {
             Some(Frame::Lua { bottom, .. }) => match self.state.stack[*bottom] {
                 Value::Function(Function::Closure(c)) => c,
-                _ => panic!("thread bottom is not a closure"),
+                _ => panic!("lua frame bottom is not a closure"),
             },
             _ => panic!("top frame is not lua frame"),
         }

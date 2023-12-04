@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map, VecDeque},
-    iter, mem,
+    fmt, iter, mem,
 };
 
 use gc_arena::Collect;
@@ -37,7 +37,7 @@ use super::{
 };
 
 #[derive(Debug, Copy, Clone, Error)]
-pub enum CompilerError {
+pub enum CompileErrorKind {
     #[error("insufficient available registers")]
     Registers,
     #[error("too many upvalues")]
@@ -58,53 +58,115 @@ pub enum CompilerError {
     JumpOverflow,
 }
 
+#[derive(Debug, Copy, Clone, Error)]
+#[error("compiler error at line {line_number}: {kind}")]
+pub struct CompileError {
+    pub kind: CompileErrorKind,
+    pub line_number: LineNumber,
+}
+
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub enum FunctionRef<S> {
+    Named(S, LineNumber),
+    Expression(LineNumber),
+    Chunk,
+}
+
+impl<S: fmt::Display> fmt::Display for FunctionRef<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FunctionRef::Named(name, line) => write!(f, "<function '{name}' at line {line}>"),
+            FunctionRef::Expression(line) => write!(f, "<function at line {line}>"),
+            FunctionRef::Chunk => write!(f, "<chunk>"),
+        }
+    }
+}
+
+impl<S> FunctionRef<S> {
+    pub fn as_string_ref(&self) -> FunctionRef<&S> {
+        match self {
+            Self::Named(name, ln) => FunctionRef::Named(name, *ln),
+            Self::Expression(ln) => FunctionRef::Expression(*ln),
+            Self::Chunk => FunctionRef::Chunk,
+        }
+    }
+
+    pub fn map_strings<S2>(self, f: impl Fn(S) -> S2) -> FunctionRef<S2> {
+        match self {
+            Self::Named(name, ln) => FunctionRef::Named(f(name), ln),
+            Self::Expression(ln) => FunctionRef::Expression(ln),
+            Self::Chunk => FunctionRef::Chunk,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct CompiledPrototype<S> {
+    pub reference: FunctionRef<S>,
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
     pub constants: Vec<Constant<S>>,
     pub opcodes: Vec<OpCode>,
-    pub opcode_lines: Vec<(usize, LineNumber)>,
+    /// Maps OpCodes to source code line numbers.
+    ///
+    /// Stored in sorted opcode index order with redundant entries removed.
+    pub opcode_line_numbers: Vec<(usize, LineNumber)>,
     pub upvalues: Vec<UpValueDescriptor>,
     pub prototypes: Vec<Box<CompiledPrototype<S>>>,
 }
 
 impl<S> CompiledPrototype<S> {
-    pub fn map_strings<S2>(self, f: impl Fn(S) -> S2 + Copy) -> CompiledPrototype<S2> {
-        CompiledPrototype {
-            fixed_params: self.fixed_params,
-            has_varargs: self.has_varargs,
-            stack_size: self.stack_size,
-            constants: self
-                .constants
-                .into_iter()
-                .map(|c| c.map_string(f))
-                .collect(),
-            opcodes: self.opcodes,
-            opcode_lines: self.opcode_lines,
-            upvalues: self.upvalues,
-            prototypes: self
-                .prototypes
-                .into_iter()
-                .map(|p| Box::new(p.map_strings(f)))
-                .collect(),
+    pub fn map_strings<S2>(self, f: impl Fn(S) -> S2) -> CompiledPrototype<S2> {
+        fn do_map<S, S2>(
+            this: CompiledPrototype<S>,
+            f: impl Fn(S) -> S2 + Copy,
+        ) -> CompiledPrototype<S2> {
+            CompiledPrototype {
+                reference: this.reference.map_strings(f),
+                fixed_params: this.fixed_params,
+                has_varargs: this.has_varargs,
+                stack_size: this.stack_size,
+                constants: this
+                    .constants
+                    .into_iter()
+                    .map(|c| c.map_string(f))
+                    .collect(),
+                opcodes: this.opcodes,
+                opcode_line_numbers: this.opcode_line_numbers,
+                upvalues: this.upvalues,
+                prototypes: this
+                    .prototypes
+                    .into_iter()
+                    .map(|p| Box::new(do_map(*p, f)))
+                    .collect(),
+            }
         }
+        do_map(self, &f)
     }
 }
 
 pub fn compile_chunk<S: StringInterner>(
     chunk: &Chunk<S::String>,
     create_string: S,
-) -> Result<CompiledPrototype<S::String>, CompilerError> {
+) -> Result<CompiledPrototype<S::String>, CompileError> {
     let mut compiler = Compiler {
         string_interner: create_string,
-        current_function: CompilerFunction::start(&[], true)?,
+        current_function: CompilerFunction::start(FunctionRef::Chunk, &[], true).unwrap(),
         upper_functions: Vec::new(),
     };
-    compiler.block(&chunk.block)?;
-    compiler.current_function.finish()
+    compiler.block(&chunk.block).map_err(|kind| CompileError {
+        kind,
+        line_number: compiler.current_function.current_line_number,
+    })?;
+
+    let line_number = compiler.current_function.current_line_number;
+    compiler
+        .current_function
+        .finish()
+        .map_err(|kind| CompileError { kind, line_number })
 }
 
 struct Compiler<S: StringInterner> {
@@ -114,6 +176,8 @@ struct Compiler<S: StringInterner> {
 }
 
 struct CompilerFunction<S> {
+    reference: FunctionRef<S>,
+
     constants: Vec<Constant<S>>,
     constant_table: FxHashMap<IdenticalConstant<S>, ConstantIndex16>,
 
@@ -132,28 +196,9 @@ struct CompilerFunction<S> {
     pending_jumps: Vec<PendingJump<S>>,
 
     operations: Vec<Operation>,
-    operation_lines: Vec<(usize, LineNumber)>,
-}
 
-impl<S> Default for CompilerFunction<S> {
-    fn default() -> Self {
-        Self {
-            constants: Vec::new(),
-            constant_table: FxHashMap::default(),
-            upvalues: Vec::new(),
-            functions: Vec::new(),
-            register_allocator: RegisterAllocator::default(),
-            has_varargs: false,
-            fixed_params: 0,
-            locals: Vec::new(),
-            blocks: Vec::new(),
-            unique_jump_id: 0,
-            jump_targets: Vec::new(),
-            pending_jumps: Vec::new(),
-            operations: Vec::new(),
-            operation_lines: Vec::new(),
-        }
-    }
+    current_line_number: LineNumber,
+    operation_lines: Vec<(usize, LineNumber)>,
 }
 
 #[derive(Debug)]
@@ -284,7 +329,7 @@ enum CallMode {
 }
 
 impl<S: StringInterner> Compiler<S> {
-    fn block(&mut self, block: &Block<S::String>) -> Result<(), CompilerError> {
+    fn block(&mut self, block: &Block<S::String>) -> Result<(), CompileErrorKind> {
         self.enter_block();
         self.block_statements(block)?;
         self.exit_block()
@@ -298,7 +343,7 @@ impl<S: StringInterner> Compiler<S> {
         });
     }
 
-    fn exit_block(&mut self) -> Result<(), CompilerError> {
+    fn exit_block(&mut self) -> Result<(), CompileErrorKind> {
         let last_block = self.current_function.blocks.pop().unwrap();
 
         while let Some((_, last)) = self.current_function.locals.last() {
@@ -319,7 +364,7 @@ impl<S: StringInterner> Compiler<S> {
                 close_upvalues: u8::try_from(last_block.stack_bottom)
                     .ok()
                     .and_then(Opt254::try_some)
-                    .ok_or(CompilerError::Registers)?,
+                    .ok_or(CompileErrorKind::Registers)?,
             });
         }
 
@@ -347,19 +392,14 @@ impl<S: StringInterner> Compiler<S> {
     // though they are in a separate scope from the rest of the block, to make it legal to jump to
     // the end of the block over local variable scope. This is logically equivalent to an extra `do
     // end` around the inside of the block not including the trailing labels.
-    fn block_statements(&mut self, block: &Block<S::String>) -> Result<(), CompilerError> {
+    fn block_statements(&mut self, block: &Block<S::String>) -> Result<(), CompileErrorKind> {
         if let Some(return_statement) = &block.return_statement {
             for statement in &block.statements {
-                self.current_function.operation_lines.push((
-                    self.current_function.operations.len(),
-                    statement.line_number,
-                ));
+                self.current_function.set_line_number(statement.line_number);
                 self.statement(statement)?;
             }
-            self.current_function.operation_lines.push((
-                self.current_function.operations.len(),
-                return_statement.line_number,
-            ));
+            self.current_function
+                .set_line_number(return_statement.line_number);
             self.return_statement(return_statement)?;
         } else {
             let mut last = block.statements.len();
@@ -374,22 +414,24 @@ impl<S: StringInterner> Compiler<S> {
 
             self.enter_block();
             for i in 0..block.statements.len() - trailing_labels.len() {
-                self.current_function.operation_lines.push((
-                    self.current_function.operations.len(),
-                    block.statements[i].line_number,
-                ));
+                self.current_function
+                    .set_line_number(block.statements[i].line_number);
                 self.statement(&block.statements[i])?;
             }
             self.exit_block()?;
 
             for label_statement in trailing_labels {
-                self.statement(&label_statement)?;
+                self.current_function
+                    .set_line_number(label_statement.line_number);
+                self.statement(label_statement)?;
             }
         }
+
+        self.current_function.set_line_number(block.closed_on);
         Ok(())
     }
 
-    fn statement(&mut self, statement: &Statement<S::String>) -> Result<(), CompilerError> {
+    fn statement(&mut self, statement: &Statement<S::String>) -> Result<(), CompileErrorKind> {
         match statement {
             Statement::If(if_statement) => self.if_statement(if_statement),
             Statement::While(while_statement) => self.while_statement(while_statement),
@@ -416,12 +458,12 @@ impl<S: StringInterner> Compiler<S> {
     fn return_statement(
         &mut self,
         return_statement: &ReturnStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let mut returns = return_statement
             .returns
             .iter()
             .map(|arg| self.expression(arg))
-            .collect::<Result<Vec<_>, CompilerError>>()?;
+            .collect::<Result<Vec<_>, CompileErrorKind>>()?;
 
         // A return of a single function call is a tail call, and this is the only thing
         // in Lua that is considered a tail call
@@ -460,7 +502,10 @@ impl<S: StringInterner> Compiler<S> {
         Ok(())
     }
 
-    fn if_statement(&mut self, if_statement: &IfStatement<S::String>) -> Result<(), CompilerError> {
+    fn if_statement(
+        &mut self,
+        if_statement: &IfStatement<S::String>,
+    ) -> Result<(), CompileErrorKind> {
         let end_label = self.unique_jump_label();
         let mut next_label = self.unique_jump_label();
 
@@ -496,7 +541,7 @@ impl<S: StringInterner> Compiler<S> {
     fn for_statement(
         &mut self,
         for_statement: &ForStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         match for_statement {
             ForStatement::Numeric {
                 name,
@@ -530,7 +575,7 @@ impl<S: StringInterner> Compiler<S> {
                     .current_function
                     .register_allocator
                     .push(1)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 self.current_function.locals.push((name.clone(), loop_var));
 
                 self.block_statements(body)?;
@@ -542,7 +587,7 @@ impl<S: StringInterner> Compiler<S> {
                     .push(Operation::NumericForLoop {
                         base: RegisterIndex(base.0),
                         jump: jump_offset(for_loop_index, for_prep_index + 1)
-                            .ok_or(CompilerError::JumpOverflow)?,
+                            .ok_or(CompileErrorKind::JumpOverflow)?,
                     });
                 match &mut self.current_function.operations[for_prep_index] {
                     Operation::NumericForPrep {
@@ -554,7 +599,7 @@ impl<S: StringInterner> Compiler<S> {
                             "instruction is not placeholder NumericForPrep"
                         );
                         *jump = jump_offset(for_prep_index, for_loop_index)
-                            .ok_or(CompilerError::JumpOverflow)?;
+                            .ok_or(CompileErrorKind::JumpOverflow)?;
                     }
                     _ => panic!("instruction is not placeholder NumericForPrep"),
                 }
@@ -605,12 +650,12 @@ impl<S: StringInterner> Compiler<S> {
                 let name_count = names
                     .len()
                     .try_into()
-                    .map_err(|_| CompilerError::Registers)?;
+                    .map_err(|_| CompileErrorKind::Registers)?;
                 let names_reg = self
                     .current_function
                     .register_allocator
                     .push(name_count)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 for i in 0..name_count {
                     self.current_function
                         .locals
@@ -631,7 +676,7 @@ impl<S: StringInterner> Compiler<S> {
                         var_count: names
                             .len()
                             .try_into()
-                            .map_err(|_| CompilerError::Registers)?,
+                            .map_err(|_| CompileErrorKind::Registers)?,
                     });
                 let loop_inst = self.current_function.operations.len();
                 self.current_function
@@ -639,7 +684,7 @@ impl<S: StringInterner> Compiler<S> {
                     .push(Operation::GenericForLoop {
                         base: RegisterIndex(base.0 + 2),
                         jump: jump_offset(loop_inst, start_inst)
-                            .ok_or(CompilerError::JumpOverflow)?,
+                            .ok_or(CompileErrorKind::JumpOverflow)?,
                     });
 
                 self.jump_target(JumpLabel::Break)?;
@@ -656,7 +701,7 @@ impl<S: StringInterner> Compiler<S> {
     fn while_statement(
         &mut self,
         while_statement: &WhileStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let start_label = self.unique_jump_label();
         let end_label = self.unique_jump_label();
 
@@ -680,7 +725,7 @@ impl<S: StringInterner> Compiler<S> {
     fn repeat_statement(
         &mut self,
         repeat_statement: &RepeatStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let start_label = self.unique_jump_label();
 
         self.enter_block();
@@ -711,7 +756,7 @@ impl<S: StringInterner> Compiler<S> {
     fn function_statement(
         &mut self,
         function_statement: &FunctionStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let mut table = None;
         let mut name = function_statement.name.clone();
 
@@ -742,12 +787,14 @@ impl<S: StringInterner> Compiler<S> {
             parameters.extend_from_slice(&function_statement.definition.parameters);
 
             self.new_prototype(
+                FunctionRef::Named(name.clone(), self.current_function.current_line_number),
                 &parameters,
                 function_statement.definition.has_varargs,
                 &function_statement.definition.body,
             )?
         } else {
             self.new_prototype(
+                FunctionRef::Named(name.clone(), self.current_function.current_line_number),
                 &function_statement.definition.parameters,
                 function_statement.definition.has_varargs,
                 &function_statement.definition.body,
@@ -766,17 +813,19 @@ impl<S: StringInterner> Compiler<S> {
     fn local_statement(
         &mut self,
         local_statement: &LocalStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
         if local_statement.values.is_empty() {
-            let count = name_len.try_into().map_err(|_| CompilerError::Registers)?;
+            let count = name_len
+                .try_into()
+                .map_err(|_| CompileErrorKind::Registers)?;
             let dest = self
                 .current_function
                 .register_allocator
                 .push(count)
-                .ok_or(CompilerError::Registers)?;
+                .ok_or(CompileErrorKind::Registers)?;
             self.current_function
                 .operations
                 .push(Operation::LoadNil { dest, count });
@@ -796,7 +845,7 @@ impl<S: StringInterner> Compiler<S> {
                 } else if i == val_len - 1 {
                     let names_left = (1 + name_len - val_len)
                         .try_into()
-                        .map_err(|_| CompilerError::Registers)?;
+                        .map_err(|_| CompileErrorKind::Registers)?;
                     let dest = self.expr_push_count(expr, names_left)?;
 
                     for j in 0..names_left {
@@ -820,14 +869,14 @@ impl<S: StringInterner> Compiler<S> {
     fn function_call_statement(
         &mut self,
         function_call: &FunctionCallStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let head_expr = self.suffixed_expression(&function_call.head)?;
         match &function_call.call {
             CallSuffix::Function(args) => {
                 let arg_exprs = args
                     .iter()
                     .map(|arg| self.expression(arg))
-                    .collect::<Result<_, CompilerError>>()?;
+                    .collect::<Result<_, CompileErrorKind>>()?;
                 self.call_function(
                     head_expr,
                     arg_exprs,
@@ -840,7 +889,7 @@ impl<S: StringInterner> Compiler<S> {
                 let arg_exprs = args
                     .iter()
                     .map(|arg| self.expression(arg))
-                    .collect::<Result<_, CompilerError>>()?;
+                    .collect::<Result<_, CompileErrorKind>>()?;
                 self.call_method(
                     head_expr,
                     ExprDescriptor::Constant(Constant::String(method.clone())),
@@ -857,7 +906,7 @@ impl<S: StringInterner> Compiler<S> {
     fn assignment_statement(
         &mut self,
         assignment: &AssignmentStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let target_len = assignment.targets.len();
         let val_len = assignment.values.len();
         assert!(val_len != 0);
@@ -866,7 +915,7 @@ impl<S: StringInterner> Compiler<S> {
             this: &'a mut Compiler<S>,
             target: &AssignmentTarget<S::String>,
             expr: ExprDescriptor<S::String>,
-        ) -> Result<(), CompilerError> {
+        ) -> Result<(), CompileErrorKind> {
             match target {
                 AssignmentTarget::Name(name) => match this.find_variable(name.clone())? {
                     VariableDescriptor::Local(dest) => {
@@ -913,7 +962,7 @@ impl<S: StringInterner> Compiler<S> {
 
                 let targets_left = (1 + target_len - val_len)
                     .try_into()
-                    .map_err(|_| CompilerError::Registers)?;
+                    .map_err(|_| CompileErrorKind::Registers)?;
                 let results = self.expr_push_count(expr, targets_left)?;
 
                 for j in 0..targets_left {
@@ -935,19 +984,23 @@ impl<S: StringInterner> Compiler<S> {
     fn local_function_statement(
         &mut self,
         local_function: &LocalFunctionStatement<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         // Make sure that the local function is declared as a local variable in the body of
         // the function, declare it before compiling the inner function prototype.
         let dest = self
             .current_function
             .register_allocator
             .push(1)
-            .ok_or(CompilerError::Registers)?;
+            .ok_or(CompileErrorKind::Registers)?;
         self.current_function
             .locals
             .push((local_function.name.clone(), dest));
 
         let proto = self.new_prototype(
+            FunctionRef::Named(
+                local_function.name.clone(),
+                self.current_function.current_line_number,
+            ),
             &local_function.definition.parameters,
             local_function.definition.has_varargs,
             &local_function.definition.body,
@@ -963,7 +1016,7 @@ impl<S: StringInterner> Compiler<S> {
     fn expression(
         &mut self,
         expression: &Expression<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         let mut expr = self.head_expression(&expression.head)?;
         for (binop, right) in &expression.tail {
             let right = self.expression(&right)?;
@@ -975,7 +1028,7 @@ impl<S: StringInterner> Compiler<S> {
     fn head_expression(
         &mut self,
         head_expression: &HeadExpression<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         match head_expression {
             HeadExpression::Simple(simple_expression) => self.simple_expression(simple_expression),
             HeadExpression::UnaryOperator(unop, expr) => {
@@ -988,7 +1041,7 @@ impl<S: StringInterner> Compiler<S> {
     fn simple_expression(
         &mut self,
         simple_expression: &SimpleExpression<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         Ok(match simple_expression {
             SimpleExpression::Float(f) => ExprDescriptor::Constant(Constant::Number(*f)),
             SimpleExpression::Integer(i) => ExprDescriptor::Constant(Constant::Integer(*i)),
@@ -1008,7 +1061,7 @@ impl<S: StringInterner> Compiler<S> {
     fn table_constructor_expression(
         &mut self,
         table_constructor: &TableConstructor<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         let mut array_fields = Vec::new();
         let mut record_fields = Vec::new();
         for field in &table_constructor.fields {
@@ -1038,16 +1091,20 @@ impl<S: StringInterner> Compiler<S> {
     fn function_expression(
         &mut self,
         function: &FunctionDefinition<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
-        let proto =
-            self.new_prototype(&function.parameters, function.has_varargs, &function.body)?;
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
+        let proto = self.new_prototype(
+            FunctionRef::Expression(self.current_function.current_line_number),
+            &function.parameters,
+            function.has_varargs,
+            &function.body,
+        )?;
         Ok(ExprDescriptor::Closure(proto))
     }
 
     fn suffixed_expression(
         &mut self,
         suffixed_expression: &SuffixedExpression<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         let mut expr = self.primary_expression(&suffixed_expression.primary)?;
         for suffix in &suffixed_expression.suffixes {
             match suffix {
@@ -1068,7 +1125,7 @@ impl<S: StringInterner> Compiler<S> {
                         let args = args
                             .iter()
                             .map(|arg| self.expression(arg))
-                            .collect::<Result<_, CompilerError>>()?;
+                            .collect::<Result<_, CompileErrorKind>>()?;
                         expr = ExprDescriptor::FunctionCall {
                             func: Box::new(expr),
                             args,
@@ -1078,7 +1135,7 @@ impl<S: StringInterner> Compiler<S> {
                         let args = args
                             .iter()
                             .map(|arg| self.expression(arg))
-                            .collect::<Result<_, CompilerError>>()?;
+                            .collect::<Result<_, CompileErrorKind>>()?;
                         expr = ExprDescriptor::MethodCall {
                             table: Box::new(expr),
                             method: Box::new(ExprDescriptor::Constant(Constant::String(
@@ -1096,7 +1153,7 @@ impl<S: StringInterner> Compiler<S> {
     fn primary_expression(
         &mut self,
         primary_expression: &PrimaryExpression<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         match primary_expression {
             PrimaryExpression::Name(name) => {
                 Ok(ExprDescriptor::Variable(self.find_variable(name.clone())?))
@@ -1109,7 +1166,7 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         unop: UnaryOperator,
         expr: ExprDescriptor<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         if let ExprDescriptor::Constant(v) = &expr {
             if let Some(v) = unop_const_fold(unop, v) {
                 return Ok(ExprDescriptor::Constant(v));
@@ -1127,7 +1184,7 @@ impl<S: StringInterner> Compiler<S> {
         left: ExprDescriptor<S::String>,
         binop: BinaryOperator,
         right: ExprDescriptor<S::String>,
-    ) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         match categorize_binop(binop) {
             BinOpCategory::Simple(op) => {
                 if let (ExprDescriptor::Constant(a), ExprDescriptor::Constant(b)) = (&left, &right)
@@ -1188,13 +1245,14 @@ impl<S: StringInterner> Compiler<S> {
 
     fn new_prototype(
         &mut self,
+        reference: FunctionRef<S::String>,
         parameters: &[S::String],
         has_varargs: bool,
         body: &Block<S::String>,
-    ) -> Result<PrototypeIndex, CompilerError> {
+    ) -> Result<PrototypeIndex, CompileErrorKind> {
         let old_current = mem::replace(
             &mut self.current_function,
-            CompilerFunction::start(parameters, has_varargs)?,
+            CompilerFunction::start(reference, parameters, has_varargs)?,
         );
         self.upper_functions.push(old_current);
         self.block(body)?;
@@ -1207,14 +1265,14 @@ impl<S: StringInterner> Compiler<S> {
         Ok(PrototypeIndex(
             (self.current_function.functions.len() - 1)
                 .try_into()
-                .map_err(|_| CompilerError::Functions)?,
+                .map_err(|_| CompileErrorKind::Functions)?,
         ))
     }
 
     fn find_variable(
         &mut self,
         name: S::String,
-    ) -> Result<VariableDescriptor<S::String>, CompilerError> {
+    ) -> Result<VariableDescriptor<S::String>, CompileErrorKind> {
         // We need to be able to index functions from the top-level chunk function (index 0), up to
         // the current function
         let current_function = self.upper_functions.len();
@@ -1252,7 +1310,7 @@ impl<S: StringInterner> Compiler<S> {
                         let mut upvalue_index = UpValueIndex(
                             (get_function(self, i + 1).upvalues.len() - 1)
                                 .try_into()
-                                .map_err(|_| CompilerError::UpValues)?,
+                                .map_err(|_| CompileErrorKind::UpValues)?,
                         );
                         for k in i + 2..=current_function {
                             get_function(self, k)
@@ -1261,7 +1319,7 @@ impl<S: StringInterner> Compiler<S> {
                             upvalue_index = UpValueIndex(
                                 (get_function(self, k).upvalues.len() - 1)
                                     .try_into()
-                                    .map_err(|_| CompilerError::UpValues)?,
+                                    .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -1280,7 +1338,7 @@ impl<S: StringInterner> Compiler<S> {
             for j in 0..get_function(self, i).upvalues.len() {
                 if name.as_ref() == get_function(self, i).upvalues[j].0.as_ref() {
                     let upvalue_index =
-                        UpValueIndex(j.try_into().map_err(|_| CompilerError::UpValues)?);
+                        UpValueIndex(j.try_into().map_err(|_| CompileErrorKind::UpValues)?);
                     if i == current_function {
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
                     } else {
@@ -1292,7 +1350,7 @@ impl<S: StringInterner> Compiler<S> {
                             upvalue_index = UpValueIndex(
                                 (get_function(self, k).upvalues.len() - 1)
                                     .try_into()
-                                    .map_err(|_| CompilerError::UpValues)?,
+                                    .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
                         return Ok(VariableDescriptor::UpValue(upvalue_index));
@@ -1306,7 +1364,7 @@ impl<S: StringInterner> Compiler<S> {
 
     // Get a reference to the variable _ENV in scope, or if that is not in scope, the implicit chunk
     // _ENV.
-    fn get_environment(&mut self) -> Result<ExprDescriptor<S::String>, CompilerError> {
+    fn get_environment(&mut self) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         let env = self.string_interner.intern(b"_ENV");
         Ok(ExprDescriptor::Variable(self.find_variable(env)?))
     }
@@ -1318,7 +1376,7 @@ impl<S: StringInterner> Compiler<S> {
         jl
     }
 
-    fn jump(&mut self, target: JumpLabel<S::String>) -> Result<(), CompilerError> {
+    fn jump(&mut self, target: JumpLabel<S::String>) -> Result<(), CompileErrorKind> {
         let jmp_inst = self.current_function.operations.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
@@ -1336,13 +1394,13 @@ impl<S: StringInterner> Compiler<S> {
 
                 self.current_function.operations.push(Operation::Jump {
                     offset: jump_offset(jmp_inst, jump_target.instruction)
-                        .ok_or(CompilerError::JumpOverflow)?,
+                        .ok_or(CompileErrorKind::JumpOverflow)?,
                     close_upvalues: if needs_close_upvalues {
                         (jump_target.stack_top)
                             .try_into()
                             .ok()
                             .and_then(Opt254::try_some)
-                            .ok_or(CompilerError::Registers)?
+                            .ok_or(CompileErrorKind::Registers)?
                     } else {
                         Opt254::none()
                     },
@@ -1370,7 +1428,7 @@ impl<S: StringInterner> Compiler<S> {
         Ok(())
     }
 
-    fn jump_target(&mut self, jump_label: JumpLabel<S::String>) -> Result<(), CompilerError> {
+    fn jump_target(&mut self, jump_label: JumpLabel<S::String>) -> Result<(), CompileErrorKind> {
         let target_instruction = self.current_function.operations.len();
         let current_stack_top = self.current_function.register_allocator.stack_top();
         let current_block_index = self.current_function.blocks.len().checked_sub(1).unwrap();
@@ -1379,7 +1437,7 @@ impl<S: StringInterner> Compiler<S> {
             if jump_target.block_index < current_block_index {
                 break;
             } else if jump_target.label == jump_label {
-                return Err(CompilerError::DuplicateLabel);
+                return Err(CompileErrorKind::DuplicateLabel);
             }
         }
 
@@ -1407,7 +1465,7 @@ impl<S: StringInterner> Compiler<S> {
         for pending_jump in resolving_jumps {
             assert!(pending_jump.stack_top <= current_stack_top);
             if pending_jump.stack_top < current_stack_top {
-                return Err(CompilerError::JumpLocal);
+                return Err(CompileErrorKind::JumpLocal);
             }
 
             match &mut self.current_function.operations[pending_jump.instruction] {
@@ -1416,13 +1474,13 @@ impl<S: StringInterner> Compiler<S> {
                     close_upvalues,
                 } if *offset == 0 && close_upvalues.is_none() => {
                     *offset = jump_offset(pending_jump.instruction, target_instruction)
-                        .ok_or(CompilerError::JumpOverflow)?;
+                        .ok_or(CompileErrorKind::JumpOverflow)?;
                     if pending_jump.close_upvalues {
                         *close_upvalues = (current_stack_top)
                             .try_into()
                             .ok()
                             .and_then(Opt254::try_some)
-                            .ok_or(CompilerError::Registers)?;
+                            .ok_or(CompileErrorKind::Registers)?;
                     };
                 }
                 _ => panic!("jump instruction is not a placeholder jump instruction"),
@@ -1435,7 +1493,7 @@ impl<S: StringInterner> Compiler<S> {
     fn get_constant(
         &mut self,
         constant: Constant<S::String>,
-    ) -> Result<ConstantIndex16, CompilerError> {
+    ) -> Result<ConstantIndex16, CompileErrorKind> {
         match self
             .current_function
             .constant_table
@@ -1446,7 +1504,7 @@ impl<S: StringInterner> Compiler<S> {
                 let c = ConstantIndex16(
                     (self.current_function.constants.len())
                         .try_into()
-                        .map_err(|_| CompilerError::Constants)?,
+                        .map_err(|_| CompileErrorKind::Constants)?,
                 );
                 self.current_function.constants.push(constant);
                 vacant.insert(c);
@@ -1460,7 +1518,7 @@ impl<S: StringInterner> Compiler<S> {
         table: ExprDescriptor<S::String>,
         key: ExprDescriptor<S::String>,
         value: ExprDescriptor<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         match table {
             ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
                 self.set_uptable(table, key, value)?;
@@ -1481,7 +1539,7 @@ impl<S: StringInterner> Compiler<S> {
         table: UpValueIndex,
         key: ExprDescriptor<S::String>,
         value: ExprDescriptor<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
         let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
 
@@ -1504,7 +1562,7 @@ impl<S: StringInterner> Compiler<S> {
         table: RegisterIndex,
         key: ExprDescriptor<S::String>,
         value: ExprDescriptor<S::String>,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         let (key, key_to_free) = self.expr_any_register_or_constant(key)?;
         let (value, value_to_free) = self.expr_any_register_or_constant(value)?;
 
@@ -1531,7 +1589,7 @@ impl<S: StringInterner> Compiler<S> {
         func: ExprDescriptor<S::String>,
         args: Vec<ExprDescriptor<S::String>>,
         mode: CallMode,
-    ) -> Result<RegisterIndex, CompilerError> {
+    ) -> Result<RegisterIndex, CompileErrorKind> {
         let func = self.expr_discharge(func, ExprDestination::PushNew)?;
         let args = self.push_arguments(args)?;
 
@@ -1563,7 +1621,7 @@ impl<S: StringInterner> Compiler<S> {
         method: ExprDescriptor<S::String>,
         args: Vec<ExprDescriptor<S::String>>,
         mode: CallMode,
-    ) -> Result<RegisterIndex, CompilerError> {
+    ) -> Result<RegisterIndex, CompileErrorKind> {
         let (table, table_is_temp) = self.expr_any_register(table)?;
         let (method, method_to_free) = self.expr_any_register_or_constant(method)?;
 
@@ -1578,7 +1636,7 @@ impl<S: StringInterner> Compiler<S> {
             .current_function
             .register_allocator
             .push(2)
-            .ok_or(CompilerError::Registers)?;
+            .ok_or(CompileErrorKind::Registers)?;
 
         self.current_function.operations.push(Operation::Method {
             base,
@@ -1591,7 +1649,7 @@ impl<S: StringInterner> Compiler<S> {
             Some(args) => args
                 .checked_add(1)
                 .and_then(VarCount::try_constant)
-                .ok_or(CompilerError::Registers)?,
+                .ok_or(CompileErrorKind::Registers)?,
             None => VarCount::variable(),
         };
         match mode {
@@ -1623,7 +1681,7 @@ impl<S: StringInterner> Compiler<S> {
     fn push_arguments(
         &mut self,
         mut args: Vec<ExprDescriptor<S::String>>,
-    ) -> Result<VarCount, CompilerError> {
+    ) -> Result<VarCount, CompileErrorKind> {
         let top = self.current_function.register_allocator.stack_top();
         let args_len = args.len();
 
@@ -1663,7 +1721,7 @@ impl<S: StringInterner> Compiler<S> {
                         dest: RegisterIndex(
                             (top as usize + args_len - 1)
                                 .try_into()
-                                .map_err(|_| CompilerError::Registers)?,
+                                .map_err(|_| CompileErrorKind::Registers)?,
                         ),
                         count: VarCount::variable(),
                     });
@@ -1675,7 +1733,7 @@ impl<S: StringInterner> Compiler<S> {
                         .try_into()
                         .ok()
                         .and_then(VarCount::try_constant)
-                        .ok_or(CompilerError::Registers)?
+                        .ok_or(CompileErrorKind::Registers)?
                 }
             };
 
@@ -1692,7 +1750,7 @@ impl<S: StringInterner> Compiler<S> {
     fn expr_any_register(
         &mut self,
         expr: ExprDescriptor<S::String>,
-    ) -> Result<(RegisterIndex, bool), CompilerError> {
+    ) -> Result<(RegisterIndex, bool), CompileErrorKind> {
         Ok(
             if let ExprDescriptor::Variable(VariableDescriptor::Local(register)) = expr {
                 (register, false)
@@ -1712,7 +1770,7 @@ impl<S: StringInterner> Compiler<S> {
     fn expr_any_register_or_constant(
         &mut self,
         expr: ExprDescriptor<S::String>,
-    ) -> Result<(RCIndex, Option<RegisterIndex>), CompilerError> {
+    ) -> Result<(RCIndex, Option<RegisterIndex>), CompileErrorKind> {
         if let ExprDescriptor::Constant(cons) = &expr {
             if let Ok(c8) = self.get_constant(cons.clone())?.0.try_into() {
                 return Ok((RCIndex::Constant(ConstantIndex8(c8)), None));
@@ -1732,23 +1790,23 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         expr: ExprDescriptor<S::String>,
         dest: ExprDestination,
-    ) -> Result<RegisterIndex, CompilerError> {
+    ) -> Result<RegisterIndex, CompileErrorKind> {
         fn new_destination<S: StringInterner>(
             this: &mut Compiler<S>,
             dest: ExprDestination,
-        ) -> Result<RegisterIndex, CompilerError> {
+        ) -> Result<RegisterIndex, CompileErrorKind> {
             Ok(match dest {
                 ExprDestination::Register(dest) => dest,
                 ExprDestination::AllocateNew => this
                     .current_function
                     .register_allocator
                     .allocate()
-                    .ok_or(CompilerError::Registers)?,
+                    .ok_or(CompileErrorKind::Registers)?,
                 ExprDestination::PushNew => this
                     .current_function
                     .register_allocator
                     .push(1)
-                    .ok_or(CompilerError::Registers)?,
+                    .ok_or(CompileErrorKind::Registers)?,
             })
         }
 
@@ -1757,7 +1815,7 @@ impl<S: StringInterner> Compiler<S> {
             table: ExprDescriptor<S::String>,
             key: ExprDescriptor<S::String>,
             dest: ExprDestination,
-        ) -> Result<RegisterIndex, CompilerError> {
+        ) -> Result<RegisterIndex, CompileErrorKind> {
             Ok(match table {
                 ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
                     let (key_rc, key_to_free) = this.expr_any_register_or_constant(key)?;
@@ -1957,7 +2015,7 @@ impl<S: StringInterner> Compiler<S> {
                     .current_function
                     .register_allocator
                     .push(1)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
 
                 self.current_function.operations.push(Operation::NewTable {
                     dest: table,
@@ -1974,7 +2032,7 @@ impl<S: StringInterner> Compiler<S> {
                     .current_function
                     .register_allocator
                     .push(1)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 // We should be at the top of the stack still.
                 assert_eq!(index.0, table.0 + 1);
 
@@ -2000,7 +2058,7 @@ impl<S: StringInterner> Compiler<S> {
                             .current_function
                             .register_allocator
                             .push(field_count)
-                            .ok_or(CompilerError::Registers)?;
+                            .ok_or(CompileErrorKind::Registers)?;
 
                         // We should be at the top of the stack still.
                         assert_eq!(reg_start.0, index.0 + 1);
@@ -2071,7 +2129,7 @@ impl<S: StringInterner> Compiler<S> {
                             self.current_function
                                 .register_allocator
                                 .push(1)
-                                .ok_or(CompilerError::Registers)?,
+                                .ok_or(CompileErrorKind::Registers)?,
                             source
                         );
                         source
@@ -2105,7 +2163,7 @@ impl<S: StringInterner> Compiler<S> {
                             self.current_function
                                 .register_allocator
                                 .push(1)
-                                .ok_or(CompilerError::Registers)?,
+                                .ok_or(CompileErrorKind::Registers)?,
                             source
                         );
                         source
@@ -2157,7 +2215,7 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         expr: ExprDescriptor<S::String>,
         count: u8,
-    ) -> Result<RegisterIndex, CompilerError> {
+    ) -> Result<RegisterIndex, CompileErrorKind> {
         assert!(count != 0);
         Ok(match expr {
             ExprDescriptor::FunctionCall { func, args } => {
@@ -2165,13 +2223,14 @@ impl<S: StringInterner> Compiler<S> {
                     *func,
                     args,
                     CallMode::Call {
-                        returns: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                        returns: VarCount::try_constant(count)
+                            .ok_or(CompileErrorKind::Registers)?,
                     },
                 )?;
                 self.current_function
                     .register_allocator
                     .push(count)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 dest
             }
             ExprDescriptor::MethodCall {
@@ -2184,13 +2243,14 @@ impl<S: StringInterner> Compiler<S> {
                     *method,
                     args,
                     CallMode::Call {
-                        returns: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                        returns: VarCount::try_constant(count)
+                            .ok_or(CompileErrorKind::Registers)?,
                     },
                 )?;
                 self.current_function
                     .register_allocator
                     .push(count)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 dest
             }
             ExprDescriptor::VarArgs => {
@@ -2198,10 +2258,10 @@ impl<S: StringInterner> Compiler<S> {
                     .current_function
                     .register_allocator
                     .push(count)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 self.current_function.operations.push(Operation::VarArgs {
                     dest,
-                    count: VarCount::try_constant(count).ok_or(CompilerError::Registers)?,
+                    count: VarCount::try_constant(count).ok_or(CompileErrorKind::Registers)?,
                 });
                 dest
             }
@@ -2210,7 +2270,7 @@ impl<S: StringInterner> Compiler<S> {
                     .current_function
                     .register_allocator
                     .push(count)
-                    .ok_or(CompilerError::Registers)?;
+                    .ok_or(CompileErrorKind::Registers)?;
                 self.current_function
                     .operations
                     .push(Operation::LoadNil { dest, count });
@@ -2223,7 +2283,7 @@ impl<S: StringInterner> Compiler<S> {
                         .current_function
                         .register_allocator
                         .push(count - 1)
-                        .ok_or(CompilerError::Registers)?;
+                        .ok_or(CompileErrorKind::Registers)?;
                     self.current_function.operations.push(Operation::LoadNil {
                         dest: nils,
                         count: count - 1,
@@ -2240,14 +2300,14 @@ impl<S: StringInterner> Compiler<S> {
         &mut self,
         expr: ExprDescriptor<S::String>,
         skip_if: bool,
-    ) -> Result<(), CompilerError> {
+    ) -> Result<(), CompileErrorKind> {
         fn gen_comparison<S: StringInterner>(
             this: &mut Compiler<S>,
             left: ExprDescriptor<S::String>,
             op: ComparisonBinOp,
             right: ExprDescriptor<S::String>,
             skip_if: bool,
-        ) -> Result<(), CompilerError> {
+        ) -> Result<(), CompileErrorKind> {
             let (left_rc, left_to_free) = this.expr_any_register_or_constant(left)?;
             let (right_rc, right_to_free) = this.expr_any_register_or_constant(right)?;
             if let Some(to_free) = left_to_free {
@@ -2267,7 +2327,7 @@ impl<S: StringInterner> Compiler<S> {
             this: &mut Compiler<S>,
             expr: ExprDescriptor<S::String>,
             is_true: bool,
-        ) -> Result<(), CompilerError> {
+        ) -> Result<(), CompileErrorKind> {
             let (test_reg, test_is_temp) = this.expr_any_register(expr)?;
             if test_is_temp {
                 this.current_function.register_allocator.free(test_reg);
@@ -2309,12 +2369,40 @@ impl<S: StringInterner> Compiler<S> {
 }
 
 impl<S: Clone> CompilerFunction<S> {
-    fn start(parameters: &[S], has_varargs: bool) -> Result<CompilerFunction<S>, CompilerError> {
-        let mut function = CompilerFunction::default();
+    fn start(
+        reference: FunctionRef<S>,
+        parameters: &[S],
+        has_varargs: bool,
+    ) -> Result<CompilerFunction<S>, CompileErrorKind> {
+        let current_line_number = match reference {
+            FunctionRef::Named(_, ln) => ln,
+            FunctionRef::Expression(ln) => ln,
+            FunctionRef::Chunk => LineNumber(0),
+        };
+
+        let mut function = CompilerFunction {
+            reference,
+            constants: Vec::new(),
+            constant_table: FxHashMap::default(),
+            upvalues: Vec::new(),
+            functions: Vec::new(),
+            register_allocator: RegisterAllocator::default(),
+            has_varargs: false,
+            fixed_params: 0,
+            locals: Vec::new(),
+            blocks: Vec::new(),
+            unique_jump_id: 0,
+            jump_targets: Vec::new(),
+            pending_jumps: Vec::new(),
+            operations: Vec::new(),
+            operation_lines: Vec::new(),
+            current_line_number,
+        };
+
         let fixed_params: u8 = parameters
             .len()
             .try_into()
-            .map_err(|_| CompilerError::FixedParameters)?;
+            .map_err(|_| CompileErrorKind::FixedParameters)?;
         if fixed_params != 0 {
             function.register_allocator.push(fixed_params).unwrap();
         }
@@ -2328,7 +2416,7 @@ impl<S: Clone> CompilerFunction<S> {
         Ok(function)
     }
 
-    fn finish(mut self) -> Result<CompiledPrototype<S>, CompilerError> {
+    fn finish(mut self) -> Result<CompiledPrototype<S>, CompileErrorKind> {
         self.operations.push(Operation::Return {
             start: RegisterIndex(0),
             count: VarCount::constant(0),
@@ -2344,7 +2432,7 @@ impl<S: Clone> CompilerFunction<S> {
         );
 
         if !self.pending_jumps.is_empty() {
-            return Err(CompilerError::GotoInvalid);
+            return Err(CompileErrorKind::GotoInvalid);
         }
 
         let mut operation_lines = self.operation_lines;
@@ -2360,6 +2448,7 @@ impl<S: Clone> CompilerFunction<S> {
         });
 
         Ok(CompiledPrototype {
+            reference: self.reference,
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
             stack_size: self.register_allocator.stack_size(),
@@ -2370,10 +2459,16 @@ impl<S: Clone> CompilerFunction<S> {
                 .copied()
                 .map(OpCode::encode)
                 .collect(),
-            opcode_lines: operation_lines,
+            opcode_line_numbers: operation_lines,
             upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
             prototypes: self.functions.into_iter().map(|f| Box::new(f)).collect(),
         })
+    }
+
+    pub fn set_line_number(&mut self, line_number: LineNumber) {
+        self.current_line_number = line_number;
+        self.operation_lines
+            .push((self.operations.len(), self.current_line_number));
     }
 }
 

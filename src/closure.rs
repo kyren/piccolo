@@ -8,7 +8,7 @@ use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
-    compiler::{self, CompiledPrototype},
+    compiler::{self, CompiledPrototype, FunctionRef, LineNumber},
     opcode::OpCode,
     thread::OpenUpValue,
     types::UpValueDescriptor,
@@ -16,20 +16,24 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum ProtoCompileError {
+pub enum PrototypeError {
     #[error(transparent)]
     Parser(#[from] compiler::ParseError),
     #[error(transparent)]
-    Compiler(#[from] compiler::CompilerError),
+    Compiler(#[from] compiler::CompileError),
 }
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct FunctionProto<'gc> {
+    pub chunk_name: String<'gc>,
+    pub reference: FunctionRef<String<'gc>>,
     pub fixed_params: u8,
+    pub has_varargs: bool,
     pub stack_size: u16,
     pub constants: boxed::Box<[Constant<String<'gc>>], MetricsAlloc<'gc>>,
     pub opcodes: boxed::Box<[OpCode], MetricsAlloc<'gc>>,
+    pub opcode_line_numbers: boxed::Box<[(usize, LineNumber)], MetricsAlloc<'gc>>,
     pub upvalues: boxed::Box<[UpValueDescriptor], MetricsAlloc<'gc>>,
     pub prototypes: boxed::Box<[Gc<'gc, FunctionProto<'gc>>], MetricsAlloc<'gc>>,
 }
@@ -37,18 +41,21 @@ pub struct FunctionProto<'gc> {
 impl<'gc> FunctionProto<'gc> {
     pub fn from_compiled(
         mc: &Mutation<'gc>,
+        chunk_name: String<'gc>,
         compiled_function: &CompiledPrototype<String<'gc>>,
     ) -> Self {
-        Self::from_compiled_map_strings(mc, compiled_function, |s| *s)
+        Self::from_compiled_map_strings(mc, chunk_name, compiled_function, |s| *s)
     }
 
     pub fn from_compiled_map_strings<S>(
         mc: &Mutation<'gc>,
+        chunk_name: String<'gc>,
         compiled_function: &CompiledPrototype<S>,
-        map_string: impl Fn(&S) -> String<'gc> + Copy,
+        map_string: impl Fn(&S) -> String<'gc>,
     ) -> Self {
         fn new<'gc, S>(
             mc: &Mutation<'gc>,
+            chunk_name: String<'gc>,
             compiled_function: &CompiledPrototype<S>,
             map_string: impl Fn(&S) -> String<'gc> + Copy,
         ) -> FunctionProto<'gc> {
@@ -63,6 +70,10 @@ impl<'gc> FunctionProto<'gc> {
             );
 
             let opcodes = SliceExt::to_vec_in(compiled_function.opcodes.as_slice(), alloc.clone());
+            let opcode_line_numbers = SliceExt::to_vec_in(
+                compiled_function.opcode_line_numbers.as_slice(),
+                alloc.clone(),
+            );
             let upvalues =
                 SliceExt::to_vec_in(compiled_function.upvalues.as_slice(), alloc.clone());
 
@@ -71,26 +82,34 @@ impl<'gc> FunctionProto<'gc> {
                 compiled_function
                     .prototypes
                     .iter()
-                    .map(|cf| Gc::new(mc, new(mc, cf, map_string))),
+                    .map(|cf| Gc::new(mc, new(mc, chunk_name, cf, map_string))),
             );
 
             FunctionProto {
+                chunk_name,
+                reference: compiled_function
+                    .reference
+                    .as_string_ref()
+                    .map_strings(map_string),
                 fixed_params: compiled_function.fixed_params,
+                has_varargs: compiled_function.has_varargs,
                 stack_size: compiled_function.stack_size,
                 constants: constants.into_boxed_slice(),
                 opcodes: opcodes.into_boxed_slice(),
+                opcode_line_numbers: opcode_line_numbers.into_boxed_slice(),
                 upvalues: upvalues.into_boxed_slice(),
                 prototypes: prototypes.into_boxed_slice(),
             }
         }
 
-        new(mc, compiled_function, map_string)
+        new(mc, chunk_name, compiled_function, &map_string)
     }
 
     pub fn compile(
         ctx: Context<'gc>,
+        source_name: &str,
         source: impl Read,
-    ) -> Result<FunctionProto<'gc>, ProtoCompileError> {
+    ) -> Result<FunctionProto<'gc>, PrototypeError> {
         #[derive(Copy, Clone)]
         struct Interner<'gc>(Context<'gc>);
 
@@ -107,7 +126,11 @@ impl<'gc> FunctionProto<'gc> {
         let chunk = compiler::parse_chunk(source, interner)?;
         let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionProto::from_compiled(&ctx, &compiled_function))
+        Ok(FunctionProto::from_compiled(
+            &ctx,
+            ctx.state.strings.intern(&ctx, source_name.as_bytes()),
+            &compiled_function,
+        ))
     }
 }
 
@@ -186,17 +209,22 @@ impl<'gc> Closure<'gc> {
     }
 
     /// Compile a top-level closure from source, using the globals table as the `_ENV` table.
-    pub fn load(ctx: Context<'gc>, source: impl Read) -> Result<Closure<'gc>, ProtoCompileError> {
-        Self::load_with_env(ctx, source, ctx.state.globals)
+    pub fn load(
+        ctx: Context<'gc>,
+        name: Option<&str>,
+        source: impl Read,
+    ) -> Result<Closure<'gc>, PrototypeError> {
+        Self::load_with_env(ctx, name, source, ctx.state.globals)
     }
 
     /// Compile a top-level closure from source, using the given table as the `_ENV` table.
     pub fn load_with_env(
         ctx: Context<'gc>,
+        name: Option<&str>,
         source: impl Read,
         env: Table<'gc>,
-    ) -> Result<Closure<'gc>, ProtoCompileError> {
-        let proto = FunctionProto::compile(ctx, source)?;
+    ) -> Result<Closure<'gc>, PrototypeError> {
+        let proto = FunctionProto::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }
 }

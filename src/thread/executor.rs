@@ -1,15 +1,13 @@
-use std::{
-    cell::RefMut,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
 
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
-    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    SequencePoll, Stack, Thread, ThreadMode, Variadic,
+    compiler::{FunctionRef, LineNumber},
+    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, FunctionProto,
+    IntoMultiValue, SequencePoll, Stack, String, Thread, ThreadMode, Value, Variadic,
 };
 
 use super::{
@@ -156,6 +154,7 @@ impl<'gc> Executor<'gc> {
             }
 
             let mut top_state = top_thread.0.borrow_mut(&ctx);
+            let top_state = &mut *top_state;
             if let Some(res_thread) = res_thread {
                 let mode = top_state.mode();
                 if mode == ThreadMode::Waiting {
@@ -203,7 +202,7 @@ impl<'gc> Executor<'gc> {
                 fn callback_ret<'gc>(
                     ctx: Context<'gc>,
                     thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
-                    mut top_state: RefMut<ThreadState<'gc>>,
+                    top_state: &mut ThreadState<'gc>,
                     stack_bottom: usize,
                     ret: CallbackReturn<'gc>,
                 ) {
@@ -279,19 +278,44 @@ impl<'gc> Executor<'gc> {
                     }
                 }
 
+                fn execution<'gc, 'a>(
+                    executor: Executor<'gc>,
+                    fuel: &'a mut Fuel,
+                    threads: &'a [Thread<'gc>],
+                    top_frames: &'a [Frame<'gc>],
+                    top_stack: &[Value<'gc>],
+                ) -> Execution<'gc, 'a> {
+                    let upper_lua = match top_frames.last() {
+                        Some(Frame::Lua { bottom, pc, .. }) => {
+                            let Value::Function(Function::Closure(closure)) = top_stack[*bottom]
+                            else {
+                                panic!("lua frame bottom is not a closure");
+                            };
+                            // Subtract 1 instruction for the Call opcode.
+                            Some((closure.0.proto, *pc - 1))
+                        }
+                        _ => None,
+                    };
+
+                    Execution {
+                        executor,
+                        fuel,
+                        upper_lua,
+                        threads,
+                    }
+                }
+
                 match top_state.frames.pop() {
                     Some(Frame::Callback { bottom, callback }) => {
                         fuel.consume(Self::FUEL_PER_CALLBACK);
-                        match callback.call(
-                            ctx,
-                            Execution {
-                                fuel,
-                                current_thread: top_thread,
-                                is_main_thread: thread_stack.len() == 1,
-                                executor: self,
-                            },
-                            Stack::new(&mut top_state.stack, bottom),
-                        ) {
+                        let exec = execution(
+                            self,
+                            fuel,
+                            &thread_stack,
+                            &top_state.frames,
+                            &top_state.stack,
+                        );
+                        match callback.call(ctx, exec, Stack::new(&mut top_state.stack, bottom)) {
                             Ok(ret) => {
                                 callback_ret(ctx, &mut *thread_stack, top_state, bottom, ret)
                             }
@@ -308,12 +332,13 @@ impl<'gc> Executor<'gc> {
                     }) => {
                         fuel.consume(Self::FUEL_PER_SEQ_STEP);
 
-                        let exec = Execution {
+                        let exec = execution(
+                            self,
                             fuel,
-                            current_thread: top_thread,
-                            is_main_thread: thread_stack.len() == 1,
-                            executor: self,
-                        };
+                            &thread_stack,
+                            &top_state.frames,
+                            &top_state.stack,
+                        );
                         let fin = if let Some(err) = pending_error {
                             sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))
                         } else {
@@ -361,7 +386,7 @@ impl<'gc> Executor<'gc> {
                         const VM_GRANULARITY: u32 = 64;
 
                         let lua_frame = LuaFrame {
-                            state: &mut top_state,
+                            state: top_state,
                             thread: top_thread,
                             fuel,
                         };
@@ -493,16 +518,59 @@ impl<'gc> Executor<'gc> {
 
 /// Execution state passed to callbacks when they are run by an `Executor`.
 pub struct Execution<'gc, 'a> {
+    executor: Executor<'gc>,
+    fuel: &'a mut Fuel,
+    upper_lua: Option<(Gc<'gc, FunctionProto<'gc>>, usize)>,
+    threads: &'a [Thread<'gc>],
+}
+
+impl<'gc, 'a> Execution<'gc, 'a> {
     /// The fuel parameter passed to `Executor::step`.
-    pub fuel: &'a mut Fuel,
+    pub fn fuel(&mut self) -> &mut Fuel {
+        self.fuel
+    }
+
     /// The curently executing Thread.
-    pub current_thread: Thread<'gc>,
-    /// `true` if this thread is at the top of the execution stack.
-    pub is_main_thread: bool,
+    pub fn current_thread(&self) -> CurrentThread<'gc> {
+        CurrentThread {
+            thread: *self.threads.last().unwrap(),
+            is_main: self.threads.len() == 1,
+        }
+    }
+
     /// The curently running Executor.
     ///
     /// Do not call methods on this from callbacks! This is provided only for identification
     /// purposes, so that callbacks can identify which executor that is currently executing them, or
     /// to store the pointer somewhere.
-    pub executor: Executor<'gc>,
+    pub fn executor(&self) -> Executor<'gc> {
+        self.executor
+    }
+
+    /// If the function we are returning to is Lua, returns information about the Lua frame we are
+    /// returning to.
+    pub fn upper_lua_frame(&self) -> Option<UpperLuaFrame<'gc>> {
+        self.upper_lua.map(|(proto, pc)| UpperLuaFrame {
+            chunk_name: proto.chunk_name,
+            current_function: proto.reference,
+            current_line: match proto
+                .opcode_line_numbers
+                .binary_search_by_key(&pc, |(opi, _)| *opi)
+            {
+                Ok(i) => proto.opcode_line_numbers[i].1,
+                Err(i) => proto.opcode_line_numbers[i - 1].1,
+            },
+        })
+    }
+}
+
+pub struct CurrentThread<'gc> {
+    pub thread: Thread<'gc>,
+    pub is_main: bool,
+}
+
+pub struct UpperLuaFrame<'gc> {
+    pub chunk_name: String<'gc>,
+    pub current_function: FunctionRef<String<'gc>>,
+    pub current_line: LineNumber,
 }

@@ -36,6 +36,7 @@ fn userdata() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 callback(userdata)
                 return userdata, type(userdata) == "userdata" and type(callback) == "function"

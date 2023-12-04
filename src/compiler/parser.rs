@@ -3,7 +3,7 @@ use std::{io::Read, ops::Deref, rc::Rc};
 use thiserror::Error;
 
 use super::{
-    lexer::{Lexer, LexerError, LineNumber, Token},
+    lexer::{LexError, Lexer, LineNumber, Token},
     StringInterner,
 };
 
@@ -56,6 +56,7 @@ pub struct Chunk<S> {
 pub struct Block<S> {
     pub statements: Vec<LineAnnotated<Statement<S>>>,
     pub return_statement: Option<LineAnnotated<ReturnStatement<S>>>,
+    pub closed_on: LineNumber,
 }
 
 #[derive(Debug, Clone)]
@@ -295,11 +296,11 @@ pub enum ParseErrorKind {
     #[error("recursion limit reached")]
     RecursionLimit,
     #[error(transparent)]
-    LexerError(#[from] LexerError),
+    LexError(#[from] LexError),
 }
 
 #[derive(Debug, Error)]
-#[error("parse error at {line_number}: {kind}")]
+#[error("parse error at line {line_number}: {kind}")]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub line_number: LineNumber,
@@ -370,9 +371,16 @@ where
             }
         }
 
+        let closed_on = if let Some(next) = self.look_ahead(0)? {
+            next.line_number
+        } else {
+            self.lexer.line_number()
+        };
+
         Ok(Block {
             statements,
             return_statement,
+            closed_on,
         })
     }
 
@@ -1023,7 +1031,7 @@ where
             } else {
                 Err(ParseError {
                     kind: ParseErrorKind::Unexpected {
-                        unexpected: format!("{:?}", next_token),
+                        unexpected: format!("{:?}", next_token.inner),
                         expected: format!("{:?}", token),
                     },
                     line_number: next_token.line_number,
@@ -1118,12 +1126,12 @@ where
     fn read_ahead(&mut self, n: usize) -> Result<(), ParseError> {
         while self.read_buffer.len() <= n {
             self.lexer.skip_whitespace().map_err(|e| ParseError {
-                kind: ParseErrorKind::LexerError(e),
+                kind: ParseErrorKind::LexError(e),
                 line_number: self.lexer.line_number(),
             })?;
             let line_number = self.lexer.line_number();
             if let Some(token) = self.lexer.read_token().map_err(|e| ParseError {
-                kind: ParseErrorKind::LexerError(e),
+                kind: ParseErrorKind::LexError(e),
                 line_number: self.lexer.line_number(),
             })? {
                 self.read_buffer

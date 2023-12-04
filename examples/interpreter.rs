@@ -6,15 +6,15 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function, FunctionProto, Lua,
-    ProtoCompileError, StashedExecutor, StaticError,
+    io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function, Lua, PrototypeError,
+    StashedExecutor, StaticError,
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
     lua.try_run(|ctx| {
-        let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
+        let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
-            Err(_) => Closure::load(ctx, code.as_bytes())?,
+            Err(_) => Closure::load(ctx, None, code.as_bytes())?,
         };
         let function = Function::compose(
             &ctx,
@@ -67,8 +67,8 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
                 Err(StaticError::Runtime(err))
                     if !read_empty
                         && matches!(
-                            err.downcast::<ProtoCompileError>(),
-                            Some(ProtoCompileError::Parser(ParseError {
+                            err.downcast::<PrototypeError>(),
+                            Some(PrototypeError::Parser(ParseError {
                                 kind: ParseErrorKind::EndOfStream { .. },
                                 ..
                             }))
@@ -110,14 +110,11 @@ fn main() -> Result<(), Box<dyn StdError>> {
         return Ok(());
     }
 
-    let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
+    let file_name = matches.get_one::<String>("file").unwrap();
+    let file = io::buffered_read(File::open(file_name)?)?;
 
     let executor = lua.try_run(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            FunctionProto::compile(ctx, file)?,
-            Some(ctx.state.globals),
-        )?;
+        let closure = Closure::load(ctx, Some(file_name.as_str()), file)?;
         Ok(ctx
             .state
             .registry

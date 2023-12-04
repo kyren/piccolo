@@ -25,7 +25,8 @@ fn test_scripts() {
 
                 if let Err(err) = lua
                     .try_run(|ctx| {
-                        let closure = Closure::load(ctx, file)?;
+                        let closure =
+                            Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
                         Ok(ctx
                             .state
                             .registry

@@ -7,8 +7,8 @@ fn test_interrupt() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_run(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, exec, _| {
-            exec.fuel.interrupt();
+        let callback = AnyCallback::from_fn(&ctx, |_, mut exec, _| {
+            exec.fuel().interrupt();
             Ok(CallbackReturn::Return)
         });
         ctx.state.globals.set(ctx, "callback", callback)?;
@@ -16,7 +16,7 @@ fn test_interrupt() -> Result<(), StaticError> {
     })?;
 
     let executor = lua.try_run(|ctx| {
-        let closure = Closure::load(ctx, &b"callback(); abort()"[..])?;
+        let closure = Closure::load(ctx, None, &b"callback(); abort()"[..])?;
         Ok(ctx
             .state
             .registry

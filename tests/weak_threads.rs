@@ -7,6 +7,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 closure = nil
 
@@ -32,7 +33,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
     for i in 1..4 {
         lua.gc_collect();
         let executor = lua.try_run(|ctx| {
-            let closure = Closure::load(ctx, format!("assert(closure() == {i})").as_bytes())?;
+            let closure = Closure::load(ctx, None, format!("assert(closure() == {i})").as_bytes())?;
 
             Ok(ctx
                 .state

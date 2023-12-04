@@ -10,6 +10,7 @@ fn error_unwind() -> Result<(), StaticError> {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 function do_error()
                     error('test error')
@@ -48,6 +49,7 @@ fn error_tostring() -> Result<(), StaticError> {
 
         let closure = Closure::load(
             ctx,
+            None,
             &br#"
                 local r, e = pcall(callback)
                 assert(not r)
