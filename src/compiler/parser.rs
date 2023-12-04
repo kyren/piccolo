@@ -1,24 +1,64 @@
-use std::{io::Read, rc::Rc};
+use std::{io::Read, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
 use super::{
-    lexer::{Lexer, LexerError, Token},
+    lexer::{Lexer, LexerError, LineNumber, Token},
     StringInterner,
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
+pub struct LineAnnotated<T> {
+    pub inner: T,
+    pub line_number: LineNumber,
+}
+
+impl<T> Deref for LineAnnotated<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> AsRef<T> for LineAnnotated<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T> LineAnnotated<T> {
+    pub fn new(line_number: LineNumber, inner: T) -> Self {
+        Self { inner, line_number }
+    }
+
+    pub fn map<R>(self, f: impl FnOnce(T) -> R) -> LineAnnotated<R> {
+        LineAnnotated {
+            inner: f(self.inner),
+            line_number: self.line_number,
+        }
+    }
+
+    pub fn try_map<R, E>(self, f: impl FnOnce(T) -> Result<R, E>) -> Result<LineAnnotated<R>, E> {
+        Ok(LineAnnotated {
+            inner: f(self.inner)?,
+            line_number: self.line_number,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Chunk<S> {
     pub block: Block<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Block<S> {
-    pub statements: Vec<Statement<S>>,
-    pub return_statement: Option<ReturnStatement<S>>,
+    pub statements: Vec<LineAnnotated<Statement<S>>>,
+    pub return_statement: Option<LineAnnotated<ReturnStatement<S>>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum Statement<S> {
     If(IfStatement<S>),
     While(WhileStatement<S>),
@@ -35,25 +75,25 @@ pub enum Statement<S> {
     Assignment(AssignmentStatement<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct ReturnStatement<S> {
     pub returns: Vec<Expression<S>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct IfStatement<S> {
     pub if_part: (Expression<S>, Block<S>),
     pub else_if_parts: Vec<(Expression<S>, Block<S>)>,
     pub else_part: Option<Block<S>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct WhileStatement<S> {
     pub condition: Expression<S>,
     pub block: Block<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum ForStatement<S> {
     Numeric {
         name: S,
@@ -69,23 +109,23 @@ pub enum ForStatement<S> {
     },
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct RepeatStatement<S> {
     pub body: Block<S>,
     pub until: Expression<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct LabelStatement<S> {
     pub name: S,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct GotoStatement<S> {
     pub name: S,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionStatement<S> {
     pub name: S,
     pub fields: Vec<S>,
@@ -93,19 +133,19 @@ pub struct FunctionStatement<S> {
     pub definition: FunctionDefinition<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalFunctionStatement<S> {
     pub name: S,
     pub definition: FunctionDefinition<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalStatement<S> {
     pub names: Vec<S>,
     pub values: Vec<Expression<S>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -130,7 +170,7 @@ pub enum BinaryOperator {
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum UnaryOperator {
     Not,
     Minus,
@@ -138,19 +178,19 @@ pub enum UnaryOperator {
     Len,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Expression<S> {
     pub head: Box<HeadExpression<S>>,
     pub tail: Vec<(BinaryOperator, Expression<S>)>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum HeadExpression<S> {
     Simple(SimpleExpression<S>),
     UnaryOperator(UnaryOperator, Expression<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum SimpleExpression<S> {
     Float(f64),
     Integer(i64),
@@ -164,73 +204,73 @@ pub enum SimpleExpression<S> {
     Suffixed(SuffixedExpression<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum PrimaryExpression<S> {
     Name(S),
     GroupedExpression(Expression<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum FieldSuffix<S> {
     Named(S),
     Indexed(Expression<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum CallSuffix<S> {
     Method(S, Vec<Expression<S>>),
     Function(Vec<Expression<S>>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum SuffixPart<S> {
     Field(FieldSuffix<S>),
     Call(CallSuffix<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct SuffixedExpression<S> {
     pub primary: PrimaryExpression<S>,
     pub suffixes: Vec<SuffixPart<S>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionDefinition<S> {
     pub parameters: Vec<S>,
     pub has_varargs: bool,
     pub body: Block<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionCallStatement<S> {
     pub head: SuffixedExpression<S>,
     pub call: CallSuffix<S>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct AssignmentStatement<S> {
     pub targets: Vec<AssignmentTarget<S>>,
     pub values: Vec<Expression<S>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum AssignmentTarget<S> {
     Name(S),
     Field(SuffixedExpression<S>, FieldSuffix<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct TableConstructor<S> {
     pub fields: Vec<ConstructorField<S>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum ConstructorField<S> {
     Array(Expression<S>),
     Record(RecordKey<S>, Expression<S>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum RecordKey<S> {
     Named(S),
     Indexed(Expression<S>),
@@ -273,7 +313,7 @@ where
 
 struct Parser<R, S: StringInterner> {
     lexer: Lexer<R, S>,
-    read_buffer: Vec<Token<S::String>>,
+    read_buffer: Vec<LineAnnotated<Token<S::String>>>,
     recursion_guard: Rc<()>,
 }
 
@@ -295,7 +335,7 @@ where
         let mut return_statement = None;
 
         loop {
-            match self.look_ahead(0)? {
+            match self.look_ahead(0)?.map(AsRef::as_ref) {
                 Some(&Token::Else) | Some(&Token::ElseIf) | Some(&Token::End)
                 | Some(&Token::Until) => break,
                 Some(&Token::SemiColon) => {
@@ -318,10 +358,13 @@ where
         })
     }
 
-    fn parse_statement(&mut self) -> Result<Statement<S::String>, ParserError> {
+    fn parse_statement(&mut self) -> Result<LineAnnotated<Statement<S::String>>, ParserError> {
         let _recursion_guard = self.recursion_guard()?;
 
-        Ok(match *self.get_next()? {
+        let next_token = self.get_next()?;
+        let statement_line = next_token.line_number;
+
+        let statement = match **next_token {
             Token::If => Statement::If(self.parse_if_statement()?),
             Token::While => Statement::While(self.parse_while_statement()?),
             Token::Do => {
@@ -348,12 +391,16 @@ where
             }
             Token::Goto => Statement::Goto(self.parse_goto_statement()?),
             _ => self.parse_expression_statement()?,
-        })
+        };
+
+        Ok(LineAnnotated::new(statement_line, statement))
     }
 
-    fn parse_return_statement(&mut self) -> Result<ReturnStatement<S::String>, ParserError> {
-        self.expect_next(Token::Return)?;
-        let returns = match self.look_ahead(0)? {
+    fn parse_return_statement(
+        &mut self,
+    ) -> Result<LineAnnotated<ReturnStatement<S::String>>, ParserError> {
+        let line_number = self.expect_next(Token::Return)?;
+        let returns = match self.look_ahead(0)?.map(AsRef::as_ref) {
             None
             | Some(Token::End)
             | Some(Token::SemiColon)
@@ -365,7 +412,7 @@ where
         if self.check_ahead(0, Token::SemiColon)? {
             self.take_next()?;
         }
-        Ok(ReturnStatement { returns })
+        Ok(LineAnnotated::new(line_number, ReturnStatement { returns }))
     }
 
     fn parse_if_statement(&mut self) -> Result<IfStatement<S::String>, ParserError> {
@@ -411,9 +458,9 @@ where
 
     fn parse_for_statement(&mut self) -> Result<ForStatement<S::String>, ParserError> {
         self.expect_next(Token::For)?;
-        let name = self.expect_name()?;
+        let name = self.expect_name()?.inner;
 
-        match self.get_next()? {
+        match self.get_next()?.as_ref() {
             Token::Assign => {
                 self.take_next()?;
                 let initial = self.parse_expression()?;
@@ -444,7 +491,7 @@ where
                 names.push(name);
                 while self.check_ahead(0, Token::Comma)? {
                     self.take_next()?;
-                    names.push(self.expect_name()?);
+                    names.push(self.expect_name()?.inner);
                 }
                 self.expect_next(Token::In)?;
                 let arguments = self.parse_expression_list()?;
@@ -478,18 +525,18 @@ where
     fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParserError> {
         self.expect_next(Token::Function)?;
 
-        let name = self.expect_name()?;
+        let name = self.expect_name()?.inner;
         let mut fields = Vec::new();
         let mut method = None;
         loop {
-            match self.look_ahead(0)? {
+            match self.look_ahead(0)?.map(AsRef::as_ref) {
                 Some(&Token::Dot) => {
                     self.take_next()?;
-                    fields.push(self.expect_name()?);
+                    fields.push(self.expect_name()?.inner);
                 }
                 Some(&Token::Colon) => {
                     self.take_next()?;
-                    method = Some(self.expect_name()?);
+                    method = Some(self.expect_name()?.inner);
                     break;
                 }
                 _ => break,
@@ -511,7 +558,7 @@ where
     ) -> Result<LocalFunctionStatement<S::String>, ParserError> {
         self.expect_next(Token::Function)?;
 
-        let name = self.expect_name()?;
+        let name = self.expect_name()?.inner;
         let definition = self.parse_function_definition()?;
 
         Ok(LocalFunctionStatement { name, definition })
@@ -520,10 +567,10 @@ where
     fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParserError> {
         self.expect_next(Token::Local)?;
         let mut names = Vec::new();
-        names.push(self.expect_name()?);
+        names.push(self.expect_name()?.inner);
         while self.check_ahead(0, Token::Comma)? {
             self.take_next()?;
-            names.push(self.expect_name()?);
+            names.push(self.expect_name()?.inner);
         }
 
         let values = if self.check_ahead(0, Token::Assign)? {
@@ -538,14 +585,14 @@ where
 
     fn parse_label_statement(&mut self) -> Result<LabelStatement<S::String>, ParserError> {
         self.expect_next(Token::DoubleColon)?;
-        let name = self.expect_name()?;
+        let name = self.expect_name()?.inner;
         self.expect_next(Token::DoubleColon)?;
         Ok(LabelStatement { name })
     }
 
     fn parse_goto_statement(&mut self) -> Result<GotoStatement<S::String>, ParserError> {
         self.expect_next(Token::Goto)?;
-        let name = self.expect_name()?;
+        let name = self.expect_name()?.inner;
         Ok(GotoStatement { name })
     }
 
@@ -629,7 +676,7 @@ where
         };
 
         let mut tail = Vec::new();
-        while let Some(binary_op) = self.look_ahead(0)?.and_then(get_binary_operator) {
+        while let Some(binary_op) = self.look_ahead(0)?.and_then(|t| get_binary_operator(t)) {
             let (left_priority, right_priority) = binary_priority(binary_op);
             if left_priority <= priority_limit {
                 break;
@@ -647,7 +694,7 @@ where
     }
 
     fn parse_simple_expression(&mut self) -> Result<SimpleExpression<S::String>, ParserError> {
-        Ok(match *self.get_next()? {
+        Ok(match **self.get_next()? {
             Token::Float(f) => {
                 self.take_next()?;
                 SimpleExpression::Float(f)
@@ -656,7 +703,7 @@ where
                 self.take_next()?;
                 SimpleExpression::Integer(i)
             }
-            Token::String(_) => SimpleExpression::String(self.expect_string()?),
+            Token::String(_) => SimpleExpression::String(self.expect_string()?.inner),
             Token::Nil => {
                 self.take_next()?;
                 SimpleExpression::Nil
@@ -683,7 +730,7 @@ where
     }
 
     fn parse_primary_expression(&mut self) -> Result<PrimaryExpression<S::String>, ParserError> {
-        match self.take_next()? {
+        match self.take_next()?.inner {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
                 self.expect_next(Token::RightParen)?;
@@ -698,10 +745,10 @@ where
     }
 
     fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S::String>, ParserError> {
-        match self.get_next()? {
+        match self.get_next()?.as_ref() {
             Token::Dot => {
                 self.take_next()?;
-                Ok(FieldSuffix::Named(self.expect_name()?))
+                Ok(FieldSuffix::Named(self.expect_name()?.inner))
             }
             Token::LeftBracket => {
                 self.take_next()?;
@@ -717,18 +764,18 @@ where
     }
 
     fn parse_call_suffix(&mut self) -> Result<CallSuffix<S::String>, ParserError> {
-        let method_name = match *self.get_next()? {
+        let method_name = match **self.get_next()? {
             Token::Colon => {
                 self.take_next()?;
-                Some(self.expect_name()?)
+                Some(self.expect_name()?.inner)
             }
             _ => None,
         };
 
-        let args = match self.get_next()? {
+        let args = match self.get_next()?.as_ref() {
             Token::LeftParen => {
                 self.take_next()?;
-                let args = if !matches!(*self.get_next()?, Token::RightParen) {
+                let args = if !matches!(**self.get_next()?, Token::RightParen) {
                     self.parse_expression_list()?
                 } else {
                     Vec::new()
@@ -744,7 +791,7 @@ where
             }],
             Token::String(_) => vec![Expression {
                 head: Box::new(HeadExpression::Simple(SimpleExpression::String(
-                    self.expect_string()?,
+                    self.expect_string()?.inner,
                 ))),
                 tail: vec![],
             }],
@@ -764,7 +811,7 @@ where
     }
 
     fn parse_suffix_part(&mut self) -> Result<SuffixPart<S::String>, ParserError> {
-        match self.get_next()? {
+        match self.get_next()?.as_ref() {
             Token::Dot | Token::LeftBracket => Ok(SuffixPart::Field(self.parse_field_suffix()?)),
             Token::Colon | Token::LeftParen | Token::LeftBrace | Token::String(_) => {
                 Ok(SuffixPart::Call(self.parse_call_suffix()?))
@@ -780,7 +827,7 @@ where
         let primary = self.parse_primary_expression()?;
         let mut suffixes = Vec::new();
         loop {
-            match self.look_ahead(0)? {
+            match self.look_ahead(0)?.map(AsRef::as_ref) {
                 Some(&Token::Dot)
                 | Some(&Token::LeftBracket)
                 | Some(&Token::Colon)
@@ -803,7 +850,7 @@ where
         let mut has_varargs = false;
         if !self.check_ahead(0, Token::RightParen)? {
             loop {
-                match self.take_next()? {
+                match self.take_next()?.inner {
                     Token::Name(name) => parameters.push(name),
                     Token::Dots => {
                         has_varargs = true;
@@ -843,7 +890,7 @@ where
                 break;
             }
             fields.push(self.parse_constructor_field()?);
-            match *self.get_next()? {
+            match **self.get_next()? {
                 Token::Comma | Token::SemiColon => {
                     self.take_next()?;
                 }
@@ -855,10 +902,10 @@ where
     }
 
     fn parse_constructor_field(&mut self) -> Result<ConstructorField<S::String>, ParserError> {
-        Ok(match *self.get_next()? {
+        Ok(match **self.get_next()? {
             Token::Name(_) => {
                 if self.check_ahead(1, Token::Assign)? {
-                    let key = self.expect_name()?;
+                    let key = self.expect_name()?.inner;
                     self.expect_next(Token::Assign)?;
                     let value = self.parse_expression()?;
                     ConstructorField::Record(RecordKey::Named(key), value)
@@ -889,7 +936,7 @@ where
     }
 
     // Return a reference to the next token in the stream, erroring if we are at the end.
-    fn get_next(&mut self) -> Result<&Token<S::String>, ParserError> {
+    fn get_next(&mut self) -> Result<&LineAnnotated<Token<S::String>>, ParserError> {
         self.read_ahead(1)?;
         if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
@@ -899,7 +946,7 @@ where
     }
 
     // Consumes the next token, returning an error if it does not match the given token.
-    fn expect_next(&mut self, token: Token<S::String>) -> Result<(), ParserError> {
+    fn expect_next(&mut self, token: Token<S::String>) -> Result<LineNumber, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
@@ -907,8 +954,8 @@ where
             })
         } else {
             let next_token = self.read_buffer.remove(0);
-            if next_token == token {
-                Ok(())
+            if *next_token == token {
+                Ok(next_token.line_number)
             } else {
                 Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", next_token),
@@ -919,43 +966,43 @@ where
     }
 
     // Consume the next token which should be a name, and return it, otherwise error.
-    fn expect_name(&mut self) -> Result<S::String, ParserError> {
+    fn expect_name(&mut self) -> Result<LineAnnotated<S::String>, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
                 expected: Some("name".to_owned()),
             })
         } else {
-            match self.read_buffer.remove(0) {
+            self.read_buffer.remove(0).try_map(|t| match t {
                 Token::Name(name) => Ok(name),
                 token => Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
                     expected: "name".to_owned(),
                 }),
-            }
+            })
         }
     }
 
     // Consume the next token which should be a string, and return it, otherwise error.
-    fn expect_string(&mut self) -> Result<S::String, ParserError> {
+    fn expect_string(&mut self) -> Result<LineAnnotated<S::String>, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream {
                 expected: Some("string".to_owned()),
             })
         } else {
-            match self.read_buffer.remove(0) {
+            self.read_buffer.remove(0).try_map(|t| match t {
                 Token::String(string) => Ok(string),
                 token => Err(ParserError::Unexpected {
                     unexpected: format!("{:?}", token),
                     expected: "string".to_owned(),
                 }),
-            }
+            })
         }
     }
 
     // Take the next token in the stream by value, erroring if we are at the end.
-    fn take_next(&mut self) -> Result<Token<S::String>, ParserError> {
+    fn take_next(&mut self) -> Result<LineAnnotated<Token<S::String>>, ParserError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
             Err(ParserError::EndOfStream { expected: None })
@@ -965,7 +1012,10 @@ where
     }
 
     // Return the nth token ahead in the stream, if it is not past the end.
-    fn look_ahead(&mut self, n: usize) -> Result<Option<&Token<S::String>>, ParserError> {
+    fn look_ahead(
+        &mut self,
+        n: usize,
+    ) -> Result<Option<&LineAnnotated<Token<S::String>>>, ParserError> {
         self.read_ahead(n + 1)?;
         Ok(self.read_buffer.get(n))
     }
@@ -975,7 +1025,7 @@ where
     fn check_ahead(&mut self, n: usize, token: Token<S::String>) -> Result<bool, ParserError> {
         self.read_ahead(n)?;
         Ok(if let Some(t) = self.read_buffer.get(n) {
-            *t == token
+            **t == token
         } else {
             false
         })
@@ -985,8 +1035,11 @@ where
     // possible).
     fn read_ahead(&mut self, n: usize) -> Result<(), ParserError> {
         while self.read_buffer.len() <= n {
+            self.lexer.skip_whitespace()?;
+            let line_number = self.lexer.line_number();
             if let Some(token) = self.lexer.read_token()? {
-                self.read_buffer.push(token);
+                self.read_buffer
+                    .push(LineAnnotated::new(line_number, token));
             } else {
                 break;
             }
@@ -1066,82 +1119,5 @@ fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOperator> {
         Token::And => Some(BinaryOperator::And),
         Token::Or => Some(BinaryOperator::Or),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::compiler::interning::BasicInterner;
-
-    use super::*;
-
-    #[test]
-    fn test_function_call() {
-        let mut interner = BasicInterner::default();
-        assert_eq!(
-            parse_chunk(
-                "print(10, 20);print'foo';print{30.0}".as_bytes(),
-                &mut interner
-            )
-            .unwrap(),
-            Chunk {
-                block: Block {
-                    statements: vec![
-                        Statement::FunctionCall(FunctionCallStatement {
-                            head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
-                                suffixes: vec![],
-                            },
-                            call: CallSuffix::Function(vec![
-                                Expression {
-                                    head: Box::new(HeadExpression::Simple(
-                                        SimpleExpression::Integer(10,)
-                                    )),
-                                    tail: vec![],
-                                },
-                                Expression {
-                                    head: Box::new(HeadExpression::Simple(
-                                        SimpleExpression::Integer(20,)
-                                    )),
-                                    tail: vec![],
-                                },
-                            ]),
-                        }),
-                        Statement::FunctionCall(FunctionCallStatement {
-                            head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
-                                suffixes: vec![],
-                            },
-                            call: CallSuffix::Function(vec![Expression {
-                                head: Box::new(HeadExpression::Simple(SimpleExpression::String(
-                                    interner.intern(b"foo"),
-                                ))),
-                                tail: vec![],
-                            },]),
-                        }),
-                        Statement::FunctionCall(FunctionCallStatement {
-                            head: SuffixedExpression {
-                                primary: PrimaryExpression::Name(interner.intern(b"print"),),
-                                suffixes: vec![],
-                            },
-                            call: CallSuffix::Function(vec![Expression {
-                                head: Box::new(HeadExpression::Simple(
-                                    SimpleExpression::TableConstructor(TableConstructor {
-                                        fields: vec![ConstructorField::Array(Expression {
-                                            head: Box::new(HeadExpression::Simple(
-                                                SimpleExpression::Float(30.0),
-                                            )),
-                                            tail: vec![],
-                                        }),],
-                                    }),
-                                )),
-                                tail: vec![],
-                            },]),
-                        }),
-                    ],
-                    return_statement: None,
-                },
-            }
-        );
     }
 }

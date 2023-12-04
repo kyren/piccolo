@@ -4,6 +4,7 @@ use std::{
     str,
 };
 
+use gc_arena::Collect;
 use thiserror::Error;
 
 use super::StringInterner;
@@ -238,6 +239,17 @@ pub enum LexerError {
     IOError(#[from] io::Error),
 }
 
+/// A 0-indexed line number of the current source input.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Collect)]
+#[collect(require_static)]
+pub struct LineNumber(pub u64);
+
+impl fmt::Display for LineNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<line {}>", u128::from(self.0) + 1)
+    }
+}
+
 pub struct Lexer<R, S> {
     source: Option<R>,
     interner: S,
@@ -261,9 +273,9 @@ where
         }
     }
 
-    /// Current line number of the source file, 0-indexed
-    pub fn line_number(&self) -> u64 {
-        self.line_number
+    /// Current line number of the source file.
+    pub fn line_number(&self) -> LineNumber {
+        LineNumber(self.line_number)
     }
 
     pub fn skip_whitespace(&mut self) -> Result<(), LexerError> {
@@ -1125,7 +1137,7 @@ mod tests {
         let mut i = 0;
         loop {
             lexer.skip_whitespace().unwrap();
-            let line_number = lexer.line_number();
+            let line_number = lexer.line_number().0;
             if let Some(token) = lexer.read_token().unwrap() {
                 assert!(i < tokens.len(), "too many tokens");
                 assert_eq!(token, tokens[i].0, "tokens not equal");

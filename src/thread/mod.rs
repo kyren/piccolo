@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::TypeError;
 
 pub use self::{
-    executor::{BadExecutorMode, Executor, ExecutorMode},
+    executor::{BadExecutorMode, Execution, Executor, ExecutorMode},
     thread::{BadThreadMode, OpenUpValue, Thread, ThreadMode},
     vm::BinaryOperatorError,
 };

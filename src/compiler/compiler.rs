@@ -18,6 +18,7 @@ use crate::{
 };
 
 use super::{
+    lexer::LineNumber,
     operators::{
         categorize_binop, comparison_binop_const_fold, comparison_binop_operation,
         simple_binop_const_fold, simple_binop_operation, unop_const_fold, unop_operation,
@@ -65,6 +66,7 @@ pub struct CompiledPrototype<S> {
     pub stack_size: u16,
     pub constants: Vec<Constant<S>>,
     pub opcodes: Vec<OpCode>,
+    pub opcode_lines: Vec<(usize, LineNumber)>,
     pub upvalues: Vec<UpValueDescriptor>,
     pub prototypes: Vec<Box<CompiledPrototype<S>>>,
 }
@@ -81,6 +83,7 @@ impl<S> CompiledPrototype<S> {
                 .map(|c| c.map_string(f))
                 .collect(),
             opcodes: self.opcodes,
+            opcode_lines: self.opcode_lines,
             upvalues: self.upvalues,
             prototypes: self
                 .prototypes
@@ -129,6 +132,7 @@ struct CompilerFunction<S> {
     pending_jumps: Vec<PendingJump<S>>,
 
     operations: Vec<Operation>,
+    operation_lines: Vec<(usize, LineNumber)>,
 }
 
 impl<S> Default for CompilerFunction<S> {
@@ -147,6 +151,7 @@ impl<S> Default for CompilerFunction<S> {
             jump_targets: Vec::new(),
             pending_jumps: Vec::new(),
             operations: Vec::new(),
+            operation_lines: Vec::new(),
         }
     }
 }
@@ -345,13 +350,21 @@ impl<S: StringInterner> Compiler<S> {
     fn block_statements(&mut self, block: &Block<S::String>) -> Result<(), CompilerError> {
         if let Some(return_statement) = &block.return_statement {
             for statement in &block.statements {
+                self.current_function.operation_lines.push((
+                    self.current_function.operations.len(),
+                    statement.line_number,
+                ));
                 self.statement(statement)?;
             }
+            self.current_function.operation_lines.push((
+                self.current_function.operations.len(),
+                return_statement.line_number,
+            ));
             self.return_statement(return_statement)?;
         } else {
             let mut last = block.statements.len();
             for i in (0..block.statements.len()).rev() {
-                match &block.statements[i] {
+                match *block.statements[i] {
                     Statement::Label(_) => {}
                     _ => break,
                 }
@@ -361,6 +374,10 @@ impl<S: StringInterner> Compiler<S> {
 
             self.enter_block();
             for i in 0..block.statements.len() - trailing_labels.len() {
+                self.current_function.operation_lines.push((
+                    self.current_function.operations.len(),
+                    block.statements[i].line_number,
+                ));
                 self.statement(&block.statements[i])?;
             }
             self.exit_block()?;
@@ -1880,18 +1897,18 @@ impl<S: StringInterner> Compiler<S> {
                 let dest = new_destination(self, dest)?;
                 let comparison_operation = comparison_binop_operation(op, left_rc, right_rc, false);
 
-                let opcodes = &mut self.current_function.operations;
-                opcodes.push(comparison_operation);
-                opcodes.push(Operation::Jump {
+                let operations = &mut self.current_function.operations;
+                operations.push(comparison_operation);
+                operations.push(Operation::Jump {
                     offset: 1,
                     close_upvalues: Opt254::none(),
                 });
-                opcodes.push(Operation::LoadBool {
+                operations.push(Operation::LoadBool {
                     dest,
                     value: false,
                     skip_next: true,
                 });
-                opcodes.push(Operation::LoadBool {
+                operations.push(Operation::LoadBool {
                     dest,
                     value: true,
                     skip_next: false,
@@ -2330,6 +2347,18 @@ impl<S: Clone> CompilerFunction<S> {
             return Err(CompilerError::GotoInvalid);
         }
 
+        let mut operation_lines = self.operation_lines;
+        operation_lines.dedup_by(|(next_opi, next_ln), (curr_opi, curr_ln)| {
+            if *curr_opi == *next_opi {
+                *curr_ln = *next_ln;
+                true
+            } else if *curr_ln == *next_ln {
+                true
+            } else {
+                false
+            }
+        });
+
         Ok(CompiledPrototype {
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
@@ -2341,6 +2370,7 @@ impl<S: Clone> CompilerFunction<S> {
                 .copied()
                 .map(OpCode::encode)
                 .collect(),
+            opcode_lines: operation_lines,
             upvalues: self.upvalues.iter().map(|(_, d)| *d).collect(),
             prototypes: self.functions.into_iter().map(|f| Box::new(f)).collect(),
         })

@@ -6,22 +6,7 @@ use std::{
 use allocator_api2::boxed;
 use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
 
-use crate::{Context, Error, Executor, Fuel, Function, Stack, Thread};
-
-pub struct Execution<'gc, 'a> {
-    /// The fuel parameter passed to `Executor::step`.
-    pub fuel: &'a mut Fuel,
-    /// The curently executing Thread.
-    pub current_thread: Thread<'gc>,
-    /// `true` if this thread is at the top of the execution stack.
-    pub is_main_thread: bool,
-    /// The curently running Executor.
-    ///
-    /// Do not call methods on this from callbacks! This is provided only for identification
-    /// purposes, so that callbacks can identify which executor that is currently executing them, or
-    /// to store the pointer somewhere.
-    pub executor: Executor<'gc>,
-}
+use crate::{Context, Error, Execution, Function, Stack, Thread};
 
 #[derive(Collect)]
 #[collect(no_drop)]

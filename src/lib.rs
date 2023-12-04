@@ -24,9 +24,7 @@ pub mod userdata;
 pub mod value;
 
 pub use self::{
-    callback::{
-        AnyCallback, AnySequence, Callback, CallbackReturn, Execution, Sequence, SequencePoll,
-    },
+    callback::{AnyCallback, AnySequence, Callback, CallbackReturn, Sequence, SequencePoll},
     closure::{Closure, ClosureError, FunctionProto, ProtoCompileError},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
@@ -42,7 +40,10 @@ pub use self::{
     stack::Stack,
     string::{String, StringError},
     table::{InvalidTableKey, Table},
-    thread::{BadExecutorMode, BadThreadMode, Executor, ExecutorMode, Thread, ThreadMode, VMError},
+    thread::{
+        BadExecutorMode, BadThreadMode, Execution, Executor, ExecutorMode, Thread, ThreadMode,
+        VMError,
+    },
     userdata::{AnyUserData, BadUserDataType},
     value::Value,
 };

@@ -8,8 +8,8 @@ use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation
 use thiserror::Error;
 
 use crate::{
-    BadThreadMode, CallbackReturn, Context, Error, Execution, FromMultiValue, Fuel, Function,
-    IntoMultiValue, SequencePoll, Stack, Thread, ThreadMode, Variadic,
+    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
+    SequencePoll, Stack, Thread, ThreadMode, Variadic,
 };
 
 use super::{
@@ -489,4 +489,20 @@ impl<'gc> Executor<'gc> {
         thread_stack[0].reset(&ctx).unwrap();
         thread_stack[0].start(ctx, function, args).unwrap();
     }
+}
+
+/// Execution state passed to callbacks when they are run by an `Executor`.
+pub struct Execution<'gc, 'a> {
+    /// The fuel parameter passed to `Executor::step`.
+    pub fuel: &'a mut Fuel,
+    /// The curently executing Thread.
+    pub current_thread: Thread<'gc>,
+    /// `true` if this thread is at the top of the execution stack.
+    pub is_main_thread: bool,
+    /// The curently running Executor.
+    ///
+    /// Do not call methods on this from callbacks! This is provided only for identification
+    /// purposes, so that callbacks can identify which executor that is currently executing them, or
+    /// to store the pointer somewhere.
+    pub executor: Executor<'gc>,
 }
