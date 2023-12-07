@@ -212,7 +212,7 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(ctx.string_intern(&bytes))
+        Ok(ctx.intern(&bytes))
     }
 
     pub fn len(self) -> i64 {

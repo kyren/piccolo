@@ -117,7 +117,7 @@ impl<'gc> FunctionPrototype<'gc> {
             type String = String<'gc>;
 
             fn intern(&mut self, s: &[u8]) -> Self::String {
-                self.0.string_intern(s)
+                self.0.intern(s)
             }
         }
 
@@ -128,7 +128,7 @@ impl<'gc> FunctionPrototype<'gc> {
 
         Ok(FunctionPrototype::from_compiled(
             &ctx,
-            ctx.string_intern(source_name.as_bytes()),
+            ctx.intern(source_name.as_bytes()),
             &compiled_function,
         ))
     }

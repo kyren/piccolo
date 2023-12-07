@@ -68,12 +68,12 @@ impl<'gc> Context<'gc> {
     }
 
     /// Calls `ctx.interned_strings().intern(&ctx, s)`.
-    pub fn string_intern(self, s: &[u8]) -> String<'gc> {
+    pub fn intern(self, s: &[u8]) -> String<'gc> {
         self.state.strings.intern(&self, s)
     }
 
     /// Calls `ctx.interned_strings().intern_static(&ctx, s)`.
-    pub fn string_intern_static(self, s: &'static [u8]) -> String<'gc> {
+    pub fn intern_static(self, s: &'static [u8]) -> String<'gc> {
         self.state.strings.intern_static(&self, s)
     }
 }
