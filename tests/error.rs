@@ -19,15 +19,12 @@ fn error_unwind() -> Result<(), StaticError> {
                 do_error()
             "#[..],
         )?;
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.finish(&executor);
     lua.try_enter(|ctx| {
-        match ctx.state.registry.fetch(&executor).take_result::<()>(ctx)? {
+        match ctx.fetch(&executor).take_result::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
             _ => panic!("wrong error returned"),
         }
@@ -57,10 +54,7 @@ fn error_tostring() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.execute(&executor)

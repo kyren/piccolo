@@ -4,6 +4,7 @@ use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Root
 
 use crate::{
     finalizers::Finalizers,
+    registry::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
     Error, FromMultiValue, Fuel, Registry, StashedExecutor, StaticError, Table,
@@ -40,6 +41,22 @@ impl<'gc> State<'gc> {
 pub struct Context<'gc> {
     pub mutation: &'gc Mutation<'gc>,
     pub state: &'gc State<'gc>,
+}
+
+impl<'gc> Context<'gc> {
+    /// Convenience method to quickly stash a `Stashable` value.
+    ///
+    /// Equivalent to calling `ctx.state.registry.stash(&ctx, r)`, but less typing.
+    pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed {
+        self.state.registry.stash(&self, s)
+    }
+
+    /// Convenience method to quickly fetch a `Fetchable` value.
+    ///
+    /// Calls `ctx.state.registry.fetch(f)`.
+    pub fn fetch<F: Fetchable<'gc>>(self, f: &F) -> F::Fetched {
+        self.state.registry.fetch(f)
+    }
 }
 
 impl<'gc> ops::Deref for Context<'gc> {
@@ -111,9 +128,9 @@ impl Lua {
 
     /// Size of all memory used by this Lua context.
     ///
-    /// This is equivalent to `self.gc_metrics().total_allocation()`. This counts all `Gc`
-    /// allocated memory and also all data Lua datastructures held inside `Gc`, as they are tracked
-    /// as "external allocations" in gc-arena.
+    /// This is equivalent to `self.gc_metrics().total_allocation()`. This counts all `Gc` allocated
+    /// memory and also all data Lua datastructures held inside `Gc`, as they are tracked as
+    /// "external allocations" in `gc-arena`.
     pub fn total_memory(&self) -> usize {
         self.gc_metrics().total_allocation()
     }
@@ -188,10 +205,7 @@ impl Lua {
         loop {
             let mut fuel = Fuel::with(FUEL_PER_GC);
 
-            if self.enter(|ctx| {
-                let executor = ctx.state.registry.fetch(executor);
-                executor.step(ctx, &mut fuel)
-            }) {
+            if self.enter(|ctx| ctx.fetch(executor).step(ctx, &mut fuel)) {
                 break;
             }
         }
@@ -206,6 +220,6 @@ impl Lua {
         executor: &StashedExecutor,
     ) -> Result<R, StaticError> {
         self.finish(executor);
-        self.try_enter(|ctx| ctx.state.registry.fetch(executor).take_result::<R>(ctx)?)
+        self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
     }
 }

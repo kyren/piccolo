@@ -33,8 +33,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
                 .into(),
             ],
         );
-        let executor = ctx.state.registry.fetch(executor);
-        executor.restart(ctx, function, ());
+        ctx.fetch(executor).restart(ctx, function, ());
         Ok(())
     })?;
 
@@ -43,10 +42,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let mut editor = DefaultEditor::new()?;
-    let executor = lua.enter(|ctx| {
-        let executor = Executor::new(ctx);
-        ctx.state.registry.stash(&ctx, executor)
-    });
+    let executor = lua.enter(|ctx| ctx.stash(Executor::new(ctx)));
 
     loop {
         let mut prompt = "> ";
@@ -115,10 +111,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(ctx, Some(file_name.as_str()), file)?;
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.execute(&executor)?;

@@ -29,10 +29,7 @@ fn callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.execute::<()>(&executor)?;
@@ -61,10 +58,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     assert_eq!(lua.execute::<(i64, i64, i64)>(&executor)?, (1, 2, 3));
@@ -140,10 +134,7 @@ fn loopy_callback() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     assert!(lua.execute::<bool>(&executor)?);
@@ -223,10 +214,7 @@ fn yield_sequence() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.execute(&executor)
@@ -279,13 +267,13 @@ fn resume_with_err() {
 
         thread.resume(ctx, "resume").unwrap();
 
-        ctx.state.registry.stash(&ctx, Executor::run(&ctx, thread))
+        ctx.stash(Executor::run(&ctx, thread))
     });
 
     lua.finish(&executor);
 
     lua.enter(|ctx| {
-        let executor = ctx.state.registry.fetch(&executor);
+        let executor = ctx.fetch(&executor);
         assert!(executor.take_result::<String>(ctx).unwrap().unwrap() == "return");
         executor
             .resume_err(&ctx, "an error".into_value(ctx).into())
@@ -294,13 +282,12 @@ fn resume_with_err() {
 
     lua.finish(&executor);
 
-    lua.enter(|ctx| {
-        let executor = ctx.state.registry.fetch(&executor);
-        match executor.take_result::<()>(ctx).unwrap() {
+    lua.enter(
+        |ctx| match ctx.fetch(&executor).take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
                 assert!(matches!(val.0, Value::String(s) if s == "a different error"))
             }
             _ => panic!("wrong error returned"),
-        }
-    });
+        },
+    );
 }

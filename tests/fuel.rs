@@ -17,14 +17,11 @@ fn test_interrupt() -> Result<(), StaticError> {
 
     let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(ctx, None, &b"callback(); abort()"[..])?;
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.enter(|ctx| {
-        let executor = ctx.state.registry.fetch(&executor);
+        let executor = ctx.fetch(&executor);
         let mut fuel = Fuel::with(i32::MAX);
         assert!(!executor.step(ctx, &mut fuel));
         assert!(fuel.is_interrupted());

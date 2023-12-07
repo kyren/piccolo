@@ -42,18 +42,13 @@ fn userdata() -> Result<(), StaticError> {
                 return userdata, type(userdata) == "userdata" and type(callback) == "function"
             "#[..],
         )?;
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
     lua.finish(&executor);
 
     lua.try_enter(|ctx| {
         let (ud, res) = ctx
-            .state
-            .registry
             .fetch(&executor)
             .take_result::<(AnyUserData, bool)>(ctx)??;
         assert!(res);

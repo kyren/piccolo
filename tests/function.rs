@@ -36,10 +36,7 @@ fn function_compose_bind() -> Result<(), StaticError> {
         )
         .bind(&ctx, 1)
         .bind(&ctx, (2, 1));
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, composed_functions, 1)))
+        Ok(ctx.stash(Executor::start(ctx, composed_functions, 1)))
     })?;
 
     assert_eq!(lua.execute::<i64>(&executor)?, 33);

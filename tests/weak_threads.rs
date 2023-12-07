@@ -23,10 +23,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
             "#[..],
         )?;
 
-        Ok(ctx
-            .state
-            .registry
-            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
     lua.execute::<()>(&executor)?;
 
@@ -35,10 +32,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
         let executor = lua.try_enter(|ctx| {
             let closure = Closure::load(ctx, None, format!("assert(closure() == {i})").as_bytes())?;
 
-            Ok(ctx
-                .state
-                .registry
-                .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+            Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
         })?;
         lua.execute::<()>(&executor)?;
     }

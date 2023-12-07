@@ -231,6 +231,10 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
+    /// Create an instance of a type that exists at most once per `Lua` instance.
+    ///
+    /// If the type has already been created, returns the already created instance, otherwise calls
+    /// `S::create` to create a new instance and returns it.
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a>,
@@ -249,10 +253,20 @@ impl<'gc> Registry<'gc> {
         }
     }
 
-    pub fn stash<R: Stashable<'gc>>(&self, mc: &Mutation<'gc>, r: R) -> R::Stashed {
-        r.stash(&self.roots, mc)
+    /// "Stash" a value with a `'gc` branding lifetime, creating a `'static` handle to it.
+    ///
+    /// This is a wrapper around an internal `gc-arena::DynamicRootSet` that makes it a little
+    /// simpler to work with common piccolo types without having to manually specify `Rootable`
+    /// projections.
+    ///
+    /// It can be implemented for external types by implementing the `Stashable` trait.
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed {
+        s.stash(&self.roots, mc)
     }
 
+    /// "Fetch" the real value for a handle that has been returned from `Registry::stash`.
+    ///
+    /// It can be implemented for external types by implementing the `Fetchable` trait.
     pub fn fetch<F: Fetchable<'gc>>(&self, f: &F) -> F::Fetched {
         f.fetch(&self.roots)
     }

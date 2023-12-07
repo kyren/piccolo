@@ -27,10 +27,7 @@ fn test_scripts() {
                     .try_enter(|ctx| {
                         let closure =
                             Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
-                        Ok(ctx
-                            .state
-                            .registry
-                            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+                        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
                     })
                     .and_then(|executor| lua.execute::<()>(&executor))
                 {
