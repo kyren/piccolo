@@ -171,14 +171,17 @@ impl Lua {
         self.arena.metrics()
     }
 
-    /// Enter the garbage collected arena and perform some operation.
+    /// Enter the garbage collection arena and perform some operation.
     ///
     /// In order to interact with Lua or do any useful work with Lua values, you must do so from
-    /// *inside* the arena. All values branded with the `'gc` branding lifetime must forever live
-    /// *inside* the arena, and cannot escape it.
+    /// *within* the garbage collection arena. All values branded with the `'gc` branding lifetime
+    /// must forever live *inside* the arena, and cannot escape it.
     ///
     /// Garbage collection takes place *in-between* calls to `Lua::enter`, no garbage will be
     /// collected cocurrently with accessing the arena.
+    ///
+    /// Automatically triggers garbage collection before returning if the allocation debt is larger
+    /// than a small constant.
     pub fn enter<F, T>(&mut self, f: F) -> T
     where
         F: for<'gc> FnOnce(Context<'gc>) -> T,
