@@ -131,7 +131,7 @@ impl<'gc> ser::Serializer for Serializer<'gc> {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Value<'gc>, Error> {
-        Ok(self.ctx.state.strings.intern(&self.ctx, v).into())
+        Ok(self.ctx.string_intern(v).into())
     }
 
     fn serialize_none(self) -> Result<Value<'gc>, Error> {

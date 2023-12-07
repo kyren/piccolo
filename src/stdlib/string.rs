@@ -24,5 +24,5 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    ctx.state.globals.set(ctx, "string", string).unwrap();
+    ctx.set_global("string", string).unwrap();
 }

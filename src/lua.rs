@@ -1,61 +1,80 @@
 use std::ops;
 
-use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Rootable};
+use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Root, Rootable};
 
 use crate::{
     finalizers::Finalizers,
     registry::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, Fuel, Registry, StashedExecutor, StaticError, Table,
+    Error, FromMultiValue, Fuel, IntoValue, InvalidTableKey, Registry, Singleton, StashedExecutor,
+    StaticError, String, Table, Value,
 };
-
-#[derive(Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub struct State<'gc> {
-    pub globals: Table<'gc>,
-    pub registry: Registry<'gc>,
-    pub strings: InternedStringSet<'gc>,
-    pub(crate) finalizers: Finalizers<'gc>,
-}
-
-impl<'gc> State<'gc> {
-    pub fn new(mc: &Mutation<'gc>) -> State<'gc> {
-        Self {
-            globals: Table::new(mc),
-            registry: Registry::new(mc),
-            strings: InternedStringSet::new(mc),
-            finalizers: Finalizers::new(mc),
-        }
-    }
-
-    pub fn ctx(&'gc self, mutation: &'gc Mutation<'gc>) -> Context<'gc> {
-        Context {
-            mutation,
-            state: self,
-        }
-    }
-}
 
 #[derive(Copy, Clone)]
 pub struct Context<'gc> {
-    pub mutation: &'gc Mutation<'gc>,
-    pub state: &'gc State<'gc>,
+    mutation: &'gc Mutation<'gc>,
+    state: &'gc State<'gc>,
 }
 
 impl<'gc> Context<'gc> {
-    /// Convenience method to quickly stash a `Stashable` value.
-    ///
-    /// Equivalent to calling `ctx.state.registry.stash(&ctx, r)`, but less typing.
+    pub fn globals(self) -> Table<'gc> {
+        self.state.globals
+    }
+
+    pub fn registry(self) -> Registry<'gc> {
+        self.state.registry
+    }
+
+    pub fn interned_strings(self) -> InternedStringSet<'gc> {
+        self.state.strings
+    }
+
+    pub fn finalizers(self) -> Finalizers<'gc> {
+        self.state.finalizers
+    }
+
+    /// Calls `ctx.globals().set(ctx, key, value)`.
+    pub fn set_global<K: IntoValue<'gc>, V: IntoValue<'gc>>(
+        self,
+        key: K,
+        value: V,
+    ) -> Result<Value<'gc>, InvalidTableKey> {
+        self.state.globals.set(self, key, value)
+    }
+
+    /// Calls `ctx.globals().get(ctx, key)`.
+    pub fn get_global<K: IntoValue<'gc>>(self, key: K) -> Value<'gc> {
+        self.state.globals.get(self, key)
+    }
+
+    /// Calls `ctx.registry().singleton::<S>(ctx)`.
+    pub fn singleton<S>(self) -> &'gc Root<'gc, S>
+    where
+        S: for<'a> Rootable<'a>,
+        Root<'gc, S>: Singleton<'gc>,
+    {
+        self.state.registry.singleton::<S>(self)
+    }
+
+    /// Calls `ctx.registry().stash(ctx, s)`.
     pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed {
         self.state.registry.stash(&self, s)
     }
 
-    /// Convenience method to quickly fetch a `Fetchable` value.
-    ///
-    /// Calls `ctx.state.registry.fetch(f)`.
+    /// Calls `ctx.registry().fetch(f)`.
     pub fn fetch<F: Fetchable<'gc>>(self, f: &F) -> F::Fetched {
         self.state.registry.fetch(f)
+    }
+
+    /// Calls `ctx.interned_strings().intern(&ctx, s)`.
+    pub fn string_intern(self, s: &[u8]) -> String<'gc> {
+        self.state.strings.intern(&self, s)
+    }
+
+    /// Calls `ctx.interned_strings().intern_static(&ctx, s)`.
+    pub fn string_intern_static(self, s: &'static [u8]) -> String<'gc> {
+        self.state.strings.intern_static(&self, s)
     }
 }
 
@@ -221,5 +240,32 @@ impl Lua {
     ) -> Result<R, StaticError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
+    }
+}
+
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+struct State<'gc> {
+    globals: Table<'gc>,
+    registry: Registry<'gc>,
+    strings: InternedStringSet<'gc>,
+    finalizers: Finalizers<'gc>,
+}
+
+impl<'gc> State<'gc> {
+    fn new(mc: &Mutation<'gc>) -> State<'gc> {
+        Self {
+            globals: Table::new(mc),
+            registry: Registry::new(mc),
+            strings: InternedStringSet::new(mc),
+            finalizers: Finalizers::new(mc),
+        }
+    }
+
+    fn ctx(&'gc self, mutation: &'gc Mutation<'gc>) -> Context<'gc> {
+        Context {
+            mutation,
+            state: self,
+        }
     }
 }

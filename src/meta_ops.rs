@@ -296,12 +296,7 @@ pub fn tostring<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc,
 
     Ok(match v {
         v @ Value::String(_) => MetaResult::Value(v),
-        v => MetaResult::Value(
-            ctx.state
-                .strings
-                .intern(&ctx, v.to_string().as_bytes())
-                .into(),
-        ),
+        v => MetaResult::Value(ctx.string_intern(v.to_string().as_bytes()).into()),
     })
 }
 

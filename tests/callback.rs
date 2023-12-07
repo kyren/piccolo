@@ -13,7 +13,7 @@ fn callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 
@@ -45,7 +45,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 
@@ -104,7 +104,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 then: Some(AnySequence::new(&ctx, Cont(4))),
             })
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 
@@ -189,7 +189,7 @@ fn yield_sequence() -> Result<(), StaticError> {
                 then: Some(AnySequence::new(&ctx, Cont(0))),
             })
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 

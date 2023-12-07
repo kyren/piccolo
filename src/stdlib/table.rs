@@ -41,5 +41,5 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    ctx.state.globals.set(ctx, "table", table).unwrap();
+    ctx.set_global("table", table).unwrap();
 }

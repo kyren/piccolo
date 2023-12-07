@@ -16,7 +16,7 @@ fn userdata() -> Result<(), StaticError> {
             &ctx,
             MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
-        ctx.state.globals.set(ctx, "userdata", userdata)?;
+        ctx.set_global("userdata", userdata)?;
         let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
             match stack[0] {
                 Value::UserData(ud) => {
@@ -29,7 +29,7 @@ fn userdata() -> Result<(), StaticError> {
             stack.clear();
             Ok(CallbackReturn::Return)
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 

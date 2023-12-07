@@ -8,203 +8,173 @@ use crate::{
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "tostring",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                if stack.is_empty() {
-                    Err("Bad argument to tostring".into_value(ctx).into())
-                } else {
-                    match meta_ops::tostring(ctx, stack.get(0))? {
-                        MetaResult::Value(v) => {
-                            stack[0] = v;
-                            stack.drain(1..);
-                            Ok(CallbackReturn::Return)
-                        }
-                        MetaResult::Call(call) => {
-                            stack.replace(ctx, Variadic(call.args));
-                            Ok(CallbackReturn::Call {
-                                function: call.function,
-                                then: None,
-                            })
-                        }
+    ctx.set_global(
+        "tostring",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.is_empty() {
+                Err("Bad argument to tostring".into_value(ctx).into())
+            } else {
+                match meta_ops::tostring(ctx, stack.get(0))? {
+                    MetaResult::Value(v) => {
+                        stack[0] = v;
+                        stack.drain(1..);
+                        Ok(CallbackReturn::Return)
+                    }
+                    MetaResult::Call(call) => {
+                        stack.replace(ctx, Variadic(call.args));
+                        Ok(CallbackReturn::Call {
+                            function: call.function,
+                            then: None,
+                        })
                     }
                 }
-            }),
-        )
-        .unwrap();
+            }
+        }),
+    )
+    .unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "error",
-            AnyCallback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
-        )
-        .unwrap();
+    ctx.set_global(
+        "error",
+        AnyCallback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
+    )
+    .unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "assert",
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                if stack.get(0).to_bool() {
-                    Ok(CallbackReturn::Return)
-                } else if stack.get(1).is_nil() {
-                    Err("assertion failed!".into_value(ctx).into())
-                } else {
-                    Err(stack.get(1).into())
-                }
-            }),
-        )
-        .unwrap();
+    ctx.set_global(
+        "assert",
+        AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+            if stack.get(0).to_bool() {
+                Ok(CallbackReturn::Return)
+            } else if stack.get(1).is_nil() {
+                Err("assertion failed!".into_value(ctx).into())
+            } else {
+                Err(stack.get(1).into())
+            }
+        }),
+    )
+    .unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "pcall",
-            AnyCallback::from_fn(&ctx, move |ctx, _, mut stack| {
-                #[derive(Collect)]
-                #[collect(require_static)]
-                struct PCall;
+    ctx.set_global(
+        "pcall",
+        AnyCallback::from_fn(&ctx, move |ctx, _, mut stack| {
+            #[derive(Collect)]
+            #[collect(require_static)]
+            struct PCall;
 
-                impl<'gc> Sequence<'gc> for PCall {
-                    fn poll(
-                        &mut self,
-                        _ctx: Context<'gc>,
-                        _exec: Execution<'gc, '_>,
-                        mut stack: Stack<'gc, '_>,
-                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                        stack.push_front(Value::Boolean(true));
-                        Ok(SequencePoll::Return)
-                    }
-
-                    fn error(
-                        &mut self,
-                        ctx: Context<'gc>,
-                        _exec: Execution<'gc, '_>,
-                        error: Error<'gc>,
-                        mut stack: Stack<'gc, '_>,
-                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                        stack.clear();
-                        stack.extend([Value::Boolean(false), error.to_value(ctx)]);
-                        Ok(SequencePoll::Return)
-                    }
+            impl<'gc> Sequence<'gc> for PCall {
+                fn poll(
+                    &mut self,
+                    _ctx: Context<'gc>,
+                    _exec: Execution<'gc, '_>,
+                    mut stack: Stack<'gc, '_>,
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                    stack.push_front(Value::Boolean(true));
+                    Ok(SequencePoll::Return)
                 }
 
-                let function = meta_ops::call(ctx, stack.get(0))?;
-                stack.pop_front();
-                Ok(CallbackReturn::Call {
-                    function,
-                    then: Some(AnySequence::new(&ctx, PCall)),
-                })
-            }),
-        )
-        .unwrap();
-
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "type",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                if let Some(v) = stack.consume::<Option<Value>>(ctx)? {
-                    stack.replace(ctx, v.type_name());
-                    Ok(CallbackReturn::Return)
-                } else {
-                    Err("Missing argument to type".into_value(ctx).into())
+                fn error(
+                    &mut self,
+                    ctx: Context<'gc>,
+                    _exec: Execution<'gc, '_>,
+                    error: Error<'gc>,
+                    mut stack: Stack<'gc, '_>,
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                    stack.clear();
+                    stack.extend([Value::Boolean(false), error.to_value(ctx)]);
+                    Ok(SequencePoll::Return)
                 }
-            }),
-        )
-        .unwrap();
+            }
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "select",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                let ind = stack.get(0);
-                if let Some(n) = ind.to_integer() {
-                    if n >= 1 {
-                        let last = (n as usize).min(stack.len());
-                        stack.drain(0..last);
-                        return Ok(CallbackReturn::Return);
-                    }
-                }
+            let function = meta_ops::call(ctx, stack.get(0))?;
+            stack.pop_front();
+            Ok(CallbackReturn::Call {
+                function,
+                then: Some(AnySequence::new(&ctx, PCall)),
+            })
+        }),
+    )
+    .unwrap();
 
-                if matches!(ind, Value::String(s) if s == b"#") {
-                    stack.replace(ctx, stack.len() as i64 - 1);
+    ctx.set_global(
+        "type",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            if let Some(v) = stack.consume::<Option<Value>>(ctx)? {
+                stack.replace(ctx, v.type_name());
+                Ok(CallbackReturn::Return)
+            } else {
+                Err("Missing argument to type".into_value(ctx).into())
+            }
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
+        "select",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            let ind = stack.get(0);
+            if let Some(n) = ind.to_integer() {
+                if n >= 1 {
+                    let last = (n as usize).min(stack.len());
+                    stack.drain(0..last);
                     return Ok(CallbackReturn::Return);
                 }
+            }
 
-                Err("Bad argument to 'select'".into_value(ctx).into())
-            }),
-        )
-        .unwrap();
+            if matches!(ind, Value::String(s) if s == b"#") {
+                stack.replace(ctx, stack.len() as i64 - 1);
+                return Ok(CallbackReturn::Return);
+            }
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "rawget",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (table, key): (Table, Value) = stack.consume(ctx)?;
-                stack.replace(ctx, table.get(ctx, key));
+            Err("Bad argument to 'select'".into_value(ctx).into())
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
+        "rawget",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (table, key): (Table, Value) = stack.consume(ctx)?;
+            stack.replace(ctx, table.get(ctx, key));
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
+        "rawset",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (table, key, value): (Table, Value, Value) = stack.consume(ctx)?;
+            table.set(ctx, key, value)?;
+            stack.replace(ctx, table);
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
+        "getmetatable",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            if let Value::Table(t) = stack.get(0) {
+                stack.replace(ctx, t.metatable());
                 Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
+            } else {
+                Err("'getmetatable' can only be used on table types"
+                    .into_value(ctx)
+                    .into())
+            }
+        }),
+    )
+    .unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "rawset",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (table, key, value): (Table, Value, Value) = stack.consume(ctx)?;
-                table.set(ctx, key, value)?;
-                stack.replace(ctx, table);
-                Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
-
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "getmetatable",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                if let Value::Table(t) = stack.get(0) {
-                    stack.replace(ctx, t.metatable());
-                    Ok(CallbackReturn::Return)
-                } else {
-                    Err("'getmetatable' can only be used on table types"
-                        .into_value(ctx)
-                        .into())
-                }
-            }),
-        )
-        .unwrap();
-
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "setmetatable",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (t, mt): (Table, Option<Table>) = stack.consume(ctx)?;
-                t.set_metatable(&ctx, mt);
-                stack.replace(ctx, t);
-                Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
+    ctx.set_global(
+        "setmetatable",
+        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (t, mt): (Table, Option<Table>) = stack.consume(ctx)?;
+            t.set_metatable(&ctx, mt);
+            stack.replace(ctx, t);
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
 
     fn next<'gc>(
         ctx: Context<'gc>,
@@ -224,36 +194,33 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         Ok(CallbackReturn::Return)
     });
 
-    ctx.state.globals.set(ctx, "next", next).unwrap();
+    ctx.set_global("next", next).unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "pairs",
-            AnyCallback::from_fn_with(&ctx, next, move |next, ctx, _, mut stack| {
-                let table = stack.get(0);
-                if let Some(mt) = match table {
-                    Value::Table(t) => t.metatable(),
-                    Value::UserData(u) => u.metatable(),
-                    _ => None,
-                } {
-                    let pairs = mt.get(ctx, MetaMethod::Pairs);
-                    if !pairs.is_nil() {
-                        let function = meta_ops::call(ctx, pairs)?;
-                        stack.replace(ctx, (table, Value::Nil));
-                        return Ok(CallbackReturn::Call {
-                            function,
-                            then: None,
-                        });
-                    }
+    ctx.set_global(
+        "pairs",
+        AnyCallback::from_fn_with(&ctx, next, move |next, ctx, _, mut stack| {
+            let table = stack.get(0);
+            if let Some(mt) = match table {
+                Value::Table(t) => t.metatable(),
+                Value::UserData(u) => u.metatable(),
+                _ => None,
+            } {
+                let pairs = mt.get(ctx, MetaMethod::Pairs);
+                if !pairs.is_nil() {
+                    let function = meta_ops::call(ctx, pairs)?;
+                    stack.replace(ctx, (table, Value::Nil));
+                    return Ok(CallbackReturn::Call {
+                        function,
+                        then: None,
+                    });
                 }
+            }
 
-                stack.replace(ctx, (*next, table));
-                Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
+            stack.replace(ctx, (*next, table));
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
 
     let inext = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
         let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
@@ -293,38 +260,29 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         })
     });
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "ipairs",
-            AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, _, mut stack| {
-                stack.into_front(ctx, *inext);
-                Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
+    ctx.set_global(
+        "ipairs",
+        AnyCallback::from_fn_with(&ctx, inext, move |inext, ctx, _, mut stack| {
+            stack.into_front(ctx, *inext);
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
 
-    ctx.state
-        .globals
-        .set(
-            ctx,
-            "collectgarbage",
-            AnyCallback::from_fn(&ctx, move |ctx, _, mut stack| {
-                match stack.consume::<Option<String>>(ctx)? {
-                    Some(arg) if arg == "count" => {
-                        stack.into_back(
-                            ctx,
-                            ctx.mutation.metrics().total_allocation() as f64 / 1024.0,
-                        );
-                    }
-                    Some(_) => {
-                        return Err("bad argument to 'collectgarbage'".into_value(ctx).into());
-                    }
-                    None => {}
+    ctx.set_global(
+        "collectgarbage",
+        AnyCallback::from_fn(&ctx, move |ctx, _, mut stack| {
+            match stack.consume::<Option<String>>(ctx)? {
+                Some(arg) if arg == "count" => {
+                    stack.into_back(ctx, ctx.metrics().total_allocation() as f64 / 1024.0);
                 }
-                Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
+                Some(_) => {
+                    return Err("bad argument to 'collectgarbage'".into_value(ctx).into());
+                }
+                None => {}
+            }
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
 }

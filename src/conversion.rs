@@ -86,13 +86,13 @@ impl_copy_into!(
 
 impl<'gc> IntoValue<'gc> for &'static str {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-        Value::String(ctx.state.strings.intern_static(&ctx, self.as_bytes()))
+        Value::String(ctx.string_intern_static(self.as_bytes()))
     }
 }
 
 impl<'gc> IntoValue<'gc> for StdString {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-        Value::String(ctx.state.strings.intern(&ctx, self.as_bytes()))
+        Value::String(ctx.string_intern(self.as_bytes()))
     }
 }
 

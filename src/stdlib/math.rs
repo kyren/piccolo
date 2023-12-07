@@ -271,5 +271,5 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     )
     .unwrap();
 
-    ctx.state.globals.set(ctx, "math", math).unwrap();
+    ctx.set_global("math", math).unwrap();
 }

@@ -117,7 +117,7 @@ impl<'gc> FunctionPrototype<'gc> {
             type String = String<'gc>;
 
             fn intern(&mut self, s: &[u8]) -> Self::String {
-                self.0.state.strings.intern(&self.0, s)
+                self.0.string_intern(s)
             }
         }
 
@@ -128,7 +128,7 @@ impl<'gc> FunctionPrototype<'gc> {
 
         Ok(FunctionPrototype::from_compiled(
             &ctx,
-            ctx.state.strings.intern(&ctx, source_name.as_bytes()),
+            ctx.string_intern(source_name.as_bytes()),
             &compiled_function,
         ))
     }
@@ -214,7 +214,7 @@ impl<'gc> Closure<'gc> {
         name: Option<&str>,
         source: impl Read,
     ) -> Result<Closure<'gc>, PrototypeError> {
-        Self::load_with_env(ctx, name, source, ctx.state.globals)
+        Self::load_with_env(ctx, name, source, ctx.globals())
     }
 
     /// Compile a top-level closure from source, using the given table as the `_ENV` table.

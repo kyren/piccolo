@@ -212,7 +212,7 @@ impl<'gc> String<'gc> {
                 }
             }
         }
-        Ok(ctx.state.strings.intern(&ctx, &bytes))
+        Ok(ctx.string_intern(&bytes))
     }
 
     pub fn len(self) -> i64 {
@@ -377,6 +377,13 @@ impl<'gc> InternedStaticStrings<'gc> {
     }
 }
 
+/// A set of shared, immutable `String` values that are de-duplicated to safe space.
+///
+/// If the given string is the same as a previously interned string, and that interned string is
+/// still "live", then a pointer to the previous string is returned instead of a newly allocated
+/// string.
+///
+/// If there is no matching existing live interned string, then a new string is allocated.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct InternedStringSet<'gc> {

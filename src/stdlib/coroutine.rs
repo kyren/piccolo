@@ -135,5 +135,5 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
-    ctx.state.globals.set(ctx, "coroutine", coroutine).unwrap();
+    ctx.set_global("coroutine", coroutine).unwrap();
 }

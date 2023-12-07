@@ -11,7 +11,7 @@ fn test_interrupt() -> Result<(), StaticError> {
             exec.fuel().interrupt();
             Ok(CallbackReturn::Return)
         });
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
         Ok(())
     })?;
 

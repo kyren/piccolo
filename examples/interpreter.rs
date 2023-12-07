@@ -25,7 +25,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
                         CallbackReturn::Return
                     } else {
                         CallbackReturn::Call {
-                            function: meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                            function: meta_ops::call(ctx, ctx.get_global("print"))?,
                             then: None,
                         }
                     })

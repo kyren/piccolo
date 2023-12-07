@@ -42,7 +42,7 @@ fn error_tostring() -> Result<(), StaticError> {
 
     let executor = lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
-        ctx.state.globals.set(ctx, "callback", callback)?;
+        ctx.set_global("callback", callback)?;
 
         let closure = Closure::load(
             ctx,

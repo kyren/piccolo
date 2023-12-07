@@ -24,10 +24,7 @@ impl<'gc> Singleton<'gc> for UnitSingleton<'gc> {
 }
 
 pub fn unit<'gc>(ctx: Context<'gc>) -> AnyUserData<'gc> {
-    ctx.state
-        .registry
-        .singleton::<Rootable![UnitSingleton<'_>]>(ctx)
-        .0
+    ctx.singleton::<Rootable![UnitSingleton<'_>]>().0
 }
 
 pub fn is_unit<'gc>(ud: AnyUserData<'gc>) -> bool {
@@ -59,10 +56,7 @@ impl<'gc> Singleton<'gc> for NoneSingleton<'gc> {
 }
 
 pub fn none<'gc>(ctx: Context<'gc>) -> AnyUserData<'gc> {
-    ctx.state
-        .registry
-        .singleton::<Rootable![NoneSingleton<'_>]>(ctx)
-        .0
+    ctx.singleton::<Rootable![NoneSingleton<'_>]>().0
 }
 
 pub fn is_none<'gc>(ud: AnyUserData<'gc>) -> bool {
@@ -70,6 +64,6 @@ pub fn is_none<'gc>(ud: AnyUserData<'gc>) -> bool {
 }
 
 pub fn set_globals<'gc>(ctx: Context<'gc>) {
-    ctx.state.globals.set(ctx, "unit", unit(ctx)).unwrap();
-    ctx.state.globals.set(ctx, "none", none(ctx)).unwrap();
+    ctx.set_global("unit", unit(ctx)).unwrap();
+    ctx.set_global("none", none(ctx)).unwrap();
 }

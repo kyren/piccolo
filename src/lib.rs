@@ -5,7 +5,7 @@ pub mod compiler;
 pub mod constant;
 pub mod conversion;
 pub mod error;
-pub(crate) mod finalizers;
+pub mod finalizers;
 pub mod fuel;
 pub mod function;
 pub mod io;
@@ -29,9 +29,10 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
+    finalizers::{Finalize, Finalizers},
     fuel::Fuel,
     function::Function,
-    lua::{Context, Lua, State},
+    lua::{Context, Lua},
     meta_ops::MetaMethod,
     registry::{
         Registry, Singleton, StashedCallback, StashedClosure, StashedExecutor, StashedFunction,
