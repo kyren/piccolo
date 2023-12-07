@@ -325,6 +325,26 @@ impl<'gc> FromValue<'gc> for AnyCallback<'gc> {
     }
 }
 
+impl<'gc> FromValue<'gc> for StdString {
+    fn from_value(_: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        let Value::String(str) = value else {
+            return Err(TypeError {
+                expected: "String",
+                found: value.type_name(),
+            });
+        };
+
+        let Ok(str) = str.to_str() else {
+            return Err(TypeError {
+                expected: "UTF-8 String",
+                found: "non-UTF-8 String",
+            });
+        };
+
+        Ok(str.to_owned())
+    }
+}
+
 pub trait IntoMultiValue<'gc> {
     type Iter: Iterator<Item = Value<'gc>>;
 

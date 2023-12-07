@@ -1,4 +1,4 @@
-use piccolo::{FromValue, IntoMultiValue, IntoValue, Lua, Table, Value};
+use piccolo::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Lua, Table, Value};
 
 #[test]
 fn test_conversions() {
@@ -48,5 +48,12 @@ fn test_conversions() {
                 Value::String(s)
             ] if s == b"hello"
         ));
+
+        let (a, b, c) = <(i32, bool, String)>::from_multi_value(
+            ctx,
+            (2, false, "goodbye").into_multi_value(ctx),
+        )
+        .unwrap();
+        assert_eq!((a, b, c), (2, false, "goodbye".to_owned()));
     });
 }
