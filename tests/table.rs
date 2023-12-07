@@ -6,7 +6,7 @@ use piccolo::{Lua, Table, Value};
 fn test_table_iter() {
     let mut lua = Lua::core();
 
-    lua.run(|ctx| {
+    lua.enter(|ctx| {
         let table = Table::new(&ctx);
 
         table.set(ctx, 1, "1").unwrap();

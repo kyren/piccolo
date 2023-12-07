@@ -15,6 +15,6 @@ pub trait LuaSerdeExt {
 
 impl LuaSerdeExt for Lua {
     fn load_serde(&mut self) {
-        self.run(|ctx| markers::set_globals(ctx));
+        self.enter(|ctx| markers::set_globals(ctx));
     }
 }

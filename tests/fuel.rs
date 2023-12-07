@@ -6,7 +6,7 @@ use piccolo::{
 fn test_interrupt() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, mut exec, _| {
             exec.fuel().interrupt();
             Ok(CallbackReturn::Return)
@@ -15,7 +15,7 @@ fn test_interrupt() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(ctx, None, &b"callback(); abort()"[..])?;
         Ok(ctx
             .state
@@ -23,7 +23,7 @@ fn test_interrupt() -> Result<(), StaticError> {
             .stash(&ctx, Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.run(|ctx| {
+    lua.enter(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
         let mut fuel = Fuel::with(i32::MAX);
         assert!(!executor.step(ctx, &mut fuel));

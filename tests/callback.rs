@@ -8,7 +8,7 @@ use piccolo::{
 fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
@@ -17,7 +17,7 @@ fn callback() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -43,7 +43,7 @@ fn callback() -> Result<(), StaticError> {
 fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
@@ -52,7 +52,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -75,7 +75,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 fn loopy_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _, _| {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -114,7 +114,7 @@ fn loopy_callback() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -154,7 +154,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 fn yield_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -202,7 +202,7 @@ fn yield_sequence() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -236,7 +236,7 @@ fn yield_sequence() -> Result<(), StaticError> {
 fn resume_with_err() {
     let mut lua = Lua::core();
 
-    let executor = lua.run(|ctx| {
+    let executor = lua.enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
@@ -284,7 +284,7 @@ fn resume_with_err() {
 
     lua.finish(&executor);
 
-    lua.run(|ctx| {
+    lua.enter(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
         assert!(executor.take_result::<String>(ctx).unwrap().unwrap() == "return");
         executor
@@ -294,7 +294,7 @@ fn resume_with_err() {
 
     lua.finish(&executor);
 
-    lua.run(|ctx| {
+    lua.enter(|ctx| {
         let executor = ctx.state.registry.fetch(&executor);
         match executor.take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {

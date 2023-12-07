@@ -11,7 +11,7 @@ use piccolo::{
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
             Err(_) => Closure::load(ctx, None, code.as_bytes())?,
@@ -43,7 +43,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let mut editor = DefaultEditor::new()?;
-    let executor = lua.run(|ctx| {
+    let executor = lua.enter(|ctx| {
         let executor = Executor::new(ctx);
         ctx.state.registry.stash(&ctx, executor)
     });
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
     let file_name = matches.get_one::<String>("file").unwrap();
     let file = io::buffered_read(File::open(file_name)?)?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(ctx, Some(file_name.as_str()), file)?;
         Ok(ctx
             .state

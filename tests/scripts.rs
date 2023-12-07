@@ -24,7 +24,7 @@ fn test_scripts() {
                 let mut lua = Lua::full();
 
                 if let Err(err) = lua
-                    .try_run(|ctx| {
+                    .try_enter(|ctx| {
                         let closure =
                             Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
                         Ok(ctx

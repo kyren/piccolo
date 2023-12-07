@@ -11,7 +11,7 @@ struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let userdata = AnyUserData::new::<Rootable![MyUserData<'_>]>(
             &ctx,
             MyUserData(Gc::new(&ctx, Lock::new(17))),
@@ -33,7 +33,7 @@ fn userdata() -> Result<(), StaticError> {
         Ok(())
     })?;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -50,7 +50,7 @@ fn userdata() -> Result<(), StaticError> {
 
     lua.finish(&executor);
 
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         let (ud, res) = ctx
             .state
             .registry

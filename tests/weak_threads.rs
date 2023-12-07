@@ -4,7 +4,7 @@ use piccolo::{Closure, Executor, Lua, StaticError};
 fn weak_threads_close() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -32,7 +32,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
 
     for i in 1..4 {
         lua.gc_collect();
-        let executor = lua.try_run(|ctx| {
+        let executor = lua.try_enter(|ctx| {
             let closure = Closure::load(ctx, None, format!("assert(closure() == {i})").as_bytes())?;
 
             Ok(ctx

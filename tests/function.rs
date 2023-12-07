@@ -4,7 +4,7 @@ use piccolo::{AnyCallback, CallbackReturn, Executor, Function, Lua, StaticError,
 fn function_compose_bind() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let composed_functions = Function::compose(
             &ctx,
             [

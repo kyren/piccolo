@@ -93,7 +93,7 @@ impl Lua {
     ///   - `load_string`
     ///   - `load_table`
     pub fn load_core(&mut self) {
-        self.run(|ctx| {
+        self.enter(|ctx| {
             load_base(ctx);
             load_coroutine(ctx);
             load_math(ctx);
@@ -104,7 +104,7 @@ impl Lua {
 
     /// Load the parts of the stdlib that allow I/O.
     pub fn load_io(&mut self) {
-        self.run(|ctx| {
+        self.enter(|ctx| {
             load_io(ctx);
         })
     }
@@ -135,7 +135,15 @@ impl Lua {
         self.arena.metrics()
     }
 
-    pub fn run<F, T>(&mut self, f: F) -> T
+    /// Enter the garbage collected arena and perform some operation.
+    ///
+    /// In order to interact with Lua or do any useful work with Lua values, you must do so from
+    /// *inside* the arena. All values branded with the `'gc` branding lifetime must forever live
+    /// *inside* the arena, and cannot escape it.
+    ///
+    /// Garbage collection takes place *in-between* calls to `Lua::enter`, no garbage will be
+    /// collected cocurrently with accessing the arena.
+    pub fn enter<F, T>(&mut self, f: F) -> T
     where
         F: for<'gc> FnOnce(Context<'gc>) -> T,
     {
@@ -161,21 +169,26 @@ impl Lua {
         r
     }
 
-    pub fn try_run<F, R>(&mut self, f: F) -> Result<R, StaticError>
+    /// A version of `Lua::enter` that expects failure and also automatically converts `Error` types
+    /// into `StaticError`, allowing the error type to escape the arena.
+    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, StaticError>
     where
         F: for<'gc> FnOnce(Context<'gc>) -> Result<R, Error<'gc>>,
     {
-        self.run(move |ctx| f(ctx).map_err(Error::into_static))
+        self.enter(move |ctx| f(ctx).map_err(Error::into_static))
     }
 
     /// Run the given executor to completion.
+    ///
+    /// This will periodically exit the arena in order to collect garbage concurrently with running
+    /// Lua code.
     pub fn finish(&mut self, executor: &StashedExecutor) {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
             let mut fuel = Fuel::with(FUEL_PER_GC);
 
-            if self.run(|ctx| {
+            if self.enter(|ctx| {
                 let executor = ctx.state.registry.fetch(executor);
                 executor.step(ctx, &mut fuel)
             }) {
@@ -185,11 +198,14 @@ impl Lua {
     }
 
     /// Run the given executor to completion and then take return values from the returning thread.
+    ///
+    /// This is equivalent to calling `Lua::finish` on an executor and then calling
+    /// `Executor::take_result` yourself.
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
         executor: &StashedExecutor,
     ) -> Result<R, StaticError> {
         self.finish(executor);
-        self.try_run(|ctx| ctx.state.registry.fetch(executor).take_result::<R>(ctx)?)
+        self.try_enter(|ctx| ctx.state.registry.fetch(executor).take_result::<R>(ctx)?)
     }
 }

@@ -7,7 +7,7 @@ use thiserror::Error;
 fn error_unwind() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let closure = Closure::load(
             ctx,
             None,
@@ -26,7 +26,7 @@ fn error_unwind() -> Result<(), StaticError> {
     })?;
 
     lua.finish(&executor);
-    lua.try_run(|ctx| {
+    lua.try_enter(|ctx| {
         match ctx.state.registry.fetch(&executor).take_result::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
             _ => panic!("wrong error returned"),
@@ -43,7 +43,7 @@ fn error_tostring() -> Result<(), StaticError> {
     #[error("test error")]
     struct TestError;
 
-    let executor = lua.try_run(|ctx| {
+    let executor = lua.try_enter(|ctx| {
         let callback = AnyCallback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
         ctx.state.globals.set(ctx, "callback", callback)?;
 

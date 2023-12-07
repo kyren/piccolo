@@ -3,7 +3,7 @@ use piccolo::{FromValue, IntoMultiValue, IntoValue, Lua, Table, Value};
 #[test]
 fn test_conversions() {
     let mut lua = Lua::core();
-    lua.run(|ctx| {
+    lua.enter(|ctx| {
         let v = (1, true, "hello").into_multi_value(ctx).collect::<Vec<_>>();
         assert!(matches!(
             v.as_slice(),
