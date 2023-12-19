@@ -149,26 +149,12 @@ impl<'gc> String<'gc> {
             }
         }
     }
-
-    pub fn to_str(self) -> Result<&'gc str, Utf8Error> {
-        str::from_utf8(self.as_bytes())
-    }
-
-    pub fn to_str_lossy(self) -> Cow<'gc, str> {
-        StdString::from_utf8_lossy(self.as_bytes())
-    }
 }
 
 fn str_hash(s: &[u8]) -> u64 {
     let mut state = FxHasher::default();
     state.write(s);
     state.finish()
-}
-
-#[derive(Debug, Copy, Clone, Error)]
-#[error("cannot concat {bad_type}")]
-pub enum StringError {
-    Concat { bad_type: &'static str },
 }
 
 impl<'gc> fmt::Debug for String<'gc> {
@@ -186,8 +172,14 @@ impl<'gc> fmt::Display for String<'gc> {
     }
 }
 
+#[derive(Debug, Copy, Clone, Error)]
+#[error("cannot concat {bad_type}")]
+pub struct BadConcatType {
+    bad_type: &'static str,
+}
+
 impl<'gc> String<'gc> {
-    pub fn concat(ctx: Context<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, StringError> {
+    pub fn concat(ctx: Context<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, BadConcatType> {
         let mut bytes = Vec::new();
         for value in values {
             match value {
@@ -196,17 +188,17 @@ impl<'gc> String<'gc> {
                 Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
                 Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
                 Value::String(s) => bytes.extend(s.as_bytes()),
-                Value::Table(_) => return Err(StringError::Concat { bad_type: "table" }),
+                Value::Table(_) => return Err(BadConcatType { bad_type: "table" }),
                 Value::Function(_) => {
-                    return Err(StringError::Concat {
+                    return Err(BadConcatType {
                         bad_type: "function",
                     });
                 }
                 Value::Thread(_) => {
-                    return Err(StringError::Concat { bad_type: "thread" });
+                    return Err(BadConcatType { bad_type: "thread" });
                 }
                 Value::UserData(_) => {
-                    return Err(StringError::Concat {
+                    return Err(BadConcatType {
                         bad_type: "userdata",
                     });
                 }
@@ -217,6 +209,14 @@ impl<'gc> String<'gc> {
 
     pub fn len(self) -> i64 {
         self.as_bytes().len().try_into().unwrap()
+    }
+
+    pub fn to_str(self) -> Result<&'gc str, Utf8Error> {
+        str::from_utf8(self.as_bytes())
+    }
+
+    pub fn to_str_lossy(self) -> Cow<'gc, str> {
+        StdString::from_utf8_lossy(self.as_bytes())
     }
 }
 
@@ -377,7 +377,7 @@ impl<'gc> InternedStaticStrings<'gc> {
     }
 }
 
-/// A set of shared, immutable `String` values that are de-duplicated to safe space.
+/// A set of shared, immutable `String` values that are de-duplicated to save space.
 ///
 /// If the given string is the same as a previously interned string, and that interned string is
 /// still "live", then a pointer to the previous string is returned instead of a newly allocated

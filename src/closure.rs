@@ -204,10 +204,6 @@ impl<'gc> Closure<'gc> {
         Ok(Closure(Gc::new(mc, ClosureState { proto, upvalues })))
     }
 
-    pub fn as_ptr(&self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
-    }
-
     /// Compile a top-level closure from source, using the globals table as the `_ENV` table.
     pub fn load(
         ctx: Context<'gc>,
@@ -226,5 +222,9 @@ impl<'gc> Closure<'gc> {
     ) -> Result<Closure<'gc>, PrototypeError> {
         let proto = FunctionPrototype::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
+    }
+
+    pub fn as_ptr(&self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
     }
 }

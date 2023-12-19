@@ -76,8 +76,7 @@ impl<'gc> Thread<'gc> {
                 open_upvalues: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
             }),
         );
-        ctx.finalizers()
-            .add(&ctx, unsize!(Gc::downgrade(p) => dyn Finalize));
+        ctx.finalizers().add(&ctx, unsize!(p => dyn Finalize));
         Thread(p)
     }
 

@@ -33,8 +33,8 @@ impl<'gc> Finalizers<'gc> {
         Finalizers(Gc::new(mc, RefLock::new(Vec::new())))
     }
 
-    pub(crate) fn add(&self, mc: &Mutation<'gc>, ptr: GcWeak<'gc, dyn Finalize<'gc> + 'gc>) {
-        self.0.borrow_mut(mc).push(ptr);
+    pub(crate) fn add(&self, mc: &Mutation<'gc>, ptr: Gc<'gc, dyn Finalize<'gc> + 'gc>) {
+        self.0.borrow_mut(mc).push(Gc::downgrade(ptr));
     }
 
     pub(crate) fn finalize(&self, fc: &Finalization<'gc>) {

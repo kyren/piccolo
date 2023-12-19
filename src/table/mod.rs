@@ -1,7 +1,7 @@
-pub mod raw;
-pub mod table;
+mod raw;
+mod table;
 
 pub use self::{
-    raw::{InvalidTableKey, NextValue},
-    table::Table,
+    raw::{InvalidTableKey, NextValue, RawTable},
+    table::{Table, TableState},
 };

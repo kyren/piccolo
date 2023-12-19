@@ -29,7 +29,7 @@ pub use self::{
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
-    finalizers::{Finalize, Finalizers},
+    finalizers::Finalizers,
     fuel::Fuel,
     function::Function,
     lua::{Context, Lua},
@@ -39,7 +39,7 @@ pub use self::{
         StashedTable, StashedThread, StashedUserData, StaticValue,
     },
     stack::Stack,
-    string::{String, StringError},
+    string::{BadConcatType, String},
     table::{InvalidTableKey, Table},
     thread::{
         BadExecutorMode, BadThreadMode, Execution, Executor, ExecutorMode, Thread, ThreadMode,

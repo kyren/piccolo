@@ -32,16 +32,16 @@ impl<'gc> Table<'gc> {
         Self::from_parts(mc, RawTable::new(mc), None)
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
-    }
-
     pub fn from_parts(
         mc: &Mutation<'gc>,
         entries: RawTable<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Table<'gc> {
         Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
+    }
+
+    pub fn as_ptr(self) -> *const () {
+        Gc::as_ptr(self.0) as *const ()
     }
 
     pub fn get<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
