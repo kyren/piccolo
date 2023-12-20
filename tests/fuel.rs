@@ -1,13 +1,11 @@
-use piccolo::{
-    AnyCallback, CallbackReturn, Closure, Executor, ExecutorMode, Fuel, Lua, StaticError,
-};
+use piccolo::{Callback, CallbackReturn, Closure, Executor, ExecutorMode, Fuel, Lua, StaticError};
 
 #[test]
 fn test_interrupt() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, mut exec, _| {
+        let callback = Callback::from_fn(&ctx, |_, mut exec, _| {
             exec.fuel().interrupt();
             Ok(CallbackReturn::Return)
         });

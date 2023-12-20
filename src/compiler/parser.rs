@@ -1,4 +1,4 @@
-use std::{io::Read, ops::Deref, rc::Rc};
+use std::{io::Read, ops, rc::Rc};
 
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub struct LineAnnotated<T> {
     pub line_number: LineNumber,
 }
 
-impl<T> Deref for LineAnnotated<T> {
+impl<T> ops::Deref for LineAnnotated<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

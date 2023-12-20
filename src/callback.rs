@@ -1,6 +1,7 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
+    ops,
 };
 
 use allocator_api2::boxed;
@@ -12,22 +13,22 @@ use crate::{Context, Error, Execution, Function, Stack, Thread};
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
     Return,
-    Sequence(AnySequence<'gc>),
+    Sequence(BoxSequence<'gc>),
     Yield {
         to_thread: Option<Thread<'gc>>,
-        then: Option<AnySequence<'gc>>,
+        then: Option<BoxSequence<'gc>>,
     },
     Call {
         function: Function<'gc>,
-        then: Option<AnySequence<'gc>>,
+        then: Option<BoxSequence<'gc>>,
     },
     Resume {
         thread: Thread<'gc>,
-        then: Option<AnySequence<'gc>>,
+        then: Option<BoxSequence<'gc>>,
     },
 }
 
-pub trait Callback<'gc>: Collect {
+pub trait CallbackFn<'gc>: Collect {
     fn call(
         &self,
         ctx: Context<'gc>,
@@ -39,7 +40,7 @@ pub trait Callback<'gc>: Collect {
 // Represents a callback as a single pointer with an inline VTable header.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct AnyCallback<'gc>(Gc<'gc, Header<'gc>>);
+pub struct Callback<'gc>(Gc<'gc, Header<'gc>>);
 
 struct Header<'gc> {
     call: unsafe fn(
@@ -50,8 +51,8 @@ struct Header<'gc> {
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
 }
 
-impl<'gc> AnyCallback<'gc> {
-    pub fn new<C: Callback<'gc> + 'gc>(mc: &Mutation<'gc>, callback: C) -> Self {
+impl<'gc> Callback<'gc> {
+    pub fn new<C: CallbackFn<'gc> + 'gc>(mc: &Mutation<'gc>, callback: C) -> Self {
         #[repr(C)]
         struct HeaderCallback<'gc, C> {
             header: Header<'gc>,
@@ -90,7 +91,7 @@ impl<'gc> AnyCallback<'gc> {
         Self(unsafe { Gc::cast::<Header>(hc) })
     }
 
-    pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> AnyCallback<'gc>
+    pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
         F: 'static
             + Fn(
@@ -102,7 +103,7 @@ impl<'gc> AnyCallback<'gc> {
         Self::from_fn_with(mc, (), move |_, ctx, exec, stack| call(ctx, exec, stack))
     }
 
-    pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> AnyCallback<'gc>
+    pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect,
         F: 'static
@@ -121,7 +122,7 @@ impl<'gc> AnyCallback<'gc> {
             call: F,
         }
 
-        impl<'gc, R, F> Callback<'gc> for RootCallback<R, F>
+        impl<'gc, R, F> CallbackFn<'gc> for RootCallback<R, F>
         where
             R: 'gc + Collect,
             F: 'static
@@ -142,7 +143,7 @@ impl<'gc> AnyCallback<'gc> {
             }
         }
 
-        AnyCallback::new(mc, RootCallback { root, call })
+        Callback::new(mc, RootCallback { root, call })
     }
 
     pub fn as_ptr(self) -> *const () {
@@ -159,21 +160,21 @@ impl<'gc> AnyCallback<'gc> {
     }
 }
 
-impl<'gc> fmt::Debug for AnyCallback<'gc> {
+impl<'gc> fmt::Debug for Callback<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("Callback").field(&self.as_ptr()).finish()
     }
 }
 
-impl<'gc> PartialEq for AnyCallback<'gc> {
-    fn eq(&self, other: &AnyCallback<'gc>) -> bool {
+impl<'gc> PartialEq for Callback<'gc> {
+    fn eq(&self, other: &Callback<'gc>) -> bool {
         self.as_ptr() == other.as_ptr()
     }
 }
 
-impl<'gc> Eq for AnyCallback<'gc> {}
+impl<'gc> Eq for Callback<'gc> {}
 
-impl<'gc> Hash for AnyCallback<'gc> {
+impl<'gc> Hash for Callback<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_ptr().hash(state)
     }
@@ -236,9 +237,9 @@ pub trait Sequence<'gc>: Collect {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnySequence<'gc>(pub boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
+pub struct BoxSequence<'gc>(pub boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
 
-impl<'gc> fmt::Debug for AnySequence<'gc> {
+impl<'gc> fmt::Debug for BoxSequence<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("Sequence")
             .field(&(self.0.as_ref() as *const _))
@@ -246,7 +247,21 @@ impl<'gc> fmt::Debug for AnySequence<'gc> {
     }
 }
 
-impl<'gc> AnySequence<'gc> {
+impl<'gc> ops::Deref for BoxSequence<'gc> {
+    type Target = dyn Sequence<'gc> + 'gc;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl<'gc> ops::DerefMut for BoxSequence<'gc> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.0
+    }
+}
+
+impl<'gc> BoxSequence<'gc> {
     pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
         let b = boxed::Box::new_in(sequence, MetricsAlloc::new(mc));
         let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
@@ -254,24 +269,5 @@ impl<'gc> AnySequence<'gc> {
         // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
         let b = unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) };
         Self(b)
-    }
-
-    pub fn poll(
-        &mut self,
-        ctx: Context<'gc>,
-        exec: Execution<'gc, '_>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.0.poll(ctx, exec, stack)
-    }
-
-    pub fn error(
-        &mut self,
-        ctx: Context<'gc>,
-        exec: Execution<'gc, '_>,
-        error: Error<'gc>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.0.error(ctx, exec, error, stack)
     }
 }

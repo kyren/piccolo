@@ -2,7 +2,7 @@ use std::{f64, fmt, i64, io, string::String as StdString};
 
 use gc_arena::Collect;
 
-use crate::{AnyCallback, AnyUserData, Closure, Constant, Function, String, Table, Thread};
+use crate::{Callback, Closure, Constant, Function, String, Table, Thread, UserData};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -15,7 +15,7 @@ pub enum Value<'gc> {
     Table(Table<'gc>),
     Function(Function<'gc>),
     Thread(Thread<'gc>),
-    UserData(AnyUserData<'gc>),
+    UserData(UserData<'gc>),
 }
 
 impl<'gc> Default for Value<'gc> {
@@ -158,8 +158,8 @@ impl<'gc> From<Closure<'gc>> for Value<'gc> {
     }
 }
 
-impl<'gc> From<AnyCallback<'gc>> for Value<'gc> {
-    fn from(v: AnyCallback<'gc>) -> Value<'gc> {
+impl<'gc> From<Callback<'gc>> for Value<'gc> {
+    fn from(v: Callback<'gc>) -> Value<'gc> {
         Value::Function(Function::Callback(v))
     }
 }
@@ -170,8 +170,8 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
     }
 }
 
-impl<'gc> From<AnyUserData<'gc>> for Value<'gc> {
-    fn from(v: AnyUserData<'gc>) -> Value<'gc> {
+impl<'gc> From<UserData<'gc>> for Value<'gc> {
+    fn from(v: UserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
     }
 }

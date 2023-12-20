@@ -1,4 +1,4 @@
-use crate::{AnyCallback, CallbackReturn, Context, IntoValue, Table, Value};
+use crate::{Callback, CallbackReturn, Context, IntoValue, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -7,7 +7,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "len",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let v: Option<Value> = stack.consume(ctx)?;
                 if let Some(len) = v.and_then(|v| match v {
                     Value::Integer(i) => Some(i.to_string().as_bytes().len().try_into().unwrap()),

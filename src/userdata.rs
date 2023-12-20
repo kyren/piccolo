@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use gc_arena::{barrier, lock, Collect, Mutation, Root, Rootable};
 use thiserror::Error;
 
-use crate::{any::AnyValue, Table};
+use crate::{any::Any, Table};
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("UserData type mismatch")]
@@ -11,17 +11,17 @@ pub struct BadUserDataType;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct AnyUserData<'gc>(AnyValue<'gc, lock::Lock<Option<Table<'gc>>>>);
+pub struct UserData<'gc>(Any<'gc, lock::Lock<Option<Table<'gc>>>>);
 
-impl<'gc> PartialEq for AnyUserData<'gc> {
+impl<'gc> PartialEq for UserData<'gc> {
     fn eq(&self, other: &Self) -> bool {
         self.0.as_ptr() == other.0.as_ptr()
     }
 }
 
-impl<'gc> Eq for AnyUserData<'gc> {}
+impl<'gc> Eq for UserData<'gc> {}
 
-impl<'gc> Hash for AnyUserData<'gc> {
+impl<'gc> Hash for UserData<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.as_ptr().hash(state)
     }
@@ -37,12 +37,12 @@ impl<'a, R: 'static> Rootable<'a> for StaticRoot<R> {
     type Root = StaticRoot<R>;
 }
 
-impl<'gc> AnyUserData<'gc> {
+impl<'gc> UserData<'gc> {
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a>,
     {
-        AnyUserData(AnyValue::new::<R>(mc, None.into(), val))
+        UserData(Any::new::<R>(mc, val))
     }
 
     pub fn new_static<R: 'static>(mc: &Mutation<'gc>, val: R) -> Self {

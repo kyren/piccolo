@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops, AnyCallback, AnySequence, CallbackReturn, Context, Execution, Sequence, SequencePoll,
+    meta_ops, BoxSequence, Callback, CallbackReturn, Context, Execution, Sequence, SequencePoll,
     Stack, Table, Thread, ThreadMode,
 };
 
@@ -12,7 +12,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "create",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread = Thread::new(ctx);
                 thread
                     .start_suspended(&ctx, meta_ops::call(ctx, stack.get(0))?)
@@ -27,7 +27,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "resume",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread: Thread = stack.from_front(ctx)?;
 
                 #[derive(Collect)]
@@ -59,7 +59,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
 
                 Ok(CallbackReturn::Resume {
                     thread,
-                    then: Some(AnySequence::new(&ctx, ResumeHandler)),
+                    then: Some(BoxSequence::new(&ctx, ResumeHandler)),
                 })
             }),
         )
@@ -69,7 +69,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "continue",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread: Thread = stack.from_front(ctx)?;
                 Ok(CallbackReturn::Resume { thread, then: None })
             }),
@@ -80,7 +80,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "status",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread: Thread = stack.consume(ctx)?;
                 stack.replace(
                     ctx,
@@ -100,7 +100,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "yield",
-            AnyCallback::from_fn(&ctx, |_, _, _| {
+            Callback::from_fn(&ctx, |_, _, _| {
                 Ok(CallbackReturn::Yield {
                     to_thread: None,
                     then: None,
@@ -113,7 +113,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "yieldto",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread: Thread = stack.from_front(ctx)?;
                 Ok(CallbackReturn::Yield {
                     to_thread: Some(thread),
@@ -127,7 +127,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "running",
-            AnyCallback::from_fn(&ctx, |ctx, exec, mut stack| {
+            Callback::from_fn(&ctx, |ctx, exec, mut stack| {
                 let current_thread = exec.current_thread();
                 stack.replace(ctx, (current_thread.thread, current_thread.is_main));
                 Ok(CallbackReturn::Return)

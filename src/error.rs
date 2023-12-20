@@ -3,9 +3,7 @@ use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc}
 use gc_arena::{Collect, Rootable};
 use thiserror::Error;
 
-use crate::{
-    AnyCallback, AnyUserData, CallbackReturn, Context, MetaMethod, Singleton, Table, Value,
-};
+use crate::{Callback, CallbackReturn, Context, MetaMethod, Singleton, Table, UserData, Value};
 
 #[derive(Debug, Clone, Copy, Error)]
 #[error("type error, expected {expected}, found {found}")]
@@ -157,8 +155,8 @@ impl<'gc> Error<'gc> {
                             .set(
                                 ctx,
                                 MetaMethod::ToString,
-                                AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
-                                    let ud = stack.consume::<AnyUserData>(ctx)?;
+                                Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                                    let ud = stack.consume::<UserData>(ctx)?;
                                     let error = ud.downcast_static::<RuntimeError>()?;
                                     stack.replace(ctx, error.to_string());
                                     Ok(CallbackReturn::Return)
@@ -169,7 +167,7 @@ impl<'gc> Error<'gc> {
                     }
                 }
 
-                let ud = AnyUserData::new_static(&ctx, err.clone());
+                let ud = UserData::new_static(&ctx, err.clone());
                 ud.set_metatable(&ctx, Some(ctx.singleton::<Rootable![UDMeta<'_>]>().0));
                 ud.into()
             }

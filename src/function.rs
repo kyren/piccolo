@@ -1,7 +1,7 @@
 use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Execution, IntoMultiValue,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, IntoMultiValue,
     Sequence, SequencePoll, Stack,
 };
 
@@ -9,7 +9,7 @@ use crate::{
 #[collect(no_drop)]
 pub enum Function<'gc> {
     Closure(Closure<'gc>),
-    Callback(AnyCallback<'gc>),
+    Callback(Callback<'gc>),
 }
 
 impl<'gc> From<Closure<'gc>> for Function<'gc> {
@@ -18,8 +18,8 @@ impl<'gc> From<Closure<'gc>> for Function<'gc> {
     }
 }
 
-impl<'gc> From<AnyCallback<'gc>> for Function<'gc> {
-    fn from(callback: AnyCallback<'gc>) -> Self {
+impl<'gc> From<Callback<'gc>> for Function<'gc> {
+    fn from(callback: Callback<'gc>) -> Self {
         Self::Callback(callback)
     }
 }
@@ -51,14 +51,14 @@ impl<'gc> Function<'gc> {
             }
         }
 
-        Self::Callback(AnyCallback::from_fn_with(
+        Self::Callback(Callback::from_fn_with(
             mc,
             Gc::new(mc, functions),
             |functions, ctx, _, _| {
                 if (**functions).as_ref().is_empty() {
                     Ok(CallbackReturn::Return)
                 } else {
-                    Ok(CallbackReturn::Sequence(AnySequence::new(
+                    Ok(CallbackReturn::Sequence(BoxSequence::new(
                         &ctx,
                         Compose(*functions, 0),
                     )))
@@ -71,7 +71,7 @@ impl<'gc> Function<'gc> {
     where
         A: IntoMultiValue<'gc> + Collect + Clone + 'gc,
     {
-        Self::Callback(AnyCallback::from_fn_with(
+        Self::Callback(Callback::from_fn_with(
             mc,
             (self, args),
             |(f, args), ctx, exec, mut stack| {

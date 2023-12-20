@@ -1,7 +1,7 @@
 use gc_arena::Collect;
 use piccolo::{
-    AnyCallback, AnySequence, CallbackReturn, Closure, Context, Error, Execution, Executor,
-    Function, IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
+    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
 };
 
 #[test]
@@ -9,7 +9,7 @@ fn callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
+        let callback = Callback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
@@ -41,7 +41,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, mut stack| {
+        let callback = Callback::from_fn(&ctx, |_, _, mut stack| {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
@@ -70,7 +70,7 @@ fn loopy_callback() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, _| {
+        let callback = Callback::from_fn(&ctx, |ctx, _, _| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont(i64);
@@ -93,7 +93,7 @@ fn loopy_callback() -> Result<(), StaticError> {
             }
 
             Ok(CallbackReturn::Call {
-                function: AnyCallback::from_fn(&ctx, |_, _, mut stack| {
+                function: Callback::from_fn(&ctx, |_, _, mut stack| {
                     stack.push_back(3.into());
                     Ok(CallbackReturn::Yield {
                         to_thread: None,
@@ -101,7 +101,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                     })
                 })
                 .into(),
-                then: Some(AnySequence::new(&ctx, Cont(4))),
+                then: Some(BoxSequence::new(&ctx, Cont(4))),
             })
         });
         ctx.set_global("callback", callback)?;
@@ -146,7 +146,7 @@ fn yield_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+        let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont(i8);
@@ -186,7 +186,7 @@ fn yield_sequence() -> Result<(), StaticError> {
             stack.extend([Value::Integer(3), Value::Integer(4)]);
             Ok(CallbackReturn::Yield {
                 to_thread: None,
-                then: Some(AnySequence::new(&ctx, Cont(0))),
+                then: Some(BoxSequence::new(&ctx, Cont(0))),
             })
         });
         ctx.set_global("callback", callback)?;
@@ -225,7 +225,7 @@ fn resume_with_err() {
     let mut lua = Lua::core();
 
     let executor = lua.enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+        let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(require_static)]
             struct Cont;
@@ -256,7 +256,7 @@ fn resume_with_err() {
             stack.replace(ctx, "return");
             Ok(CallbackReturn::Yield {
                 to_thread: None,
-                then: Some(AnySequence::new(&ctx, Cont)),
+                then: Some(BoxSequence::new(&ctx, Cont)),
             })
         });
 

@@ -6,7 +6,7 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, AnyCallback, CallbackReturn, Closure, Executor, Function, Lua, PrototypeError,
+    io, meta_ops, Callback, CallbackReturn, Closure, Executor, Function, Lua, PrototypeError,
     StashedExecutor, StaticError,
 };
 
@@ -20,7 +20,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
             &ctx,
             [
                 closure.into(),
-                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                Callback::from_fn(&ctx, |ctx, _, stack| {
                     Ok(if stack.is_empty() {
                         CallbackReturn::Return
                     } else {

@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use gc_arena::{barrier, Mutation, Root, Rootable};
 use piccolo::{
-    AnyCallback, AnyUserData, CallbackReturn, Context, Error, Execution, FromMultiValue,
-    IntoMultiValue, IntoValue, MetaMethod, Table, Value,
+    Callback, CallbackReturn, Context, Error, Execution, FromMultiValue, IntoMultiValue, IntoValue,
+    MetaMethod, Table, UserData, Value,
 };
 
 pub struct UserMethods<'gc, U: for<'a> Rootable<'a>> {
@@ -34,8 +34,8 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
-            let userdata: AnyUserData = stack.from_front(ctx)?;
+        let callback = Callback::from_fn(&ctx, move |ctx, exec, mut stack| {
+            let userdata: UserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let this = userdata.downcast::<U>()?;
             let ret = method(&this, ctx, exec, args)?;
@@ -58,8 +58,8 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
-            let userdata: AnyUserData = stack.from_front(ctx)?;
+        let callback = Callback::from_fn(&ctx, move |ctx, exec, mut stack| {
+            let userdata: UserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let mut this = userdata.downcast_write::<U>(&ctx)?;
             let ret = method(&mut this, ctx, exec, args)?;
@@ -76,8 +76,8 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
         metatable
     }
 
-    pub fn wrap(self, ctx: Context<'gc>, ud: Root<'gc, U>) -> AnyUserData<'gc> {
-        let ud = AnyUserData::new::<U>(&ctx, ud);
+    pub fn wrap(self, ctx: Context<'gc>, ud: Root<'gc, U>) -> UserData<'gc> {
+        let ud = UserData::new::<U>(&ctx, ud);
         ud.set_metatable(&ctx, Some(self.metatable(ctx)));
         ud
     }
@@ -116,8 +116,8 @@ impl<'gc, U: 'static> StaticUserMethods<'gc, U> {
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        let callback = AnyCallback::from_fn(&ctx, move |ctx, exec, mut stack| {
-            let userdata: AnyUserData = stack.from_front(ctx)?;
+        let callback = Callback::from_fn(&ctx, move |ctx, exec, mut stack| {
+            let userdata: UserData = stack.from_front(ctx)?;
             let args: A = stack.consume(ctx)?;
             let this = userdata.downcast_static::<U>()?;
             let ret = method(&this, ctx, exec, args)?;
@@ -134,8 +134,8 @@ impl<'gc, U: 'static> StaticUserMethods<'gc, U> {
         metatable
     }
 
-    pub fn wrap(self, ctx: Context<'gc>, ud: U) -> AnyUserData<'gc> {
-        let ud = AnyUserData::new_static(&ctx, ud);
+    pub fn wrap(self, ctx: Context<'gc>, ud: U) -> UserData<'gc> {
+        let ud = UserData::new_static(&ctx, ud);
         ud.set_metatable(&ctx, Some(self.metatable(ctx)));
         ud
     }

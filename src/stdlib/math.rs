@@ -1,21 +1,21 @@
-use std::{cell::RefCell, f64, ops::DerefMut, rc::Rc};
+use std::{cell::RefCell, f64, rc::Rc};
 
 use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    raw_ops, AnyCallback, CallbackReturn, Context, FromMultiValue, IntoMultiValue, IntoValue,
-    Table, Value, Variadic,
+    raw_ops, Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue, IntoValue, Table,
+    Value, Variadic,
 };
 
 pub fn load_math<'gc>(ctx: Context<'gc>) {
-    fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> AnyCallback<'gc>
+    fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> Callback<'gc>
     where
         F: Fn(Context<'gc>, A) -> Option<R> + 'static,
         A: FromMultiValue<'gc>,
         R: IntoMultiValue<'gc>,
     {
-        AnyCallback::from_fn(mc, move |ctx, _, mut stack| {
+        Callback::from_fn(mc, move |ctx, _, mut stack| {
             if let Some(res) = f(ctx, stack.consume(ctx)?) {
                 stack.replace(ctx, res);
                 Ok(CallbackReturn::Return)
@@ -217,7 +217,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
         "randomseed",
         callback("randomseed", &ctx, move |_, f: i64| {
             let rng = &randomseed_rng;
-            *(rng.borrow_mut().deref_mut()) = SmallRng::seed_from_u64(f as u64);
+            *rng.borrow_mut() = SmallRng::seed_from_u64(f as u64);
             Some(())
         }),
     )

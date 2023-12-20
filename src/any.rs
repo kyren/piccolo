@@ -2,7 +2,10 @@ use std::{any::TypeId, fmt};
 
 use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 
-/// Garbage collected `Any` type that can be downcast.
+/// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
+///
+/// The optional `M` metadata parameter provides a way of including statically typed metadata along
+/// with the dynamically typed value.
 //
 // SAFETY:
 //
@@ -22,8 +25,8 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 // 2) The `Gc` type is *invariant* in the 'gc lifetime. If it was instead covariant or contravariant
 //    in 'gc, then we could store a type with a mismatched variance and improperly lengthen or
 //    shorten the 'gc lifetime for that type. Since `Gc` is invariant in 'gc (the entire garbage
-//    collection system relies on this), `AnyValue` can project to a type with any variance in 'gc
-//    and nothing can go wrong.
+//    collection system relies on this), `Any` can project to a type with any variance in 'gc and
+//    nothing can go wrong.
 //
 // 3) We use the proxy `Rootable` type as the source of the `TypeId` rather than the projected
 //    `<R as Rootable<'_>>::Root`. If we were to instead use `<R as Rootable<'static>>:Root` for
@@ -38,14 +41,14 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 //    were given.
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct AnyValue<'gc, M: 'gc>(Gc<'gc, Header<M>>);
+pub struct Any<'gc, M: 'gc = ()>(Gc<'gc, Header<M>>);
 
-impl<'gc, M> fmt::Debug for AnyValue<'gc, M>
+impl<'gc, M> fmt::Debug for Any<'gc, M>
 where
     M: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("AnyValue")
+        fmt.debug_struct("Any")
             .field("metadata", self.metadata())
             .field("type_id", &(self.type_id()))
             .field("value", &(self.as_ptr()))
@@ -68,16 +71,24 @@ struct Value<M, V> {
     value: V,
 }
 
-impl<'gc, M> Copy for AnyValue<'gc, M> {}
+impl<'gc, M> Copy for Any<'gc, M> {}
 
-impl<'gc, M> Clone for AnyValue<'gc, M> {
+impl<'gc, M> Clone for Any<'gc, M> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'gc, M> AnyValue<'gc, M> {
-    pub fn new<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
+impl<'gc, M> Any<'gc, M> {
+    pub fn new<R>(mc: &Mutation<'gc>, data: Root<'gc, R>) -> Self
+    where
+        M: Collect + Default,
+        R: for<'a> Rootable<'a>,
+    {
+        Self::with_metadata::<R>(mc, M::default(), data)
+    }
+
+    pub fn with_metadata<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
         R: for<'a> Rootable<'a>,
@@ -165,9 +176,9 @@ mod tests {
             #[collect(no_drop)]
             struct C<'gc>(Gc<'gc, i32>);
 
-            let any1 = AnyValue::new::<Rootable![A<'_>]>(mc, 1i32, A(Gc::new(mc, 5)));
-            let any2 = AnyValue::new::<Rootable![B<'_>]>(mc, 2i32, B(Gc::new(mc, 6)));
-            let any3 = AnyValue::new::<Rootable![C<'_>]>(mc, 3i32, C(Gc::new(mc, 7)));
+            let any1 = Any::with_metadata::<Rootable![A<'_>]>(mc, 1i32, A(Gc::new(mc, 5)));
+            let any2 = Any::with_metadata::<Rootable![B<'_>]>(mc, 2i32, B(Gc::new(mc, 6)));
+            let any3 = Any::with_metadata::<Rootable![C<'_>]>(mc, 3i32, C(Gc::new(mc, 7)));
 
             assert!(any1.is::<Rootable![A<'_>]>());
             assert!(!any1.is::<Rootable![B<'_>]>());

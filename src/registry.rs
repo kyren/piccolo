@@ -8,8 +8,8 @@ use hashbrown::{hash_map, HashMap};
 use rustc_hash::FxHasher;
 
 use crate::{
-    any::AnyValue, AnyCallback, AnyUserData, Closure, Context, Executor, Function, String, Table,
-    Thread, Value,
+    any::Any, Callback, Closure, Context, Executor, Function, String, Table, Thread, UserData,
+    Value,
 };
 
 #[derive(Clone)]
@@ -35,7 +35,7 @@ impl fmt::Debug for StashedClosure {
 }
 
 #[derive(Clone)]
-pub struct StashedCallback(pub DynamicRoot<Rootable![AnyCallback<'_>]>);
+pub struct StashedCallback(pub DynamicRoot<Rootable![Callback<'_>]>);
 
 impl fmt::Debug for StashedCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,7 +57,7 @@ impl fmt::Debug for StashedThread {
 }
 
 #[derive(Clone)]
-pub struct StashedUserData(pub DynamicRoot<Rootable![AnyUserData<'_>]>);
+pub struct StashedUserData(pub DynamicRoot<Rootable![UserData<'_>]>);
 
 impl fmt::Debug for StashedUserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -210,9 +210,7 @@ pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
     singletons: Gc<
         'gc,
-        RefLock<
-            HashMap<TypeId, AnyValue<'gc, ()>, BuildHasherDefault<FxHasher>, MetricsAlloc<'gc>>,
-        >,
+        RefLock<HashMap<TypeId, Any<'gc>, BuildHasherDefault<FxHasher>, MetricsAlloc<'gc>>>,
     >,
 }
 
@@ -246,7 +244,7 @@ impl<'gc> Registry<'gc> {
             hash_map::Entry::Vacant(vacant) => {
                 let v = Root::<'gc, S>::create(ctx);
                 vacant
-                    .insert(AnyValue::new::<S>(&ctx, (), v))
+                    .insert(Any::new::<S>(&ctx, v))
                     .downcast::<S>()
                     .unwrap()
             }
@@ -299,9 +297,9 @@ macro_rules! reg_type {
 reg_type!(String, StashedString);
 reg_type!(Table, StashedTable);
 reg_type!(Closure, StashedClosure);
-reg_type!(AnyCallback, StashedCallback);
+reg_type!(Callback, StashedCallback);
 reg_type!(Thread, StashedThread);
-reg_type!(AnyUserData, StashedUserData);
+reg_type!(UserData, StashedUserData);
 reg_type!(Executor, StashedExecutor);
 
 macro_rules! fetch_type {
@@ -319,9 +317,9 @@ macro_rules! fetch_type {
 fetch_type!(StashedString, String);
 fetch_type!(StashedTable, Table);
 fetch_type!(StashedClosure, Closure);
-fetch_type!(StashedCallback, AnyCallback);
+fetch_type!(StashedCallback, Callback);
 fetch_type!(StashedThread, Thread);
-fetch_type!(StashedUserData, AnyUserData);
+fetch_type!(StashedUserData, UserData);
 fetch_type!(StashedExecutor, Executor);
 
 impl<'gc> Stashable<'gc> for Function<'gc> {

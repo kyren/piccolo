@@ -1,6 +1,6 @@
 mod sizes;
 
-use piccolo::{error::LuaError, AnyCallback, Closure, Error, Executor, Lua, StaticError, Value};
+use piccolo::{error::LuaError, Callback, Closure, Error, Executor, Lua, StaticError, Value};
 use thiserror::Error;
 
 #[test]
@@ -41,7 +41,7 @@ fn error_tostring() -> Result<(), StaticError> {
     struct TestError;
 
     let executor = lua.try_enter(|ctx| {
-        let callback = AnyCallback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
+        let callback = Callback::from_fn(&ctx, |_, _, _| Err(TestError.into()));
         ctx.set_global("callback", callback)?;
 
         let closure = Closure::load(

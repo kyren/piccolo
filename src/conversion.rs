@@ -1,7 +1,7 @@
 use std::{array, iter, ops, string::String as StdString, vec};
 
 use crate::{
-    AnyCallback, AnyUserData, Closure, Context, Function, String, Table, Thread, TypeError, Value,
+    Callback, Closure, Context, Function, String, Table, Thread, TypeError, UserData, Value,
 };
 
 pub trait IntoValue<'gc> {
@@ -27,10 +27,10 @@ impl_into!(
     Table<'gc>,
     Function<'gc>,
     Closure<'gc>,
-    AnyCallback<'gc>,
+    Callback<'gc>,
     Thread<'gc>,
     Value<'gc>,
-    AnyUserData<'gc>,
+    UserData<'gc>,
 );
 
 macro_rules! impl_int_into {
@@ -78,10 +78,10 @@ impl_copy_into!(
     Table<'gc>,
     Function<'gc>,
     Closure<'gc>,
-    AnyCallback<'gc>,
+    Callback<'gc>,
     Thread<'gc>,
     Value<'gc>,
-    AnyUserData<'gc>,
+    UserData<'gc>,
 );
 
 impl<'gc> IntoValue<'gc> for &'static str {
@@ -290,7 +290,7 @@ impl_from! {
     [Table Table<'gc>],
     [Function Function<'gc>],
     [Thread Thread<'gc>],
-    [UserData AnyUserData<'gc>],
+    [UserData UserData<'gc>],
 }
 
 impl<'gc> FromValue<'gc> for Closure<'gc> {
@@ -309,7 +309,7 @@ impl<'gc> FromValue<'gc> for Closure<'gc> {
     }
 }
 
-impl<'gc> FromValue<'gc> for AnyCallback<'gc> {
+impl<'gc> FromValue<'gc> for Callback<'gc> {
     fn from_value(_: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         match value {
             Value::Function(Function::Callback(c)) => Ok(c),

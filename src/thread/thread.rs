@@ -16,8 +16,8 @@ use crate::{
     finalizers::{Finalize, FinalizeWrite},
     meta_ops,
     types::{RegisterIndex, VarCount},
-    AnyCallback, AnySequence, Closure, Context, Error, FromMultiValue, Fuel, Function,
-    IntoMultiValue, TypeError, VMError, Value,
+    BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
+    TypeError, VMError, Value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,14 +277,14 @@ pub(super) enum Frame<'gc> {
     // A callback that has been queued but not called yet. Must be the top frame of the stack.
     Callback {
         bottom: usize,
-        callback: AnyCallback<'gc>,
+        callback: Callback<'gc>,
     },
     // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
     // will be called on the next call to `Thread::step`, depending on whether there is a pending
     // error.
     Sequence {
         bottom: usize,
-        sequence: AnySequence<'gc>,
+        sequence: BoxSequence<'gc>,
         // Will be set when unwinding has stopped at this frame. If set, this must be the top frame
         // of the stack.
         pending_error: Option<Error<'gc>>,

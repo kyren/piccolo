@@ -1,7 +1,5 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{
-    AnyCallback, AnyUserData, CallbackReturn, Closure, Executor, Lua, StaticError, Value,
-};
+use piccolo::{Callback, CallbackReturn, Closure, Executor, Lua, StaticError, UserData, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -12,12 +10,12 @@ fn userdata() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let userdata = AnyUserData::new::<Rootable![MyUserData<'_>]>(
+        let userdata = UserData::new::<Rootable![MyUserData<'_>]>(
             &ctx,
             MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
         ctx.set_global("userdata", userdata)?;
-        let callback = AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+        let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
             match stack[0] {
                 Value::UserData(ud) => {
                     let ud = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
@@ -50,7 +48,7 @@ fn userdata() -> Result<(), StaticError> {
     lua.try_enter(|ctx| {
         let (ud, res) = ctx
             .fetch(&executor)
-            .take_result::<(AnyUserData, bool)>(ctx)??;
+            .take_result::<(UserData, bool)>(ctx)??;
         assert!(res);
         let data = ud.downcast::<Rootable![MyUserData<'_>]>().unwrap();
         assert_eq!(data.0.get(), 23);

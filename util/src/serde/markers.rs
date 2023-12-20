@@ -1,18 +1,18 @@
 use gc_arena::{Collect, Rootable};
-use piccolo::{AnyCallback, AnyUserData, CallbackReturn, Context, Singleton, Table};
+use piccolo::{Callback, CallbackReturn, Context, Singleton, Table, UserData};
 
 #[derive(Collect)]
 #[collect(no_drop)]
-struct UnitSingleton<'gc>(AnyUserData<'gc>);
+struct UnitSingleton<'gc>(UserData<'gc>);
 
 impl<'gc> Singleton<'gc> for UnitSingleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self {
-        let ud = AnyUserData::new_static(&ctx, ());
+        let ud = UserData::new_static(&ctx, ());
         let mt = Table::new(&ctx);
         mt.set(
             ctx,
             "__tostring",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 stack.replace(ctx, "unit");
                 Ok(CallbackReturn::Return)
             }),
@@ -23,11 +23,11 @@ impl<'gc> Singleton<'gc> for UnitSingleton<'gc> {
     }
 }
 
-pub fn unit<'gc>(ctx: Context<'gc>) -> AnyUserData<'gc> {
+pub fn unit<'gc>(ctx: Context<'gc>) -> UserData<'gc> {
     ctx.singleton::<Rootable![UnitSingleton<'_>]>().0
 }
 
-pub fn is_unit<'gc>(ud: AnyUserData<'gc>) -> bool {
+pub fn is_unit<'gc>(ud: UserData<'gc>) -> bool {
     ud.is_static::<()>()
 }
 
@@ -35,16 +35,16 @@ pub struct None;
 
 #[derive(Collect)]
 #[collect(no_drop)]
-struct NoneSingleton<'gc>(AnyUserData<'gc>);
+struct NoneSingleton<'gc>(UserData<'gc>);
 
 impl<'gc> Singleton<'gc> for NoneSingleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self {
-        let ud = AnyUserData::new_static(&ctx, None);
+        let ud = UserData::new_static(&ctx, None);
         let mt = Table::new(&ctx);
         mt.set(
             ctx,
             "__tostring",
-            AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 stack.replace(ctx, "none");
                 Ok(CallbackReturn::Return)
             }),
@@ -55,11 +55,11 @@ impl<'gc> Singleton<'gc> for NoneSingleton<'gc> {
     }
 }
 
-pub fn none<'gc>(ctx: Context<'gc>) -> AnyUserData<'gc> {
+pub fn none<'gc>(ctx: Context<'gc>) -> UserData<'gc> {
     ctx.singleton::<Rootable![NoneSingleton<'_>]>().0
 }
 
-pub fn is_none<'gc>(ud: AnyUserData<'gc>) -> bool {
+pub fn is_none<'gc>(ud: UserData<'gc>) -> bool {
     ud.is_static::<None>()
 }
 

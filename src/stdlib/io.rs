@@ -4,14 +4,14 @@ use gc_arena::Collect;
 
 use crate::{
     meta_ops::{self, MetaResult},
-    AnyCallback, AnySequence, CallbackReturn, Context, Error, Execution, Sequence, SequencePoll,
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Sequence, SequencePoll,
     Stack, Value,
 };
 
 pub fn load_io<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "print",
-        AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
             #[collect(require_static)]
             enum Mode {
@@ -69,7 +69,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             }
 
-            Ok(CallbackReturn::Sequence(AnySequence::new(
+            Ok(CallbackReturn::Sequence(BoxSequence::new(
                 &ctx,
                 PrintSeq {
                     mode: Mode::Init,

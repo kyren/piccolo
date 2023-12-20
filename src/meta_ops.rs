@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    AnyCallback, AnyUserData, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table,
-    TypeError, Value,
+    Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, TypeError,
+    UserData, Value,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -113,7 +113,7 @@ pub fn index<'gc>(
 
     Ok(MetaResult::Call(match idx {
         Value::Table(table) => MetaCall {
-            function: AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let table = stack.get(0);
                 let key = stack.get(1);
                 stack.clear();
@@ -200,7 +200,7 @@ pub fn new_index<'gc>(
 
     Ok(Some(match idx {
         Value::Table(table) => MetaCall {
-            function: AnyCallback::from_fn(&ctx, |ctx, _, mut stack| {
+            function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
@@ -237,7 +237,7 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Type
 
     match metatable.get(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            AnyCallback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, mut stack| {
+            Callback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, mut stack| {
                 stack.push_front(v);
                 Ok(CallbackReturn::Call {
                     function: call(ctx, f)?,
@@ -367,7 +367,7 @@ pub fn equal<'gc>(
             if a == b {
                 Value::Boolean(true).into()
             } else {
-                let get_eq = |u: AnyUserData<'gc>| {
+                let get_eq = |u: UserData<'gc>| {
                     let eq = u
                         .metatable()
                         .map(|t| t.get(ctx, MetaMethod::Eq))
