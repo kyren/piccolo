@@ -1,11 +1,11 @@
 use std::{any::TypeId, fmt, hash::BuildHasherDefault};
 
+use ahash::AHasher;
 use gc_arena::{
     allocator_api::MetricsAlloc, lock::RefLock, Collect, DynamicRoot, DynamicRootSet, Gc, Mutation,
     Root, Rootable,
 };
 use hashbrown::{hash_map, HashMap};
-use rustc_hash::FxHasher;
 
 use crate::{
     any::Any, Callback, Closure, Context, Executor, Function, String, Table, Thread, UserData,
@@ -208,10 +208,8 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons: Gc<
-        'gc,
-        RefLock<HashMap<TypeId, Any<'gc>, BuildHasherDefault<FxHasher>, MetricsAlloc<'gc>>>,
-    >,
+    singletons:
+        Gc<'gc, RefLock<HashMap<TypeId, Any<'gc>, BuildHasherDefault<AHasher>, MetricsAlloc<'gc>>>>,
 }
 
 impl<'gc> Registry<'gc> {

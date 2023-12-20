@@ -9,12 +9,12 @@ use std::{
     string::String as StdString,
 };
 
+use ahash::AHasher;
 use gc_arena::{
     allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect, Gc,
     GcWeak, Mutation, StaticCollect,
 };
 use hashbrown::{hash_map, raw::RawTable, HashMap};
-use rustc_hash::FxHasher;
 use thiserror::Error;
 
 use crate::{Context, Value};
@@ -152,7 +152,7 @@ impl<'gc> String<'gc> {
 }
 
 fn str_hash(s: &[u8]) -> u64 {
-    let mut state = FxHasher::default();
+    let mut state = AHasher::default();
     state.write(s);
     state.finish()
 }
@@ -342,7 +342,7 @@ struct InternedStaticStrings<'gc>(
             HashMap<
                 StaticCollect<*const [u8]>,
                 String<'gc>,
-                BuildHasherDefault<FxHasher>,
+                BuildHasherDefault<AHasher>,
                 MetricsAlloc<'gc>,
             >,
         >,

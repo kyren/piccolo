@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use rustc_hash::FxHashSet;
+use ahash::HashSet;
 
 pub trait StringInterner {
     type String: AsRef<[u8]> + Clone;
@@ -17,7 +17,7 @@ impl<'a, S: StringInterner> StringInterner for &'a mut S {
 }
 
 #[derive(Default)]
-pub struct BasicInterner(FxHashSet<Rc<[u8]>>);
+pub struct BasicInterner(HashSet<Rc<[u8]>>);
 
 impl StringInterner for BasicInterner {
     type String = Rc<[u8]>;

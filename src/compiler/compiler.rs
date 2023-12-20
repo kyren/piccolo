@@ -3,8 +3,8 @@ use std::{
     fmt, iter, mem,
 };
 
+use ahash::HashMap;
 use gc_arena::Collect;
-use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::{
@@ -179,7 +179,7 @@ struct CompilerFunction<S> {
     reference: FunctionRef<S>,
 
     constants: Vec<Constant<S>>,
-    constant_table: FxHashMap<IdenticalConstant<S>, ConstantIndex16>,
+    constant_table: HashMap<IdenticalConstant<S>, ConstantIndex16>,
 
     upvalues: Vec<(S, UpValueDescriptor)>,
     functions: Vec<CompiledPrototype<S>>,
@@ -2383,7 +2383,7 @@ impl<S: Clone> CompilerFunction<S> {
         let mut function = CompilerFunction {
             reference,
             constants: Vec::new(),
-            constant_table: FxHashMap::default(),
+            constant_table: HashMap::default(),
             upvalues: Vec::new(),
             functions: Vec::new(),
             register_allocator: RegisterAllocator::default(),

@@ -4,10 +4,10 @@ use std::{
     i64, mem,
 };
 
+use ahash::AHasher;
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
 use hashbrown::{hash_map, HashMap};
-use rustc_hash::FxHasher;
 use thiserror::Error;
 
 use crate::Value;
@@ -381,7 +381,7 @@ fn key_eq<'gc>(a: Value<'gc>, b: Value<'gc>) -> bool {
 }
 
 fn key_hash<'gc>(value: Value<'gc>) -> u64 {
-    let mut state = FxHasher::default();
+    let mut state = AHasher::default();
     match value {
         Value::Nil => Hash::hash(&0, &mut state),
         Value::Boolean(b) => {
