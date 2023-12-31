@@ -1,9 +1,8 @@
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Gc};
+use gc_arena::allocator_api::MetricsAlloc;
 use thiserror::Error;
 
 use crate::{
-    closure::ClosureState,
     meta_ops::{self, MetaResult},
     opcode::{Operation, RCIndex},
     raw_ops,
@@ -65,6 +64,8 @@ pub(super) fn run_vm<'gc>(
     }
 
     let current_function = lua_frame.closure();
+    let current_prototype = current_function.prototype();
+    let current_upvalues = current_function.upvalues();
     let mut registers = lua_frame.registers();
     let mut instructions_run = 0;
 
@@ -80,7 +81,7 @@ pub(super) fn run_vm<'gc>(
     }
 
     loop {
-        let op = current_function.0.proto.opcodes[*registers.pc].decode();
+        let op = current_prototype.opcodes[*registers.pc].decode();
         *registers.pc += 1;
 
         match op {
@@ -90,7 +91,7 @@ pub(super) fn run_vm<'gc>(
 
             Operation::LoadConstant { dest, constant } => {
                 registers.stack_frame[dest.0 as usize] =
-                    current_function.0.proto.constants[constant.0 as usize].into();
+                    current_prototype.constants[constant.0 as usize].into();
             }
 
             Operation::LoadBool {
@@ -124,11 +125,7 @@ pub(super) fn run_vm<'gc>(
 
             Operation::GetTable { dest, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
-                let key = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    key,
-                );
+                let key = get_rc(&registers.stack_frame, &current_prototype.constants, key);
                 match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
@@ -147,16 +144,8 @@ pub(super) fn run_vm<'gc>(
 
             Operation::SetTable { table, key, value } => {
                 let table = registers.stack_frame[table.0 as usize];
-                let key = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    key,
-                );
-                let value = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    value,
-                );
+                let key = get_rc(&registers.stack_frame, &current_prototype.constants, key);
+                let value = get_rc(&registers.stack_frame, &current_prototype.constants, value);
                 if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
                     lua_frame.call_meta_function(
                         ctx,
@@ -169,13 +158,8 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::GetUpTable { dest, table, key } => {
-                let table =
-                    registers.get_upvalue(&ctx, current_function.0.upvalues[table.0 as usize]);
-                let key = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    key,
-                );
+                let table = registers.get_upvalue(&ctx, current_upvalues[table.0 as usize]);
+                let key = get_rc(&registers.stack_frame, &current_prototype.constants, key);
                 match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
@@ -193,18 +177,9 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::SetUpTable { table, key, value } => {
-                let table =
-                    registers.get_upvalue(&ctx, current_function.0.upvalues[table.0 as usize]);
-                let key = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    key,
-                );
-                let value = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    value,
-                );
+                let table = registers.get_upvalue(&ctx, current_upvalues[table.0 as usize]);
+                let key = get_rc(&registers.stack_frame, &current_prototype.constants, key);
+                let value = get_rc(&registers.stack_frame, &current_prototype.constants, value);
                 if let Some(call) = meta_ops::new_index(ctx, table, key, value)? {
                     lua_frame.call_meta_function(
                         ctx,
@@ -276,7 +251,7 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::Closure { proto, dest } => {
-                let proto = current_function.0.proto.prototypes[proto.0 as usize];
+                let proto = current_prototype.prototypes[proto.0 as usize];
                 let mut upvalues = vec::Vec::new_in(MetricsAlloc::new(&ctx));
                 for &desc in proto.upvalues.iter() {
                     match desc {
@@ -287,12 +262,12 @@ pub(super) fn run_vm<'gc>(
                             upvalues.push(registers.open_upvalue(&ctx, reg));
                         }
                         UpValueDescriptor::Outer(uvindex) => {
-                            upvalues.push(current_function.0.upvalues[uvindex.0 as usize]);
+                            upvalues.push(current_upvalues[uvindex.0 as usize]);
                         }
                     }
                 }
 
-                let closure = Closure(Gc::new(&ctx, ClosureState { proto, upvalues }));
+                let closure = Closure::from_parts(&ctx, proto, upvalues);
                 registers.stack_frame[dest.0 as usize] =
                     Value::Function(Function::Closure(closure));
             }
@@ -364,11 +339,7 @@ pub(super) fn run_vm<'gc>(
 
             Operation::Method { base, table, key } => {
                 let table = registers.stack_frame[table.0 as usize];
-                let key = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    key,
-                );
+                let key = get_rc(&registers.stack_frame, &current_prototype.constants, key);
                 registers.stack_frame[base.0 as usize + 1] = table;
                 match meta_ops::index(ctx, table, key)? {
                     MetaResult::Value(v) => {
@@ -399,13 +370,13 @@ pub(super) fn run_vm<'gc>(
 
             Operation::GetUpValue { source, dest } => {
                 registers.stack_frame[dest.0 as usize] =
-                    registers.get_upvalue(&ctx, current_function.0.upvalues[source.0 as usize]);
+                    registers.get_upvalue(&ctx, current_upvalues[source.0 as usize]);
             }
 
             Operation::SetUpValue { source, dest } => {
                 registers.set_upvalue(
                     &ctx,
-                    current_function.0.upvalues[dest.0 as usize],
+                    current_upvalues[dest.0 as usize],
                     registers.stack_frame[source.0 as usize],
                 );
             }
@@ -432,16 +403,8 @@ pub(super) fn run_vm<'gc>(
                 left,
                 right,
             } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 match meta_ops::equal(ctx, left, right)? {
                     MetaResult::Value(v) => {
                         if v.to_bool() == skip_if {
@@ -465,16 +428,8 @@ pub(super) fn run_vm<'gc>(
                 left,
                 right,
             } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 if (raw_ops::less_than(left, right).ok_or(BinaryOperatorError::LessThan)?)
                     == skip_if
                 {
@@ -487,16 +442,8 @@ pub(super) fn run_vm<'gc>(
                 left,
                 right,
             } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 if (raw_ops::less_equal(left, right).ok_or(BinaryOperatorError::LessEqual)?)
                     == skip_if
                 {
@@ -522,181 +469,85 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::Add { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::add(left, right).ok_or(BinaryOperatorError::Add)?;
             }
 
             Operation::Sub { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::subtract(left, right).ok_or(BinaryOperatorError::Add)?;
             }
 
             Operation::Mul { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::multiply(left, right).ok_or(BinaryOperatorError::Multiply)?;
             }
 
             Operation::Div { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::float_divide(left, right).ok_or(BinaryOperatorError::FloatDivide)?;
             }
 
             Operation::IDiv { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::floor_divide(left, right).ok_or(BinaryOperatorError::FloorDivide)?;
             }
 
             Operation::Mod { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::modulo(left, right).ok_or(BinaryOperatorError::Modulo)?;
             }
 
             Operation::Pow { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::exponentiate(left, right).ok_or(BinaryOperatorError::Exponentiate)?;
             }
 
             Operation::BitAnd { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::bitwise_and(left, right).ok_or(BinaryOperatorError::BitAnd)?;
             }
 
             Operation::BitOr { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::bitwise_or(left, right).ok_or(BinaryOperatorError::BitOr)?;
             }
 
             Operation::BitXor { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::bitwise_xor(left, right).ok_or(BinaryOperatorError::BitXor)?;
             }
 
             Operation::ShiftLeft { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::shift_left(left, right).ok_or(BinaryOperatorError::ShiftLeft)?;
             }
 
             Operation::ShiftRight { dest, left, right } => {
-                let left = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    left,
-                );
-                let right = get_rc(
-                    &registers.stack_frame,
-                    &current_function.0.proto.constants,
-                    right,
-                );
+                let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
+                let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
                 registers.stack_frame[dest.0 as usize] =
                     raw_ops::shift_right(left, right).ok_or(BinaryOperatorError::ShiftRight)?;
             }

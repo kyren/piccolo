@@ -11,8 +11,8 @@ use std::{
 
 use ahash::AHasher;
 use gc_arena::{
-    allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect, Gc,
-    GcWeak, Mutation, StaticCollect,
+    allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect,
+    Collection, Gc, GcWeak, Mutation, StaticCollect,
 };
 use hashbrown::{hash_map, raw::RawTable, HashMap};
 use thiserror::Error;
@@ -23,11 +23,11 @@ use crate::{Context, Value};
 // inline array.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct String<'gc>(Gc<'gc, Header>);
+pub struct String<'gc>(Gc<'gc, StringInner>);
 
 #[derive(Copy, Clone, Collect)]
 #[collect(require_static)]
-struct Header {
+pub struct StringInner {
     hash: u64,
     buffer: Buffer,
 }
@@ -44,7 +44,7 @@ impl<'gc> String<'gc> {
         #[collect(require_static)]
         #[repr(C)]
         struct Owned {
-            header: Header,
+            header: StringInner,
             metrics: Metrics,
         }
 
@@ -63,14 +63,14 @@ impl<'gc> String<'gc> {
         let metrics = mc.metrics().clone();
         metrics.mark_external_allocation(s.len());
         let owned = Owned {
-            header: Header {
+            header: StringInner {
                 hash: str_hash(&s),
                 buffer: Buffer::Indirect(Box::into_raw(s)),
             },
             metrics,
         };
-        // SAFETY: We know we can cast to `InlineHeader` because `Owned` is `#[repr(C)]`
-        String(unsafe { Gc::cast::<Header>(Gc::new(mc, owned)) })
+        // SAFETY: We know we can cast to `StringInner` because `Owned` is `#[repr(C)]`
+        String(unsafe { Gc::cast::<StringInner>(Gc::new(mc, owned)) })
     }
 
     pub fn from_slice(mc: &Mutation<'gc>, s: impl AsRef<[u8]>) -> String<'gc> {
@@ -84,13 +84,13 @@ impl<'gc> String<'gc> {
             #[collect(require_static)]
             #[repr(C)]
             struct InlineString<const N: usize> {
-                header: Header,
+                header: StringInner,
                 array: [u8; N],
             }
 
             assert!(s.len() <= N);
             let mut string = InlineString {
-                header: Header {
+                header: StringInner {
                     hash: str_hash(&s),
                     buffer: Buffer::Inline(s.len()),
                 },
@@ -99,9 +99,9 @@ impl<'gc> String<'gc> {
             string.array[0..s.len()].copy_from_slice(s);
 
             let string = Gc::new(mc, string);
-            // SAFETY: We know we can cast to `Header` because `InlineString` is `#[repr(C)]`
+            // SAFETY: We know we can cast to `StringInner` because `InlineString` is `#[repr(C)]`
             // and `header` is the first field.
-            unsafe { String(Gc::cast::<Header>(string)) }
+            unsafe { String(Gc::cast::<StringInner>(string)) }
         }
 
         let s = s.as_ref();
@@ -121,11 +121,19 @@ impl<'gc> String<'gc> {
     pub fn from_static<S: ?Sized + AsRef<[u8]>>(mc: &Mutation<'gc>, s: &'static S) -> String<'gc> {
         String(Gc::new(
             mc,
-            Header {
+            StringInner {
                 hash: str_hash(s.as_ref()),
                 buffer: Buffer::Indirect(s.as_ref()),
             },
         ))
+    }
+
+    pub fn from_inner(inner: Gc<'gc, StringInner>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, StringInner> {
+        self.0
     }
 
     pub fn stored_hash(self) -> u64 {
@@ -138,7 +146,7 @@ impl<'gc> String<'gc> {
             match self.0.buffer {
                 Buffer::Indirect(p) => &(*p),
                 Buffer::Inline(len) => {
-                    let layout = alloc::Layout::new::<Header>();
+                    let layout = alloc::Layout::new::<StringInner>();
                     let (_, offset) = layout
                         .extend(alloc::Layout::array::<u8>(len).unwrap())
                         .unwrap();
@@ -253,7 +261,7 @@ impl<'gc> Hash for String<'gc> {
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-struct WeakString<'gc>(GcWeak<'gc, Header>);
+struct WeakString<'gc>(GcWeak<'gc, StringInner>);
 
 impl<'gc> WeakString<'gc> {
     fn downgrade(s: String<'gc>) -> Self {
@@ -264,8 +272,8 @@ impl<'gc> WeakString<'gc> {
         GcWeak::upgrade(self.0, mc).map(String)
     }
 
-    fn is_dropped(self) -> bool {
-        GcWeak::is_dropped(self.0)
+    fn is_dropped(self, cc: &Collection) -> bool {
+        self.0.is_dropped(cc)
     }
 }
 
@@ -276,14 +284,14 @@ struct InternedDynStringsInner<'gc>(RefLock<RawTable<(WeakString<'gc>, u64), Met
 struct InternedDynStrings<'gc>(Gc<'gc, InternedDynStringsInner<'gc>>);
 
 unsafe impl<'gc> Collect for InternedDynStringsInner<'gc> {
-    fn trace(&self, cc: &gc_arena::Collection) {
+    fn trace(&self, cc: &Collection) {
         // SAFETY: No new Gc pointers are adopted or reparented.
         let mut dyn_strings = unsafe { self.0.unlock_unchecked() }.borrow_mut();
         unsafe {
             for bucket in dyn_strings.iter() {
                 let s = bucket.as_ref().0;
                 s.trace(cc);
-                if s.is_dropped() {
+                if s.is_dropped(cc) {
                     // SAFETY: it is okay to erase items yielded by the iterator.
                     dyn_strings.erase(bucket);
                 }

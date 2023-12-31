@@ -8,7 +8,7 @@ use crate::TypeError;
 
 pub use self::{
     executor::{BadExecutorMode, CurrentThread, Execution, Executor, ExecutorMode, UpperLuaFrame},
-    thread::{BadThreadMode, OpenUpValue, Thread, ThreadMode},
+    thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode},
     vm::BinaryOperatorError,
 };
 

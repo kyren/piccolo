@@ -1,57 +1,36 @@
-use gc_arena::{barrier::Write, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation};
+use gc_arena::{lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation};
 
-pub trait Finalize<'gc> {
-    fn finalize(&self, mc: &Mutation<'gc>);
-
-    fn needs_write_barrier(&self) -> bool {
-        false
-    }
-}
-
-pub trait FinalizeWrite<'gc> {
-    fn finalize_write(this: &Write<Self>, mc: &Mutation<'gc>);
-}
-
-impl<'gc, T: FinalizeWrite<'gc>> Finalize<'gc> for T {
-    fn finalize(&self, mc: &Mutation<'gc>) {
-        // SAFETY: The write barrier has been called because `Self::needs_write_barrier()` returns
-        // true.
-        Self::finalize_write(unsafe { Write::assume(self) }, mc);
-    }
-
-    fn needs_write_barrier(&self) -> bool {
-        true
-    }
-}
+use crate::{thread::ThreadInner, Thread};
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Finalizers<'gc>(Gc<'gc, RefLock<Vec<GcWeak<'gc, dyn Finalize<'gc> + 'gc>>>>);
+pub struct Finalizers<'gc>(Gc<'gc, RefLock<FinalizersState<'gc>>>);
 
 impl<'gc> Finalizers<'gc> {
     pub(crate) fn new(mc: &Mutation<'gc>) -> Self {
-        Finalizers(Gc::new(mc, RefLock::new(Vec::new())))
+        Finalizers(Gc::new(mc, RefLock::default()))
     }
 
-    pub(crate) fn add(&self, mc: &Mutation<'gc>, ptr: Gc<'gc, dyn Finalize<'gc> + 'gc>) {
-        self.0.borrow_mut(mc).push(Gc::downgrade(ptr));
+    pub(crate) fn register_thread(&self, mc: &Mutation<'gc>, ptr: Gc<'gc, ThreadInner<'gc>>) {
+        self.0.borrow_mut(mc).threads.push(Gc::downgrade(ptr));
     }
 
     pub(crate) fn finalize(&self, fc: &Finalization<'gc>) {
-        self.0.borrow_mut(fc).retain(|&w| {
-            if let Some(s) = w.upgrade(fc) {
-                if w.is_dead(fc) {
-                    if s.needs_write_barrier() {
-                        Gc::write(fc, s);
-                    }
-                    s.finalize(fc);
-                    false
-                } else {
-                    true
-                }
+        let mut state = self.0.borrow_mut(fc);
+        state.threads.retain(|&ptr| {
+            let ptr = ptr.upgrade(fc).expect("thread finalization was missed");
+            if Gc::is_dead(fc, ptr) {
+                Thread::from_inner(ptr).reset(fc).unwrap();
+                false
             } else {
-                panic!("finalization was missed");
+                true
             }
         });
     }
+}
+
+#[derive(Default, Collect)]
+#[collect(no_drop)]
+struct FinalizersState<'gc> {
+    threads: Vec<GcWeak<'gc, ThreadInner<'gc>>>,
 }

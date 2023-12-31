@@ -4,16 +4,11 @@ use std::{
 };
 
 use allocator_api2::vec;
-use gc_arena::{
-    allocator_api::MetricsAlloc,
-    lock::{Lock, RefLock},
-    unsize, Collect, Gc, GcWeak, Mutation,
-};
+use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, GcWeak, Mutation};
 use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
-    finalizers::{Finalize, FinalizeWrite},
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
@@ -48,9 +43,11 @@ pub struct BadThreadMode {
     pub expected: Option<ThreadMode>,
 }
 
+pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
+
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(no_drop)]
-pub struct Thread<'gc>(pub(super) Gc<'gc, RefLock<ThreadState<'gc>>>);
+pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);
 
 impl<'gc> PartialEq for Thread<'gc> {
     fn eq(&self, other: &Thread<'gc>) -> bool {
@@ -62,7 +59,7 @@ impl<'gc> Eq for Thread<'gc> {}
 
 impl<'gc> Hash for Thread<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.as_ptr().hash(state)
+        Gc::as_ptr(self.0).hash(state)
     }
 }
 
@@ -76,12 +73,16 @@ impl<'gc> Thread<'gc> {
                 open_upvalues: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
             }),
         );
-        ctx.finalizers().add(&ctx, unsize!(p => dyn Finalize));
+        ctx.finalizers().register_thread(&ctx, p);
         Thread(p)
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+    pub fn from_inner(inner: Gc<'gc, ThreadInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, ThreadInner<'gc>> {
+        self.0
     }
 
     pub fn mode(self) -> ThreadMode {
@@ -203,12 +204,6 @@ impl<'gc> Thread<'gc> {
     }
 }
 
-impl<'gc> FinalizeWrite<'gc> for RefLock<ThreadState<'gc>> {
-    fn finalize_write(this: &gc_arena::barrier::Write<Self>, mc: &Mutation<'gc>) {
-        this.unlock().borrow_mut().reset(mc);
-    }
-}
-
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct OpenUpValue<'gc> {
@@ -301,7 +296,7 @@ pub(super) enum Frame<'gc> {
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub(super) struct ThreadState<'gc> {
+pub struct ThreadState<'gc> {
     pub(super) frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
     pub(super) stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     pub(super) open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
@@ -336,8 +331,9 @@ impl<'gc> ThreadState<'gc> {
     pub(super) fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
         match function {
             Function::Closure(closure) => {
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
+                let proto = closure.prototype();
+                let fixed_params = proto.fixed_params as usize;
+                let stack_size = proto.stack_size as usize;
                 let given_params = self.stack.len() - bottom;
 
                 let var_params = if given_params > fixed_params {
@@ -449,10 +445,10 @@ impl<'gc> ThreadState<'gc> {
 
         let this_ptr = self as *mut _;
         for &upval in &self.open_upvalues[start..] {
-            match upval.0.get() {
+            match upval.get() {
                 UpValueState::Open(open_upvalue) => {
                     assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
-                    upval.0.set(
+                    upval.set(
                         mc,
                         UpValueState::Closed(self.stack[open_upvalue.stack_index]),
                     );
@@ -663,8 +659,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         match meta_ops::call(ctx, self.state.stack[function_index])? {
             Function::Closure(closure) => {
                 self.state.stack[function_index] = closure.into();
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
+                let proto = closure.prototype();
+                let fixed_params = proto.fixed_params as usize;
+                let stack_size = proto.stack_size as usize;
 
                 let base = if arg_count > fixed_params {
                     self.state.stack.truncate(function_index + 1 + arg_count);
@@ -739,8 +736,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 }
 
                 self.state.stack[top] = closure.into();
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
+                let proto = closure.prototype();
+                let fixed_params = proto.fixed_params as usize;
+                let stack_size = proto.stack_size as usize;
 
                 let base = if arg_count > fixed_params {
                     self.state.stack[top + 1..].rotate_left(fixed_params);
@@ -813,8 +811,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 self.state.stack[top] = closure.into();
                 self.state.stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
 
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
+                let proto = closure.prototype();
+                let fixed_params = proto.fixed_params as usize;
+                let stack_size = proto.stack_size as usize;
 
                 let base = if args.len() > fixed_params {
                     self.state.stack[top + 1..].rotate_left(fixed_params);
@@ -886,8 +885,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     self.state.stack[bottom + 1 + i] = self.state.stack[function_index + 1 + i];
                 }
 
-                let fixed_params = closure.0.proto.fixed_params as usize;
-                let stack_size = closure.0.proto.stack_size as usize;
+                let proto = closure.prototype();
+                let fixed_params = proto.fixed_params as usize;
+                let stack_size = proto.stack_size as usize;
 
                 let base = if arg_count > fixed_params {
                     self.state.stack.truncate(bottom + 1 + arg_count);
@@ -1044,13 +1044,13 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         {
             Ok(i) => self.open_upvalues[i],
             Err(i) => {
-                let uv = UpValue(Gc::new(
+                let uv = UpValue::new(
                     mc,
-                    Lock::new(UpValueState::Open(OpenUpValue {
+                    UpValueState::Open(OpenUpValue {
                         thread: Gc::downgrade(self.thread.0),
                         stack_index: ind,
-                    })),
-                ));
+                    }),
+                );
                 self.open_upvalues.insert(i, uv);
                 uv
             }
@@ -1058,7 +1058,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
     }
 
     pub(super) fn get_upvalue(&self, mc: &Mutation<'gc>, upvalue: UpValue<'gc>) -> Value<'gc> {
-        match upvalue.0.get() {
+        match upvalue.get() {
             UpValueState::Open(open_upvalue) => {
                 if open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0) {
                     assert!(
@@ -1080,7 +1080,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         upvalue: UpValue<'gc>,
         value: Value<'gc>,
     ) {
-        match upvalue.0.get() {
+        match upvalue.get() {
             UpValueState::Open(open_upvalue) => {
                 if open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0) {
                     assert!(
@@ -1093,7 +1093,7 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
                 }
             }
             UpValueState::Closed(_) => {
-                upvalue.0.set(mc, UpValueState::Closed(value));
+                upvalue.set(mc, UpValueState::Closed(value));
             }
         }
     }
@@ -1109,10 +1109,10 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
         };
 
         for &upval in &self.open_upvalues[start..] {
-            match upval.0.get() {
+            match upval.get() {
                 UpValueState::Open(open_upvalue) => {
                     assert!(open_upvalue.thread.as_ptr() == Gc::as_ptr(self.thread.0));
-                    upval.0.set(
+                    upval.set(
                         mc,
                         UpValueState::Closed(if open_upvalue.stack_index < self.base {
                             self.upper_stack[open_upvalue.stack_index]
@@ -1136,7 +1136,7 @@ fn count_fuel(per_item: i32, len: usize) -> i32 {
 }
 
 fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
-    match u.0.get() {
+    match u.get() {
         UpValueState::Open(open_upvalue) => open_upvalue.stack_index,
         UpValueState::Closed(_) => panic!("upvalue is not open"),
     }

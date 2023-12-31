@@ -1,6 +1,6 @@
 use std::{f64, fmt, i64, io, string::String as StdString};
 
-use gc_arena::Collect;
+use gc_arena::{Collect, Gc};
 
 use crate::{Callback, Closure, Constant, Function, String, Table, Thread, UserData};
 
@@ -45,11 +45,15 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => write!(w, "{}", i),
             Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
-            Value::Table(t) => write!(w, "<table {:p}>", t.as_ptr()),
-            Value::Function(Function::Closure(c)) => write!(w, "<function {:p}>", c.as_ptr()),
-            Value::Function(Function::Callback(c)) => write!(w, "<function {:p}>", c.as_ptr()),
-            Value::Thread(t) => write!(w, "<thread {:p}>", t.as_ptr()),
-            Value::UserData(t) => write!(w, "<userdata {:p}>", t.as_ptr()),
+            Value::Table(t) => write!(w, "<table {:p}>", Gc::as_ptr(t.into_inner())),
+            Value::Function(Function::Closure(c)) => {
+                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+            }
+            Value::Function(Function::Callback(c)) => {
+                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+            }
+            Value::Thread(t) => write!(w, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
+            Value::UserData(u) => write!(w, "<userdata {:p}>", Gc::as_ptr(u.into_inner())),
         }
     }
 

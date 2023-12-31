@@ -86,11 +86,4 @@ impl<'gc> Function<'gc> {
             },
         ))
     }
-
-    pub fn as_ptr(&self) -> *const () {
-        match self {
-            Function::Closure(c) => c.as_ptr(),
-            Function::Callback(c) => c.as_ptr(),
-        }
-    }
 }

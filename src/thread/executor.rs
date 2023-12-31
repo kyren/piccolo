@@ -39,6 +39,14 @@ pub struct BadExecutorMode {
     pub expected: ExecutorMode,
 }
 
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+pub struct ExecutorState<'gc> {
+    thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+}
+
+pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
+
 /// The entry-point for the Lua VM.
 ///
 /// `Executor` runs networks of `Threads` that may depend on each other and may pass control
@@ -57,7 +65,7 @@ pub struct BadExecutorMode {
 /// the same executor calling the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Executor<'gc>(Gc<'gc, RefLock<vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>>>);
+pub struct Executor<'gc>(Gc<'gc, ExecutorInner<'gc>>);
 
 impl<'gc> PartialEq for Executor<'gc> {
     fn eq(&self, other: &Executor<'gc>) -> bool {
@@ -69,7 +77,7 @@ impl<'gc> Eq for Executor<'gc> {}
 
 impl<'gc> Hash for Executor<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.as_ptr().hash(state)
+        Gc::as_ptr(self.0).hash(state)
     }
 }
 
@@ -87,7 +95,15 @@ impl<'gc> Executor<'gc> {
     pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Self {
         let mut thread_stack = vec::Vec::new_in(MetricsAlloc::new(mc));
         thread_stack.push(thread);
-        Executor(Gc::new(mc, RefLock::new(thread_stack)))
+        Executor(Gc::new(mc, RefLock::new(ExecutorState { thread_stack })))
+    }
+
+    pub fn from_inner(inner: Gc<'gc, ExecutorInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, ExecutorInner<'gc>> {
+        self.0
     }
 
     /// Creates a new `Executor` with a new `Thread` running the given function.
@@ -101,16 +117,12 @@ impl<'gc> Executor<'gc> {
         Self::run(&ctx, thread)
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
-    }
-
     pub fn mode(self) -> ExecutorMode {
-        if let Ok(thread_stack) = self.0.try_borrow() {
-            if thread_stack.len() > 1 {
+        if let Ok(state) = self.0.try_borrow() {
+            if state.thread_stack.len() > 1 {
                 ExecutorMode::Normal
             } else {
-                match thread_stack[0].mode() {
+                match state.thread_stack[0].mode() {
                     ThreadMode::Stopped => ExecutorMode::Stopped,
                     ThreadMode::Result => ExecutorMode::Result,
                     ThreadMode::Normal => ExecutorMode::Normal,
@@ -133,10 +145,10 @@ impl<'gc> Executor<'gc> {
     /// do, and returns `true` if no more progress can be made. If `true` is returned, then
     /// `Executor::mode()` will no longer be `ExecutorMode::Normal`.
     pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
+        let mut state = self.0.borrow_mut(&ctx);
 
         loop {
-            let mut top_thread = thread_stack.last().copied().unwrap();
+            let mut top_thread = state.thread_stack.last().copied().unwrap();
             let mut res_thread = None;
             match top_thread.mode() {
                 ThreadMode::Normal => {}
@@ -144,17 +156,17 @@ impl<'gc> Executor<'gc> {
                     panic!("`Executor` thread already running")
                 }
                 _ => {
-                    if thread_stack.len() == 1 {
+                    if state.thread_stack.len() == 1 {
                         break true;
                     } else {
-                        thread_stack.pop();
+                        state.thread_stack.pop();
                         res_thread = Some(top_thread);
-                        top_thread = thread_stack.last().copied().unwrap();
+                        top_thread = state.thread_stack.last().copied().unwrap();
                     }
                 }
             }
 
-            let mut top_state = top_thread.0.borrow_mut(&ctx);
+            let mut top_state = top_thread.into_inner().borrow_mut(&ctx);
             let top_state = &mut *top_state;
             if let Some(res_thread) = res_thread {
                 let mode = top_state.mode();
@@ -164,7 +176,7 @@ impl<'gc> Executor<'gc> {
                         ThreadMode::Result => {
                             // Take the results from the res_thread and return them to our top
                             // thread.
-                            let mut res_state = res_thread.0.borrow_mut(&ctx);
+                            let mut res_state = res_thread.into_inner().borrow_mut(&ctx);
                             match res_state.take_result() {
                                 Ok(vals) => {
                                     let bottom = top_state.stack.len();
@@ -293,7 +305,7 @@ impl<'gc> Executor<'gc> {
                                 panic!("lua frame bottom is not a closure");
                             };
                             // Subtract 1 instruction for the Call opcode.
-                            Some((closure.0.proto, *pc - 1))
+                            Some((closure.prototype(), *pc - 1))
                         }
                         _ => None,
                     };
@@ -312,13 +324,13 @@ impl<'gc> Executor<'gc> {
                         let exec = execution(
                             self,
                             fuel,
-                            &thread_stack,
+                            &state.thread_stack,
                             &top_state.frames,
                             &top_state.stack,
                         );
                         match callback.call(ctx, exec, Stack::new(&mut top_state.stack, bottom)) {
                             Ok(ret) => {
-                                callback_ret(ctx, &mut *thread_stack, top_state, bottom, ret)
+                                callback_ret(ctx, &mut state.thread_stack, top_state, bottom, ret)
                             }
                             Err(err) => {
                                 top_state.stack.truncate(bottom);
@@ -336,7 +348,7 @@ impl<'gc> Executor<'gc> {
                         let exec = execution(
                             self,
                             fuel,
-                            &thread_stack,
+                            &state.thread_stack,
                             &top_state.frames,
                             &top_state.stack,
                         );
@@ -349,7 +361,7 @@ impl<'gc> Executor<'gc> {
                         match fin {
                             Ok(ret) => callback_ret(
                                 ctx,
-                                &mut *thread_stack,
+                                &mut state.thread_stack,
                                 top_state,
                                 bottom,
                                 match ret {
@@ -444,8 +456,8 @@ impl<'gc> Executor<'gc> {
     ) -> Result<Result<T, Error<'gc>>, BadExecutorMode> {
         let mode = self.mode();
         if mode == ExecutorMode::Result {
-            let thread_stack = self.0.borrow();
-            Ok(thread_stack[0].take_result(ctx).unwrap())
+            let state = self.0.borrow();
+            Ok(state.thread_stack[0].take_result(ctx).unwrap())
         } else {
             Err(BadExecutorMode {
                 found: mode,
@@ -461,8 +473,8 @@ impl<'gc> Executor<'gc> {
     ) -> Result<(), BadExecutorMode> {
         let mode = self.mode();
         if mode == ExecutorMode::Suspended {
-            let thread_stack = self.0.borrow();
-            thread_stack[0].resume(ctx, args).unwrap();
+            let state = self.0.borrow();
+            state.thread_stack[0].resume(ctx, args).unwrap();
             Ok(())
         } else {
             Err(BadExecutorMode {
@@ -475,8 +487,8 @@ impl<'gc> Executor<'gc> {
     pub fn resume_err(self, mc: &Mutation<'gc>, error: Error<'gc>) -> Result<(), BadExecutorMode> {
         let mode = self.mode();
         if mode == ExecutorMode::Suspended {
-            let thread_stack = self.0.borrow();
-            thread_stack[0].resume_err(mc, error).unwrap();
+            let state = self.0.borrow();
+            state.thread_stack[0].resume_err(mc, error).unwrap();
             Ok(())
         } else {
             Err(BadExecutorMode {
@@ -489,17 +501,17 @@ impl<'gc> Executor<'gc> {
     /// Reset this `Executor` entirely, leaving it with a stopped main thread. Equivalent to
     /// creating a new executor with `Executor::new`.
     pub fn stop(self, mc: &Mutation<'gc>) {
-        let mut thread_stack = self.0.borrow_mut(mc);
-        thread_stack.truncate(1);
-        thread_stack[0].reset(mc).unwrap();
+        let mut state = self.0.borrow_mut(mc);
+        state.thread_stack.truncate(1);
+        state.thread_stack[0].reset(mc).unwrap();
     }
 
     /// Reset this `Executor` entirely and begins running the given thread. Equivalent to
     /// creating a new executor with `Executor::run`.
     pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
-        let mut thread_stack = self.0.borrow_mut(mc);
-        thread_stack.clear();
-        thread_stack.push(thread);
+        let mut state = self.0.borrow_mut(mc);
+        state.thread_stack.clear();
+        state.thread_stack.push(thread);
     }
 
     /// Reset this `Executor` entirely and begins running the given function, equivalent to
@@ -510,10 +522,10 @@ impl<'gc> Executor<'gc> {
         function: Function<'gc>,
         args: impl IntoMultiValue<'gc>,
     ) {
-        let mut thread_stack = self.0.borrow_mut(&ctx);
-        thread_stack.truncate(1);
-        thread_stack[0].reset(&ctx).unwrap();
-        thread_stack[0].start(ctx, function, args).unwrap();
+        let mut state = self.0.borrow_mut(&ctx);
+        state.thread_stack.truncate(1);
+        state.thread_stack[0].reset(&ctx).unwrap();
+        state.thread_stack[0].start(ctx, function, args).unwrap();
     }
 }
 

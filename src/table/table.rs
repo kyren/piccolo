@@ -9,9 +9,11 @@ use crate::{Context, IntoValue, Value};
 
 use super::raw::{InvalidTableKey, NextValue, RawTable};
 
+pub type TableInner<'gc> = RefLock<TableState<'gc>>;
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Table<'gc>(pub Gc<'gc, RefLock<TableState<'gc>>>);
+pub struct Table<'gc>(Gc<'gc, TableInner<'gc>>);
 
 impl<'gc> PartialEq for Table<'gc> {
     fn eq(&self, other: &Table<'gc>) -> bool {
@@ -23,7 +25,7 @@ impl<'gc> Eq for Table<'gc> {}
 
 impl<'gc> Hash for Table<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.as_ptr().hash(state);
+        Gc::as_ptr(self.0).hash(state)
     }
 }
 
@@ -40,8 +42,12 @@ impl<'gc> Table<'gc> {
         Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+    pub fn from_inner(inner: Gc<'gc, TableInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, TableInner<'gc>> {
+        self.0
     }
 
     pub fn get<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {

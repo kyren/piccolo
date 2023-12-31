@@ -40,11 +40,11 @@ pub trait CallbackFn<'gc>: Collect {
 // Represents a callback as a single pointer with an inline VTable header.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Callback<'gc>(Gc<'gc, Header<'gc>>);
+pub struct Callback<'gc>(Gc<'gc, CallbackInner<'gc>>);
 
-struct Header<'gc> {
+pub struct CallbackInner<'gc> {
     call: unsafe fn(
-        *const (),
+        *const CallbackInner<'gc>,
         Context<'gc>,
         Execution<'gc, '_>,
         Stack<'gc, '_>,
@@ -55,7 +55,7 @@ impl<'gc> Callback<'gc> {
     pub fn new<C: CallbackFn<'gc> + 'gc>(mc: &Mutation<'gc>, callback: C) -> Self {
         #[repr(C)]
         struct HeaderCallback<'gc, C> {
-            header: Header<'gc>,
+            header: CallbackInner<'gc>,
             callback: C,
         }
 
@@ -78,7 +78,7 @@ impl<'gc> Callback<'gc> {
         let hc = Gc::new(
             mc,
             HeaderCallback {
-                header: Header {
+                header: CallbackInner {
                     call: |ptr, ctx, exec, stack| unsafe {
                         let hc = ptr as *const HeaderCallback<C>;
                         ((*hc).callback).call(ctx, exec, stack)
@@ -88,7 +88,7 @@ impl<'gc> Callback<'gc> {
             },
         );
 
-        Self(unsafe { Gc::cast::<Header>(hc) })
+        Self(unsafe { Gc::cast::<CallbackInner>(hc) })
     }
 
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
@@ -146,8 +146,12 @@ impl<'gc> Callback<'gc> {
         Callback::new(mc, RootCallback { root, call })
     }
 
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+    pub fn from_inner(inner: Gc<'gc, CallbackInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, CallbackInner<'gc>> {
+        self.0
     }
 
     pub fn call(
@@ -156,19 +160,21 @@ impl<'gc> Callback<'gc> {
         exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
     ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-        unsafe { (self.0.call)(Gc::as_ptr(self.0) as *const (), ctx, exec, stack) }
+        unsafe { (self.0.call)(Gc::as_ptr(self.0), ctx, exec, stack) }
     }
 }
 
 impl<'gc> fmt::Debug for Callback<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("Callback").field(&self.as_ptr()).finish()
+        fmt.debug_tuple("Callback")
+            .field(&Gc::as_ptr(self.0))
+            .finish()
     }
 }
 
 impl<'gc> PartialEq for Callback<'gc> {
     fn eq(&self, other: &Callback<'gc>) -> bool {
-        self.as_ptr() == other.as_ptr()
+        Gc::ptr_eq(self.0, other.0)
     }
 }
 
@@ -176,7 +182,7 @@ impl<'gc> Eq for Callback<'gc> {}
 
 impl<'gc> Hash for Callback<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_ptr().hash(state)
+        Gc::as_ptr(self.0).hash(state)
     }
 }
 
@@ -237,7 +243,7 @@ pub trait Sequence<'gc>: Collect {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct BoxSequence<'gc>(pub boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
+pub struct BoxSequence<'gc>(boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
 
 impl<'gc> fmt::Debug for BoxSequence<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {

@@ -141,20 +141,44 @@ pub enum UpValueState<'gc> {
     Closed(Value<'gc>),
 }
 
+pub type UpValueInner<'gc> = Lock<UpValueState<'gc>>;
+
 #[derive(Debug, Collect, Copy, Clone)]
 #[collect(no_drop)]
-pub struct UpValue<'gc>(pub Gc<'gc, Lock<UpValueState<'gc>>>);
+pub struct UpValue<'gc>(Gc<'gc, UpValueInner<'gc>>);
+
+impl<'gc> UpValue<'gc> {
+    pub fn new(mc: &Mutation<'gc>, state: UpValueState<'gc>) -> Self {
+        Self(Gc::new(mc, Lock::new(state)))
+    }
+
+    pub fn from_inner(inner: Gc<'gc, UpValueInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, UpValueInner<'gc>> {
+        self.0
+    }
+
+    pub fn get(self) -> UpValueState<'gc> {
+        self.0.get()
+    }
+
+    pub fn set(self, mc: &Mutation<'gc>, state: UpValueState<'gc>) {
+        self.0.set(mc, state)
+    }
+}
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub struct ClosureState<'gc> {
-    pub proto: Gc<'gc, FunctionPrototype<'gc>>,
-    pub upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+pub struct ClosureInner<'gc> {
+    proto: Gc<'gc, FunctionPrototype<'gc>>,
+    upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Closure<'gc>(pub Gc<'gc, ClosureState<'gc>>);
+pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 
 impl<'gc> PartialEq for Closure<'gc> {
     fn eq(&self, other: &Closure<'gc>) -> bool {
@@ -166,7 +190,7 @@ impl<'gc> Eq for Closure<'gc> {}
 
 impl<'gc> Hash for Closure<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (&*self.0 as *const ClosureState).hash(state)
+        Gc::as_ptr(self.0).hash(state)
     }
 }
 
@@ -201,7 +225,23 @@ impl<'gc> Closure<'gc> {
             }
         }
 
-        Ok(Closure(Gc::new(mc, ClosureState { proto, upvalues })))
+        Ok(Closure(Gc::new(mc, ClosureInner { proto, upvalues })))
+    }
+
+    pub fn from_parts(
+        mc: &Mutation<'gc>,
+        proto: Gc<'gc, FunctionPrototype<'gc>>,
+        upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    ) -> Self {
+        Self(Gc::new(mc, ClosureInner { proto, upvalues }))
+    }
+
+    pub fn from_inner(inner: Gc<'gc, ClosureInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, ClosureInner<'gc>> {
+        self.0
     }
 
     /// Compile a top-level closure from source, using the globals table as the `_ENV` table.
@@ -224,7 +264,11 @@ impl<'gc> Closure<'gc> {
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }
 
-    pub fn as_ptr(&self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+    pub fn prototype(self) -> Gc<'gc, FunctionPrototype<'gc>> {
+        self.0.proto
+    }
+
+    pub fn upvalues(self) -> &'gc [UpValue<'gc>] {
+        &Gc::as_ref(self.0).upvalues
     }
 }

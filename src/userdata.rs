@@ -1,21 +1,36 @@
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    mem,
+};
 
-use gc_arena::{barrier, lock, Collect, Mutation, Root, Rootable};
+use gc_arena::{barrier, lock, Collect, Gc, Mutation, Root, Rootable};
 use thiserror::Error;
 
-use crate::{any::Any, Table};
+use crate::{
+    any::{Any, AnyInner},
+    Table,
+};
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("UserData type mismatch")]
 pub struct BadUserDataType;
 
+#[derive(Debug, Copy, Clone, Default, Collect)]
+#[collect(no_drop)]
+pub struct UserDataMeta<'gc> {
+    pub metatable: Option<Table<'gc>>,
+}
+
+pub type UserDataMetaState<'gc> = lock::Lock<UserDataMeta<'gc>>;
+pub type UserDataInner<'gc> = AnyInner<UserDataMetaState<'gc>>;
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct UserData<'gc>(Any<'gc, lock::Lock<Option<Table<'gc>>>>);
+pub struct UserData<'gc>(Any<'gc, UserDataMetaState<'gc>>);
 
 impl<'gc> PartialEq for UserData<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_ptr() == other.0.as_ptr()
+        self.0.eq(&other.0)
     }
 }
 
@@ -23,7 +38,7 @@ impl<'gc> Eq for UserData<'gc> {}
 
 impl<'gc> Hash for UserData<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.as_ptr().hash(state)
+        self.0.hash(state)
     }
 }
 
@@ -47,6 +62,14 @@ impl<'gc> UserData<'gc> {
 
     pub fn new_static<R: 'static>(mc: &Mutation<'gc>, val: R) -> Self {
         Self::new::<StaticRoot<R>>(mc, StaticRoot { root: val })
+    }
+
+    pub fn from_inner(inner: Gc<'gc, UserDataInner<'gc>>) -> Self {
+        Self(Any::from_inner(inner))
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, UserDataInner<'gc>> {
+        self.0.into_inner()
     }
 
     pub fn is<R>(self) -> bool
@@ -85,7 +108,7 @@ impl<'gc> UserData<'gc> {
     }
 
     pub fn metatable(self) -> Option<Table<'gc>> {
-        self.0.metadata().get()
+        self.0.metadata().get().metatable
     }
 
     pub fn set_metatable(
@@ -93,10 +116,10 @@ impl<'gc> UserData<'gc> {
         mc: &Mutation<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Option<Table<'gc>> {
-        self.0.write_metadata(mc).unlock().replace(metatable)
-    }
-
-    pub fn as_ptr(self) -> *const () {
-        self.0.as_ptr()
+        let md = self.0.write_metadata(mc).unlock();
+        let mut v = md.get();
+        let old_metatable = mem::replace(&mut v.metatable, metatable);
+        md.set(v);
+        old_metatable
     }
 }

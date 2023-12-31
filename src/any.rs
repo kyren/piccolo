@@ -1,4 +1,8 @@
-use std::{any::TypeId, fmt};
+use std::{
+    any::TypeId,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 
@@ -41,24 +45,11 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 //    were given.
 #[derive(Collect)]
 #[collect(no_drop)]
-pub struct Any<'gc, M: 'gc = ()>(Gc<'gc, Header<M>>);
-
-impl<'gc, M> fmt::Debug for Any<'gc, M>
-where
-    M: fmt::Debug,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Any")
-            .field("metadata", self.metadata())
-            .field("type_id", &(self.type_id()))
-            .field("value", &(self.as_ptr()))
-            .finish()
-    }
-}
+pub struct Any<'gc, M: 'gc = ()>(Gc<'gc, AnyInner<M>>);
 
 #[derive(Collect)]
 #[collect(no_drop)]
-struct Header<M> {
+pub struct AnyInner<M> {
     metadata: M,
     type_id: TypeId,
 }
@@ -67,8 +58,35 @@ struct Header<M> {
 #[collect(no_drop)]
 #[repr(C)]
 struct Value<M, V> {
-    header: Header<M>,
+    header: AnyInner<M>,
     value: V,
+}
+
+impl<'gc, M> fmt::Debug for Any<'gc, M>
+where
+    M: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Any")
+            .field("data", &Gc::as_ptr(self.0))
+            .field("metadata", self.metadata())
+            .field("type_id", &(self.type_id()))
+            .finish()
+    }
+}
+
+impl<'gc, M> PartialEq for Any<'gc, M> {
+    fn eq(&self, other: &Self) -> bool {
+        Gc::ptr_eq(self.0, other.0)
+    }
+}
+
+impl<'gc, M> Eq for Any<'gc, M> {}
+
+impl<'gc, M> Hash for Any<'gc, M> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Gc::as_ptr(self.0).hash(state)
+    }
 }
 
 impl<'gc, M> Copy for Any<'gc, M> {}
@@ -96,7 +114,7 @@ impl<'gc, M> Any<'gc, M> {
         let val = Gc::new(
             mc,
             Value::<M, Root<'gc, R>> {
-                header: Header {
+                header: AnyInner {
                     metadata,
                     type_id: TypeId::of::<R>(),
                 },
@@ -106,7 +124,15 @@ impl<'gc, M> Any<'gc, M> {
 
         // SAFETY: We know we can cast to a `Header<M>` because `Value<M, Root<'gc, R>>` is
         // `#[repr(C)]` and `Header<M>` is the first field
-        Self(unsafe { Gc::cast::<Header<M>>(val) })
+        Self(unsafe { Gc::cast::<AnyInner<M>>(val) })
+    }
+
+    pub fn from_inner(inner: Gc<'gc, AnyInner<M>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, AnyInner<M>> {
+        self.0
     }
 
     pub fn metadata(self) -> &'gc M {
@@ -114,11 +140,7 @@ impl<'gc, M> Any<'gc, M> {
     }
 
     pub fn write_metadata(self, mc: &Mutation<'gc>) -> &'gc Write<M> {
-        gc_arena::barrier::field!(Gc::write(mc, self.0), Header, metadata)
-    }
-
-    pub fn as_ptr(self) -> *const () {
-        Gc::as_ptr(self.0) as *const ()
+        gc_arena::barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
     }
 
     pub fn type_id(self) -> TypeId {
