@@ -33,6 +33,7 @@ impl<'f, T: ?Sized + for<'a> Freeze<'a>> Freeze<'f> for DynFreeze<T> {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! __scripting_Freeze {
     ($f:lifetime => $frozen:ty) => {
         $crate::freeze::DynFreeze::<
