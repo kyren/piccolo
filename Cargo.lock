@@ -164,8 +164,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena"
-version = "0.4.0"
-source = "git+https://github.com/kyren/gc-arena#3e8c5d97869552b65b8b8a4637a0b3117d86c166"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b2e43b3fc51b9900cc9ced1c4630dcbfae1859573102a84d2231ac744c1208"
 dependencies = [
  "allocator-api2",
  "gc-arena-derive",
@@ -175,8 +176,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena-derive"
-version = "0.4.0"
-source = "git+https://github.com/kyren/gc-arena#3e8c5d97869552b65b8b8a4637a0b3117d86c166"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96f3c487d429eaa928334f7f2ca7b14734f1c2f4020d2b08c1f0b4d9c70e4f17"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -266,7 +268,7 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
 name = "piccolo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ahash",
  "allocator-api2",
@@ -281,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "piccolo-util"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gc-arena",
  "piccolo",
