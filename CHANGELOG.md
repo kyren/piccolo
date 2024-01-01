@@ -1,3 +1,10 @@
+## [0.3.1]
+
+Small fixups from 0.3
+
+* Actually export `ExecutorInner`
+* Add a missing `#[doc(hidden)]` around an internal macro.
+
 ## [0.3]
 
 Huge release! Much safer `Executor` API that no longer requires recursion
