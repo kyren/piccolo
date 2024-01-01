@@ -36,10 +36,16 @@ impl<'gc> Table<'gc> {
 
     pub fn from_parts(
         mc: &Mutation<'gc>,
-        entries: RawTable<'gc>,
+        raw_table: RawTable<'gc>,
         metatable: Option<Table<'gc>>,
     ) -> Table<'gc> {
-        Self(Gc::new(mc, RefLock::new(TableState { entries, metatable })))
+        Self(Gc::new(
+            mc,
+            RefLock::new(TableState {
+                raw_table,
+                metatable,
+            }),
+        ))
     }
 
     pub fn from_inner(inner: Gc<'gc, TableInner<'gc>>) -> Self {
@@ -64,7 +70,7 @@ impl<'gc> Table<'gc> {
     }
 
     pub fn get_value(self, key: Value<'gc>) -> Value<'gc> {
-        self.0.borrow().entries.get(key)
+        self.0.borrow().raw_table.get(key)
     }
 
     pub fn set_value(
@@ -73,7 +79,7 @@ impl<'gc> Table<'gc> {
         key: Value<'gc>,
         value: Value<'gc>,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.0.borrow_mut(&mc).entries.set(key, value)
+        self.0.borrow_mut(&mc).raw_table.set(key, value)
     }
 
     /// Returns a 'border' for this table.
@@ -84,7 +90,7 @@ impl<'gc> Table<'gc> {
     /// If a table has exactly one border, it is called a 'sequence', and this border is the table's
     /// length.
     pub fn length(self) -> i64 {
-        self.0.borrow().entries.length()
+        self.0.borrow().raw_table.length()
     }
 
     /// Returns the next value after this key in the table order.
@@ -98,7 +104,7 @@ impl<'gc> Table<'gc> {
     /// in the table, it will return the next pair in iteration order. If given a key that is not
     /// present in the table, the behavior is unspecified.
     pub fn next(self, key: Value<'gc>) -> NextValue<'gc> {
-        self.0.borrow().entries.next(key)
+        self.0.borrow().raw_table.next(key)
     }
 
     /// Iterate over the key-value pairs of the table.
@@ -163,6 +169,6 @@ impl<'gc> IntoIterator for Table<'gc> {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct TableState<'gc> {
-    pub entries: RawTable<'gc>,
+    pub raw_table: RawTable<'gc>,
     pub metatable: Option<Table<'gc>>,
 }

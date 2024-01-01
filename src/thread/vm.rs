@@ -116,10 +116,10 @@ pub(super) fn run_vm<'gc>(
                 array_size,
                 map_size,
             } => {
-                let mut entries = RawTable::new(&ctx);
-                entries.reserve_array(array_size as usize);
-                entries.reserve_map(map_size as usize);
-                let table = Table::from_parts(&ctx, entries, None);
+                let mut raw_table = RawTable::new(&ctx);
+                raw_table.reserve_array(array_size as usize);
+                raw_table.reserve_map(map_size as usize);
+                let table = Table::from_parts(&ctx, raw_table, None);
                 registers.stack_frame[dest.0 as usize] = Value::Table(table);
             }
 
