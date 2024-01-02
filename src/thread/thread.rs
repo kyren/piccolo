@@ -275,7 +275,7 @@ pub(super) enum Frame<'gc> {
         callback: Callback<'gc>,
     },
     // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
-    // will be called on the next call to `Thread::step`, depending on whether there is a pending
+    // will be called the next time this thread is stepped, depending on whether there is a pending
     // error.
     Sequence {
         bottom: usize,

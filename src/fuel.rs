@@ -1,10 +1,10 @@
-/// A counter for tracking the amount of time spent in `Thread::step` and in callbacks.
+/// A counter for tracking the amount of time spent in `Executor::step` and in callbacks.
 ///
 /// The fuel unit is *approximately* one VM instruction, but this is just a rough estimate
 /// (especially since VM instructions are highly variable in cost, such as with the len operator).
 ///
 /// All operations that take a variable amount of time should consume some amount of fuel, so that
-/// it is always possible to bound the amount of time spent in `Thread::step`.
+/// it is always possible to bound the amount of time spent in `Executor::step`.
 #[derive(Debug, Clone)]
 pub struct Fuel {
     fuel: i32,
@@ -25,8 +25,8 @@ impl Fuel {
 
     /// Refills fuel up to a given maximum and also clears the fuel interrupt flag.
     ///
-    /// This is a convenience method that is intended to be called outside the outermost call to
-    /// `Thread::step` in some loop. It does the operations that all loops that would *re-use* a
+    /// This is a convenience method that is intended to be called outside of a call to
+    /// `Executor::step` in some loop. It does the operations that all loops that would *re-use* a
     /// fuel container from one tick to another would need to do.
     ///
     /// It credits the running thread with fuel while also preventing available fuel from growing to
@@ -57,10 +57,10 @@ impl Fuel {
         self.fuel = fuel;
     }
 
-    /// Marks that the calling `Thread` should immediately stop executing, without actually
+    /// Marks that the calling `Executor` should immediately stop executing, without actually
     /// consuming any fuel.
     ///
-    /// This is useful in situations where you need to interrupt an executing `Thread` because it
+    /// This is useful in situations where you need to interrupt a running `Executor` because it
     /// may be waiting on an external event that has not yet occurred, but still want to record the
     /// correct fuel usage.
     pub fn interrupt(&mut self) {
