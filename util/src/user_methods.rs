@@ -128,6 +128,25 @@ impl<'gc, U: 'static> StaticUserMethods<'gc, U> {
         !self.table.set(ctx, name, callback).unwrap().is_nil()
     }
 
+    pub fn add_write<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
+    where
+        F: Fn(&barrier::Write<U>, Context<'gc>, Execution<'gc, '_>, A) -> Result<R, Error<'gc>>
+            + 'static,
+        A: FromMultiValue<'gc>,
+        R: IntoMultiValue<'gc>,
+    {
+        let callback = Callback::from_fn(&ctx, move |ctx, exec, mut stack| {
+            let userdata: UserData = stack.from_front(ctx)?;
+            let args: A = stack.consume(ctx)?;
+            let this = userdata.downcast_write_static::<U>(&ctx)?;
+            let ret = method(&this, ctx, exec, args)?;
+            stack.replace(ctx, ret);
+            Ok(CallbackReturn::Return)
+        });
+
+        !self.table.set(ctx, name, callback).unwrap().is_nil()
+    }
+
     pub fn metatable(self, ctx: Context<'gc>) -> Table<'gc> {
         let metatable = Table::new(&ctx);
         metatable.set(ctx, MetaMethod::Index, self.table).unwrap();

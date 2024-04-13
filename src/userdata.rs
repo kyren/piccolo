@@ -100,6 +100,16 @@ impl<'gc> UserData<'gc> {
         self.0.downcast_write::<R>(mc).ok_or(BadUserDataType)
     }
 
+    pub fn downcast_write_static<R: 'static>(
+        self,
+        mc: &Mutation<'gc>,
+    ) -> Result<&'gc barrier::Write<R>, BadUserDataType> {
+        self.0
+            .downcast_write::<StaticRoot<R>>(mc)
+            .map(|r| barrier::Write::from_static(&r.root))
+            .ok_or(BadUserDataType)
+    }
+
     pub fn downcast_static<R: 'static>(self) -> Result<&'gc R, BadUserDataType> {
         self.0
             .downcast::<StaticRoot<R>>()
