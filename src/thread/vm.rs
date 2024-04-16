@@ -491,8 +491,20 @@ pub(super) fn run_vm<'gc>(
             Operation::Sub { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::subtract(left, right).ok_or(BinaryOperatorError::Add)?;
+                match meta_ops::subtract(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        registers.stack_frame[dest.0 as usize] = v;
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Mul { dest, left, right } => {
