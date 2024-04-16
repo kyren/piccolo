@@ -23,6 +23,7 @@ pub mod types;
 pub mod userdata;
 pub mod value;
 
+#[doc(inline)]
 pub use self::{
     callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
     closure::{Closure, ClosureError, FunctionPrototype, PrototypeError},
