@@ -15,6 +15,7 @@ pub enum MetaMethod {
     Pairs,
     ToString,
     Eq,
+    Add,
 }
 
 impl MetaMethod {
@@ -27,6 +28,7 @@ impl MetaMethod {
             MetaMethod::Pairs => "__pairs",
             MetaMethod::ToString => "__tostring",
             MetaMethod::Eq => "__eq",
+            MetaMethod::Add => "__add",
         }
     }
 }
@@ -395,4 +397,258 @@ pub fn equal<'gc>(
         }
         (Value::UserData(_), _) => Value::Boolean(false).into(),
     })
+}
+
+pub fn add<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, TypeError> {
+    Ok(match (lhs, rhs) {
+        (Value::Integer(a), Value::Integer(b)) => Value::Integer(a + b).into(),
+        (Value::Integer(a), Value::Number(b)) => Value::Number(a as f64 + b).into(),
+        (Value::Number(a), Value::Integer(b)) => Value::Number(a + b as f64).into(),
+        (Value::Number(a), Value::Number(b)) => Value::Number(a + b).into(),
+
+        (Value::Table(a), Value::Table(b)) => {
+            let get_add = |t: Table<'gc>| {
+                let eq = t
+                    .metatable()
+                    .map(|t| t.get(ctx, MetaMethod::Add))
+                    .unwrap_or_default();
+                if eq.is_nil() {
+                    None
+                } else {
+                    Some(eq)
+                }
+            };
+            if let Some(a_eq) = get_add(a) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else if let Some(b_eq) = get_add(b) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, b_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "tables with no _add",
+                })?
+            }
+        }
+        (Value::UserData(a), Value::UserData(b)) => {
+            let get_add = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Add);
+            if let Some(a_eq) = get_add(a) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else if let Some(b_eq) = get_add(b) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, b_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "userdata(s) with no _add",
+                })?
+            }
+        }
+        (Value::UserData(a), Value::Table(b)) => {
+            if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, MetaMethod::Add) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, MetaMethod::Add) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, b_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "userdata(s) with no _add",
+                })?
+            }
+        }
+        (Value::Table(a), Value::UserData(b)) => {
+            if let Some(a_eq) = get_metamethod_from_table(ctx, a, MetaMethod::Add) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, MetaMethod::Add) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, b_eq)?,
+                    args: [a.into(), b.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "userdata(s) with no _add",
+                })?
+            }
+        }
+
+        (Value::Table(t), a) => {
+            let get_add = |t: Table<'gc>| {
+                let eq = t
+                    .metatable()
+                    .map(|t| t.get(ctx, MetaMethod::Add))
+                    .unwrap_or_default();
+                if eq.is_nil() {
+                    None
+                } else {
+                    Some(eq)
+                }
+            };
+            if let Some(a_eq) = get_add(t) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [t.into(), a.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "table with no _add",
+                })?
+            }
+        }
+        (Value::UserData(t), a) => {
+            let get_add = |t: UserData<'gc>| {
+                let eq = t
+                    .metatable()
+                    .map(|t| t.get(ctx, MetaMethod::Add))
+                    .unwrap_or_default();
+                if eq.is_nil() {
+                    None
+                } else {
+                    Some(eq)
+                }
+            };
+            if let Some(a_eq) = get_add(t) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [t.into(), a.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "userdata with no _add",
+                })?
+            }
+        }
+
+        (a, Value::Table(t)) => {
+            let get_add = |t: Table<'gc>| {
+                let eq = t
+                    .metatable()
+                    .map(|t| t.get(ctx, MetaMethod::Add))
+                    .unwrap_or_default();
+                if eq.is_nil() {
+                    None
+                } else {
+                    Some(eq)
+                }
+            };
+            if let Some(a_eq) = get_add(t) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), t.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "table with no _add",
+                })?
+            }
+        }
+        (a, Value::UserData(t)) => {
+            let get_add = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Add);
+            if let Some(a_eq) = get_add(t) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, a_eq)?,
+                    args: [a.into(), t.into()],
+                })
+            } else {
+                Err(TypeError {
+                    expected: "integer or table with __add or userdata with __add",
+                    found: "userdata with no _add",
+                })?
+            }
+        }
+
+        (Value::Nil, _) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "nil",
+        })?,
+        (_, Value::Nil) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "nil",
+        })?,
+        (Value::Boolean(_), _) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "boolean",
+        })?,
+        (_, Value::Boolean(_)) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "boolean",
+        })?,
+        (Value::String(_), _) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "string",
+        })?,
+        (_, Value::String(_)) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "string",
+        })?,
+        (Value::Function(_), _) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "function",
+        })?,
+        (_, Value::Function(_)) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "function",
+        })?,
+        (Value::Thread(_), _) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "thread",
+        })?,
+        (_, Value::Thread(_)) => Err(TypeError {
+            expected: "integer or table with __add or userdata with __add",
+            found: "thread",
+        })?,
+    })
+}
+
+// If we had a HasMetatable trait, we could fold these together.
+fn get_metamethod_from_userdata<'gc>(
+    ctx: Context<'gc>,
+    t: UserData<'gc>,
+    m: MetaMethod,
+) -> Option<Value<'gc>> {
+    let eq = t.metatable().map(|t| t.get(ctx, m)).unwrap_or_default();
+    if eq.is_nil() {
+        None
+    } else {
+        Some(eq)
+    }
+}
+
+fn get_metamethod_from_table<'gc>(
+    ctx: Context<'gc>,
+    t: Table<'gc>,
+    m: MetaMethod,
+) -> Option<Value<'gc>> {
+    let eq = t.metatable().map(|t| t.get(ctx, m)).unwrap_or_default();
+    if eq.is_nil() {
+        None
+    } else {
+        Some(eq)
+    }
 }
