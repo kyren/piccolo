@@ -406,31 +406,56 @@ pub fn add<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, TypeError> {
-    let expected = "integer or table with __add or userdata with __add";
+    arithmetic_meta_op(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Add,
+        "integer or table with __add or userdata with __add",
+        |a, b| a + b,
+        |a, b| a + b,
+    )
+}
+
+pub fn subtract<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, TypeError> {
+    arithmetic_meta_op(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Sub,
+        "integer or table with __sub or userdata with __sub",
+        |a, b| a - b,
+        |a, b| a - b,
+    )
+}
+
+//TODO figure out hwo to infer `expected_message`` from `m`.
+pub fn arithmetic_meta_op<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+    m: MetaMethod,
+    expected: &'static str,
+    integer_op: impl FnOnce(i64, i64) -> i64,
+    number_op: impl FnOnce(f64, f64) -> f64,
+) -> Result<MetaResult<'gc, 2>, TypeError> {
     Ok(match (lhs, rhs) {
-        (Value::Integer(a), Value::Integer(b)) => Value::Integer(a + b).into(),
-        (Value::Integer(a), Value::Number(b)) => Value::Number(a as f64 + b).into(),
-        (Value::Number(a), Value::Integer(b)) => Value::Number(a + b as f64).into(),
-        (Value::Number(a), Value::Number(b)) => Value::Number(a + b).into(),
+        (Value::Integer(a), Value::Integer(b)) => Value::Integer(integer_op(a, b)).into(),
+        (Value::Integer(a), Value::Number(b)) => Value::Number(number_op(a as f64, b)).into(),
+        (Value::Number(a), Value::Integer(b)) => Value::Number(number_op(a, b as f64)).into(),
+        (Value::Number(a), Value::Number(b)) => Value::Number(number_op(a, b)).into(),
 
         (Value::Table(a), Value::Table(b)) => {
-            let get_add = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Add))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_add(a) {
+            if let Some(a_eq) = get_metamethod_from_table(ctx, a, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), b.into()],
                 })
-            } else if let Some(b_eq) = get_add(b) {
+            } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, b_eq)?,
                     args: [a.into(), b.into()],
@@ -438,18 +463,17 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "tables with no __add",
+                    found: "tables with no __sub",
                 })?
             }
         }
         (Value::UserData(a), Value::UserData(b)) => {
-            let get_add = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Add);
-            if let Some(a_eq) = get_add(a) {
+            if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), b.into()],
                 })
-            } else if let Some(b_eq) = get_add(b) {
+            } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, b_eq)?,
                     args: [a.into(), b.into()],
@@ -457,17 +481,17 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __add",
+                    found: "userdata(s) with no __sub",
                 })?
             }
         }
         (Value::UserData(a), Value::Table(b)) => {
-            if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, MetaMethod::Add) {
+            if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), b.into()],
                 })
-            } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, MetaMethod::Add) {
+            } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, b_eq)?,
                     args: [a.into(), b.into()],
@@ -475,17 +499,17 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __add",
+                    found: "userdata(s) with no __sub",
                 })?
             }
         }
         (Value::Table(a), Value::UserData(b)) => {
-            if let Some(a_eq) = get_metamethod_from_table(ctx, a, MetaMethod::Add) {
+            if let Some(a_eq) = get_metamethod_from_table(ctx, a, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), b.into()],
                 })
-            } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, MetaMethod::Add) {
+            } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, b_eq)?,
                     args: [a.into(), b.into()],
@@ -493,24 +517,13 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __add",
+                    found: "userdata(s) with no )__sub",
                 })?
             }
         }
 
         (Value::Table(t), a) => {
-            let get_add = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Add))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_add(t) {
+            if let Some(a_eq) = get_metamethod_from_table(ctx, t, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [t.into(), a.into()],
@@ -518,23 +531,12 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "table with no __add",
+                    found: "table with no __sub",
                 })?
             }
         }
         (Value::UserData(t), a) => {
-            let get_add = |t: UserData<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Add))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_add(t) {
+            if let Some(a_eq) = get_metamethod_from_userdata(ctx, t, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [t.into(), a.into()],
@@ -542,24 +544,13 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata with no __add",
+                    found: "userdata with no __sub",
                 })?
             }
         }
 
         (a, Value::Table(t)) => {
-            let get_add = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Add))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_add(t) {
+            if let Some(a_eq) = get_metamethod_from_table(ctx, t, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), t.into()],
@@ -567,13 +558,12 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "table with no __add",
+                    found: "table with no __sub",
                 })?
             }
         }
         (a, Value::UserData(t)) => {
-            let get_add = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Add);
-            if let Some(a_eq) = get_add(t) {
+            if let Some(a_eq) = get_metamethod_from_userdata(ctx, t, m) {
                 MetaResult::Call(MetaCall {
                     function: call(ctx, a_eq)?,
                     args: [a.into(), t.into()],
@@ -581,7 +571,7 @@ pub fn add<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata with no __add",
+                    found: "userdata with no __sub",
                 })?
             }
         }
@@ -629,239 +619,6 @@ pub fn add<'gc>(
     })
 }
 
-
-pub fn subtract<'gc>(
-    ctx: Context<'gc>,
-    lhs: Value<'gc>,
-    rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
-    let expected = "integer or table with __sub or userdata with __sub";
-    Ok(match (lhs, rhs) {
-        (Value::Integer(a), Value::Integer(b)) => Value::Integer(a - b).into(),
-        (Value::Integer(a), Value::Number(b)) => Value::Number(a as f64 - b).into(),
-        (Value::Number(a), Value::Integer(b)) => Value::Number(a - b as f64).into(),
-        (Value::Number(a), Value::Number(b)) => Value::Number(a - b).into(),
-
-        (Value::Table(a), Value::Table(b)) => {
-            let get_sub = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Sub))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_sub(a) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else if let Some(b_eq) = get_sub(b) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "tables with no __sub",
-                })?
-            }
-        }
-        (Value::UserData(a), Value::UserData(b)) => {
-            let get_sub = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Sub);
-            if let Some(a_eq) = get_sub(a) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else if let Some(b_eq) = get_sub(b) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "userdata(s) with no __sub",
-                })?
-            }
-        }
-        (Value::UserData(a), Value::Table(b)) => {
-            if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, MetaMethod::Sub) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, MetaMethod::Sub) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "userdata(s) with no __sub",
-                })?
-            }
-        }
-        (Value::Table(a), Value::UserData(b)) => {
-            if let Some(a_eq) = get_metamethod_from_table(ctx, a, MetaMethod::Sub) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, MetaMethod::Sub) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "userdata(s) with no )__sub",
-                })?
-            }
-        }
-
-        (Value::Table(t), a) => {
-            let get_sub = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Sub))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_sub(t) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [t.into(), a.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "table with no __sub",
-                })?
-            }
-        }
-        (Value::UserData(t), a) => {
-            let get_sub = |t: UserData<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Sub))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_sub(t) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [t.into(), a.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "userdata with no __sub",
-                })?
-            }
-        }
-
-        (a, Value::Table(t)) => {
-            let get_sub = |t: Table<'gc>| {
-                let eq = t
-                    .metatable()
-                    .map(|t| t.get(ctx, MetaMethod::Sub))
-                    .unwrap_or_default();
-                if eq.is_nil() {
-                    None
-                } else {
-                    Some(eq)
-                }
-            };
-            if let Some(a_eq) = get_sub(t) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), t.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "table with no __sub",
-                })?
-            }
-        }
-        (a, Value::UserData(t)) => {
-            let get_sub = |t| get_metamethod_from_userdata(ctx, t, MetaMethod::Sub);
-            if let Some(a_eq) = get_sub(t) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
-                    args: [a.into(), t.into()],
-                })
-            } else {
-                Err(TypeError {
-                    expected,
-                    found: "userdata with no __sub",
-                })?
-            }
-        }
-
-        (Value::Nil, _) => {
-            Err(TypeError {
-                    expected,
-                    found: "nil",
-                })?
-        },
-        (_, Value::Nil) => Err(TypeError {
-            expected,
-            found: "nil",
-        })?,
-        (Value::Boolean(_), _) => Err(TypeError {
-            expected,
-            found: "boolean",
-        })?,
-        (_, Value::Boolean(_)) => Err(TypeError {
-            expected,
-            found: "boolean",
-        })?,
-        (Value::String(_), _) => Err(TypeError {
-            expected,
-            found: "string",
-        })?,
-        (_, Value::String(_)) => Err(TypeError {
-            expected,
-            found: "string",
-        })?,
-        (Value::Function(_), _) => Err(TypeError {
-            expected,
-            found: "function",
-        })?,
-        (_, Value::Function(_)) => Err(TypeError {
-            expected,
-            found: "function",
-        })?,
-        (Value::Thread(_), _) => Err(TypeError {
-            expected,
-            found: "thread",
-        })?,
-        (_, Value::Thread(_)) => Err(TypeError {
-            expected,
-            found: "thread",
-        })?,
-    })
-}
-
-
-
 // If we had a HasMetatable trait, we could fold these together.
 fn get_metamethod_from_userdata<'gc>(
     ctx: Context<'gc>,
@@ -888,4 +645,3 @@ fn get_metamethod_from_table<'gc>(
         Some(eq)
     }
 }
-
