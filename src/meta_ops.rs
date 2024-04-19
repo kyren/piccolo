@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, TypeError,
-    UserData, Value,
+    raw_ops, thread::BinaryOperatorError, Callback, CallbackReturn, Context, Function, IntoValue,
+    RuntimeError, Table, TypeError, UserData, Value,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -405,15 +405,14 @@ pub fn add<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
+) -> Result<MetaResult<'gc, 2>, RuntimeError> {
     arithmetic_meta_op(
         ctx,
         lhs,
         rhs,
         MetaMethod::Add,
         "integer or table with __add or userdata with __add",
-        |a, b| a + b,
-        |a, b| a + b,
+        |x, y| raw_ops::add(x, y).ok_or(crate::thread::BinaryOperatorError::Add),
     )
 }
 
@@ -421,33 +420,39 @@ pub fn subtract<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
+) -> Result<MetaResult<'gc, 2>, RuntimeError> {
     arithmetic_meta_op(
         ctx,
         lhs,
         rhs,
         MetaMethod::Sub,
         "integer or table with __sub or userdata with __sub",
-        |a, b| a - b,
-        |a, b| a - b,
+        |x, y| raw_ops::subtract(x, y).ok_or(crate::thread::BinaryOperatorError::Subtract),
     )
 }
 
-//TODO figure out hwo to infer `expected_message`` from `m`.
+//TODO figure out how to infer `expected_message`, `raw_op` from `m`.
 pub fn arithmetic_meta_op<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
     m: MetaMethod,
     expected: &'static str,
-    integer_op: impl FnOnce(i64, i64) -> i64,
-    number_op: impl FnOnce(f64, f64) -> f64,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
+    raw_op: impl FnOnce(Value<'gc>, Value<'gc>) -> Result<Value<'gc>, BinaryOperatorError>,
+) -> Result<MetaResult<'gc, 2>, RuntimeError> {
     Ok(match (lhs, rhs) {
-        (Value::Integer(a), Value::Integer(b)) => Value::Integer(integer_op(a, b)).into(),
-        (Value::Integer(a), Value::Number(b)) => Value::Number(number_op(a as f64, b)).into(),
-        (Value::Number(a), Value::Integer(b)) => Value::Number(number_op(a, b as f64)).into(),
-        (Value::Number(a), Value::Number(b)) => Value::Number(number_op(a, b)).into(),
+        (Value::Integer(a), Value::Integer(b)) => {
+            (raw_op(Value::Integer(a), Value::Integer(b))).map(MetaResult::Value)?
+        }
+        (Value::Integer(a), Value::Number(b)) => {
+            (raw_op(Value::Integer(a), Value::Number(b))).map(MetaResult::Value)?
+        }
+        (Value::Number(a), Value::Integer(b)) => {
+            (raw_op(Value::Number(a), Value::Integer(b))).map(MetaResult::Value)?
+        }
+        (Value::Number(a), Value::Number(b)) => {
+            (raw_op(Value::Number(a), Value::Number(b))).map(MetaResult::Value)?
+        }
 
         (Value::Table(a), Value::Table(b)) => {
             if let Some(a_eq) = get_metamethod_from_table(ctx, a, m) {
