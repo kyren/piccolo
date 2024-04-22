@@ -156,9 +156,10 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        self.arena.mark_all();
         if !self.finalized {
-            self.finalize();
+            self.arena.mark_all().unwrap().finalize(|fc, root| {
+                root.finalizers.finalize(fc);
+            });
         }
 
         self.arena.collect_all();
@@ -196,9 +197,11 @@ impl Lua {
                     self.finalized = false;
                 }
             } else {
-                self.arena.mark_debt();
-                if self.arena.collection_phase() == CollectionPhase::Marked {
-                    self.finalize();
+                if let Some(marked) = self.arena.mark_debt() {
+                    marked.finalize(|fc, root| {
+                        root.finalizers.finalize(fc);
+                    });
+                    self.finalized = true;
                 }
             }
         }
@@ -240,15 +243,6 @@ impl Lua {
     ) -> Result<R, StaticError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
-    }
-
-    fn finalize(&mut self) {
-        while let Some(marked) = self.arena.mark_all() {
-            if !marked.finalize(|fc, root| root.finalizers.finalize(fc)) {
-                break;
-            }
-        }
-        self.finalized = true;
     }
 }
 

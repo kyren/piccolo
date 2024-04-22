@@ -164,9 +164,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena"
-version = "0.5.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24d4a9d8c3c1ef4301b8afc383e53e102a13f9947da2181bf82828480dcc5165"
+checksum = "57b2e43b3fc51b9900cc9ced1c4630dcbfae1859573102a84d2231ac744c1208"
 dependencies = [
  "allocator-api2",
  "gc-arena-derive",
