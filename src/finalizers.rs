@@ -15,17 +15,22 @@ impl<'gc> Finalizers<'gc> {
         self.0.borrow_mut(mc).threads.push(Gc::downgrade(ptr));
     }
 
-    pub(crate) fn finalize(&self, fc: &Finalization<'gc>) {
+    // Returns `true` when some finalization work has been performed, so more may need to be done in
+    // another iteration.
+    pub(crate) fn finalize(&self, fc: &Finalization<'gc>) -> bool {
+        let mut dropped = false;
         let mut state = self.0.borrow_mut(fc);
         state.threads.retain(|&ptr| {
             let ptr = ptr.upgrade(fc).expect("thread finalization was missed");
             if Gc::is_dead(fc, ptr) {
                 Thread::from_inner(ptr).reset(fc).unwrap();
+                dropped = true;
                 false
             } else {
                 true
             }
         });
+        dropped
     }
 }
 
