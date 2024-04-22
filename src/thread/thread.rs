@@ -852,12 +852,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         func: RegisterIndex,
         args: VarCount,
     ) -> Result<(), VMError> {
-        let Some(Frame::Lua {
+        let Some(&mut Frame::Lua {
             bottom,
             base,
             is_variable,
             ..
-        }) = self.state.frames.pop()
+        }) = self.state.frames.last_mut()
         else {
             panic!("top frame is not lua frame");
         };
@@ -866,19 +866,22 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(args.is_variable()));
         }
 
-        self.state.close_upvalues(&ctx, bottom);
-
         let function_index = base + func.0 as usize;
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - function_index - 1);
 
+        let call = meta_ops::call(ctx, self.state.stack[function_index])?;
+
+        self.state.close_upvalues(&ctx, bottom);
+        self.state.frames.pop();
+
         self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-        match meta_ops::call(ctx, self.state.stack[function_index])? {
+        match call {
             Function::Closure(closure) => {
                 self.state.stack[bottom] = closure.into();
                 for i in 0..arg_count {
