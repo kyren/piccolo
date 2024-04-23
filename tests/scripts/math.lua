@@ -239,6 +239,12 @@ function test18()
     -- (randomized bit integer)
     local dont_crash = math.random(0)
 
+    -- this *should* crash though, but not as in a Rust panic crash...
+    local status, _ = pcall(function()
+        return math.random(-1)
+    end)
+    good = good and not status
+
     return good
 end
 
