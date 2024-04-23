@@ -1,5 +1,5 @@
 function select_forward()
-    local fail_on_0 = pcall(function()
+    local succeed_on_0 = pcall(function()
         return select(0)
     end)
 
@@ -13,7 +13,7 @@ function select_forward()
         return c == 3 and d == 4 and e == nil
     end)()
 
-    return full_forward and partial_forward and not fail_on_0
+    return full_forward and partial_forward and not succeed_on_0
 end
 
 function select_backwards()
@@ -26,7 +26,11 @@ function select_backwards()
         local eeny, meeny, miney, moe = select(-3, 1, 2, 3, 4)
         return eeny == 2 and meeny == 3 and miney == 4 and moe == nil
     end)()
-    return last_element and before_last_element
+
+    local too_far = pcall(function()
+        return select(-5, 1, 2, 3, 4)
+    end)
+    return last_element and before_last_element and not too_far
 end
 
 assert(select_forward() and select_backwards())
