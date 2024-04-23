@@ -97,8 +97,12 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "type",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let len = stack.len();
             if let Some(v) = stack.consume::<Option<Value>>(ctx)? {
                 stack.replace(ctx, v.type_name());
+                Ok(CallbackReturn::Return)
+            } else if len > 0 {
+                stack.replace(ctx, "nil");
                 Ok(CallbackReturn::Return)
             } else {
                 Err("Missing argument to type".into_value(ctx).into())
