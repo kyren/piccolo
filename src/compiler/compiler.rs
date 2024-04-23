@@ -813,13 +813,21 @@ impl<S: StringInterner> Compiler<S> {
             )?;
         } else {
             match self.find_variable(name.clone())? {
-                VariableDescriptor::Local(dest) => {
+                VariableDescriptor::Local(dest, attrs) => {
+                    if attrs.contains(&LocalAttribute::Const) {
+                        return Err(CompileErrorKind::AssignToConst);
+                    }
+
                     self.expr_discharge(
                         ExprDescriptor::Closure(proto),
                         ExprDestination::Register(dest),
                     )?;
                 }
-                VariableDescriptor::UpValue(dest) => {
+                VariableDescriptor::UpValue(dest, attrs) => {
+                    if attrs.contains(&LocalAttribute::Const) {
+                        return Err(CompileErrorKind::AssignToConst);
+                    }
+
                     let source = self.expr_discharge(
                         ExprDescriptor::Closure(proto),
                         ExprDestination::AllocateNew,
