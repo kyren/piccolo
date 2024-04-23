@@ -205,7 +205,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                     (Some(0), None) => Some(rng.borrow_mut().gen::<i64>().into()),
                     (Some(a), None) if a < 0 => None,
                     (Some(a), None) => Some(rng.borrow_mut().gen_range(1..=a).into()),
-                    (Some(a), Some(b)) => Some(rng.borrow_mut().gen_range(a..=b).into()),
+                    (Some(a), Some(b)) if a <= b => Some(rng.borrow_mut().gen_range(a..=b).into()),
                     _ => None,
                 }
             },

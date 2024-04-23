@@ -240,7 +240,7 @@ function test18()
     local dont_crash = math.random(0)
 
     -- this *should* crash though, but not as in a Rust panic crash...
-    local status, _ = pcall(function()
+    local status = pcall(function()
         return math.random(-1)
     end)
     good = good and not status
@@ -251,6 +251,12 @@ function test18()
         local bigboi, bigboi2 = math.random(math.maxinteger), math.random(0, math.maxinteger)
         good = good and bigboi > 0 and bigboi2 > -1
     end
+
+    -- so much violence...
+    local status2 = pcall(function()
+        return math.random(5, 3)
+    end)
+    good = good and not status2
 
     return good
 end
