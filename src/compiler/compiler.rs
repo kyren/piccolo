@@ -253,7 +253,7 @@ enum ExprDescriptor<S> {
 #[derive(Debug)]
 enum VariableDescriptor<S> {
     Local(RegisterIndex, HashSet<LocalAttribute>),
-    UpValue(UpValueIndex),
+    UpValue(UpValueIndex, HashSet<LocalAttribute>),
     Global(S),
 }
 
@@ -978,7 +978,10 @@ impl<S: StringInterner> Compiler<S> {
                         }
                         this.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
-                    VariableDescriptor::UpValue(dest) => {
+                    VariableDescriptor::UpValue(dest, attrs) => {
+                        if attrs.contains(&LocalAttribute::Const) {
+                            return Err(CompileErrorKind::AssignToConst);
+                        }
                         let (source, source_is_temp) = this.expr_any_register(expr)?;
                         this.current_function
                             .operations
@@ -1380,7 +1383,7 @@ impl<S: StringInterner> Compiler<S> {
                                     .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     }
                 }
             }
@@ -1395,10 +1398,13 @@ impl<S: StringInterner> Compiler<S> {
 
             for j in 0..get_function(self, i).upvalues.len() {
                 if name.as_ref() == get_function(self, i).upvalues[j].0.as_ref() {
+                    // Functions are never const unless assigned in a
+                    // local statement, so synthesize a non-const
+                    let attrs = HashSet::new();
                     let upvalue_index =
                         UpValueIndex(j.try_into().map_err(|_| CompileErrorKind::UpValues)?);
                     if i == current_function {
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     } else {
                         let mut upvalue_index = upvalue_index;
                         for k in i + 1..=current_function {
@@ -1411,7 +1417,7 @@ impl<S: StringInterner> Compiler<S> {
                                     .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     }
                 }
             }
@@ -1578,7 +1584,7 @@ impl<S: StringInterner> Compiler<S> {
         value: ExprDescriptor<S::String>,
     ) -> Result<(), CompileErrorKind> {
         match table {
-            ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+            ExprDescriptor::Variable(VariableDescriptor::UpValue(table, _)) => {
                 self.set_uptable(table, key, value)?;
             }
             table => {
@@ -1875,7 +1881,7 @@ impl<S: StringInterner> Compiler<S> {
             dest: ExprDestination,
         ) -> Result<RegisterIndex, CompileErrorKind> {
             Ok(match table {
-                ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+                ExprDescriptor::Variable(VariableDescriptor::UpValue(table, _)) => {
                     let (key_rc, key_to_free) = this.expr_any_register_or_constant(key)?;
                     if let Some(to_free) = key_to_free {
                         this.current_function.register_allocator.free(to_free);
@@ -1920,7 +1926,7 @@ impl<S: StringInterner> Compiler<S> {
                     dest
                 }
 
-                VariableDescriptor::UpValue(source) => {
+                VariableDescriptor::UpValue(source, _) => {
                     let dest = new_destination(self, dest)?;
                     self.current_function
                         .operations
