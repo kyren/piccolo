@@ -11,10 +11,10 @@
 "Unimplemented" means there is no implementation (when used, `nil` is found) _or_
 that calling the implementation with the corresponding arguments will error where in PUC-Lua it does not.
 
-"Will Not Implement" is for functions that will not be implemented due to a fundamental difference between Piccolo and PUC-Lua.
+"Will Not Implement" is for functions that will not be implemented due to a fundamental difference between piccolo and PUC-Lua.
 
 "Low Importance" is for things that, while technically implementable, will
-likely not be implemented due to differences between Piccolo and PUC-Lua.
+likely not be implemented due to differences between piccolo and PUC-Lua.
 
 **NOTE**: `(a[, b, c])` corresponds to the Lua docs' `(a[, b[, c]])` usage.
 
@@ -36,28 +36,28 @@ likely not be implemented due to differences between Piccolo and PUC-Lua.
 | ⚫️    | `error(message, level)`                                        |                                                                                                                                        |       |
 | ⚫️    | `_G` (value)                                                   |                                                                                                                                        |       |
 | 🔵     | `getmetatable(object)`                                         |                                                                                                                                        |       |
-| 🟡     | `ipairs(t)`                                                    | PUC-Lua returns `iter, table, 0`, where as Piccolo returns `iter, table`.                                                              |       |
+| 🟡     | `ipairs(t)`                                                    | PUC-Lua returns `iter, table, 0`, where as piccolo returns `iter, table`.                                                              |       |
 | ⚫️    | `load(chunk[, chunkname, mode, env])`                          |                                                                                                                                        |       |
 | ⚫️    | `loadfile([filename, mode, env])`                              |                                                                                                                                        |       |
 | 🔵     | `next(table [, index])`                                        |                                                                                                                                        |       |
-| 🟡     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as Piccolo returns `iter, table`. Also how `__pairs` works differs[^1]             |       |
+| 🟡     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as piccolo returns `iter, table`. Also how `__pairs` works differs[^1]             |       |
 | 🔵     | `pcall(f, args...)`                                            |                                                                                                                                        |       |
 | 🔵     | `print(args...)`                                               |                                                                                                                                        |       |
 | ⚫️    | `rawequal(v1, v2)`                                             |                                                                                                                                        |       |
 | 🔵     | `rawget(table, index)`                                         |                                                                                                                                        |       |
 | ⚫️    | `rawlen(v)`                                                    |                                                                                                                                        |       |
 | 🔵     | `rawset(table, index, value)`                                  |                                                                                                                                        |       |
-| 🟡     | `select(index, args...)`                                       | Piccolo does not support negative indicies where PUC-Lua does.                                                                         |       |
+| 🟡     | `select(index, args...)`                                       | piccolo does not support negative indicies where PUC-Lua does.                                                                         |       |
 | 🔵     | `setmetatable(table, metatable)`                               |                                                                                                                                        |       |
 | ⚫️    | `tonumber(e[, base])`                                          |                                                                                                                                        |       |
-| 🟡     | `tostring(v)`                                                  | Piccolo does not use the metatable field `__name` by default, while PUC-Lua does.                                                      |       |
-| 🟡     | `type(v)`                                                      | Piccolo errors when passed `nil`, while PUC-Lua doesn't, instead returning `"nil"`.[^2]                                                |       |
+| 🟡     | `tostring(v)`                                                  | piccolo does not use the metatable field `__name` by default, while PUC-Lua does.                                                      |       |
+| 🟡     | `type(v)`                                                      | piccolo errors when passed `nil`, while PUC-Lua doesn't, instead returning `"nil"`.[^2]                                                |       |
 | ⚫️    | `_VERSION` (value)                                             |                                                                                                                                        |       |
 | ⚫️    | `warn(msg, args...)`                                           |                                                                                                                                        |       |
 | ⚫️    | `xpcall(f, msgh, args...)`                                     |                                                                                                                                        |       |
 
 [^1]:
-    Given the code below, calling `pairs(t)`, PUC-Lua returns `1, 2, 3`, while Piccolo returns `1, 2, 3, 4`. The documentation from PUC-Lua does state that `pairs(t)` "\[where] `t` has a metamethod `__pairs`, calls it with `t` as argument and returns the first three results from the call."
+    Given the code below, calling `pairs(t)`, PUC-Lua returns `1, 2, 3`, while piccolo returns `1, 2, 3, 4`. The documentation from PUC-Lua does state that `pairs(t)` "\[where] `t` has a metamethod `__pairs`, calls it with `t` as argument and returns the first three results from the call."
 
     ```lua
     t = {}
@@ -95,7 +95,7 @@ likely not be implemented due to differences between Piccolo and PUC-Lua.
 | ❗     | `loadlib(libname, funcname)`         |                                                                                                 |       |
 | ⚫️️   | `path` (value)                       |                                                                                                 |       |
 | ⚫️️   | `preload` (value)                    |                                                                                                 |       |
-| ⚫️️   | `searchers` (value)                  | This implementation will _definitely_ differ from PUC-Lua as Piccolo does not support C loaders |       |
+| ⚫️️   | `searchers` (value)                  | This implementation will _definitely_ differ from PUC-Lua as piccolo does not support C loaders |       |
 | ⚫️️   | `searchpath(name, path[, sep, rep])` |                                                                                                 |       |
 
 ## String
@@ -160,7 +160,7 @@ I'm not going over these with a fine-tooth comb, if it exists (and takes the spe
 | 🔵     | `floor(x)`           |                                                                                                                                     |       |
 | 🔵     | `fmod(x, y)`         |                                                                                                                                     |       |
 | 🔵     | `huge` (value)       |                                                                                                                                     |       |
-| 🟡     | `log(x)`             | The second argument is being ignored, so where PUC-Lua `math.log(2, 2)` is `1`, Piccolo is still taking the natural logarithm. [^4] |       |
+| 🟡     | `log(x)`             | The second argument is being ignored, so where PUC-Lua `math.log(2, 2)` is `1`, piccolo is still taking the natural logarithm. [^4] |       |
 | ⚫️    | `log(x, base)`       |                                                                                                                                     |       |
 | 🔵     | `max(x, args...)`    |                                                                                                                                     |       |
 | 🔵     | `maxinteger` (value) |                                                                                                                                     |       |
@@ -169,7 +169,7 @@ I'm not going over these with a fine-tooth comb, if it exists (and takes the spe
 | 🔵     | `modf(x)`            |                                                                                                                                     |       |
 | 🔵     | `pi` (value)         |                                                                                                                                     |       |
 | 🔵     | `rad(x)`             |                                                                                                                                     |       |
-| 🟡     | `random([m, n])`     | `math.random(0)` crashes Piccolo, while in PUC-Lua is "produces an integer with all bits (pseudo)random"[^5]                        |       |
+| 🟡     | `random([m, n])`     | `math.random(0)` crashes piccolo, while in PUC-Lua is "produces an integer with all bits (pseudo)random"[^5]                        |       |
 | 🔵     | `randomseed(x)`      |                                                                                                                                     |       |
 | ⚫️    | `randomseed()`       | `math.randomseed()` does not attempt to randomly generate a seed.[^6]                                                               |       |
 | 🟡     | `randomseed(x, y)`   | Looking at the code, the second argument is ignored, leading to only be able to seed using 64-bits.[^6]                             |       |
