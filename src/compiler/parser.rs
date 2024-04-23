@@ -592,7 +592,7 @@ where
     fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParseError> {
         self.expect_next(Token::Local)?;
         let mut names = Vec::new();
-        macro_rules! read_local_name {
+        macro_rules! local_name_and_maybe_attr {
             ($self:expr) => {{
                 let name = $self.expect_name()?.inner;
                 let attribute = if $self.check_ahead(0, Token::LessThan)? {
@@ -606,10 +606,10 @@ where
                 (name, attribute)
             }};
         }
-        names.push(read_local_name!(self));
+        names.push(local_name_and_maybe_attr!(self));
         while self.check_ahead(0, Token::Comma)? {
             self.take_next()?;
-            names.push(read_local_name!(self));
+            names.push(local_name_and_maybe_attr!(self));
         }
 
         let values = if self.check_ahead(0, Token::Assign)? {
