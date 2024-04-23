@@ -234,6 +234,11 @@ function test18()
         good = good and numbers1[i] == numbers2[i]
     end
 
+    -- make sure we don't crash when 0 is passed into math.random
+    -- as it is valid for PUC-Lua and has different behavior
+    -- (randomized bit integer)
+    local dont_crash = math.random(0)
+
     return good
 end
 
