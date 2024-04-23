@@ -119,13 +119,15 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
 
     math.set(ctx, "huge", Value::Number(f64::INFINITY)).unwrap();
 
-    math.set(ctx, "log", callback("log", &ctx, |_, v: f64| Some(v.ln())))
-        .unwrap();
-
     math.set(
         ctx,
-        "log10",
-        callback("log10", &ctx, |_, v: f64| Some(v.log10())),
+        "log",
+        callback("log", &ctx, |_, (v, base): (f64, Option<f64>)| match base {
+            None => Some(v.ln()),
+            Some(f) if f == 2.0 => Some(v.log2()),
+            Some(f) if f == 10.0 => Some(v.log10()),
+            Some(base) => Some(v.log(base)),
+        }),
     )
     .unwrap();
 
