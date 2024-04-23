@@ -854,7 +854,7 @@ impl<S: StringInterner> Compiler<S> {
                 .push(Operation::LoadNil { dest, count });
             for i in 0..name_len {
                 self.current_function.locals.push((
-                    local_statement.names[i].clone(),
+                    local_statement.names[i].0.clone(),
                     RegisterIndex(dest.0 + i as u8),
                 ));
             }
@@ -873,7 +873,7 @@ impl<S: StringInterner> Compiler<S> {
 
                     for j in 0..names_left {
                         self.current_function.locals.push((
-                            local_statement.names[val_len - 1 + j as usize].clone(),
+                            local_statement.names[val_len - 1 + j as usize].0.clone(),
                             RegisterIndex(dest.0 + j),
                         ));
                     }
@@ -881,7 +881,7 @@ impl<S: StringInterner> Compiler<S> {
                     let reg = self.expr_discharge(expr, ExprDestination::PushNew)?;
                     self.current_function
                         .locals
-                        .push((local_statement.names[i].clone(), reg));
+                        .push((local_statement.names[i].0.clone(), reg));
                 }
             }
         }
