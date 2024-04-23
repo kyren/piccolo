@@ -219,6 +219,9 @@ function test18()
         good = good and rand >= 1 and rand <= 35
     end
 
+    -- this is a valid call
+    math.randomseed()
+
     local numbers1 = {}
     math.randomseed(8675309)
     for i=1,10000,1 do
@@ -231,8 +234,20 @@ function test18()
         numbers2[#numbers2 + 1] = math.random()
     end
 
+    local numbers3 = {}
+    math.randomseed(2345, 1492101)
     for i=1,10000,1 do
-        good = good and numbers1[i] == numbers2[i]
+        numbers3[#numbers3 + 1] = math.random()
+    end
+
+    local numbers4 = {}
+    math.randomseed(2345, 1492101)
+    for i=1,10000,1 do
+        numbers4[#numbers4 + 1] = math.random()
+    end
+
+    for i=1,10000,1 do
+        good = good and numbers3[i] == numbers4[i]
     end
 
     -- `math.random(0)` should return a fully random integer.
