@@ -228,7 +228,7 @@ function test18()
     end
 
     local numbers2 = {}
-    math.randomseed(8675309)
+    math.randomseed(8675309, 0)
     for i=1,10000,1 do
         numbers2[#numbers2 + 1] = math.random()
     end

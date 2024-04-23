@@ -225,7 +225,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                         *rng.borrow_mut() = SmallRng::from_entropy();
                         Some(())
                     }
-                    (Some(seed), None) => {
+                    (Some(seed), None) | (Some(seed), Some(0)) => {
                         *rng.borrow_mut() = SmallRng::seed_from_u64(seed);
                         Some(())
                     }
