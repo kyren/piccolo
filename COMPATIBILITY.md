@@ -52,7 +52,7 @@ likely not be implemented due to differences between Piccolo and PUC-Lua.
 | ⚫️    | `tonumber(e[, base])`                                          |                                                                                                                                        |       |
 | 🟡     | `tostring(v)`                                                  | Piccolo does not use the metatable field `__name` by default, while PUC-Lua does.                                                      |       |
 | 🟡     | `type(v)`                                                      | Piccolo errors when passed `nil`, while PUC-Lua doesn't, instead returning `"nil"`.[^2]                                                |       |
-| ⚫️    | `_VERSION` (variable)                                          |                                                                                                                                        |       |
+| ⚫️    | `_VERSION` (value)                                             |                                                                                                                                        |       |
 | ⚫️    | `warn(msg, args...)`                                           |                                                                                                                                        |       |
 | ⚫️    | `xpcall(f, msgh, args...)`                                     |                                                                                                                                        |       |
 
