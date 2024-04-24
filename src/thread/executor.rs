@@ -42,7 +42,7 @@ pub struct BadExecutorMode {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ExecutorState<'gc> {
-    thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+    pub(super) thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
 }
 
 pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;

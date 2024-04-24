@@ -1,3 +1,4 @@
+mod debug;
 mod executor;
 mod thread;
 mod vm;
