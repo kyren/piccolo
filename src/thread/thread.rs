@@ -891,12 +891,19 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let proto = closure.prototype();
                 let fixed_params = proto.fixed_params as usize;
                 let stack_size = proto.stack_size as usize;
+                let has_varargs = proto.has_varargs;
 
                 let base = if arg_count > fixed_params {
                     self.state.stack.truncate(bottom + 1 + arg_count);
                     self.state.stack[bottom + 1..].rotate_left(fixed_params);
                     bottom + 1 + (arg_count - fixed_params)
                 } else {
+                    // Nil out stack[i] where i < fix_params && > arg_count unless has_varargs
+                    // Fixes #53
+                    if !has_varargs && fixed_params < stack_size - 1 {
+                        self.state.stack[bottom + 1 + arg_count..bottom + 1 + fixed_params]
+                            .fill(Value::Nil);
+                    }
                     bottom + 1
                 };
 
