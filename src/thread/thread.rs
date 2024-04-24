@@ -897,6 +897,10 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                     self.state.stack[bottom + 1..].rotate_left(fixed_params);
                     bottom + 1 + (arg_count - fixed_params)
                 } else {
+                    if arg_count < fixed_params {
+                        self.state.stack[bottom + 1 + arg_count..bottom + 1 + fixed_params]
+                            .fill(Value::Nil);
+                    }
                     bottom + 1
                 };
 
