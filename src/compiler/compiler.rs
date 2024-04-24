@@ -776,12 +776,6 @@ impl<S: StringInterner> Compiler<S> {
             name = field.clone();
         }
 
-        let table = if let Some(table) = table {
-            table
-        } else {
-            self.get_environment()?
-        };
-
         let proto = if function_statement.method.is_some() {
             let mut parameters = vec![self.string_interner.intern(b"self")];
             parameters.extend_from_slice(&function_statement.definition.parameters);
@@ -801,11 +795,40 @@ impl<S: StringInterner> Compiler<S> {
             )?
         };
 
-        self.set_table(
-            table,
-            ExprDescriptor::Constant(Constant::String(name)),
-            ExprDescriptor::Closure(proto),
-        )?;
+        if let Some(table) = table {
+            self.set_table(
+                table,
+                ExprDescriptor::Constant(Constant::String(name)),
+                ExprDescriptor::Closure(proto),
+            )?;
+        } else {
+            match self.find_variable(name.clone())? {
+                VariableDescriptor::Local(dest) => {
+                    self.expr_discharge(
+                        ExprDescriptor::Closure(proto),
+                        ExprDestination::Register(dest),
+                    )?;
+                }
+                VariableDescriptor::UpValue(dest) => {
+                    let source = self.expr_discharge(
+                        ExprDescriptor::Closure(proto),
+                        ExprDestination::AllocateNew,
+                    )?;
+                    self.current_function
+                        .operations
+                        .push(Operation::SetUpValue { source, dest });
+                    self.current_function.register_allocator.free(source);
+                }
+                VariableDescriptor::Global(_) => {
+                    let env = self.get_environment()?;
+                    self.set_table(
+                        env,
+                        ExprDescriptor::Constant(Constant::String(name)),
+                        ExprDescriptor::Closure(proto),
+                    )?;
+                }
+            }
+        };
 
         Ok(())
     }
