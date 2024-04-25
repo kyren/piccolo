@@ -202,8 +202,10 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 let rng = &random_rng;
                 match (a, b) {
                     (None, None) => Some(rng.borrow_mut().gen::<f64>().into()),
-                    (Some(a), None) => Some(rng.borrow_mut().gen_range(1..a + 1).into()),
-                    (Some(a), Some(b)) => Some(rng.borrow_mut().gen_range(a..b + 1).into()),
+                    (Some(0), None) => Some(rng.borrow_mut().gen::<i64>().into()),
+                    (Some(a), None) if a < 0 => None,
+                    (Some(a), None) => Some(rng.borrow_mut().gen_range(1..=a).into()),
+                    (Some(a), Some(b)) if a <= b => Some(rng.borrow_mut().gen_range(a..=b).into()),
                     _ => None,
                 }
             },
