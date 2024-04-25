@@ -32,8 +32,6 @@ function thread_type()
     return type(main) == "thread" and type(t1) == "thread"
 end
 
--- iunno how to get a userdata
-
 assert(
     number_type() and
     nil_type() and
