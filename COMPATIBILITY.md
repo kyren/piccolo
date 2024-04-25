@@ -51,7 +51,7 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵     | `setmetatable(table, metatable)`                               |                                                                                                                                        |       |
 | ⚫️    | `tonumber(e[, base])`                                          |                                                                                                                                        |       |
 | 🟡     | `tostring(v)`                                                  | piccolo does not use the metatable field `__name` by default, while PUC-Lua does.                                                      |       |
-| 🟡     | `type(v)`                                                      | piccolo errors when passed `nil`, while PUC-Lua doesn't, instead returning `"nil"`.[^2]                                                |       |
+| 🔵     | `type(v)`                                                      |                                                                                                                                        |       |
 | ⚫️    | `_VERSION` (value)                                             |                                                                                                                                        |       |
 | ⚫️    | `warn(msg, args...)`                                           |                                                                                                                                        |       |
 | ⚫️    | `xpcall(f, msgh, args...)`                                     |                                                                                                                                        |       |
@@ -68,7 +68,6 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
     setmetatable(t, tm)
     ```
 
-[^2]: Fixing this would be here https://github.com/kyren/piccolo/blob/master/src/stdlib/base.rs#L104, where instead of erroring, it should return the string "nil", as the only non-presence in Lua afaik _is_ nil. LMK if this is just incorrect tho.
 [^0]: Hedging b/c I don't know PUC-Lua like my reverse palm, and there might be differing behaviors if you poke both implementations to death, but that's not what this document is for.
 
 ## Coroutine
@@ -169,7 +168,7 @@ I'm not going over these with a fine-tooth comb, if it exists (and takes the spe
 | 🔵     | `modf(x)`            |                                                                                                                                     |       |
 | 🔵     | `pi` (value)         |                                                                                                                                     |       |
 | 🔵     | `rad(x)`             |                                                                                                                                     |       |
-| 🟡     | `random([m, n])`     | `math.random(0)` crashes piccolo, while in PUC-Lua is "produces an integer with all bits (pseudo)random"[^5]                        |       |
+| 🔵     | `random([m, n])`     |                                                                                                                                     |       |
 | 🔵     | `randomseed(x)`      |                                                                                                                                     |       |
 | ⚫️    | `randomseed()`       | `math.randomseed()` does not attempt to randomly generate a seed.[^6]                                                               |       |
 | 🟡     | `randomseed(x, y)`   | Looking at the code, the second argument is ignored, leading to only be able to seed using 64-bits.[^6]                             |       |
@@ -181,7 +180,6 @@ I'm not going over these with a fine-tooth comb, if it exists (and takes the spe
 | 🔵     | `ult(m, n)`          |                                                                                                                                     |       |
 
 [^4]: This is most likely due to Rust implementing [`f64::ln(self)`](https://doc.rust-lang.org/std/primitive.f64.html#method.ln) and [`f64::log10(self)`](https://doc.rust-lang.org/std/primitive.f64.html#method.log10) as seen here: https://github.com/kyren/piccolo/blob/master/src/stdlib/math.rs#L122-L130. The fix would unify these and add the use of [`f64::log2(self)`](https://doc.rust-lang.org/std/primitive.f64.html#method.log2) for the more specific bases of _e_, 10 and 2 respectively, and fallback to [`f64::log(self, _: f64)`](https://doc.rust-lang.org/std/primitive.f64.html#method.log) when a specific base is given that is not one of the forementioned bases.
-[^5]: Special-case https://github.com/kyren/piccolo/blob/master/src/stdlib/math.rs#L205 to handle when `a == 0` to create a random `i64`.
 [^6]: Change https://github.com/kyren/piccolo/blob/master/src/stdlib/math.rs#L214-L224 to properly hand the 0-argument and 2-argument cases (and thus can seed from 128-bits).
 
 ## I/O
