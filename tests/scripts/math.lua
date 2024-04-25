@@ -234,6 +234,30 @@ function test18()
         good = good and numbers1[i] == numbers2[i]
     end
 
+    -- make sure we don't crash when 0 is passed into math.random
+    -- as it is valid for PUC-Lua and has different behavior
+    -- (randomized bit integer)
+    local dont_crash = math.random(0)
+
+    -- this *should* crash though, but not as in a Rust panic crash...
+    local status = pcall(function()
+        return math.random(-1)
+    end)
+    good = good and not status
+
+    -- I woke up and chose violence today it seems
+    -- these also should not crash
+    for i = 1, 10000, 1 do
+        local bigboi, bigboi2 = math.random(math.maxinteger), math.random(0, math.maxinteger)
+        good = good and bigboi > 0 and bigboi2 > -1
+    end
+
+    -- so much violence...
+    local status2 = pcall(function()
+        return math.random(5, 3)
+    end)
+    good = good and not status2
+
     return good
 end
 
