@@ -237,7 +237,7 @@ function test18()
     -- be different than the earlier seed (if not specifically
     -- engineered to be the same)
     math.randomseed(8675309, 1492101)
-    good = good or math.random() ~= numbers1[i]
+    good = good and math.random() ~= numbers1[i]
 
     for i=1,10000,1 do
         good = good and numbers1[i] == numbers2[i]
