@@ -124,9 +124,6 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
         "log",
         callback("log", &ctx, |_, (v, base): (f64, Option<f64>)| match base {
             None => Some(v.ln()),
-            Some(f) if f == 2.0 => Some(v.log2()),
-            Some(f) if f == 10.0 => Some(v.log10()),
-            Some(f) if f == core::f64::consts::E => Some(v.ln()),
             Some(base) => Some(v.log(base)),
         }),
     )
