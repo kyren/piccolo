@@ -1,5 +1,3 @@
-use std::any::type_name;
-
 use gc_arena::Collect;
 
 use crate::{
@@ -21,19 +19,25 @@ pub enum MetaMethod {
     Sub,
 }
 
+macro_rules! metamethod_name_construction {
+    ($s:literal,$self:expr) => {
+        match $self {
+            MetaMethod::Len => const_format::formatcp!($s, name = "__len"),
+            MetaMethod::Index => const_format::formatcp!($s, name = "__index"),
+            MetaMethod::NewIndex => const_format::formatcp!($s, name = "__newindex"),
+            MetaMethod::Call => const_format::formatcp!($s, name = "__call"),
+            MetaMethod::Pairs => const_format::formatcp!($s, name = "__pairs"),
+            MetaMethod::ToString => const_format::formatcp!($s, name = "__tostring"),
+            MetaMethod::Eq => const_format::formatcp!($s, name = "__eq"),
+            MetaMethod::Add => const_format::formatcp!($s, name = "__add"),
+            MetaMethod::Sub => const_format::formatcp!($s, name = "__sub"),
+        }
+    };
+}
+
 impl MetaMethod {
     pub const fn name(self) -> &'static str {
-        match self {
-            MetaMethod::Len => "__len",
-            MetaMethod::Index => "__index",
-            MetaMethod::NewIndex => "__newindex",
-            MetaMethod::Call => "__call",
-            MetaMethod::Pairs => "__pairs",
-            MetaMethod::ToString => "__tostring",
-            MetaMethod::Eq => "__eq",
-            MetaMethod::Add => "__add",
-            MetaMethod::Sub => "__sub",
-        }
+        metamethod_name_construction!("{name}", self)
     }
 }
 
@@ -408,14 +412,9 @@ pub fn add<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, RuntimeError> {
-    arithmetic_meta_op(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Add,
-        "integer or table with __add or userdata with __add",
-        |x, y| raw_ops::add(x, y).ok_or(crate::thread::BinaryOperatorError::Add),
-    )
+    arithmetic_meta_op(ctx, lhs, rhs, MetaMethod::Add, |x, y| {
+        raw_ops::add(x, y).ok_or(crate::thread::BinaryOperatorError::Add)
+    })
 }
 
 pub fn subtract<'gc>(
@@ -423,25 +422,22 @@ pub fn subtract<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, RuntimeError> {
-    arithmetic_meta_op(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Sub,
-        "integer or table with __sub or userdata with __sub",
-        |x, y| raw_ops::subtract(x, y).ok_or(crate::thread::BinaryOperatorError::Subtract),
-    )
+    arithmetic_meta_op(ctx, lhs, rhs, MetaMethod::Sub, |x, y| {
+        raw_ops::subtract(x, y).ok_or(crate::thread::BinaryOperatorError::Subtract)
+    })
 }
 
-//TODO figure out how to infer `expected_message`, `raw_op` from `m`.
+//TODO figure out how to infer `raw_op` from `m`.
 pub fn arithmetic_meta_op<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
     m: MetaMethod,
-    expected: &'static str,
     raw_op: impl FnOnce(Value<'gc>, Value<'gc>) -> Result<Value<'gc>, BinaryOperatorError>,
 ) -> Result<MetaResult<'gc, 2>, RuntimeError> {
+    let expected: &'static str =
+        metamethod_name_construction!("integer or table with {name} or userdata with {name}", m);
+
     Ok(match (lhs, rhs) {
         (Value::Integer(a), Value::Integer(b)) => {
             (raw_op(Value::Integer(a), Value::Integer(b))).map(MetaResult::Value)?
@@ -590,7 +586,7 @@ pub fn arithmetic_meta_op<'gc>(
     })
 }
 
-// If we had a HasMetatable trait, we could fold these together.
+// If we had a HasMetatable trait, we could fold these two functions together.
 fn get_metamethod_from_userdata<'gc>(
     ctx: Context<'gc>,
     t: UserData<'gc>,
