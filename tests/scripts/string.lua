@@ -58,3 +58,53 @@ bar
 baz]] == "foo\nbar\nbaz")
 end
 
+function test_lower()
+    return is_err(function() return string.lower(nil) end) and
+        is_err(function() return string.lower(true) end) and
+        is_err(function() return string.lower(false) end) and
+        is_err(function() return string.lower({}) end) and
+        is_err(function() return string.lower(is_err) end) and
+        is_err(function() return string.lower(coroutine.create(test_coroutine_len)) end) and
+        string.lower("HelLo") == "hello" and
+        string.lower("最強") == "最強"
+    -- we fail this right now, even though it is allowed under PUC-Lua
+    -- and string.lower(80) == 80
+end
+
+function test_rep()
+    return string.rep("apple", -32) == "" and
+        string.rep("bat", 0) == "" and
+        string.rep("say", 3) == "saysaysay" and
+        string.rep("say", 3, ", ") == "say, say, say, "
+end
+
+function test_reverse()
+    return is_err(function() return string.reverse(nil) end) and
+        is_err(function() return string.reverse(true) end) and
+        is_err(function() return string.reverse(false) end) and
+        is_err(function() return string.reverse({}) end) and
+        is_err(function() return string.reverse(is_err) end) and
+        is_err(function() return string.reverse(coroutine.create(test_coroutine_len)) end) and
+        string.reverse("HelLo") == "oLleH" and
+        string.reverse("最強") == "強最" -- Technically incorrect, should be 倜�
+end
+
+function test_upper()
+    return is_err(function() return string.upper(nil) end) and
+        is_err(function() return string.upper(true) end) and
+        is_err(function() return string.upper(false) end) and
+        is_err(function() return string.upper({}) end) and
+        is_err(function() return string.upper(is_err) end) and
+        is_err(function() return string.upper(coroutine.create(test_coroutine_len)) end) and
+        string.upper("HelLo") == "HELLO" and
+        string.upper("最強") == "最強" -- this is *incorrect* according to PUC-Lua, it should be "Ɯż"
+end
+
+assert(
+    test_lower() and
+    test_rep() and
+    test_reverse() and
+    test_upper() and
+    test_concat() and
+    test_len()
+)
