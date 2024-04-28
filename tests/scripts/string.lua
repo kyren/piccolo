@@ -68,7 +68,7 @@ function test_lower()
         string.lower("HelLo") == "hello" and
         string.lower("最強") == "最強"
     -- we fail this right now, even though it is allowed under PUC-Lua
-    -- and string.lower(80) == 80
+    -- and string.lower(80) == "80"
 end
 
 function test_rep()
