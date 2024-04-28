@@ -85,5 +85,63 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
+    string
+        .set(
+            ctx,
+            "lower",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s: String = stack.consume(ctx)?;
+                stack.replace(ctx, s.to_lowercase().into_value(ctx));
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "rep",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let (s, n, sep): (String, i64, Option<String>) = stack.consume(ctx)?;
+                if n > 0 {
+                    let mut ret = String::new();
+                    let sep = sep.unwrap_or(String::new());
+                    for _ in 0..n {
+                        ret.push_str(&s);
+                        ret.push_str(&sep);
+                    }
+                    stack.replace(ctx, ret.into_value(ctx));
+                } else {
+                    stack.replace(ctx, "".into_value(ctx));
+                }
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "reverse",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s: String = stack.consume(ctx)?;
+                stack.replace(ctx, s.chars().rev().collect::<String>().into_value(ctx));
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "upper",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s: String = stack.consume(ctx)?;
+                stack.replace(ctx, s.to_uppercase().into_value(ctx));
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
     ctx.set_global("string", string).unwrap();
 }
