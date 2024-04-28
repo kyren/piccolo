@@ -437,6 +437,8 @@ pub fn arithmetic_meta_op<'gc>(
 ) -> Result<MetaResult<'gc, 2>, RuntimeError> {
     let expected: &'static str =
         metamethod_name_construction!("integer or table with {name} or userdata with {name}", m);
+    let found_table: &'static str = metamethod_name_construction!("table with no {name}", m);
+    let found_userdata: &'static str = metamethod_name_construction!("userdata with no {name}", m);
 
     Ok(match (lhs, rhs) {
         (Value::Integer(a), Value::Integer(b)) => {
@@ -466,7 +468,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "tables with no __sub",
+                    found: found_table,
                 })?
             }
         }
@@ -484,7 +486,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __sub",
+                    found: found_userdata,
                 })?
             }
         }
@@ -502,7 +504,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __sub",
+                    found: found_userdata,
                 })?
             }
         }
@@ -520,7 +522,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no __sub",
+                    found: found_userdata,
                 })?
             }
         }
@@ -534,7 +536,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "table with no __sub",
+                    found: found_table,
                 })?
             }
         }
@@ -547,7 +549,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata with no __sub",
+                    found: found_userdata,
                 })?
             }
         }
@@ -561,7 +563,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "table with no __sub",
+                    found: found_table,
                 })?
             }
         }
@@ -574,7 +576,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata with no __sub",
+                    found: found_userdata,
                 })?
             }
         }
