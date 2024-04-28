@@ -1,4 +1,4 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, Table, Value};
+use crate::{Callback, CallbackReturn, Context, IntoValue, MetaMethod, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -22,6 +22,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 }
             }),
         )
+        .unwrap();
+
+    // Set the string metatable to index from here.
+    ctx.string_metatable()
+        .set(ctx, MetaMethod::Index, string)
         .unwrap();
 
     ctx.set_global("string", string).unwrap();
