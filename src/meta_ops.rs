@@ -70,8 +70,6 @@ pub fn index<'gc>(
 ) -> Result<MetaResult<'gc, 2>, TypeError> {
     let idx = match table {
         Value::String(_) => {
-            // We actually don't care what the value is, as for metatable purposes, all strings
-            // share a metatable.
             let idx = ctx.string_metatable().get(ctx, MetaMethod::Index);
             if idx.is_nil() {
                 return Ok(MetaResult::Value(Value::Nil));
