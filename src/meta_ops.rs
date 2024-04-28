@@ -1,3 +1,5 @@
+use std::any::type_name;
+
 use gc_arena::Collect;
 
 use crate::{
@@ -522,7 +524,7 @@ pub fn arithmetic_meta_op<'gc>(
             } else {
                 Err(TypeError {
                     expected,
-                    found: "userdata(s) with no )__sub",
+                    found: "userdata(s) with no __sub",
                 })?
             }
         }
@@ -581,45 +583,9 @@ pub fn arithmetic_meta_op<'gc>(
             }
         }
 
-        (Value::Nil, _) => Err(TypeError {
+        (l, _) => Err(TypeError {
             expected,
-            found: "nil",
-        })?,
-        (_, Value::Nil) => Err(TypeError {
-            expected,
-            found: "nil",
-        })?,
-        (Value::Boolean(_), _) => Err(TypeError {
-            expected,
-            found: "boolean",
-        })?,
-        (_, Value::Boolean(_)) => Err(TypeError {
-            expected,
-            found: "boolean",
-        })?,
-        (Value::String(_), _) => Err(TypeError {
-            expected,
-            found: "string",
-        })?,
-        (_, Value::String(_)) => Err(TypeError {
-            expected,
-            found: "string",
-        })?,
-        (Value::Function(_), _) => Err(TypeError {
-            expected,
-            found: "function",
-        })?,
-        (_, Value::Function(_)) => Err(TypeError {
-            expected,
-            found: "function",
-        })?,
-        (Value::Thread(_), _) => Err(TypeError {
-            expected,
-            found: "thread",
-        })?,
-        (_, Value::Thread(_)) => Err(TypeError {
-            expected,
-            found: "thread",
+            found: l.type_name(),
         })?,
     })
 }
