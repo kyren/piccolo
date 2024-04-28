@@ -1,4 +1,4 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, Table, Value};
+use crate::{Callback, CallbackReturn, Context, IntoValue, Table, TypeError, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -34,7 +34,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                                             ))
                                     })
                             }),
-                        _ => Err(format!("argument #{argn} has no integer representation")),
+                        v => Err(TypeError {
+                            expected: "valid UTF-8 codepoint (string, number, or integer)",
+                            found: v.type_name(),
+                        }
+                        .to_string()),
                     }
                     .map_err(|s| s.into_value(ctx))?;
 
