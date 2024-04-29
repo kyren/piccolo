@@ -19,7 +19,6 @@ repository = "https://github.com/kyren/piccolo"
 ahash = "0.8"
 allocator-api2 = "0.2"
 anyhow = "1.0"
-const_format = "0.2.32"
 gc-arena = { git = "https://github.com/kyren/gc-arena", branch = "piccolo", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
@@ -42,7 +41,6 @@ repository.workspace = true
 ahash.workspace = true
 allocator-api2.workspace = true
 anyhow.workspace = true
-const_format.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
 rand.workspace = true

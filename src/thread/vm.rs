@@ -472,7 +472,9 @@ pub(super) fn run_vm<'gc>(
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
 
-                match meta_ops::add(ctx, left, right)? {
+                match meta_ops::add(ctx, left, right)
+                    .map_err(|_| crate::thread::BinaryOperatorError::Add)?
+                {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }
@@ -491,7 +493,9 @@ pub(super) fn run_vm<'gc>(
             Operation::Sub { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                match meta_ops::subtract(ctx, left, right)? {
+                match meta_ops::subtract(ctx, left, right)
+                    .map_err(|_| crate::thread::BinaryOperatorError::Subtract)?
+                {
                     MetaResult::Value(v) => {
                         registers.stack_frame[dest.0 as usize] = v;
                     }

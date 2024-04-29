@@ -1,8 +1,8 @@
 use gc_arena::Collect;
 
 use crate::{
-    raw_ops, thread::BinaryOperatorError, Callback, CallbackReturn, Context, Function, IntoValue,
-    RuntimeError, Table, TypeError, UserData, Value,
+    raw_ops, Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table,
+    TypeError, UserData, Value,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -19,25 +19,19 @@ pub enum MetaMethod {
     Sub,
 }
 
-macro_rules! metamethod_name_construction {
-    ($s:literal,$self:expr) => {
-        match $self {
-            MetaMethod::Len => const_format::formatcp!($s, name = "__len"),
-            MetaMethod::Index => const_format::formatcp!($s, name = "__index"),
-            MetaMethod::NewIndex => const_format::formatcp!($s, name = "__newindex"),
-            MetaMethod::Call => const_format::formatcp!($s, name = "__call"),
-            MetaMethod::Pairs => const_format::formatcp!($s, name = "__pairs"),
-            MetaMethod::ToString => const_format::formatcp!($s, name = "__tostring"),
-            MetaMethod::Eq => const_format::formatcp!($s, name = "__eq"),
-            MetaMethod::Add => const_format::formatcp!($s, name = "__add"),
-            MetaMethod::Sub => const_format::formatcp!($s, name = "__sub"),
-        }
-    };
-}
-
 impl MetaMethod {
     pub const fn name(self) -> &'static str {
-        metamethod_name_construction!("{name}", self)
+        match self {
+            MetaMethod::Len => "__len",
+            MetaMethod::Index => "__index",
+            MetaMethod::NewIndex => "__newindex",
+            MetaMethod::Call => "__call",
+            MetaMethod::Pairs => "__pairs",
+            MetaMethod::ToString => "__tostring",
+            MetaMethod::Eq => "__eq",
+            MetaMethod::Add => "__add",
+            MetaMethod::Sub => "__sub",
+        }
     }
 }
 
@@ -411,9 +405,9 @@ pub fn add<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, RuntimeError> {
+) -> Result<MetaResult<'gc, 2>, ()> {
     arithmetic_meta_op(ctx, lhs, rhs, MetaMethod::Add, |x, y| {
-        raw_ops::add(x, y).ok_or(crate::thread::BinaryOperatorError::Add)
+        raw_ops::add(x, y).ok_or(())
     })
 }
 
@@ -421,9 +415,9 @@ pub fn subtract<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, RuntimeError> {
+) -> Result<MetaResult<'gc, 2>, ()> {
     arithmetic_meta_op(ctx, lhs, rhs, MetaMethod::Sub, |x, y| {
-        raw_ops::subtract(x, y).ok_or(crate::thread::BinaryOperatorError::Subtract)
+        raw_ops::subtract(x, y).ok_or(())
     })
 }
 
@@ -433,158 +427,126 @@ pub fn arithmetic_meta_op<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
     m: MetaMethod,
-    raw_op: impl FnOnce(Value<'gc>, Value<'gc>) -> Result<Value<'gc>, BinaryOperatorError>,
-) -> Result<MetaResult<'gc, 2>, RuntimeError> {
-    let expected: &'static str =
-        metamethod_name_construction!("integer or table with {name} or userdata with {name}", m);
-    let found_table: &'static str = metamethod_name_construction!("table with no {name}", m);
-    let found_userdata: &'static str = metamethod_name_construction!("userdata with no {name}", m);
-
+    raw_op: impl FnOnce(Value<'gc>, Value<'gc>) -> Result<Value<'gc>, ()>,
+) -> Result<MetaResult<'gc, 2>, ()> {
     Ok(match (lhs, rhs) {
-        (Value::Integer(a), Value::Integer(b)) => {
-            (raw_op(Value::Integer(a), Value::Integer(b))).map(MetaResult::Value)?
-        }
-        (Value::Integer(a), Value::Number(b)) => {
-            (raw_op(Value::Integer(a), Value::Number(b))).map(MetaResult::Value)?
-        }
-        (Value::Number(a), Value::Integer(b)) => {
-            (raw_op(Value::Number(a), Value::Integer(b))).map(MetaResult::Value)?
-        }
-        (Value::Number(a), Value::Number(b)) => {
-            (raw_op(Value::Number(a), Value::Number(b))).map(MetaResult::Value)?
-        }
+        (Value::Integer(a), Value::Integer(b)) => (raw_op(Value::Integer(a), Value::Integer(b)))
+            .map(MetaResult::Value)
+            .or(Err(()))?,
+        (Value::Integer(a), Value::Number(b)) => (raw_op(Value::Integer(a), Value::Number(b)))
+            .map(MetaResult::Value)
+            .or(Err(()))?,
+        (Value::Number(a), Value::Integer(b)) => (raw_op(Value::Number(a), Value::Integer(b)))
+            .map(MetaResult::Value)
+            .or(Err(()))?,
+        (Value::Number(a), Value::Number(b)) => (raw_op(Value::Number(a), Value::Number(b)))
+            .map(MetaResult::Value)
+            .or(Err(()))?,
 
         (Value::Table(a), Value::Table(b)) => {
             if let Some(a_eq) = get_metamethod_from_table(ctx, a, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
+                    function: call(ctx, b_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_table,
-                })?
+                Err(())?
             }
         }
         (Value::UserData(a), Value::UserData(b)) => {
             if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
+                    function: call(ctx, b_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_userdata,
-                })?
+                Err(())?
             }
         }
         (Value::UserData(a), Value::Table(b)) => {
             if let Some(a_eq) = get_metamethod_from_userdata(ctx, a, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
+                    function: call(ctx, b_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_userdata,
-                })?
+                Err(())?
             }
         }
         (Value::Table(a), Value::UserData(b)) => {
             if let Some(a_eq) = get_metamethod_from_table(ctx, a, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, b_eq)?,
+                    function: call(ctx, b_eq).or(Err(()))?,
                     args: [a.into(), b.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_userdata,
-                })?
+                Err(())?
             }
         }
 
         (Value::Table(t), a) => {
             if let Some(a_eq) = get_metamethod_from_table(ctx, t, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [t.into(), a.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_table,
-                })?
+                Err(())?
             }
         }
         (Value::UserData(t), a) => {
             if let Some(a_eq) = get_metamethod_from_userdata(ctx, t, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [t.into(), a.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_userdata,
-                })?
+                Err(())?
             }
         }
 
         (a, Value::Table(t)) => {
             if let Some(a_eq) = get_metamethod_from_table(ctx, t, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), t.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_table,
-                })?
+                Err(())?
             }
         }
         (a, Value::UserData(t)) => {
             if let Some(a_eq) = get_metamethod_from_userdata(ctx, t, m) {
                 MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq)?,
+                    function: call(ctx, a_eq).or(Err(()))?,
                     args: [a.into(), t.into()],
                 })
             } else {
-                Err(TypeError {
-                    expected,
-                    found: found_userdata,
-                })?
+                Err(())?
             }
         }
 
-        (l, _) => Err(TypeError {
-            expected,
-            found: l.type_name(),
-        })?,
+        (_, _) => Err(())?,
     })
 }
 
