@@ -60,8 +60,7 @@ impl<'gc> Callback<'gc> {
         }
 
         // SAFETY: We can't auto-implement `Collect` due to the function pointer lifetimes, but
-        // function pointers can't hold any data. It would be nice if function pointers could have
-        // higher rank `for<'gc>` lifetimes.
+        // function pointers can't hold any data.
         unsafe impl<'gc, C: Collect> Collect for HeaderCallback<'gc, C> {
             fn needs_trace() -> bool
             where
