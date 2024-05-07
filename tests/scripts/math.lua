@@ -226,7 +226,7 @@ function test18()
     end
 
     local numbers2 = {}
-    math.randomseed(8675309)
+    math.randomseed(8675309, 0)
     for i=1,10000,1 do
         numbers2[#numbers2 + 1] = math.random()
     end
@@ -234,6 +234,9 @@ function test18()
     for i=1,10000,1 do
         good = good and numbers1[i] == numbers2[i]
     end
+
+    math.randomseed(8675309, 1)
+    good = good and math.random() ~= numbers1[1]
 
     -- `math.random(0)` should return a fully random integer.
     local val = math.random(0)
