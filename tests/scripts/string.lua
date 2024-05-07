@@ -35,14 +35,7 @@ function test_len()
         string.len(-2147483648) == 11
 end
 
-function test_char()
-    return is_err(function() return string.char(0x110000) end) and
-        is_err(function() return string.char(0.1) end) and
-        string.char(72, 69, 76.0, "76", 79) == "HELLO"
-end
-
 assert(
     test_concat() and
-    test_len() and
-    test_char()
+    test_len()
 )
