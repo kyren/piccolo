@@ -217,11 +217,38 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     math.set(
         ctx,
         "randomseed",
-        callback("randomseed", &ctx, move |_, f: i64| {
-            let rng = &randomseed_rng;
-            *rng.borrow_mut() = SmallRng::seed_from_u64(f as u64);
-            Some(())
-        }),
+        callback(
+            "randomseed",
+            &ctx,
+            move |_, (u, l): (Option<u64>, Option<u64>)| {
+                let rng = &randomseed_rng;
+                match (u, l) {
+                    (None, None) => {
+                        *rng.borrow_mut() = SmallRng::from_entropy();
+                        Some(())
+                    }
+                    (Some(seed), None) | (Some(seed), Some(0)) => {
+                        *rng.borrow_mut() = SmallRng::seed_from_u64(seed);
+                        Some(())
+                    }
+                    (Some(high), Some(low)) => {
+                        let seed = {
+                            let mut seed = [0; 32];
+                            let high_bytes = high.to_ne_bytes();
+                            let low_bytes = low.to_ne_bytes();
+                            seed[..8].copy_from_slice(&low_bytes);
+                            seed[8..16].copy_from_slice(&high_bytes);
+                            seed[16..24].copy_from_slice(&low_bytes);
+                            seed[24..].copy_from_slice(&high_bytes);
+                            seed
+                        };
+                        *rng.borrow_mut() = SmallRng::from_seed(seed);
+                        Some(())
+                    }
+                    _ => None,
+                }
+            },
+        ),
     )
     .unwrap();
 
