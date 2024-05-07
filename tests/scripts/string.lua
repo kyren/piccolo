@@ -66,8 +66,8 @@ function test_lower()
         is_err(function() return string.lower(is_err) end) and
         is_err(function() return string.lower(coroutine.create(test_coroutine_len)) end) and
         string.lower("HelLo") == "hello" and
-        string.lower("最強") == "最強"
-    -- we fail this right now, even though it is allowed under PUC-Lua
+        string.lower("ABCDEFGHIJKLMNOP123QRSTUVWXYZ") == "abcdefghijklmnop123qrstuvwxyz"
+    -- for some reason this is accepted in PUC Lua 5.4
     -- and string.lower(80) == "80"
 end
 
@@ -86,7 +86,7 @@ function test_reverse()
         is_err(function() return string.reverse(is_err) end) and
         is_err(function() return string.reverse(coroutine.create(test_coroutine_len)) end) and
         string.reverse("HelLo") == "oLleH" and
-        string.reverse("最強") == "強最" -- Technically incorrect, should be 倜�
+        string.reverse("raCecar") == "raceCar"
 end
 
 function test_upper()
@@ -97,7 +97,9 @@ function test_upper()
         is_err(function() return string.upper(is_err) end) and
         is_err(function() return string.upper(coroutine.create(test_coroutine_len)) end) and
         string.upper("HelLo") == "HELLO" and
-        string.upper("最強") == "最強" -- this is *incorrect* according to PUC-Lua, it should be "Ɯż"
+        string.upper("abcdefghijklmnop123qrstuvwxyz") == "ABCDEFGHIJKLMNOP123QRSTUVWXYZ"
+    -- for some reason this is accepted in PUC Lua 5.4
+    -- and string.upper(80) == "80"
 end
 
 assert(
