@@ -146,39 +146,35 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 I'm not going over these with a fine-tooth comb, if it exists (and takes the specified number of arguments), it's considered implemented. (Except for "basic" identities like $\cos(0) = 1$ and stuff like that.)
 
-| Status | Function             | Differences                                                                                             | Notes |
-| ------ | -------------------- | ------------------------------------------------------------------------------------------------------- | ----- |
-| 🔵     | `abs(x)`             |                                                                                                         |       |
-| 🔵     | `acos(x)`            |                                                                                                         |       |
-| 🔵     | `asin(x)`            |                                                                                                         |       |
-| 🔵     | `atan(y[, x])`       |                                                                                                         |       |
-| 🔵     | `ceil(x)`            |                                                                                                         |       |
-| 🔵     | `cos(x)`             |                                                                                                         |       |
-| 🔵     | `deg(x)`             |                                                                                                         |       |
-| 🔵     | `exp(x)`             |                                                                                                         |       |
-| 🔵     | `floor(x)`           |                                                                                                         |       |
-| 🔵     | `fmod(x, y)`         |                                                                                                         |       |
-| 🔵     | `huge` (value)       |                                                                                                         |       |
-| 🔵     | `log(x[, base])`     |                                                                                                         |       |
-| 🔵     | `max(x, args...)`    |                                                                                                         |       |
-| 🔵     | `maxinteger` (value) |                                                                                                         |       |
-| 🔵     | `min(x, args...)`    |                                                                                                         |       |
-| 🔵     | `mininteger` (value) |                                                                                                         |       |
-| 🔵     | `modf(x)`            |                                                                                                         |       |
-| 🔵     | `pi` (value)         |                                                                                                         |       |
-| 🔵     | `rad(x)`             |                                                                                                         |       |
-| 🔵     | `random([m, n])`     |                                                                                                         |       |
-| 🔵     | `randomseed(x)`      |                                                                                                         |       |
-| ⚫️    | `randomseed()`       | `math.randomseed()` does not attempt to randomly generate a seed.[^6]                                   |       |
-| 🟡     | `randomseed(x, y)`   | Looking at the code, the second argument is ignored, leading to only be able to seed using 64-bits.[^6] |       |
-| 🔵     | `sin(x)`             |                                                                                                         |       |
-| 🔵     | `sqrt(x)`            |                                                                                                         |       |
-| 🔵     | `tan(x)`             |                                                                                                         |       |
-| 🔵     | `tointeger(x)`       |                                                                                                         |       |
-| 🔵     | `type(x)`            |                                                                                                         |       |
-| 🔵     | `ult(m, n)`          |                                                                                                         |       |
-
-[^6]: Change https://github.com/kyren/piccolo/blob/master/src/stdlib/math.rs#L214-L224 to properly hand the 0-argument and 2-argument cases (and thus can seed from 128-bits).
+| Status | Function             | Differences | Notes |
+| ------ | -------------------- | ----------- | ----- |
+| 🔵     | `abs(x)`             |             |       |
+| 🔵     | `acos(x)`            |             |       |
+| 🔵     | `asin(x)`            |             |       |
+| 🔵     | `atan(y[, x])`       |             |       |
+| 🔵     | `ceil(x)`            |             |       |
+| 🔵     | `cos(x)`             |             |       |
+| 🔵     | `deg(x)`             |             |       |
+| 🔵     | `exp(x)`             |             |       |
+| 🔵     | `floor(x)`           |             |       |
+| 🔵     | `fmod(x, y)`         |             |       |
+| 🔵     | `huge` (value)       |             |       |
+| 🔵     | `log(x[, base])`     |             |       |
+| 🔵     | `max(x, args...)`    |             |       |
+| 🔵     | `maxinteger` (value) |             |       |
+| 🔵     | `min(x, args...)`    |             |       |
+| 🔵     | `mininteger` (value) |             |       |
+| 🔵     | `modf(x)`            |             |       |
+| 🔵     | `pi` (value)         |             |       |
+| 🔵     | `rad(x)`             |             |       |
+| 🔵     | `random([m, n])`     |             |       |
+| 🔵     | `randomseed([x, y])` |             |       |
+| 🔵     | `sin(x)`             |             |       |
+| 🔵     | `sqrt(x)`            |             |       |
+| 🔵     | `tan(x)`             |             |       |
+| 🔵     | `tointeger(x)`       |             |       |
+| 🔵     | `type(x)`            |             |       |
+| 🔵     | `ult(m, n)`          |             |       |
 
 ## I/O
 
