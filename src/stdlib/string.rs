@@ -1,4 +1,9 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, Value};
+use gc_arena::Collect;
+
+use crate::{
+    BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll,
+    String, Table, Value,
+};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -110,25 +115,56 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         )
         .unwrap();
 
+    #[derive(Collect)]
+    #[collect(require_static)]
+    struct StringRepSeq {
+        string: Vec<u8>,
+        sep: Vec<u8>,
+        n: i64,
+        i: i64,
+
+        built: Vec<u8>,
+    }
+
+    impl<'gc> Sequence<'gc> for StringRepSeq {
+        fn poll(
+            &mut self,
+            ctx: Context<'gc>,
+            mut exec: crate::Execution<'gc, '_>,
+            mut stack: crate::Stack<'gc, '_>,
+        ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+            if self.i < self.n {
+                exec.fuel().consume(1);
+                self.built.extend(&self.string);
+                if self.i < self.n - 1 {
+                    self.built.extend(&self.sep);
+                }
+
+                self.i += 1;
+                Ok(SequencePoll::Pending)
+            } else {
+                stack.replace(ctx, String::from_slice(&ctx, &self.built));
+                Ok(SequencePoll::Return)
+            }
+        }
+    }
+
     string
         .set(
             ctx,
             "rep",
-            Callback::from_fn(&ctx, |ctx, mut exec, mut stack| {
-                let (s, n, sep): (String, i64, Option<String>) = stack.consume(ctx)?;
-                if n > 0 {
-                    let mut ret = Vec::new();
-                    let sep = sep.map(|s| s.as_bytes()).unwrap_or(b"");
-                    for _ in 0..n {
-                        exec.fuel().consume(1);
-                        ret.extend(s.as_bytes());
-                        ret.extend(sep);
-                    }
-                    stack.replace(ctx, String::from_slice(&ctx, ret).into_value(ctx));
-                } else {
-                    stack.replace(ctx, "".into_value(ctx));
-                }
-                Ok(CallbackReturn::Return)
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let (string, n, sep): (String, i64, Option<String>) = stack.consume(ctx)?;
+                Ok(CallbackReturn::Sequence(BoxSequence::new(
+                    &ctx,
+                    StringRepSeq {
+                        string: string.to_vec(),
+                        sep: sep.map(|s| s.as_bytes()).unwrap_or(b"").to_vec(),
+                        n,
+                        i: 0,
+                        built: vec![],
+                    },
+                )))
             }),
         )
         .unwrap();
