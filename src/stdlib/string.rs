@@ -7,9 +7,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         .set(
             ctx,
             "char",
-            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            Callback::from_fn(&ctx, |ctx, mut exec, mut stack| {
                 let mut string = String::new();
                 for argn in 0..stack.len() {
+                    exec.fuel().consume(1);
                     let codepoint = match stack.pop_front() {
                         Value::Integer(i) if i >= 0 && i <= char::MAX as i64 => Ok(i as u32),
                         Value::Number(n)
