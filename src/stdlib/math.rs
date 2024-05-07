@@ -237,10 +237,10 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                             let high_bytes = high.to_ne_bytes();
                             let low_bytes = low.to_ne_bytes();
                             // Let's have some fun.
-                            seed[..4].copy_from_slice(&high_bytes[..4]);
-                            seed[8..12].copy_from_slice(&high_bytes[4..]);
-                            seed[16..20].copy_from_slice(&low_bytes[..4]);
-                            seed[28..].copy_from_slice(&low_bytes[4..]);
+                            seed[..8].copy_from_slice(&low_bytes);
+                            seed[8..16].copy_from_slice(&high_bytes);
+                            seed[16..24].copy_from_slice(&low_bytes);
+                            seed[24..].copy_from_slice(&high_bytes);
                             seed
                         };
                         *rng.borrow_mut() = SmallRng::from_seed(seed);
