@@ -236,7 +236,6 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                             let mut seed = [0; 32];
                             let high_bytes = high.to_ne_bytes();
                             let low_bytes = low.to_ne_bytes();
-                            // Let's have some fun.
                             seed[..8].copy_from_slice(&low_bytes);
                             seed[8..16].copy_from_slice(&high_bytes);
                             seed[16..24].copy_from_slice(&low_bytes);
