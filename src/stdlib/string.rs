@@ -134,13 +134,13 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             mut stack: crate::Stack<'gc, '_>,
         ) -> Result<SequencePoll<'gc>, Error<'gc>> {
             if self.i < self.n {
+                self.i += 1;
+
                 exec.fuel().consume(1);
                 self.built.extend(&self.string);
-                if self.i < self.n - 1 {
+                if self.i < self.n {
                     self.built.extend(&self.sep);
                 }
-
-                self.i += 1;
                 Ok(SequencePoll::Pending)
             } else {
                 stack.replace(ctx, String::from_slice(&ctx, &self.built));
