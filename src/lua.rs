@@ -202,7 +202,7 @@ impl Lua {
                         root.finalizers.finalize(fc);
                     });
                     // Immediately transition to `CollectionPhase::Collecting`.
-                    self.arena.mark_all().unwrap().collect();
+                    self.arena.mark_all().unwrap().start_collecting();
                     self.finalized = true;
                 }
             }
