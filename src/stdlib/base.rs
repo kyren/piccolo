@@ -116,6 +116,14 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     let last = (n as usize).min(stack.len());
                     stack.drain(0..last);
                     return Ok(CallbackReturn::Return);
+                } else if n < 0 {
+                    let inverse_index = n.unsigned_abs() as usize;
+                    let len = stack.len();
+                    if inverse_index < len {
+                        let args = stack.drain(..).collect::<Vec<_>>();
+                        stack.extend(args.into_iter().skip(len - inverse_index));
+                        return Ok(CallbackReturn::Return);
+                    }
                 }
             }
 
