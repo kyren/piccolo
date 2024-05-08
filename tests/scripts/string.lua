@@ -73,7 +73,7 @@ do
     assert(string.rep("apple", -32) == "" and
         string.rep("bat", 0) == "" and
         string.rep("say", 3) == "saysaysay" and
-        string.rep("say", 3, ", ") == "say, say, say, ")
+        string.rep("say", 3, ", ") == "say, say, say")
 end
 
 do
