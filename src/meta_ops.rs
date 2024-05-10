@@ -442,101 +442,44 @@ pub fn arithmetic_meta_op<'gc>(
         (Value::Number(a), Value::Number(b)) => (raw_op(Value::Number(a), Value::Number(b)))
             .map(MetaResult::Value)
             .or(Err(()))?,
-
-        (Value::Table(a), b) => {
-            if let Some(metamethod) = get_metamethod_from_table(ctx, a, m) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, metamethod).or(Err(()))?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                match b {
-                    Value::Table(b) => {
-                        if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
-                            MetaResult::Call(MetaCall {
-                                function: call(ctx, b_eq).or(Err(()))?,
-                                args: [a.into(), b.into()],
-                            })
-                        } else {
-                            Err(())?
-                        }
-                    }
-                    Value::UserData(b) => {
-                        if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
-                            MetaResult::Call(MetaCall {
-                                function: call(ctx, b_eq).or(Err(()))?,
-                                args: [a.into(), b.into()],
-                            })
-                        } else {
-                            Err(())?
-                        }
-                    }
-                    Value::Nil => todo!(),
-                    _ => Err(())?,
-                }
-            }
+        // Could avoid calling `get_metamethod_from_{table,userdata}` twice if if-let-match gets stabilised
+        (Value::Table(a), b) if get_metamethod_from_table(ctx, a, m).is_some() => {
+            let metamethod = get_metamethod_from_table(ctx, a, m).unwrap();
+            MetaResult::Call(MetaCall {
+                function: call(ctx, metamethod).or(Err(()))?,
+                args: [a.into(), b],
+            })
         }
 
-        (Value::UserData(a), b) => {
-            if let Some(metamethod) = get_metamethod_from_userdata(ctx, a, m) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, metamethod).or(Err(()))?,
-                    args: [a.into(), b.into()],
-                })
-            } else {
-                match b {
-                    Value::Table(b) => {
-                        if let Some(b_eq) = get_metamethod_from_table(ctx, b, m) {
-                            MetaResult::Call(MetaCall {
-                                function: call(ctx, b_eq).or(Err(()))?,
-                                args: [a.into(), b.into()],
-                            })
-                        } else {
-                            Err(())?
-                        }
-                    }
-                    Value::UserData(b) => {
-                        if let Some(b_eq) = get_metamethod_from_userdata(ctx, b, m) {
-                            MetaResult::Call(MetaCall {
-                                function: call(ctx, b_eq).or(Err(()))?,
-                                args: [a.into(), b.into()],
-                            })
-                        } else {
-                            Err(())?
-                        }
-                    }
-                    Value::Nil => todo!(),
-                    _ => Err(())?,
-                }
-            }
+        (Value::UserData(a), b) if get_metamethod_from_userdata(ctx, a, m).is_some() => {
+            let metamethod = get_metamethod_from_userdata(ctx, a, m).unwrap();
+            MetaResult::Call(MetaCall {
+                function: call(ctx, metamethod).or(Err(()))?,
+                args: [a.into(), b],
+            })
         }
 
-        (a, Value::Table(t)) => {
-            if let Some(a_eq) = get_metamethod_from_table(ctx, t, m) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq).or(Err(()))?,
-                    args: [a.into(), t.into()],
-                })
-            } else {
-                Err(())?
-            }
+        (a, Value::Table(b)) if get_metamethod_from_table(ctx, b, m).is_some() => {
+            let metamethod = get_metamethod_from_table(ctx, b, m).unwrap();
+            MetaResult::Call(MetaCall {
+                function: call(ctx, metamethod).or(Err(()))?,
+                args: [a, b.into()],
+            })
         }
-        (a, Value::UserData(t)) => {
-            if let Some(a_eq) = get_metamethod_from_userdata(ctx, t, m) {
-                MetaResult::Call(MetaCall {
-                    function: call(ctx, a_eq).or(Err(()))?,
-                    args: [a.into(), t.into()],
-                })
-            } else {
-                Err(())?
-            }
+
+        (a, Value::UserData(b)) if get_metamethod_from_userdata(ctx, b, m).is_some() => {
+            let metamethod = get_metamethod_from_userdata(ctx, b, m).unwrap();
+            MetaResult::Call(MetaCall {
+                function: call(ctx, metamethod).or(Err(()))?,
+                args: [a, b.into()],
+            })
         }
 
         (_, _) => Err(())?,
     })
 }
 
-// If we had a HasMetatable trait, we could fold these two functions together.
+// If we had a `HasMetatable` trait, we could fold these two helper functions together.
 fn get_metamethod_from_userdata<'gc>(
     ctx: Context<'gc>,
     t: UserData<'gc>,
