@@ -165,8 +165,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena"
-version = "0.5.1"
-source = "git+https://github.com/kyren/gc-arena?branch=piccolo#e0f34f85d27f0d303f4e4c304b173081e596c6b2"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d36ae83018844eacaceff1c411f8e4411f95563b072b6a597901addab980e5a"
 dependencies = [
  "allocator-api2",
  "gc-arena-derive",
@@ -176,8 +177,9 @@ dependencies = [
 
 [[package]]
 name = "gc-arena-derive"
-version = "0.5.1"
-source = "git+https://github.com/kyren/gc-arena?branch=piccolo#e0f34f85d27f0d303f4e4c304b173081e596c6b2"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78b355dbafa4a51f1506624ee614c252a613dcbe751dae235064bdd871c00328"
 dependencies = [
  "proc-macro2",
  "quote",
