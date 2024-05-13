@@ -232,16 +232,16 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                         Some(())
                     }
                     (Some(high), Some(low)) => {
-                        let seed = {
-                            let mut seed = [0; 32];
-                            let high_bytes = high.to_ne_bytes();
-                            let low_bytes = low.to_ne_bytes();
-                            seed[..8].copy_from_slice(&low_bytes);
-                            seed[8..16].copy_from_slice(&high_bytes);
-                            seed[16..24].copy_from_slice(&low_bytes);
-                            seed[24..].copy_from_slice(&high_bytes);
-                            seed
-                        };
+                        let high_bytes = high.to_ne_bytes();
+                        let low_bytes = low.to_ne_bytes();
+                        let seed = std::array::from_fn(|idx| {
+                            let idx_mod_16 = idx % 16;
+                            if idx_mod_16 > 8 {
+                                high_bytes[idx_mod_16 - 8]
+                            } else {
+                                low_bytes[idx_mod_16]
+                            }
+                        });
                         *rng.borrow_mut() = SmallRng::from_seed(seed);
                         Some(())
                     }
