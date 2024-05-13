@@ -2,7 +2,7 @@ use gc_arena::Collect;
 
 use crate::{
     BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll,
-    String, Table, Value,
+    String, Table, TypeError, Value,
 };
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
@@ -95,7 +95,18 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "lower",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s: String = stack.consume(ctx)?;
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
                 let lowered = String::from_slice(
                     &ctx,
                     s.as_bytes()
@@ -148,7 +159,30 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "rep",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (string, n, sep): (String, i64, Option<String>) = stack.consume(ctx)?;
+                let (string, n, sep): (Value, i64, Option<Value>) = stack.consume(ctx)?;
+                let string = match string {
+                    Value::String(s) => s,
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
+                let sep = sep
+                    .map(|sep| match sep {
+                        Value::String(s) => Ok(s),
+                        Value::Integer(i) => Ok(String::from_slice(&ctx, i.to_string())),
+                        Value::Number(f) => Ok(String::from_slice(&ctx, f.to_string())),
+                        v => Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }),
+                    })
+                    .transpose()?;
                 Ok(CallbackReturn::Sequence(BoxSequence::new(
                     &ctx,
                     StringRepSeq {
@@ -168,7 +202,18 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "reverse",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s: String = stack.consume(ctx)?;
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
                 stack.replace(
                     ctx,
                     String::from_slice(
@@ -187,7 +232,18 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "upper",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s: String = stack.consume(ctx)?;
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
                 let uppered = String::from_slice(
                     &ctx,
                     s.as_bytes()

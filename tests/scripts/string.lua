@@ -73,7 +73,8 @@ do
     assert(string.rep("apple", -32) == "" and
         string.rep("bat", 0) == "" and
         string.rep("say", 3) == "saysaysay" and
-        string.rep("say", 3, ", ") == "say, say, say")
+        string.rep("say", 3, ", ") == "say, say, say" and
+        string.rep(4, 4, 4) == "4444444")
 end
 
 do
@@ -84,7 +85,8 @@ do
         is_err(function() return string.reverse(is_err) end) and
         is_err(function() return string.reverse(coroutine.create(test_coroutine_len)) end) and
         string.reverse("HelLo") == "oLleH" and
-        string.reverse("raCecar") == "raceCar")
+        string.reverse("raCecar") == "raceCar" and
+        string.reverse(84) == "48")
 end
 
 do
