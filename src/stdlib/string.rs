@@ -100,13 +100,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     &ctx,
                     s.as_bytes()
                         .iter()
-                        .map(|b| {
-                            if (65..=90).contains(b) {
-                                97 + (*b - 65)
-                            } else {
-                                *b
-                            }
-                        })
+                        .map(u8::to_ascii_lowercase)
                         .collect::<Vec<_>>(),
                 );
                 stack.replace(ctx, lowered.into_value(ctx));
@@ -198,13 +192,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     &ctx,
                     s.as_bytes()
                         .iter()
-                        .map(|b| {
-                            if (97..=122).contains(b) {
-                                65 + (*b - 97)
-                            } else {
-                                *b
-                            }
-                        })
+                        .map(u8::to_ascii_uppercase)
                         .collect::<Vec<_>>(),
                 );
                 stack.replace(ctx, uppered.into_value(ctx));
