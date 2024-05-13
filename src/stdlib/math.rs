@@ -236,7 +236,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                         let low_bytes = low.to_ne_bytes();
                         let seed = std::array::from_fn(|idx| {
                             let idx_mod_16 = idx % 16;
-                            if idx_mod_16 > 8 {
+                            if idx_mod_16 >= 8 {
                                 high_bytes[idx_mod_16 - 8]
                             } else {
                                 low_bytes[idx_mod_16]
