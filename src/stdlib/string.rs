@@ -47,8 +47,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     i.saturating_sub(1) as usize
                 } else {
                     (string.len() as i64 + i) as usize
-                }
-                .clamp(0, (string.len() as usize).saturating_sub(1));
+                };
                 let j = if let Some(j) = j {
                     if j >= 0 {
                         j as usize
@@ -60,7 +59,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 }
                 .clamp(0, string.len());
 
-                let result = if i > j { &[] } else { &string[i..j] };
+                let result = if i > j || i >= string.len() {
+                    &[]
+                } else {
+                    &string[i..j]
+                };
                 stack.replace(ctx, crate::String::from_slice(&ctx, result).into_value(ctx));
                 Ok(CallbackReturn::Return)
             }),
