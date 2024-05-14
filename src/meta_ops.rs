@@ -120,20 +120,41 @@ pub fn index<'gc>(
                 match index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         stack.push_back(v);
-                        Ok(CallbackReturn::Return.into())
+                        Ok(CallbackReturn::Return)
                     }
                     MetaResult::Call(call) => {
                         stack.extend(call.args);
                         Ok(CallbackReturn::Call {
                             function: call.function,
                             then: None,
-                        }
-                        .into())
+                        })
                     }
                 }
             })
             .into(),
             args: [table.into(), key],
+        },
+        Value::UserData(ud) => MetaCall {
+            function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let ud = stack.get(0);
+                let key = stack.get(1);
+                stack.clear();
+                match index(ctx, ud, key)? {
+                    MetaResult::Value(v) => {
+                        stack.push_back(v);
+                        Ok(CallbackReturn::Return)
+                    }
+                    MetaResult::Call(call) => {
+                        stack.extend(call.args);
+                        Ok(CallbackReturn::Call {
+                            function: call.function,
+                            then: None,
+                        })
+                    }
+                }
+            })
+            .into(),
+            args: [ud.into(), key],
         },
         _ => MetaCall {
             function: call(ctx, idx)?,
