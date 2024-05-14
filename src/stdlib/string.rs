@@ -51,16 +51,16 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 .clamp(0, (string.len() as usize).saturating_sub(1));
                 let j = if let Some(j) = j {
                     if j >= 0 {
-                        j.saturating_sub(1) as usize
+                        j as usize
                     } else {
-                        (string.len() as i64 + j) as usize
+                        (string.len() as i64 + j + 1) as usize
                     }
-                    .clamp(0, (string.len() as usize).saturating_sub(1))
                 } else {
-                    string.len().saturating_sub(1)
-                };
+                    string.len()
+                }
+                .clamp(0, string.len());
 
-                let result = if i > j { &[] } else { &string[i..=j] };
+                let result = if i > j { &[] } else { &string[i..j] };
                 stack.replace(ctx, crate::String::from_slice(&ctx, result).into_value(ctx));
                 Ok(CallbackReturn::Return)
             }),
