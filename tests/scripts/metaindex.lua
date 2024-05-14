@@ -52,7 +52,7 @@ do
     local idx = {}
 
     local mt = {
-        __newindex = function(table, key, value) 
+        __newindex = function(table, key, value)
             idx[key] = value
         end,
     }
@@ -64,4 +64,13 @@ do
     assert(idx.foo == 3)
     t.foo = 4
     assert(idx.foo == 4)
+end
+
+do
+    local t = { x = 3 }
+    local udt = indexable(t)
+    assert(t.x == udt.x)
+    local v = {}
+    setmetatable(v, { __index = udt })
+    assert(v.x == t.x)
 end

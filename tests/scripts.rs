@@ -23,6 +23,27 @@ fn test_scripts() {
                 let _ = writeln!(stdout(), "running {:?}", path);
                 let mut lua = Lua::full();
 
+                // Used for `scripts/metaindex.lua`, creates a UserData with it's __index set to a given table
+                lua.try_enter(|ctx| {
+                    use piccolo::{
+                        Callback, CallbackReturn, Function, IntoValue, MetaMethod, Table, UserData,
+                    };
+                    ctx.set_global(
+                        "indexable",
+                        Function::Callback(Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                            let table = stack.consume::<Table>(ctx)?;
+                            let ud = UserData::new_static(&ctx, ());
+                            let ud_meta = Table::new(&ctx);
+                            ud_meta.set(ctx, MetaMethod::Index, table)?;
+                            ud.set_metatable(&ctx, Some(ud_meta));
+                            stack.replace(ctx, ud.into_value(ctx));
+                            Ok(CallbackReturn::Return)
+                        })),
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+
                 if let Err(err) = lua
                     .try_enter(|ctx| {
                         let closure =
