@@ -112,7 +112,7 @@ pub fn index<'gc>(
     };
 
     Ok(MetaResult::Call(match idx {
-        Value::Table(table) => MetaCall {
+        table @ (Value::Table(_) | Value::UserData(_)) => MetaCall {
             function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let table = stack.get(0);
                 let key = stack.get(1);
