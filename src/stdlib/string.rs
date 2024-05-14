@@ -59,7 +59,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 }
                 .clamp(0, string.len());
 
-                let result = if i > j || i >= string.len() {
+                let result = if i >= j || i >= string.len() {
                     &[]
                 } else {
                     &string[i..j]
