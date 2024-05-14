@@ -46,7 +46,7 @@ do
         string.sub(48, 2) == "8" and
         string.sub(48, -1) == "8" and
         string.sub("hilo", -1, -4) == "" and
-        string.sub("hilo", -4, -1) == "hilo" and
+        string.sub("hilo", -4, 4) == "hilo" and
         string.sub("hilo", -4, -3) == "hi"
     )
 end
