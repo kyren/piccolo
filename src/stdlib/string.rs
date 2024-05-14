@@ -29,7 +29,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "sub",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (string, i, j) = stack.consume::<(Value, i64, Option<i64>)>(ctx)?;
+                let string = stack.pop_front();
                 let string = match string {
                     Value::Integer(i) => i.to_string().as_bytes().to_vec(),
                     Value::String(s) => s.as_bytes().to_vec(),
@@ -43,6 +43,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     }
                 };
 
+                let (i, j) = stack.consume::<(i64, Option<i64>)>(ctx)?;
                 let i = if i >= 0 {
                     i.saturating_sub(1) as usize
                 } else {
