@@ -259,25 +259,9 @@ impl<'gc> Hash for String<'gc> {
     }
 }
 
-#[derive(Copy, Clone, Collect)]
-#[collect(no_drop)]
-struct WeakString<'gc>(GcWeak<'gc, StringInner>);
-
-impl<'gc> WeakString<'gc> {
-    fn downgrade(s: String<'gc>) -> Self {
-        Self(Gc::downgrade(s.0))
-    }
-
-    fn upgrade(self, mc: &Mutation<'gc>) -> Option<String<'gc>> {
-        GcWeak::upgrade(self.0, mc).map(String)
-    }
-
-    fn is_dropped(self, cc: &Collection) -> bool {
-        self.0.is_dropped(cc)
-    }
-}
-
-struct InternedDynStringsInner<'gc>(RefLock<RawTable<(WeakString<'gc>, u64), MetricsAlloc<'gc>>>);
+struct InternedDynStringsInner<'gc>(
+    RefLock<RawTable<(GcWeak<'gc, StringInner>, u64), MetricsAlloc<'gc>>>,
+);
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -316,7 +300,7 @@ impl<'gc> InternedDynStrings<'gc> {
         unsafe {
             for bucket in dyn_strings.iter_hash(str_hash(s)) {
                 let (key, _) = *bucket.as_ref();
-                if let Some(st) = key.upgrade(mc) {
+                if let Some(st) = key.upgrade(mc).map(String::from_inner) {
                     if st == s {
                         return st;
                     }
@@ -333,7 +317,7 @@ impl<'gc> InternedDynStrings<'gc> {
         let s = String::from_slice(mc, s);
         dyn_strings.insert(
             s.stored_hash(),
-            (WeakString::downgrade(s), s.stored_hash()),
+            (Gc::downgrade(s.into_inner()), s.stored_hash()),
             |(_, hash)| *hash,
         );
 
