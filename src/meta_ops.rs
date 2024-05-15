@@ -199,7 +199,7 @@ pub fn new_index<'gc>(
     };
 
     Ok(Some(match idx {
-        Value::Table(table) => MetaCall {
+        table @ (Value::Table(_) | Value::UserData(_)) => MetaCall {
             function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
