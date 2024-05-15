@@ -128,5 +128,11 @@ do
     for k,_ in pairs(t) do
         t[k] = nil
     end
-    assert(#t == 0)
+    assert(#t == 0 and t.a == nil and t.b == nil)
+
+    local t2 = {[1] = 1, [4] = 4, [7] = 7, a = "a", b = "b"}
+    for k,v in pairs(t2) do
+        t2[k] = nil
+    end
+    assert(t2[1] == nil and t2[4] == nil and t2[7] == nil and t.a == nil and t.b == nil)
 end

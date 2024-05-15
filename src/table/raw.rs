@@ -134,10 +134,8 @@ impl<'gc> RawTable<'gc> {
                 let (k, v) = occupied.get_key_value_mut();
                 if let Some(dead) = k.kill() {
                     *k = dead;
-                    mem::take(v)
-                } else {
-                    occupied.remove()
                 }
+                mem::take(v)
             } else {
                 Value::Nil
             }
@@ -162,10 +160,16 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            for &key in self.map.keys() {
-                if let Some(i) = key.live_key().and_then(|k| to_array_index(k.to_value())) {
-                    array_counts[highest_bit(i)] += 1;
-                    array_total += 1;
+            for (&key, &value) in &self.map {
+                if !value.is_nil() {
+                    if let Some(i) = to_array_index(
+                        key.live_key()
+                            .expect("dead keys must have Nil values")
+                            .to_value(),
+                    ) {
+                        array_counts[highest_bit(i)] += 1;
+                        array_total += 1;
+                    }
                 }
             }
 
@@ -204,10 +208,12 @@ impl<'gc> RawTable<'gc> {
 
                 let array = &mut self.array;
                 self.map.retain(|k, v| {
-                    let Some(key) = k.live_key() else {
-                        // If our key is dead, clear the entry.
+                    if v.is_nil() {
+                        // If our entry is dead, remove it.
                         return false;
-                    };
+                    }
+
+                    let key = k.live_key().expect("all dead keys should have a Nil value");
 
                     // If our live key is an array index that fits in the array portion,
                     // move the entry to the array portion.
@@ -300,7 +306,7 @@ impl<'gc> RawTable<'gc> {
                     .from_hash(self.hash_builder.hash_one(CanonicalKey::Integer(i)), |k| {
                         k.eq(CanonicalKey::Integer(i))
                     }) {
-                    Some((k, _)) => k.is_dead_key(),
+                    Some((_, v)) => v.is_nil(),
                     None => true,
                 }
             })
@@ -336,9 +342,12 @@ impl<'gc> RawTable<'gc> {
                 for bucket_index in 0..raw_table.buckets() {
                     if raw_table.is_bucket_full(bucket_index) {
                         let (key, value) = *raw_table.bucket(bucket_index).as_ref();
-                        if let Some(key) = key.live_key() {
+                        if !value.is_nil() {
                             return NextValue::Found {
-                                key: key.to_value(),
+                                key: key
+                                    .live_key()
+                                    .expect("dead keys must have Nil values")
+                                    .to_value(),
                                 value,
                             };
                         }
@@ -358,9 +367,12 @@ impl<'gc> RawTable<'gc> {
                     for i in bucket_index + 1..raw_table.buckets() {
                         if raw_table.is_bucket_full(i) {
                             let (key, value) = *raw_table.bucket(i).as_ref();
-                            if let Some(key) = key.live_key() {
+                            if !value.is_nil() {
                                 return NextValue::Found {
-                                    key: key.to_value(),
+                                    key: key
+                                        .live_key()
+                                        .expect("dead keys must have Nil` values")
+                                        .to_value(),
                                     value,
                                 };
                             }
@@ -380,7 +392,7 @@ impl<'gc> RawTable<'gc> {
 
     pub fn reserve_map(&mut self, additional: usize) {
         if additional > self.map.capacity() - self.map.len() {
-            self.map.retain(|k, _| !k.is_dead_key());
+            self.map.retain(|_, v| !v.is_nil());
 
             self.map.raw_table_mut().reserve(additional, |(key, _)| {
                 self.hash_builder.hash_one(
@@ -451,8 +463,8 @@ impl<'gc> CanonicalKey<'gc> {
 
 // A table key which may be "live" or "dead".
 //
-// "Removed" keys in tables do not actually have their entry removed, instead the key is set to a
-// "dead key" and the value is set to Nil.
+// "Removed" keys in tables do not actually have their entry removed, instead the value is set to
+// Nil and the key is set to a dead key if it is a GC object.
 //
 // This is done to make iteration predictable in the presence of any table mutation that does not
 // cause the table to grow.
