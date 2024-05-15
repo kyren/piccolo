@@ -274,10 +274,11 @@ unsafe impl<'gc> Collect for InternedDynStringsInner<'gc> {
         unsafe {
             for bucket in dyn_strings.iter() {
                 let s = bucket.as_ref().0;
-                s.trace(cc);
                 if s.is_dropped(cc) {
                     // SAFETY: it is okay to erase items yielded by the iterator.
                     dyn_strings.erase(bucket);
+                } else {
+                    s.trace(cc);
                 }
             }
         }

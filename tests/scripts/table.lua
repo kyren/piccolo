@@ -122,3 +122,11 @@ do
     assert(table.unpack(t, 4, 4) == nil)
     assert(table.unpack(t, 4, 2) == nil)
 end
+
+do
+    local t = {1, 2, 3, a = "a", b = "b"}
+    for k,_ in pairs(t) do
+        t[k] = nil
+    end
+    assert(#t == 0)
+end

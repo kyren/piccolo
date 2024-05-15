@@ -1,16 +1,11 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    i64, mem,
-};
+use std::{fmt, hash::Hash, i64, mem};
 
-use ahash::AHasher;
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Collect, Mutation};
+use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
 use hashbrown::{hash_map, HashMap};
 use thiserror::Error;
 
-use crate::Value;
+use crate::{Callback, Closure, Function, String, Table, Thread, UserData, Value};
 
 #[derive(Debug, Copy, Clone, Error)]
 pub enum InvalidTableKey {
@@ -32,7 +27,11 @@ pub enum NextValue<'gc> {
 #[collect(no_drop)]
 pub struct RawTable<'gc> {
     array: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    map: HashMap<Value<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
+    // TODO: It would be safer to use `hashbrown::HashTable` and access the inner raw table when
+    // necessary, but `HashTable` does not allow access to the inner raw table yet.
+    map: HashMap<Key<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
+    #[collect(require_static)]
+    hash_builder: ahash::random_state::RandomState,
 }
 
 impl<'gc> fmt::Debug for RawTable<'gc> {
@@ -42,8 +41,16 @@ impl<'gc> fmt::Debug for RawTable<'gc> {
                 self.array
                     .iter()
                     .enumerate()
-                    .map(|(i, v)| (Value::Integer(i.try_into().unwrap()), *v))
-                    .chain(self.map.iter().map(|(&k, &v)| (k, v))),
+                    .map(|(i, v)| (Value::Integer((i + 1).try_into().unwrap()), *v))
+                    .chain({
+                        self.map.iter().filter_map(|(k, v)| {
+                            if let Key::Live(k) = k {
+                                Some((k.to_value(), *v))
+                            } else {
+                                None
+                            }
+                        })
+                    }),
             )
             .finish()
     }
@@ -53,7 +60,8 @@ impl<'gc> RawTable<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             array: vec::Vec::new_in(MetricsAlloc::new(mc)),
-            map: hash_map::HashMap::with_hasher_in((), MetricsAlloc::new(mc)),
+            map: HashMap::with_hasher_in((), MetricsAlloc::new(mc)),
+            hash_builder: ahash::random_state::RandomState::new(),
         }
     }
 
@@ -64,13 +72,13 @@ impl<'gc> RawTable<'gc> {
             }
         }
 
-        if let Ok(key) = canonical_key(key) {
-            if let Some((_, value)) = self
+        if let Ok(key) = CanonicalKey::new(key) {
+            if let Some((_, v)) = self
                 .map
                 .raw_entry()
-                .from_hash(key_hash(key), |k| key_eq(*k, key))
+                .from_hash(self.hash_builder.hash_one(key), |k| k.eq(key))
             {
-                *value
+                *v
             } else {
                 Value::Nil
             }
@@ -91,32 +99,50 @@ impl<'gc> RawTable<'gc> {
             }
         }
 
-        let table_key = canonical_key(key)?;
-        let hash = key_hash(table_key);
+        fn set_reserved_value<'gc>(
+            map: &mut HashMap<Key<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
+            hash: u64,
+            key: CanonicalKey<'gc>,
+            value: Value<'gc>,
+        ) -> Value<'gc> {
+            match map.raw_entry_mut().from_hash(hash, |k| k.eq(key)) {
+                hash_map::RawEntryMut::Occupied(occupied) => {
+                    let (k, v) = occupied.into_key_value();
+                    if k.is_dead_key() {
+                        // Resurrect the key if it is dead.
+                        *k = Key::Live(key);
+                    }
+                    mem::replace(v, value)
+                }
+                hash_map::RawEntryMut::Vacant(vacant) => {
+                    vacant.insert_with_hasher(hash, Key::Live(key), value, |_| {
+                        panic!("map slot must be pre-reserved")
+                    });
+                    Value::Nil
+                }
+            }
+        }
+
+        let table_key = CanonicalKey::new(key)?;
+        let hash = self.hash_builder.hash_one(table_key);
         Ok(if value.is_nil() {
-            if let hash_map::RawEntryMut::Occupied(occupied) = self
+            if let hash_map::RawEntryMut::Occupied(mut occupied) = self
                 .map
                 .raw_entry_mut()
-                .from_hash(hash, |k| key_eq(*k, table_key))
+                .from_hash(hash, |k| k.eq(table_key))
             {
-                occupied.remove()
+                let (k, v) = occupied.get_key_value_mut();
+                if let Some(dead) = k.kill() {
+                    *k = dead;
+                    mem::take(v)
+                } else {
+                    occupied.remove()
+                }
             } else {
                 Value::Nil
             }
         } else if self.map.len() < self.map.capacity() {
-            match self
-                .map
-                .raw_entry_mut()
-                .from_hash(hash, |k| key_eq(*k, table_key))
-            {
-                hash_map::RawEntryMut::Occupied(occupied) => {
-                    mem::replace(occupied.into_mut(), value)
-                }
-                hash_map::RawEntryMut::Vacant(vacant) => {
-                    vacant.insert_with_hasher(hash, table_key, value, |k| key_hash(*k));
-                    Value::Nil
-                }
-            }
+            set_reserved_value(&mut self.map, hash, table_key, value)
         } else {
             // If a new element does not fit in either the array or map part of the table, we need
             // to grow. First, we find the total count of array candidate elements across the array
@@ -137,7 +163,7 @@ impl<'gc> RawTable<'gc> {
             }
 
             for &key in self.map.keys() {
-                if let Some(i) = to_array_index(key) {
+                if let Some(i) = key.live_key().and_then(|k| to_array_index(k.to_value())) {
                     array_counts[highest_bit(i)] += 1;
                     array_total += 1;
                 }
@@ -177,41 +203,40 @@ impl<'gc> RawTable<'gc> {
                 self.array.resize(capacity, Value::Nil);
 
                 let array = &mut self.array;
-                self.map.retain(|&key, &mut value| {
-                    if let Some(i) = to_array_index(key) {
+                self.map.retain(|k, v| {
+                    let Some(key) = k.live_key() else {
+                        // If our key is dead, clear the entry.
+                        return false;
+                    };
+
+                    // If our live key is an array index that fits in the array portion,
+                    // move the entry to the array portion.
+                    if let Some(i) = to_array_index(key.to_value()) {
                         if i < array.len() {
-                            array[i] = value;
+                            array[i] = *v;
                             return false;
                         }
                     }
+
                     true
                 });
             } else {
                 // If we aren't growing the array, we're adding a new element to the map that won't
                 // fit in the advertised capacity. We explicitly double the map size here.
-                self.map
-                    .raw_table_mut()
-                    .reserve(old_map_size, |(key, _)| key_hash(*key));
+                self.map.raw_table_mut().reserve(old_map_size, |(key, _)| {
+                    self.hash_builder.hash_one(
+                        key.live_key()
+                            .expect("all keys must be live when table is grown"),
+                    )
+                });
             }
 
             // Now we can insert the new key value pair
-            if let Some(index) = index_key {
-                if index < self.array.len() {
+            match index_key {
+                Some(index) if index < self.array.len() => {
                     return Ok(mem::replace(&mut self.array[index], value));
                 }
-            }
-            match self
-                .map
-                .raw_entry_mut()
-                .from_hash(hash, |k| key_eq(*k, table_key))
-            {
-                hash_map::RawEntryMut::Occupied(occupied) => {
-                    mem::replace(occupied.into_mut(), value)
-                }
-                hash_map::RawEntryMut::Vacant(vacant) => {
-                    vacant.insert_with_hasher(hash, table_key, value, |k| key_hash(*k));
-                    Value::Nil
-                }
+                _ => set_reserved_value(&mut self.map, hash, table_key, value),
             }
         })
     }
@@ -248,7 +273,10 @@ impl<'gc> RawTable<'gc> {
             while self
                 .map
                 .raw_entry()
-                .from_hash(key_hash(max.into()), |k| key_eq(*k, max.into()))
+                .from_hash(
+                    self.hash_builder.hash_one(CanonicalKey::Integer(max)),
+                    |k| k.eq(CanonicalKey::Integer(max)),
+                )
                 .is_some()
             {
                 if max == i64::MAX {
@@ -266,31 +294,35 @@ impl<'gc> RawTable<'gc> {
 
             // We have found a max where table[max] == nil, so we can now binary search
             binary_search(min, max, |i| {
-                self.map
+                match self
+                    .map
                     .raw_entry()
-                    .from_hash(key_hash(i.into()), |k| key_eq(*k, i.into()))
-                    .is_none()
+                    .from_hash(self.hash_builder.hash_one(CanonicalKey::Integer(i)), |k| {
+                        k.eq(CanonicalKey::Integer(i))
+                    }) {
+                    Some((k, _)) => k.is_dead_key(),
+                    None => true,
+                }
             })
         }
     }
 
     pub fn next(&self, key: Value<'gc>) -> NextValue<'gc> {
-        let array_result = if let Some(index_key) = to_array_index(key) {
+        let start_index = if let Some(index_key) = to_array_index(key) {
             if index_key < self.array.len() {
-                Some((index_key + 1, self.array[index_key].is_nil()))
+                Some(index_key + 1)
             } else {
                 None
             }
         } else if key.is_nil() {
-            // Nil is never considered missing, it is the "key" before the first key.
-            Some((0, false))
+            Some(0)
         } else {
             None
         };
 
         let raw_table = self.map.raw_table();
 
-        if let Some((start_index, is_missing)) = array_result {
+        if let Some(start_index) = start_index {
             for i in start_index..self.array.len() {
                 if !self.array[i].is_nil() {
                     return NextValue::Found {
@@ -300,15 +332,16 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            if is_missing {
-                return NextValue::NotFound;
-            }
-
             unsafe {
                 for bucket_index in 0..raw_table.buckets() {
                     if raw_table.is_bucket_full(bucket_index) {
                         let (key, value) = *raw_table.bucket(bucket_index).as_ref();
-                        return NextValue::Found { key, value };
+                        if let Some(key) = key.live_key() {
+                            return NextValue::Found {
+                                key: key.to_value(),
+                                value,
+                            };
+                        }
                     }
                 }
             }
@@ -316,16 +349,21 @@ impl<'gc> RawTable<'gc> {
             return NextValue::Last;
         }
 
-        if let Ok(table_key) = canonical_key(key) {
-            if let Some(bucket) =
-                raw_table.find(key_hash(table_key), |(k, _)| key_eq(*k, table_key))
-            {
+        if let Ok(table_key) = CanonicalKey::new(key) {
+            if let Some(bucket) = raw_table.find(self.hash_builder.hash_one(table_key), |(k, _)| {
+                k.eq(table_key)
+            }) {
                 unsafe {
                     let bucket_index = raw_table.bucket_index(&bucket);
                     for i in bucket_index + 1..raw_table.buckets() {
                         if raw_table.is_bucket_full(i) {
                             let (key, value) = *raw_table.bucket(i).as_ref();
-                            return NextValue::Found { key, value };
+                            if let Some(key) = key.live_key() {
+                                return NextValue::Found {
+                                    key: key.to_value(),
+                                    value,
+                                };
+                            }
                         }
                     }
                 }
@@ -341,83 +379,140 @@ impl<'gc> RawTable<'gc> {
     }
 
     pub fn reserve_map(&mut self, additional: usize) {
-        self.map
-            .raw_table_mut()
-            .reserve(additional, |(k, _)| key_hash(*k));
+        if additional > self.map.capacity() - self.map.len() {
+            self.map.retain(|k, _| !k.is_dead_key());
+
+            self.map.raw_table_mut().reserve(additional, |(key, _)| {
+                self.hash_builder.hash_one(
+                    key.live_key()
+                        .expect("all keys must be live when table is grown"),
+                )
+            });
+        }
     }
 }
 
-fn canonical_key<'gc>(value: Value<'gc>) -> Result<Value<'gc>, InvalidTableKey> {
-    match value {
-        Value::Nil => Err(InvalidTableKey::IsNil),
-        Value::Number(n) => {
-            // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
-            // to themselves when cast back to f64 are considered integer keys.
-            if n.is_nan() {
-                Err(InvalidTableKey::IsNaN)
-            } else if let Some(i) = f64_to_i64(n) {
-                Ok(Value::Integer(i))
-            } else {
-                Ok(Value::Number(n))
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
+#[collect(no_drop)]
+enum CanonicalKey<'gc> {
+    Boolean(bool),
+    Integer(i64),
+    Number(u64),
+    String(String<'gc>),
+    Table(Table<'gc>),
+    Closure(Closure<'gc>),
+    Callback(Callback<'gc>),
+    Thread(Thread<'gc>),
+    UserData(UserData<'gc>),
+}
+
+impl<'gc> CanonicalKey<'gc> {
+    fn new(value: Value<'gc>) -> Result<Self, InvalidTableKey> {
+        Ok(match value {
+            Value::Nil => {
+                return Err(InvalidTableKey::IsNil);
             }
+            Value::Number(n) => {
+                // NaN keys are disallowed, f64 keys where their closest i64 representation is equal
+                // to themselves when cast back to f64 are considered integer keys.
+                if n.is_nan() {
+                    return Err(InvalidTableKey::IsNaN);
+                } else if let Some(i) = f64_to_i64(n) {
+                    CanonicalKey::Integer(i)
+                } else {
+                    CanonicalKey::Number(canonical_float_bytes(n))
+                }
+            }
+            Value::Boolean(b) => CanonicalKey::Boolean(b),
+            Value::Integer(i) => CanonicalKey::Integer(i),
+            Value::String(s) => CanonicalKey::String(s),
+            Value::Table(t) => CanonicalKey::Table(t),
+            Value::Function(Function::Closure(c)) => CanonicalKey::Closure(c),
+            Value::Function(Function::Callback(c)) => CanonicalKey::Callback(c),
+            Value::Thread(t) => CanonicalKey::Thread(t),
+            Value::UserData(u) => CanonicalKey::UserData(u),
+        })
+    }
+
+    fn to_value(self) -> Value<'gc> {
+        match self {
+            CanonicalKey::Boolean(b) => b.into(),
+            CanonicalKey::Integer(i) => i.into(),
+            CanonicalKey::Number(n) => f64::from_bits(n).into(),
+            CanonicalKey::String(s) => s.into(),
+            CanonicalKey::Table(t) => t.into(),
+            CanonicalKey::Closure(c) => c.into(),
+            CanonicalKey::Callback(c) => c.into(),
+            CanonicalKey::Thread(t) => t.into(),
+            CanonicalKey::UserData(u) => u.into(),
         }
-        v => Ok(v),
     }
 }
 
-fn key_eq<'gc>(a: Value<'gc>, b: Value<'gc>) -> bool {
-    match (a, b) {
-        (Value::Nil, Value::Nil) => true,
-        (Value::Boolean(a), Value::Boolean(b)) => a == b,
-        (Value::Integer(a), Value::Integer(b)) => a == b,
-        (Value::Number(a), Value::Number(b)) => a == b,
-        (Value::String(a), Value::String(b)) => a == b,
-        (Value::Table(a), Value::Table(b)) => a == b,
-        (Value::Function(a), Value::Function(b)) => a == b,
-        (Value::Thread(a), Value::Thread(b)) => a == b,
-        (Value::UserData(a), Value::UserData(b)) => a == b,
-        _ => false,
-    }
+// A table key which may be "live" or "dead".
+//
+// "Removed" keys in tables do not actually have their entry removed, instead the key is set to a
+// "dead key" and the value is set to Nil.
+//
+// This is done to make iteration predictable in the presence of any table mutation that does not
+// cause the table to grow.
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+enum Key<'gc> {
+    Live(CanonicalKey<'gc>),
+    Dead(#[collect(require_static)] *const ()),
 }
 
-fn key_hash<'gc>(value: Value<'gc>) -> u64 {
-    let mut state = AHasher::default();
-    match value {
-        Value::Nil => Hash::hash(&0, &mut state),
-        Value::Boolean(b) => {
-            Hash::hash(&1, &mut state);
-            b.hash(&mut state);
-        }
-        Value::Integer(i) => {
-            Hash::hash(&2, &mut state);
-            i.hash(&mut state);
-        }
-        Value::Number(n) => {
-            Hash::hash(&3, &mut state);
-            canonical_float_bytes(n).hash(&mut state);
-        }
-        Value::String(s) => {
-            Hash::hash(&4, &mut state);
-            s.hash(&mut state);
-        }
-        Value::Table(t) => {
-            Hash::hash(&5, &mut state);
-            t.hash(&mut state);
-        }
-        Value::Function(c) => {
-            Hash::hash(&6, &mut state);
-            c.hash(&mut state);
-        }
-        Value::Thread(t) => {
-            Hash::hash(&7, &mut state);
-            t.hash(&mut state);
-        }
-        Value::UserData(u) => {
-            Hash::hash(&8, &mut state);
-            u.hash(&mut state);
+impl<'gc> Key<'gc> {
+    fn kill(self) -> Option<Key<'gc>> {
+        if let Key::Live(v) = self {
+            match v {
+                CanonicalKey::Boolean(_) | CanonicalKey::Integer(_) | CanonicalKey::Number(_) => {
+                    None
+                }
+                CanonicalKey::String(s) => Some(Key::Dead(Gc::as_ptr(s.into_inner()) as *const ())),
+                CanonicalKey::Table(t) => Some(Key::Dead(Gc::as_ptr(t.into_inner()) as *const ())),
+                CanonicalKey::Closure(c) => {
+                    Some(Key::Dead(Gc::as_ptr(c.into_inner()) as *const ()))
+                }
+                CanonicalKey::Callback(c) => {
+                    Some(Key::Dead(Gc::as_ptr(c.into_inner()) as *const ()))
+                }
+                CanonicalKey::Thread(t) => Some(Key::Dead(Gc::as_ptr(t.into_inner()) as *const ())),
+                CanonicalKey::UserData(u) => {
+                    Some(Key::Dead(Gc::as_ptr(u.into_inner()) as *const ()))
+                }
+            }
+        } else {
+            Some(self)
         }
     }
-    state.finish()
+
+    fn is_dead_key(&self) -> bool {
+        self.live_key().is_none()
+    }
+
+    fn live_key(self) -> Option<CanonicalKey<'gc>> {
+        match self {
+            Key::Live(v) => Some(v),
+            Key::Dead(_) => None,
+        }
+    }
+
+    fn eq(self, key: CanonicalKey<'gc>) -> bool {
+        match (self, key) {
+            (Key::Live(a), b) => a == b,
+            (Key::Dead(a), b) => match b {
+                CanonicalKey::String(s) => a == Gc::as_ptr(s.into_inner()) as *const (),
+                CanonicalKey::Table(t) => a == Gc::as_ptr(t.into_inner()) as *const (),
+                CanonicalKey::Closure(c) => a == Gc::as_ptr(c.into_inner()) as *const (),
+                CanonicalKey::Callback(c) => a == Gc::as_ptr(c.into_inner()) as *const (),
+                CanonicalKey::Thread(t) => a == Gc::as_ptr(t.into_inner()) as *const (),
+                CanonicalKey::UserData(u) => a == Gc::as_ptr(u.into_inner()) as *const (),
+                _ => false,
+            },
+        }
+    }
 }
 
 // Returns the closest i64 to a given f64 such that casting the i64 back to an f64 results in an

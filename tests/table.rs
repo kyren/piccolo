@@ -32,5 +32,17 @@ fn test_table_iter() {
         assert!(matches!(pairs[3], (Value::String(s), Value::Integer(1)) if s == "1" ));
         assert!(matches!(pairs[4], (Value::String(s), Value::Integer(2)) if s == "2" ));
         assert!(matches!(pairs[5], (Value::String(s), Value::Integer(3)) if s == "3" ));
+
+        for (k, _) in table.iter() {
+            dbg!(k);
+            table.set(ctx, k, Value::Nil).unwrap();
+        }
+
+        assert!(table.get(ctx, 1).is_nil());
+        assert!(table.get(ctx, 2).is_nil());
+        assert!(table.get(ctx, 3).is_nil());
+        assert!(table.get(ctx, "1").is_nil());
+        assert!(table.get(ctx, "2").is_nil());
+        assert!(table.get(ctx, "3").is_nil());
     });
 }
