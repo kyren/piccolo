@@ -371,7 +371,7 @@ impl<'gc> RawTable<'gc> {
                                 return NextValue::Found {
                                     key: key
                                         .live_key()
-                                        .expect("dead keys must have Nil` values")
+                                        .expect("dead keys must have Nil values")
                                         .to_value(),
                                     value,
                                 };
