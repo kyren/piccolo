@@ -69,6 +69,13 @@ pub fn index<'gc>(
     key: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, TypeError> {
     let idx = match table {
+        Value::String(_) => {
+            let idx = ctx.string_metatable().get(ctx, MetaMethod::Index);
+            if idx.is_nil() {
+                return Ok(MetaResult::Value(Value::Nil));
+            }
+            idx
+        }
         Value::Table(table) => {
             let v = table.get(ctx, key);
             if !v.is_nil() {

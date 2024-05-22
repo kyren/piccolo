@@ -34,6 +34,11 @@ impl<'gc> Context<'gc> {
         self.state.finalizers
     }
 
+    /// Access to the string metatable
+    pub fn string_metatable(self) -> Table<'gc> {
+        self.state.string_metatable
+    }
+
     /// Calls `ctx.globals().set(ctx, key, value)`.
     pub fn set_global<K: IntoValue<'gc>, V: IntoValue<'gc>>(
         self,
@@ -255,6 +260,14 @@ struct State<'gc> {
     registry: Registry<'gc>,
     strings: InternedStringSet<'gc>,
     finalizers: Finalizers<'gc>,
+
+    // Value metatables. For each non-table non-userdata value,
+    // *all* instances of that value share a metatable.
+    //
+    // Such a metatable is only editable from Lua using
+    // the `debug.setmetatable` function, and passing in
+    // a value of the appropriate type.
+    string_metatable: Table<'gc>,
 }
 
 impl<'gc> State<'gc> {
@@ -264,6 +277,8 @@ impl<'gc> State<'gc> {
             registry: Registry::new(mc),
             strings: InternedStringSet::new(mc),
             finalizers: Finalizers::new(mc),
+
+            string_metatable: Table::new(mc),
         }
     }
 
