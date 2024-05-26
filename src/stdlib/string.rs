@@ -53,7 +53,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     if j >= 0 {
                         j as usize
                     } else {
-                        string.len().saturating_add_signed(j as isize) + 1
+                        string.len().saturating_add_signed(j as isize + 1)
                     }
                 } else {
                     string.len()
