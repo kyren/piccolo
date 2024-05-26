@@ -44,8 +44,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 };
 
                 let (i, j) = stack.consume::<(i64, Option<i64>)>(ctx)?;
-                let i = if i >= 0 {
+                let i = if i > 0 {
                     i.saturating_sub(1) as usize
+                } else if i == 0 {
+                    0
                 } else {
                     string.len().saturating_add_signed(i as isize)
                 };
