@@ -47,13 +47,13 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 let i = if i >= 0 {
                     i.saturating_sub(1) as usize
                 } else {
-                    (string.len() as i64 + i) as usize
+                    string.len().saturating_add_signed(i as isize)
                 };
                 let j = if let Some(j) = j {
                     if j >= 0 {
                         j as usize
                     } else {
-                        (string.len() as i64 + j + 1) as usize
+                        string.len().saturating_add_signed(j as isize) + 1
                     }
                 } else {
                     string.len()
