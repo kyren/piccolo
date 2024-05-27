@@ -39,14 +39,16 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     } else if i == 0 {
                         0
                     } else {
-                        string.len().saturating_add_signed(i.try_into()?)
+                        // we abs_diff rather than abs so that all possible numbers *including*
+                        // i64::MIN are accounted for (as abs_diff returns a u64)
+                        string.len().saturating_sub(i.abs_diff(0).try_into()?)
                     };
                     let j = if let Some(j) = j {
                         if j >= 0 {
                             j.try_into()?
                         } else {
-                            let j: isize = j.try_into()?;
-                            string.len().saturating_add_signed(j + 1)
+                            let j: usize = j.abs_diff(0).try_into()?;
+                            string.len().saturating_sub(j.saturating_sub(1))
                         }
                     } else {
                         string.len()
