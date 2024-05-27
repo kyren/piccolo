@@ -60,15 +60,14 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     });
                 }
 
-                let string = stack.pop_front();
-                let (i, j) = stack.consume::<(i64, Option<i64>)>(ctx)?;
+                let (string, i, j) = stack.consume::<(Value, i64, Option<i64>)>(ctx)?;
                 let string = match string {
                     Value::Integer(int) => {
                         ctx.intern(operate_sub(int.to_string().as_bytes(), i, j)?)
-                    },
+                    }
                     Value::Number(num) => {
                         ctx.intern(operate_sub(num.to_string().as_bytes(), i, j)?)
-                    },
+                    }
                     Value::String(string) => ctx.intern(operate_sub(string.as_bytes(), i, j)?),
                     v => {
                         return Err(format!(
