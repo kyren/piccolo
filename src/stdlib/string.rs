@@ -29,7 +29,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "sub",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                fn operate_sub<'a>(string: &'a [u8], i: i64, j: Option<i64>) -> Result<&'a [u8], std::num::TryFromIntError> {
+                fn operate_sub<'a>(
+                    string: &'a [u8],
+                    i: i64,
+                    j: Option<i64>,
+                ) -> Result<&'a [u8], std::num::TryFromIntError> {
                     let i = if i > 0 {
                         i.saturating_sub(1).try_into()?
                     } else if i == 0 {
@@ -48,12 +52,12 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         string.len()
                     }
                     .clamp(0, string.len());
-    
+                
                     return Ok(if i >= j || i >= string.len() {
                         &[]
                     } else {
                         &string[i..j]
-                    })
+                    });
                 }
 
                 let string = stack.pop_front();
