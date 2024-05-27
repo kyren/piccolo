@@ -34,7 +34,6 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     i: i64,
                     j: Option<i64>,
                 ) -> Result<&'a [u8], std::num::TryFromIntError> {
-                    dbg!(i, j);
                     let i = if i > 0 {
                         i.saturating_sub(1).try_into()?
                     } else if i == 0 {
