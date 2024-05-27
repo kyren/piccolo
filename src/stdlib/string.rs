@@ -52,7 +52,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         string.len()
                     }
                     .clamp(0, string.len());
-                
+
                     return Ok(if i >= j || i >= string.len() {
                         &[]
                     } else {
