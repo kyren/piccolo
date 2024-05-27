@@ -34,6 +34,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     i: i64,
                     j: Option<i64>,
                 ) -> Result<&'a [u8], std::num::TryFromIntError> {
+                    dbg!(i, j);
                     let i = if i > 0 {
                         i.saturating_sub(1).try_into()?
                     } else if i == 0 {
@@ -63,9 +64,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 let string = stack.pop_front();
                 let (i, j) = stack.consume::<(i64, Option<i64>)>(ctx)?;
                 let string = match string {
-                    Value::Integer(i) => ctx.intern(operate_sub(i.to_string().as_bytes(), i, j)?),
-                    Value::Number(n) => ctx.intern(operate_sub(n.to_string().as_bytes(), i, j)?),
-                    Value::String(s) => ctx.intern(operate_sub(s.as_bytes(), i, j)?),
+                    Value::Integer(int) => ctx.intern(operate_sub(int.to_string().as_bytes(), i, j)?),
+                    Value::Number(num) => ctx.intern(operate_sub(num.to_string().as_bytes(), i, j)?),
+                    Value::String(string) => ctx.intern(operate_sub(string.as_bytes(), i, j)?),
                     v => {
                         return Err(format!(
                             "Bad argument to sub: expected string, got {}",
