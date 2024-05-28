@@ -1,11 +1,13 @@
 use std::marker::PhantomData;
 
-use gc_arena::{barrier, Mutation, Root, Rootable};
+use gc_arena::{barrier, Collect, Mutation, Root, Rootable};
 use piccolo::{
     Callback, CallbackReturn, Context, Error, Execution, FromMultiValue, IntoMultiValue, IntoValue,
     MetaMethod, Table, UserData, Value,
 };
 
+#[derive(Collect)]
+#[collect(no_drop, bound = "")]
 pub struct UserMethods<'gc, U: for<'a> Rootable<'a>> {
     table: Table<'gc>,
     _marker: PhantomData<U>,
@@ -89,6 +91,8 @@ impl<'gc, U: for<'a> Rootable<'a>> IntoValue<'gc> for UserMethods<'gc, U> {
     }
 }
 
+#[derive(Collect)]
+#[collect(no_drop, bound = "")]
 pub struct StaticUserMethods<'gc, U: 'static> {
     table: Table<'gc>,
     _marker: PhantomData<U>,
