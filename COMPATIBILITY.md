@@ -115,7 +115,7 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | ⚫️️   | `packsize(fmt)`                   |             |       |
 | ⚫️️   | `rep(s, n[, sep])`                |             |       |
 | ⚫️️   | `reverse(s)`                      |             |       |
-| ⚫️️   | `sub(s, i[, j])`                  |             |       |
+| 🔵   | `sub(s, i[, j])`                  |             |       |
 | ⚫️️   | `unpack(fmt, s[, pos])`           |             |       |
 | ⚫️️   | `upper(s)`                        |             |       |
 
