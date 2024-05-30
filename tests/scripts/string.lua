@@ -35,6 +35,25 @@ function test_len()
         string.len(-2147483648) == 11
 end
 
+do
+    assert(is_err(function() return string.sub(nil) end) and
+        is_err(function() return string.sub(true, 1) end) and
+        is_err(function() return string.sub(false) end) and
+        is_err(function() return string.sub({}) end) and
+        is_err(function() return string.sub(is_err) end) and
+        is_err(function() return string.sub(coroutine.create(test_coroutine_len)) end) and
+        string.sub(48, 1) == "48" and
+        string.sub(48, 2) == "8" and
+        string.sub(48, -1) == "8" and
+        string.sub("hilo", -1, -4) == "" and
+        string.sub("hilo", -4, 4) == "hilo" and
+        string.sub("hilo", -4, -3) == "hi" and
+        string.sub("hilo", -4, -6) == "" and
+        string.sub("hilo", 0, -4) == "h" and
+        string.sub(3.4, 1, 2) == "3."
+    )
+end
+
 assert(
     test_concat() and
     test_len()
