@@ -510,16 +510,15 @@ where
         let newline = self.peek(0).unwrap().unwrap();
         assert!(is_newline(newline));
         self.advance(1);
+        // We always append a single plain `\n` character for any newline characters, matching the
+        // behavior of PUC-Rio Lua.
         if append_string {
-            self.string_buffer.push(newline);
+            self.string_buffer.push(b'\n');
         }
 
         if let Some(next_newline) = self.peek(0)? {
             if is_newline(next_newline) && next_newline != newline {
                 self.advance(1);
-                if append_string {
-                    self.string_buffer.push(next_newline);
-                }
             }
         }
 
@@ -715,6 +714,12 @@ where
             return Err(LexError::InvalidLongStringDelimiter);
         }
         self.advance(1);
+
+        if matches!(self.peek(0)?, Some(b'\n' | b'\r')) {
+            // If the long string starts imediately with a newline, we read it and do *not* put it
+            // into the string buffer, matching the behavior of PUC-Rio Lua.
+            self.read_line_end(false)?;
+        }
 
         loop {
             let c = if let Some(c) = self.peek(0)? {
