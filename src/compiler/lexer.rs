@@ -1167,22 +1167,22 @@ mod tests {
     fn comments() {
         test_tokens_lines(
             r#"
-            -- this is a comment
-            -- this is also -- a comment
-            --[[ long comment ]]
-            --[==[ longer comment ]==]
+                -- this is a comment
+                -- this is also -- a comment
+                --[[ long comment ]]
+                --[==[ longer comment ]==]
 
-            -- Real token
-            -
+                -- Real token
+                -
 
-            --[====[ longest comment
-                these shouldn't trigger the end of comments
-                ]=] ]==] ]===]
-            ]====]
+                --[====[ longest comment
+                    these shouldn't trigger the end of comments
+                    ]=] ]==] ]===]
+                ]====]
 
-            -- Real token
-            =
-        "#,
+                -- Real token
+                =
+            "#,
             &[(Token::Minus, 7), (Token::Assign, 15)],
         );
     }
@@ -1210,14 +1210,14 @@ mod tests {
     fn short_string() {
         test_tokens_lines(
             r#"
-            "\\ \" '"
-            '\n \t "'
-            "begin \z
-            end"
-            'state\u{2e}'
-            "question\x3f"
-            "exclaim\33"
-        "#,
+                "\\ \" '"
+                '\n \t "'
+                "begin \z
+                end"
+                'state\u{2e}'
+                "question\x3f"
+                "exclaim\33"
+            "#,
             &[
                 (str_token("\\ \" '"), 1),
                 (str_token("\n \t \""), 2),
@@ -1233,18 +1233,18 @@ mod tests {
     fn numerals() {
         test_tokens(
             r#"
-            0xdeadbeef
-            12345
-            12345.
-            3.1415e-2
-            0x22.4p+1
-            0Xaa.8P-2
-            0x8.4P0
-            .123E-10
-            0x99999999999999999999999999999999p999999999999999999999999999999
-            9223372036854775807
-            9223372036854775808
-        "#,
+                0xdeadbeef
+                12345
+                12345.
+                3.1415e-2
+                0x22.4p+1
+                0Xaa.8P-2
+                0x8.4P0
+                .123E-10
+                0x99999999999999999999999999999999p999999999999999999999999999999
+                9223372036854775807
+                9223372036854775808
+            "#,
             &[
                 Token::Integer(0xdeadbeef),
                 Token::Integer(12345),
@@ -1265,10 +1265,10 @@ mod tests {
     fn words() {
         test_tokens(
             r#"
-            break do else elseif end function goto if in local nil for while repeat until return
-            then true false not and or
-            custom names
-        "#,
+                break do else elseif end function goto if in local nil for while repeat until return
+                then true false not and or
+                custom names
+            "#,
             &[
                 Token::Break,
                 Token::Do,
