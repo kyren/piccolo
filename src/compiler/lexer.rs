@@ -1191,13 +1191,18 @@ mod tests {
     fn long_string() {
         test_tokens(
             r#"
-            [====[ [==[ this is a [[]] long string ]== ]==] ]====]
-            [[ [=] [==] another long string [==] [=] ]]
-        "#,
+                [====[ [==[ this is a [[]] long string ]== ]==] ]====]
+                [[ [=] [==] another long string [==] [=] ]]
+            "#,
             &[
                 str_token(" [==[ this is a [[]] long string ]== ]==] "),
                 str_token(" [=] [==] another long string [==] [=] "),
             ],
+        );
+
+        test_tokens(
+            "[==[\nfoo\nbar\rbaz\r\nbaf\rquux]==]",
+            &[str_token("foo\nbar\nbaz\nbaf\nquux")],
         );
     }
 

@@ -50,3 +50,11 @@ do
     assert(string.sub("hilo", 0, -4) == "h")
     assert(string.sub(3.4, 1, 2) == "3.")
 end
+
+do
+    assert([[
+foo
+bar
+baz]] == "foo\nbar\nbaz")
+end
+
