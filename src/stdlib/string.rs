@@ -29,17 +29,15 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "sub",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                fn operate_sub<'a>(
-                    string: &'a [u8],
+                fn operate_sub(
+                    string: &[u8],
                     i: i64,
                     j: Option<i64>,
-                ) -> Result<&'a [u8], std::num::TryFromIntError> {
-                    let i = if i > 0 {
-                        i.saturating_sub(1).try_into()?
-                    } else if i == 0 {
-                        0
-                    } else {
-                        string.len().saturating_sub(i.unsigned_abs().try_into()?)
+                ) -> Result<&[u8], std::num::TryFromIntError> {
+                    let i = match i {
+                        i if i > 0 => i.saturating_sub(1).try_into()?,
+                        0 => 0,
+                        i => string.len().saturating_sub(i.unsigned_abs().try_into()?),
                     };
                     let j = if let Some(j) = j {
                         if j >= 0 {
@@ -53,11 +51,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     }
                     .clamp(0, string.len());
 
-                    return Ok(if i >= j || i >= string.len() {
+                    Ok(if i >= j || i >= string.len() {
                         &[]
                     } else {
                         &string[i..j]
-                    });
+                    })
                 }
 
                 let (string, i, j) = stack.consume::<(Value, i64, Option<i64>)>(ctx)?;
