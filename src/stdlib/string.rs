@@ -1,9 +1,4 @@
-use gc_arena::Collect;
-
-use crate::{
-    BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll,
-    String, Table, TypeError, Value,
-};
+use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, TypeError, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -115,93 +110,6 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 );
                 stack.replace(ctx, lowered);
                 Ok(CallbackReturn::Return)
-            }),
-        )
-        .unwrap();
-
-    #[derive(Collect)]
-    #[collect(require_static)]
-    struct StringRepSeq {
-        string: Vec<u8>,
-        sep: Vec<u8>,
-        n: i64,
-        i: i64,
-
-        built: Vec<u8>,
-    }
-
-    impl<'gc> Sequence<'gc> for StringRepSeq {
-        fn poll(
-            &mut self,
-            ctx: Context<'gc>,
-            mut exec: crate::Execution<'gc, '_>,
-            mut stack: crate::Stack<'gc, '_>,
-        ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-            if self.i < self.n {
-                self.i += 1;
-
-                // TODO How much fuel should each repetition cost?
-                // Right now, it uses an amount of fuel equal to the number of characters,
-                // which is most likely *way* too much fuel.
-                exec.fuel().consume(if self.i < self.n {
-                    self.string
-                        .len()
-                        .saturating_add(self.sep.len())
-                        .try_into()?
-                } else {
-                    self.string.len() as i32
-                });
-                self.built.extend(&self.string);
-                if self.i < self.n {
-                    self.built.extend(&self.sep);
-                }
-                Ok(SequencePoll::Pending)
-            } else {
-                stack.replace(ctx, String::from_slice(&ctx, &self.built));
-                Ok(SequencePoll::Return)
-            }
-        }
-    }
-
-    string
-        .set(
-            ctx,
-            "rep",
-            Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (string, n, sep): (Value, i64, Option<Value>) = stack.consume(ctx)?;
-                let string = match string {
-                    Value::String(s) => s,
-                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
-                    v => {
-                        return Err(TypeError {
-                            expected: "string, integer or number",
-                            found: v.type_name(),
-                        }
-                        .into())
-                    }
-                };
-                let sep = sep
-                    .map(|sep| match sep {
-                        Value::String(s) => Ok(s),
-                        Value::Integer(i) => Ok(String::from_slice(&ctx, i.to_string())),
-                        Value::Number(f) => Ok(String::from_slice(&ctx, f.to_string())),
-                        v => Err(TypeError {
-                            expected: "string, integer or number",
-                            found: v.type_name(),
-                        }),
-                    })
-                    .transpose()?;
-                Ok(CallbackReturn::Sequence(BoxSequence::new(
-                    &ctx,
-                    StringRepSeq {
-                        string: string.to_vec(),
-                        sep: sep.map(|s| s.as_bytes()).unwrap_or(b"").to_vec(),
-                        n,
-                        i: 0,
-                        built: vec![],
-                    },
-                )))
             }),
         )
         .unwrap();

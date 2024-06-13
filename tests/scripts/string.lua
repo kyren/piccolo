@@ -68,7 +68,7 @@ do
     -- for some reason this is accepted in PUC Lua 5.4
     -- and string.lower(80) == "80"
 end
-
+--[[
 do
     assert(string.rep("apple", -32) == "" and
         string.rep("bat", 0) == "" and
@@ -76,7 +76,7 @@ do
         string.rep("say", 3, ", ") == "say, say, say" and
         string.rep(4, 4, 4) == "4444444")
 end
-
+]]
 do
     assert(is_err(function() return string.reverse(nil) end) and
         is_err(function() return string.reverse(true) end) and
