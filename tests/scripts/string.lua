@@ -94,5 +94,5 @@ do
     assert(string.upper("HelLo") == "HELLO")
     assert(string.upper("abcdefghijklmnop123qrstuvwxyz") == "ABCDEFGHIJKLMNOP123QRSTUVWXYZ")
     assert(string.upper(80) == "80")
-    assert(string.lower(3.14) == "3.14")
+    assert(string.upper(3.14) == "3.14")
 end
