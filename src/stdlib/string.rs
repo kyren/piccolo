@@ -107,9 +107,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         .into())
                     }
                 };
-                let lowered = String::from_slice(
-                    &ctx,
-                    s.as_bytes()
+                let lowered = ctx.intern(
+                    &s.as_bytes()
                         .iter()
                         .map(u8::to_ascii_lowercase)
                         .collect::<Vec<_>>(),
@@ -216,11 +215,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 };
                 stack.replace(
                     ctx,
-                    String::from_slice(
-                        &ctx,
-                        s.as_bytes().iter().copied().rev().collect::<Vec<_>>(),
-                    )
-                    .into_value(ctx),
+                    ctx.intern(&s.as_bytes().iter().copied().rev().collect::<Vec<_>>())
+                        .into_value(ctx),
                 );
                 Ok(CallbackReturn::Return)
             }),
@@ -244,9 +240,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         .into())
                     }
                 };
-                let uppered = String::from_slice(
-                    &ctx,
-                    s.as_bytes()
+                let uppered = ctx.intern(
+                    &s.as_bytes()
                         .iter()
                         .map(u8::to_ascii_uppercase)
                         .collect::<Vec<_>>(),
