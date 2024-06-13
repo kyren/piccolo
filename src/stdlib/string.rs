@@ -113,7 +113,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         .map(u8::to_ascii_lowercase)
                         .collect::<Vec<_>>(),
                 );
-                stack.replace(ctx, lowered.into_value(ctx));
+                stack.replace(ctx, lowered);
                 Ok(CallbackReturn::Return)
             }),
         )
@@ -215,8 +215,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 };
                 stack.replace(
                     ctx,
-                    ctx.intern(&s.as_bytes().iter().copied().rev().collect::<Vec<_>>())
-                        .into_value(ctx),
+                    ctx.intern(&s.as_bytes().iter().copied().rev().collect::<Vec<_>>()),
                 );
                 Ok(CallbackReturn::Return)
             }),
@@ -246,7 +245,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                         .map(u8::to_ascii_uppercase)
                         .collect::<Vec<_>>(),
                 );
-                stack.replace(ctx, uppered.into_value(ctx));
+                stack.replace(ctx, uppered);
                 Ok(CallbackReturn::Return)
             }),
         )
