@@ -140,7 +140,17 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             if self.i < self.n {
                 self.i += 1;
 
-                exec.fuel().consume(1);
+                // TODO How much fuel should each repetition cost?
+                // Right now, it uses an amount of fuel equal to the number of characters,
+                // which is most likely *way* too much fuel.
+                exec.fuel().consume(if self.i < self.n {
+                    self.string
+                        .len()
+                        .saturating_add(self.sep.len())
+                        .try_into()?
+                } else {
+                    self.string.len() as i32
+                });
                 self.built.extend(&self.string);
                 if self.i < self.n {
                     self.built.extend(&self.sep);
