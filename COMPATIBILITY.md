@@ -109,15 +109,15 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | ⚫️️   | `gmatch(s, pattern[, init])`      |             |       |
 | ⚫️️   | `gsub(s, pattern, repl[, n])`     |             |       |
 | 🔵     | `len(s)`                          |             |       |
-| ⚫️️   | `lower(s)`                        |             |       |
+| 🔵   | `lower(s)`                        |             |       |
 | ⚫️️   | `match(s, pattern[, init])`       |             |       |
 | ⚫️️   | `pack(fmt, values...)`            |             |       |
 | ⚫️️   | `packsize(fmt)`                   |             |       |
 | ⚫️️   | `rep(s, n[, sep])`                |             |       |
-| ⚫️️   | `reverse(s)`                      |             |       |
+| 🔵   | `reverse(s)`                      |             |       |
 | 🔵   | `sub(s, i[, j])`                  |             |       |
 | ⚫️️   | `unpack(fmt, s[, pos])`           |             |       |
-| ⚫️️   | `upper(s)`                        |             |       |
+| 🔵   | `upper(s)`                        |             |       |
 
 ## UTF8
 

@@ -1,4 +1,6 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, Table, Value};
+use crate::{
+    Callback, CallbackReturn, Context, IntoValue, String as LuaString, Table, TypeError, Value,
+};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -29,17 +31,15 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "sub",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                fn operate_sub<'a>(
-                    string: &'a [u8],
+                fn operate_sub(
+                    string: &[u8],
                     i: i64,
                     j: Option<i64>,
-                ) -> Result<&'a [u8], std::num::TryFromIntError> {
-                    let i = if i > 0 {
-                        i.saturating_sub(1).try_into()?
-                    } else if i == 0 {
-                        0
-                    } else {
-                        string.len().saturating_sub(i.unsigned_abs().try_into()?)
+                ) -> Result<&[u8], std::num::TryFromIntError> {
+                    let i = match i {
+                        i if i > 0 => i.saturating_sub(1).try_into()?,
+                        0 => 0,
+                        i => string.len().saturating_sub(i.unsigned_abs().try_into()?),
                     };
                     let j = if let Some(j) = j {
                         if j >= 0 {
@@ -53,11 +53,11 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     }
                     .clamp(0, string.len());
 
-                    return Ok(if i >= j || i >= string.len() {
+                    Ok(if i >= j || i >= string.len() {
                         &[]
                     } else {
                         &string[i..j]
-                    });
+                    })
                 }
 
                 let (string, i, j) = stack.consume::<(Value, i64, Option<i64>)>(ctx)?;
@@ -80,6 +80,90 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 };
 
                 stack.replace(ctx, string);
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "lower",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
+                let lowered = ctx.intern(
+                    &s.as_bytes()
+                        .iter()
+                        .map(u8::to_ascii_lowercase)
+                        .collect::<Vec<_>>(),
+                );
+                stack.replace(ctx, lowered);
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "reverse",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
+                stack.replace(
+                    ctx,
+                    ctx.intern(&s.as_bytes().iter().copied().rev().collect::<Vec<_>>()),
+                );
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "upper",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let s = match stack.consume::<Value>(ctx)? {
+                    Value::String(s) => s,
+                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    v => {
+                        return Err(TypeError {
+                            expected: "string, integer or number",
+                            found: v.type_name(),
+                        }
+                        .into())
+                    }
+                };
+                let uppered = ctx.intern(
+                    &s.as_bytes()
+                        .iter()
+                        .map(u8::to_ascii_uppercase)
+                        .collect::<Vec<_>>(),
+                );
+                stack.replace(ctx, uppered);
                 Ok(CallbackReturn::Return)
             }),
         )
