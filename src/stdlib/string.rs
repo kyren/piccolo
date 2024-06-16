@@ -1,6 +1,4 @@
-use crate::{
-    Callback, CallbackReturn, Context, IntoValue, String as LuaString, Table, TypeError, Value,
-};
+use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, TypeError, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -92,8 +90,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let s = match stack.consume::<Value>(ctx)? {
                     Value::String(s) => s,
-                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
                     v => {
                         return Err(TypeError {
                             expected: "string, integer or number",
@@ -121,8 +119,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let s = match stack.consume::<Value>(ctx)? {
                     Value::String(s) => s,
-                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
                     v => {
                         return Err(TypeError {
                             expected: "string, integer or number",
@@ -147,8 +145,8 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let s = match stack.consume::<Value>(ctx)? {
                     Value::String(s) => s,
-                    Value::Integer(i) => LuaString::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => LuaString::from_slice(&ctx, f.to_string()),
+                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
+                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
                     v => {
                         return Err(TypeError {
                             expected: "string, integer or number",
