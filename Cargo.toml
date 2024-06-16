@@ -9,7 +9,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["kyren <catherine@kyju.org>"]
 license = "MIT"
@@ -25,7 +25,7 @@ rand = { version = "0.8", features = ["small_rng"] }
 serde = "1.0"
 thiserror = "1.0"
 
-piccolo = { path = "./", version = "0.3.2" }
+piccolo = { path = "./", version = "0.3.3" }
 
 [package]
 name = "piccolo"

@@ -1,3 +1,6 @@
+## [0.3.3]
+* Bugfix to not reset live threads held in upvalues of dead threads.
+
 ## [0.3.2]
 
 * Bugfix for tail-calling uncallable values. Fixes internal panics.
