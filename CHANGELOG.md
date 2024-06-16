@@ -4,18 +4,19 @@
 * Major bugfix for finalization, make sure to transition the collector
   immediately to `Collecting` after finalization is done. Fixes lost `Thread`
   finalization and unclosed upvalues.
-* Make the `type` builtin match PUC-Rio Lua.
+* Make the `type` builtin match PUC-Rio Lua by @Jengamon.
 * Fix Lua stack corruption during tail calls with less arguments than expected.
 * Make function statements act like local / upvalue assignment when appropriate.
-* Fix `math.random` and `math.log` to better match PUC-Rio Lua.
-* Fix `select` to better match PUC-Rio Lua.
-* Implement `math.randomseed`.
+* Fix `math.random` and `math.log` to better match PUC-Rio Lua by @Jengamon.
+* Fix `select` to better match PUC-Rio Lua by @Jengamon.
+* Implement `math.randomseed` by @Jengamon.
 * Let `__index` and `__newindex` chain through `UserData` in addition to
   `Table`.
 * Implement "dead keys" to make table iteration behavior match PUC-Rio Lua.
 * Implement `gc_arena::Collect` for `piccolo_util::UserDataMethods` and
   `piccolo_util::StaticUserDataMethods`.
-* Implement `string.sub`, `string.lower`, `string.upper`, `string.reverse`.
+* Implement `string.sub`, `string.lower`, `string.upper`, `string.reverse` by
+  @Jengamon.
 * Better match PUC-Rio Lua behavior with longstring newlines.
 
 ## [0.3.1]
