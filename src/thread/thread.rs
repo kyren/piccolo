@@ -4,7 +4,9 @@ use std::{
 };
 
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, GcWeak, Mutation};
+use gc_arena::{
+    allocator_api::MetricsAlloc, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation,
+};
 use thiserror::Error;
 
 use crate::{
@@ -12,7 +14,7 @@ use crate::{
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    TypeError, VMError, Value,
+    String, Table, TypeError, UserData, VMError, Value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +179,27 @@ impl<'gc> Thread<'gc> {
                 expected: None,
             }),
         }
+    }
+
+    /// For each open upvalue pointing to this thread, if the upvalue itself is live, then resurrect
+    /// the actual value that it is pointing to.
+    ///
+    /// Because open upvalues keep a *weak* pointer to their parent thread, their target values will
+    /// not be properly marked as live until until they are manually marked with this method.
+    pub(crate) fn resurrect_live_upvalues(
+        self,
+        fc: &Finalization<'gc>,
+    ) -> Result<(), BadThreadMode> {
+        // If this thread is not dead, then none of the held stack values can be dead, so we don't
+        // need to resurrect them.
+        if Gc::is_dead(fc, self.0) {
+            let state = self.0.try_borrow().map_err(|_| BadThreadMode {
+                found: ThreadMode::Running,
+                expected: None,
+            })?;
+            state.resurrect_live_upvalues(fc);
+        }
+        Ok(())
     }
 
     fn check_mode(
@@ -447,7 +470,7 @@ impl<'gc> ThreadState<'gc> {
         for &upval in &self.open_upvalues[start..] {
             match upval.get() {
                 UpValueState::Open(open_upvalue) => {
-                    assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
+                    debug_assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
                     upval.set(
                         mc,
                         UpValueState::Closed(self.stack[open_upvalue.stack_index]),
@@ -458,6 +481,31 @@ impl<'gc> ThreadState<'gc> {
         }
 
         self.open_upvalues.truncate(start);
+    }
+
+    fn resurrect_live_upvalues(&self, fc: &Finalization<'gc>) {
+        for &upval in &self.open_upvalues {
+            if !Gc::is_dead(fc, UpValue::into_inner(upval)) {
+                match upval.get() {
+                    UpValueState::Open(open_upvalue) => {
+                        match self.stack[open_upvalue.stack_index] {
+                            Value::String(s) => Gc::resurrect(fc, String::into_inner(s)),
+                            Value::Table(t) => Gc::resurrect(fc, Table::into_inner(t)),
+                            Value::Function(Function::Closure(c)) => {
+                                Gc::resurrect(fc, Closure::into_inner(c))
+                            }
+                            Value::Function(Function::Callback(c)) => {
+                                Gc::resurrect(fc, Callback::into_inner(c))
+                            }
+                            Value::Thread(t) => Gc::resurrect(fc, Thread::into_inner(t)),
+                            Value::UserData(u) => Gc::resurrect(fc, UserData::into_inner(u)),
+                            _ => {}
+                        }
+                    }
+                    UpValueState::Closed(_) => panic!("upvalue is not open"),
+                }
+            }
+        }
     }
 
     fn reset(&mut self, mc: &Mutation<'gc>) {

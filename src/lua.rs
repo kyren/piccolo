@@ -88,7 +88,6 @@ impl<'gc> ops::Deref for Context<'gc> {
 
 pub struct Lua {
     arena: Arena<Rootable![State<'_>]>,
-    finalized: bool,
 }
 
 impl Default for Lua {
@@ -102,7 +101,6 @@ impl Lua {
     pub fn empty() -> Self {
         Lua {
             arena: Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)),
-            finalized: false,
         }
     }
 
@@ -156,7 +154,10 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        if !self.finalized {
+        if self.arena.collection_phase() != CollectionPhase::Collecting {
+            self.arena.mark_all().unwrap().finalize(|fc, root| {
+                root.finalizers.prepare(fc);
+            });
             self.arena.mark_all().unwrap().finalize(|fc, root| {
                 root.finalizers.finalize(fc);
             });
@@ -164,7 +165,6 @@ impl Lua {
 
         self.arena.collect_all();
         assert!(self.arena.collection_phase() == CollectionPhase::Sleeping);
-        self.finalized = false;
     }
 
     pub fn gc_metrics(&self) -> &Metrics {
@@ -190,20 +190,18 @@ impl Lua {
 
         let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
         if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            if self.finalized {
+            if self.arena.collection_phase() == CollectionPhase::Collecting {
                 self.arena.collect_debt();
-
-                if self.arena.collection_phase() == CollectionPhase::Sleeping {
-                    self.finalized = false;
-                }
             } else {
                 if let Some(marked) = self.arena.mark_debt() {
                     marked.finalize(|fc, root| {
+                        root.finalizers.prepare(fc);
+                    });
+                    self.arena.mark_all().unwrap().finalize(|fc, root| {
                         root.finalizers.finalize(fc);
                     });
                     // Immediately transition to `CollectionPhase::Collecting`.
                     self.arena.mark_all().unwrap().start_collecting();
-                    self.finalized = true;
                 }
             }
         }

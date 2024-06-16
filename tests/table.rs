@@ -34,7 +34,6 @@ fn test_table_iter() {
         assert!(matches!(pairs[5], (Value::String(s), Value::Integer(3)) if s == "3" ));
 
         for (k, _) in table.iter() {
-            dbg!(k);
             table.set(ctx, k, Value::Nil).unwrap();
         }
 
