@@ -711,8 +711,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 let fixed_params = proto.fixed_params as usize;
                 let stack_size = proto.stack_size as usize;
 
+                self.state.stack.truncate(function_index + 1 + arg_count);
                 let base = if arg_count > fixed_params {
-                    self.state.stack.truncate(function_index + 1 + arg_count);
                     self.state.stack[function_index + 1..].rotate_left(fixed_params);
                     function_index + 1 + (arg_count - fixed_params)
                 } else {

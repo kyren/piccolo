@@ -1,7 +1,7 @@
 do
     local f = nil
 
-    function f()
+    local function f()
         return "yes"
     end
 
@@ -12,7 +12,7 @@ end
 do
     local f = nil
 
-    function go()
+    local function go()
         function f()
             return "yes"
         end
@@ -20,4 +20,29 @@ do
 
     go()
     assert(f() == "yes")
+end
+
+do
+    local x, y
+    local function abc(a, b, c)
+        x = b
+        y = c
+    end
+
+    abc({})
+    assert(x == nil and y == nil)
+end
+
+do
+    local x, y
+    local function test()
+        local function abc(a, b, c)
+            x = b
+            y = c
+        end
+        return abc({})
+    end
+
+    test()
+    assert(x == nil and y == nil)
 end
