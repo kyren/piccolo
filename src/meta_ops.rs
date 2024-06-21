@@ -3,6 +3,11 @@ use thiserror::Error;
 
 use crate::{Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, Value};
 
+// TODO: Remaining metamethods to implement:
+// - Lt
+// - Le
+// - Concat
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
 pub enum MetaMethod {
@@ -17,6 +22,19 @@ pub enum MetaMethod {
     Sub,
     Mul,
     Div,
+    Mod,
+    Pow,
+    Unm,
+    IDiv,
+    BAnd,
+    BOr,
+    BXor,
+    BNot,
+    Shl,
+    Shr,
+    Concat,
+    Lt,
+    Le,
 }
 
 impl MetaMethod {
@@ -33,6 +51,19 @@ impl MetaMethod {
             MetaMethod::Sub => "__sub",
             MetaMethod::Mul => "__mul",
             MetaMethod::Div => "__div",
+            MetaMethod::Mod => "__mod",
+            MetaMethod::Pow => "__pow",
+            MetaMethod::Unm => "__unm",
+            MetaMethod::IDiv => "__idiv",
+            MetaMethod::BAnd => "__band",
+            MetaMethod::BOr => "__bor",
+            MetaMethod::BXor => "__bxor",
+            MetaMethod::BNot => "__bnot",
+            MetaMethod::Shl => "__shl",
+            MetaMethod::Shr => "__shr",
+            MetaMethod::Concat => "__concat",
+            MetaMethod::Lt => "__lt",
+            MetaMethod::Le => "__le",
         }
     }
     /// Sentence-form verb of this metamethod's action
@@ -53,6 +84,19 @@ impl MetaMethod {
             MetaMethod::Sub => "subtract",
             MetaMethod::Mul => "multiply",
             MetaMethod::Div => "divide",
+            MetaMethod::Mod => "take modulus of",
+            MetaMethod::Pow => "exponentiate",
+            MetaMethod::Unm => "negate",
+            MetaMethod::IDiv => "flooring divide",
+            MetaMethod::BAnd => "binary and",
+            MetaMethod::BOr => "binary or",
+            MetaMethod::BXor => "binary xor",
+            MetaMethod::BNot => "binary negate",
+            MetaMethod::Shl => "left shift",
+            MetaMethod::Shr => "right shift",
+            MetaMethod::Concat => "concatenate",
+            MetaMethod::Lt => "compare less than", // ???
+            MetaMethod::Le => "compare less than or equal", // ???
         }
     }
 }
@@ -427,8 +471,6 @@ fn meta_metaop<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
     method: MetaMethod,
-    int_op: impl Fn(i64, i64) -> Value<'gc>,
-    float_op: impl Fn(f64, f64) -> Value<'gc>,
     const_op: impl Fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     Ok(match (lhs, rhs) {
@@ -479,10 +521,31 @@ fn meta_metaop<'gc>(
                 ));
             }
         }
-        (Value::Integer(a), Value::Integer(b)) => int_op(a, b).into(),
-        (Value::Number(a), Value::Number(b)) => float_op(a, b).into(),
         (a, b) => const_op(a, b)
             .ok_or_else(|| MetaOperatorError::Binary(method, lhs.type_name(), rhs.type_name()))?
+            .into(),
+    })
+}
+
+fn meta_unary_metaop<'gc>(
+    ctx: Context<'gc>,
+    arg: Value<'gc>,
+    method: MetaMethod,
+    const_op: impl Fn(Value<'gc>) -> Option<Value<'gc>>,
+) -> Result<MetaResult<'gc, 1>, MetaOperatorError> {
+    Ok(match arg {
+        Value::Table(_) | Value::UserData(_) => {
+            if let Some(m) = get_metamethod(ctx, arg, method) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m).map_err(|e| MetaOperatorError::Call(method, e))?,
+                    args: [arg],
+                })
+            } else {
+                return Err(MetaOperatorError::Unary(method, arg.type_name()));
+            }
+        }
+        val => const_op(val)
+            .ok_or_else(|| MetaOperatorError::Unary(method, arg.type_name()))?
             .into(),
     })
 }
@@ -492,58 +555,132 @@ pub fn add<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Add,
-        |a, b| Value::Integer(a.wrapping_add(b)),
-        |a, b| Value::Number(a + b),
-        |a, b| Some(a.to_constant()?.add(&b.to_constant()?)?.into()),
-    )
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Add, |a, b| {
+        Some(a.to_constant()?.add(&b.to_constant()?)?.into())
+    })
 }
 pub fn subtract<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Sub,
-        |a, b| Value::Integer(a.wrapping_sub(b)),
-        |a, b| Value::Number(a - b),
-        |a, b| Some(a.to_constant()?.subtract(&b.to_constant()?)?.into()),
-    )
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Sub, |a, b| {
+        Some(a.to_constant()?.subtract(&b.to_constant()?)?.into())
+    })
 }
 pub fn multiply<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Mul,
-        |a, b| Value::Integer(a.wrapping_mul(b)),
-        |a, b| Value::Number(a * b),
-        |a, b| Some(a.to_constant()?.multiply(&b.to_constant()?)?.into()),
-    )
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Mul, |a, b| {
+        Some(a.to_constant()?.multiply(&b.to_constant()?)?.into())
+    })
 }
 pub fn float_divide<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(
-        ctx,
-        lhs,
-        rhs,
-        MetaMethod::Div,
-        |a, b| Value::Number(a as f64 / b as f64),
-        |a, b| Value::Number(a / b),
-        |a, b| Some(a.to_constant()?.float_divide(&b.to_constant()?)?.into()),
-    )
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Div, |a, b| {
+        Some(a.to_constant()?.float_divide(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn floor_divide<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::IDiv, |a, b| {
+        Some(a.to_constant()?.floor_divide(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn modulo<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Mod, |a, b| {
+        Some(a.to_constant()?.modulo(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn exponentiate<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Pow, |a, b| {
+        Some(a.to_constant()?.exponentiate(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn negate<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 1>, MetaOperatorError> {
+    meta_unary_metaop(ctx, lhs, MetaMethod::Unm, |val| {
+        Some(val.to_constant()?.negate()?.into())
+    })
+}
+
+pub fn bitwise_not<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 1>, MetaOperatorError> {
+    meta_unary_metaop(ctx, lhs, MetaMethod::BNot, |val| {
+        Some(val.to_constant()?.bitwise_not()?.into())
+    })
+}
+
+pub fn bitwise_and<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BAnd, |a, b| {
+        Some(a.to_constant()?.bitwise_and(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn bitwise_or<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BOr, |a, b| {
+        Some(a.to_constant()?.bitwise_or(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn bitwise_xor<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BXor, |a, b| {
+        Some(a.to_constant()?.bitwise_xor(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn shift_left<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Shl, |a, b| {
+        Some(a.to_constant()?.shift_left(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn shift_right<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Shr, |a, b| {
+        Some(a.to_constant()?.shift_right(&b.to_constant()?)?.into())
+    })
 }

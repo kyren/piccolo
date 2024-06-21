@@ -458,14 +458,34 @@ pub(super) fn run_vm<'gc>(
 
             Operation::Minus { dest, source } => {
                 let value = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::negate(value).ok_or(BinaryOperatorError::UnaryNegate)?;
+                match meta_ops::negate(ctx, value)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitNot { dest, source } => {
                 let value = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_not(value).ok_or(BinaryOperatorError::BitNot)?;
+                match meta_ops::bitwise_not(ctx, value)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Add { dest, left, right } => {
@@ -539,57 +559,137 @@ pub(super) fn run_vm<'gc>(
             Operation::IDiv { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::floor_divide(left, right).ok_or(BinaryOperatorError::FloorDivide)?;
+                match meta_ops::floor_divide(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Mod { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::modulo(left, right).ok_or(BinaryOperatorError::Modulo)?;
+                match meta_ops::modulo(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Pow { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::exponentiate(left, right).ok_or(BinaryOperatorError::Exponentiate)?;
+                match meta_ops::exponentiate(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitAnd { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_and(left, right).ok_or(BinaryOperatorError::BitAnd)?;
+                match meta_ops::bitwise_and(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitOr { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_or(left, right).ok_or(BinaryOperatorError::BitOr)?;
+                match meta_ops::bitwise_or(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitXor { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_xor(left, right).ok_or(BinaryOperatorError::BitXor)?;
+                match meta_ops::bitwise_xor(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::ShiftLeft { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::shift_left(left, right).ok_or(BinaryOperatorError::ShiftLeft)?;
+                match meta_ops::shift_left(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::ShiftRight { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::shift_right(left, right).ok_or(BinaryOperatorError::ShiftRight)?;
+                match meta_ops::shift_right(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
         }
 

@@ -147,6 +147,16 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     .unwrap();
 
     ctx.set_global(
+        "rawlen",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let table: Table = stack.consume(ctx)?;
+            stack.replace(ctx, table.length());
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
         "rawset",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (table, key, value): (Table, Value, Value) = stack.consume(ctx)?;
