@@ -17,6 +17,14 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 match prenumber {
                     v @ (Value::Integer(_) | Value::Number(_)) => v,
                     Value::String(s) => {
+                        let is_neg = s.first().is_some_and(|b| *b == b'-');
+                        let bytes = if is_neg {
+                            &s.as_bytes()[1..]
+                        } else {
+                            s.as_bytes()
+                        };
+
+                        let sign = if is_neg { -1 } else { 1 };
                         if let Some(base) = maybe_base {
                             if !(2..=36).contains(&base) {
                                 Err("base out of range".into_value(ctx))?;
@@ -25,19 +33,14 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                             // represent an integer of the base
                             const BASE_ELEMENTS: &[u8; 36] =
                                 b"0123456789abcdefghijklmnopqrstuvwxyz";
-                            let is_neg = s.first().is_some_and(|b| *b == b'-');
-                            let byte_values = if is_neg {
-                                &s.as_bytes()[1..]
-                            } else {
-                                s.as_bytes()
-                            }
-                            .iter()
-                            .map(|b| {
-                                BASE_ELEMENTS
-                                    .iter()
-                                    .position(|i| b.to_ascii_lowercase() == *i)
-                            })
-                            .collect::<Vec<_>>();
+                            let byte_values = bytes
+                                .iter()
+                                .map(|b| {
+                                    BASE_ELEMENTS
+                                        .iter()
+                                        .position(|i| b.to_ascii_lowercase() == *i)
+                                })
+                                .collect::<Vec<_>>();
                             if byte_values
                                 .iter()
                                 .any(|v| v.is_none() || v.is_some_and(|v| v >= base as usize))
@@ -56,12 +59,6 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                             }
                         } else {
                             // Just try to decimal-numberify it
-                            let is_neg = s.first().is_some_and(|b| *b == b'-');
-                            let bytes = if is_neg {
-                                &s.as_bytes()[1..]
-                            } else {
-                                s.as_bytes()
-                            };
                             let dot_positions = bytes
                                 .iter()
                                 .copied()
@@ -91,7 +88,6 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                 {
                                     Value::Nil
                                 } else {
-                                    // 4 cases 1 1e 1. 1.e
                                     fn parse_whole_value(data: &[u8]) -> u64 {
                                         let mut whole_value = 0;
                                         for b in data {
@@ -120,7 +116,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                                     &bytes[(*ep + 1).min(bytes.len() - 1)..],
                                                 );
                                                 Value::Number(
-                                                    if is_neg { -1.0 } else { 1.0 }
+                                                    sign as f64
                                                         * (whole_value as f64 + fract_value)
                                                         * 10f64.powf(exponent as f64),
                                                 )
@@ -132,8 +128,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                                 &bytes[(*dp + 1).min(bytes.len() - 1)..],
                                             );
                                             Value::Number(
-                                                if is_neg { -1.0 } else { 1.0 }
-                                                    * (whole_value as f64 + fract_value),
+                                                sign as f64 * (whole_value as f64 + fract_value),
                                             )
                                         }
                                         (None, Some(ep)) => {
@@ -142,7 +137,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                                 &bytes[(*ep + 1).min(bytes.len() - 1)..],
                                             );
                                             Value::Number(
-                                                if is_neg { -1.0 } else { 1.0 }
+                                                sign as f64
                                                     * whole_value as f64
                                                     * 10f64.powf(exponent as f64),
                                             )
@@ -150,9 +145,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                         (None, None) => {
                                             let whole_value: i64 =
                                                 parse_whole_value(bytes).try_into()?;
-                                            Value::Integer(
-                                                if is_neg { -1 } else { 1 } * whole_value,
-                                            )
+                                            Value::Integer(sign * whole_value)
                                         }
                                     }
                                 }
