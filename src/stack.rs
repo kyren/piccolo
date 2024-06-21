@@ -42,19 +42,19 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.insert(self.bottom, value);
     }
 
-    pub fn pop_back(&mut self) -> Value<'gc> {
+    pub fn pop_back(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
-            self.values.pop().unwrap()
+            Some(self.values.pop().unwrap())
         } else {
-            Value::Nil
+            None
         }
     }
 
-    pub fn pop_front(&mut self) -> Value<'gc> {
+    pub fn pop_front(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
-            self.values.remove(self.bottom)
+            Some(self.values.remove(self.bottom))
         } else {
-            Value::Nil
+            None
         }
     }
 
@@ -107,11 +107,11 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     }
 
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_back())
+        V::from_value(ctx, self.pop_back().unwrap_or_default())
     }
 
     pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_front())
+        V::from_value(ctx, self.pop_front().unwrap_or_default())
     }
 
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {

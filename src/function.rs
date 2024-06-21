@@ -46,8 +46,14 @@ impl<'gc> Function<'gc> {
                 let fns = (*self.0).as_ref();
                 let function = fns[self.1];
                 self.1 += 1;
-                let is_tail = self.1 == fns.len();
-                Ok(SequencePoll::Call { function, is_tail })
+                if self.1 == fns.len() {
+                    Ok(SequencePoll::TailCall { function })
+                } else {
+                    Ok(SequencePoll::Call {
+                        function,
+                        bottom: 0,
+                    })
+                }
             }
         }
 

@@ -162,16 +162,21 @@ fn yield_sequence() -> Result<(), StaticError> {
                         0 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
                             assert_eq!((a, b), (5, 6));
-                            stack.extend([Value::Integer(7), Value::Integer(8)]);
+                            stack.extend([
+                                Value::Integer(5),
+                                Value::Integer(6),
+                                Value::Integer(7),
+                                Value::Integer(8),
+                            ]);
                             self.0 = 1;
                             Ok(SequencePoll::Yield {
                                 to_thread: None,
-                                is_tail: false,
+                                bottom: 2,
                             })
                         }
                         1 => {
-                            let (a, b): (i32, i32) = stack.consume(ctx)?;
-                            assert_eq!((a, b), (9, 10));
+                            let (a, b, c, d): (i32, i32, i32, i32) = stack.consume(ctx)?;
+                            assert_eq!((a, b, c, d), (5, 6, 9, 10));
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
                             self.0 = 2;
                             Ok(SequencePoll::Return)
@@ -233,21 +238,29 @@ fn resume_with_err() {
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
                     &mut self,
-                    _ctx: Context<'gc>,
+                    ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    _stack: Stack<'gc, '_>,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    panic!("did not error");
+                    stack.replace(ctx, 12);
+                    Ok(SequencePoll::Call {
+                        function: Callback::from_fn(&ctx, |ctx, _, _| {
+                            Err("an error".into_value(ctx).into())
+                        })
+                        .into(),
+                        bottom: 1,
+                    })
                 }
 
                 fn error(
                     &mut self,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    _error: Error<'gc>,
-                    _stack: Stack<'gc, '_>,
+                    error: Error<'gc>,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    Err("a different error".into_value(ctx).into())
+                    assert_eq!(stack.consume::<i32>(ctx).unwrap(), 12);
+                    Err(error)
                 }
             }
 
@@ -275,9 +288,7 @@ fn resume_with_err() {
     lua.enter(|ctx| {
         let executor = ctx.fetch(&executor);
         assert!(executor.take_result::<String>(ctx).unwrap().unwrap() == "return");
-        executor
-            .resume_err(&ctx, "an error".into_value(ctx).into())
-            .unwrap();
+        executor.resume(ctx, ()).unwrap();
     });
 
     lua.finish(&executor);
@@ -285,7 +296,7 @@ fn resume_with_err() {
     lua.enter(
         |ctx| match ctx.fetch(&executor).take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
-                assert!(matches!(val.0, Value::String(s) if s == "a different error"))
+                assert!(matches!(val.0, Value::String(s) if s == "an error"))
             }
             _ => panic!("wrong error returned"),
         },

@@ -288,16 +288,6 @@ pub(super) enum Frame<'gc> {
         stack_size: usize,
         expected_return: Option<LuaReturn>,
     },
-    /// A suspended function call that has not yet been run. Must be the only frame in the stack.
-    Start(Function<'gc>),
-    /// Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
-    /// below a results frame.
-    Yielded,
-    /// A callback that has been queued but not called yet. Must be the top frame of the stack.
-    Callback {
-        bottom: usize,
-        callback: Callback<'gc>,
-    },
     /// A frame for a running sequence. When it is the top frame, either the `poll` or `error`
     /// method will be called the next time this thread is stepped, depending on whether there is a
     /// pending error.
@@ -308,6 +298,16 @@ pub(super) enum Frame<'gc> {
         // of the stack.
         pending_error: Option<Error<'gc>>,
     },
+    /// A suspended function call that has not yet been run. Must be the only frame in the stack.
+    Start(Function<'gc>),
+    /// A callback that has been queued but not called yet. Must be the top frame of the stack.
+    Callback {
+        bottom: usize,
+        callback: Callback<'gc>,
+    },
+    /// Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
+    /// below a Result frame.
+    Yielded,
     /// We are waiting on an upper thread to finish. Must be the top frame of the stack.
     WaitThread,
     /// Results are waiting to be taken. Must be the top frame of the stack.
@@ -388,9 +388,7 @@ impl<'gc> ThreadState<'gc> {
     /// sequence, lua frame, or there must be no frames at all.
     pub(super) fn return_to(&mut self, bottom: usize) {
         match self.frames.last_mut() {
-            Some(Frame::Sequence {
-                bottom: seq_bottom, ..
-            }) => assert_eq!(bottom, *seq_bottom),
+            Some(Frame::Sequence { .. }) => {}
             Some(Frame::Lua {
                 expected_return,
                 is_variable,

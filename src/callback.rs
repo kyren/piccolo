@@ -14,12 +14,12 @@ use crate::{Context, Error, Execution, Function, Stack, Thread};
 pub enum CallbackReturn<'gc> {
     Return,
     Sequence(BoxSequence<'gc>),
-    Yield {
-        to_thread: Option<Thread<'gc>>,
-        then: Option<BoxSequence<'gc>>,
-    },
     Call {
         function: Function<'gc>,
+        then: Option<BoxSequence<'gc>>,
+    },
+    Yield {
+        to_thread: Option<Thread<'gc>>,
         then: Option<BoxSequence<'gc>>,
     },
     Resume {
@@ -188,27 +188,32 @@ impl<'gc> Hash for Callback<'gc> {
 pub enum SequencePoll<'gc> {
     /// Sequence pending, `Sequence::poll` will be called on the next step with the stack unchanged.
     Pending,
-    /// Sequence finished, the values in the stack will be returned to the caller.
+    /// Sequence finished, all of the values in the stack will be returned to the caller.
     Return,
-    /// Yield the values in the stack inside a coroutine. If `is_tail` is true, then this also
-    /// finishes the sequence, otherwise `Sequence::poll` will be called when the coroutine is
-    /// resumed, or `Sequence::error` if the coroutine is resumed with an error.
-    Yield {
-        to_thread: Option<Thread<'gc>>,
-        is_tail: bool,
-    },
-    /// Call the given function with the arguments in the stack. If `is_tail` is true, then this
-    /// is a tail call, and the sequence is now finished, otherwise `Sequence::poll` will be called
-    /// with the results of the function call, or if the function errors, `Sequence::error` will be
-    /// called with the function error.
+    /// Call the given functions with the arguments in the stack starting at `bottom`. When the
+    /// function returns, `Sequence::poll` will be called with the return values will be placed into
+    /// the stack starting at `bottom`. If the given function errors, then `Sequence::error` will be
+    /// called and the stack will instead be truncated to `bottom`.
     Call {
         function: Function<'gc>,
-        is_tail: bool,
+        bottom: usize,
     },
-    Resume {
-        thread: Thread<'gc>,
-        is_tail: bool,
+    /// Call the given function as a tail call with the entire stack as arguments and finish the
+    /// sequence.
+    TailCall { function: Function<'gc> },
+    /// Yield the values in the stack starting at `bottom`. When the `Sequence` is resumed, the
+    /// resume arguments will be on the stack starting at `bottom`.
+    Yield {
+        to_thread: Option<Thread<'gc>>,
+        bottom: usize,
     },
+    /// Yield all of the values in the stack and finish the sequence.
+    TailYield { to_thread: Option<Thread<'gc>> },
+    /// Resume the given thread with arguments starting at `bottom`. When the thread returns values,
+    /// those values will be placed on the stack starting at `bottom`.
+    Resume { thread: Thread<'gc>, bottom: usize },
+    /// Resume the given thread with the entire stack as arguments and finish the sequence.
+    TailResume { thread: Thread<'gc> },
 }
 
 pub trait Sequence<'gc>: Collect {

@@ -213,82 +213,47 @@ impl<'gc> Executor<'gc> {
             }
 
             if top_state.mode() == ThreadMode::Normal {
-                fn callback_ret<'gc>(
+                fn do_yield<'gc>(
                     ctx: Context<'gc>,
                     thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
                     top_state: &mut ThreadState<'gc>,
-                    stack_bottom: usize,
-                    ret: CallbackReturn<'gc>,
+                    to_thread: Option<Thread<'gc>>,
+                    bottom: usize,
                 ) {
-                    match ret {
-                        CallbackReturn::Return => {
-                            top_state.return_to(stack_bottom);
-                        }
-                        CallbackReturn::Sequence(sequence) => {
-                            top_state.frames.push(Frame::Sequence {
-                                bottom: stack_bottom,
-                                sequence,
-                                pending_error: None,
-                            });
-                        }
-                        CallbackReturn::Yield { to_thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
+                    if let Some(to_thread) = to_thread {
+                        if let Err(err) =
+                            to_thread.resume(ctx, Variadic(top_state.stack.drain(bottom..)))
+                        {
+                            top_state.frames.push(Frame::Error(err.into()));
+                        } else {
                             top_state.frames.push(Frame::Yielded);
+                            thread_stack.pop();
+                            thread_stack.push(to_thread);
+                        }
+                    } else {
+                        top_state.frames.push(Frame::Yielded);
+                        top_state.frames.push(Frame::Result { bottom });
+                    }
+                }
 
-                            if let Some(to_thread) = to_thread {
-                                if let Err(err) = to_thread
-                                    .resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                                {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                } else {
-                                    thread_stack.pop();
-                                    thread_stack.push(to_thread);
-                                }
-                            } else {
-                                top_state.frames.push(Frame::Result {
-                                    bottom: stack_bottom,
-                                });
-                            }
-                        }
-                        CallbackReturn::Call { function, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.push_call(stack_bottom, function);
-                        }
-                        CallbackReturn::Resume { thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
+                fn do_resume<'gc>(
+                    ctx: Context<'gc>,
+                    thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+                    top_state: &mut ThreadState<'gc>,
+                    thread: Thread<'gc>,
+                    bottom: usize,
+                ) {
+                    if let Err(err) = thread.resume(ctx, Variadic(top_state.stack.drain(bottom..)))
+                    {
+                        top_state.frames.push(Frame::Error(err.into()));
+                    } else {
+                        // Tail call the thread resume if we can.
+                        if top_state.frames.is_empty() {
+                            thread_stack.pop();
+                        } else {
                             top_state.frames.push(Frame::WaitThread);
-
-                            if let Err(err) =
-                                thread.resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                            {
-                                top_state.frames.push(Frame::Error(err.into()));
-                            } else {
-                                if top_state.frames.len() == 1 {
-                                    // Tail call the thread resume if we can.
-                                    assert!(matches!(top_state.frames[0], Frame::WaitThread));
-                                    thread_stack.pop();
-                                }
-                                thread_stack.push(thread);
-                            }
                         }
+                        thread_stack.push(thread);
                     }
                 }
 
@@ -305,8 +270,51 @@ impl<'gc> Executor<'gc> {
                             },
                             Stack::new(&mut top_state.stack, bottom),
                         ) {
-                            Ok(ret) => {
-                                callback_ret(ctx, &mut state.thread_stack, top_state, bottom, ret)
+                            Ok(CallbackReturn::Return) => {
+                                top_state.return_to(bottom);
+                            }
+                            Ok(CallbackReturn::Sequence(sequence)) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                            }
+                            Ok(CallbackReturn::Call { function, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                top_state.push_call(bottom, function);
+                            }
+                            Ok(CallbackReturn::Yield { to_thread, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    bottom,
+                                );
+                            }
+                            Ok(CallbackReturn::Resume { thread, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
                             }
                             Err(err) => {
                                 top_state.stack.truncate(bottom);
@@ -315,7 +323,7 @@ impl<'gc> Executor<'gc> {
                         }
                     }
                     Some(Frame::Sequence {
-                        bottom,
+                        bottom: seq_bottom,
                         mut sequence,
                         pending_error,
                     }) => {
@@ -327,43 +335,81 @@ impl<'gc> Executor<'gc> {
                             threads: &state.thread_stack,
                             upper_frames: &top_state.frames,
                         };
-                        let fin = if let Some(err) = pending_error {
-                            sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))
+                        let poll = if let Some(err) = pending_error {
+                            sequence.error(
+                                ctx,
+                                exec,
+                                err,
+                                Stack::new(&mut top_state.stack, seq_bottom),
+                            )
                         } else {
-                            sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, bottom))
+                            sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, seq_bottom))
                         };
 
-                        match fin {
-                            Ok(ret) => callback_ret(
-                                ctx,
-                                &mut state.thread_stack,
-                                top_state,
-                                bottom,
-                                match ret {
-                                    SequencePoll::Pending => CallbackReturn::Sequence(sequence),
-                                    SequencePoll::Return => CallbackReturn::Return,
-                                    SequencePoll::Yield { to_thread, is_tail } => {
-                                        CallbackReturn::Yield {
-                                            to_thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Call { function, is_tail } => {
-                                        CallbackReturn::Call {
-                                            function,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Resume { thread, is_tail } => {
-                                        CallbackReturn::Resume {
-                                            thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                },
-                            ),
+                        match poll {
+                            Ok(SequencePoll::Pending) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom: seq_bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                            }
+                            Ok(SequencePoll::Return) => {
+                                top_state.return_to(seq_bottom);
+                            }
+                            Ok(SequencePoll::Call { function, bottom }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom: seq_bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                top_state.push_call(bottom, function);
+                            }
+                            Ok(SequencePoll::TailCall { function }) => {
+                                top_state.push_call(seq_bottom, function);
+                            }
+                            Ok(SequencePoll::Yield { to_thread, bottom }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom: seq_bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    bottom,
+                                );
+                            }
+                            Ok(SequencePoll::TailYield { to_thread }) => {
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    seq_bottom,
+                                );
+                            }
+                            Ok(SequencePoll::Resume { thread, bottom }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom: seq_bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
+                            }
+                            Ok(SequencePoll::TailResume { thread }) => {
+                                do_resume(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    thread,
+                                    seq_bottom,
+                                );
+                            }
                             Err(error) => {
-                                top_state.stack.truncate(bottom);
+                                top_state.stack.truncate(seq_bottom);
                                 top_state.frames.push(Frame::Error(error));
                             }
                         }
@@ -399,16 +445,16 @@ impl<'gc> Executor<'gc> {
                             Frame::Sequence {
                                 bottom,
                                 sequence,
-                                pending_error: error,
+                                pending_error,
                             } => {
-                                assert!(error.is_none());
+                                assert!(pending_error.is_none());
                                 top_state.frames.push(Frame::Sequence {
                                     bottom,
                                     sequence,
                                     pending_error: Some(err),
                                 });
                             }
-                            _ => top_state.frames.push(Frame::Error(err)),
+                            frame => panic!("tried to wind through improper frame {frame:?}"),
                         }
                     }
                     _ => panic!("tried to step invalid frame type"),
