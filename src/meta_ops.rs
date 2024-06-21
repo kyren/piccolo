@@ -1,8 +1,8 @@
 use gc_arena::Collect;
+use thiserror::Error;
 
 use crate::{
-    Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, TypeError,
-    UserData, Value,
+    Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, UserData, Value,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -27,6 +27,22 @@ impl MetaMethod {
             MetaMethod::Pairs => "__pairs",
             MetaMethod::ToString => "__tostring",
             MetaMethod::Eq => "__eq",
+        }
+    }
+    /// Sentence-form verb of this metamethod's action
+    ///
+    /// - unary: "Could not {verb} a {type} value"
+    /// - index: "Could not {verb} a {type} value"
+    /// - binary: "Could not {verb} values of type {lhs_type} and {rhs_type}"
+    pub const fn verb(self) -> &'static str {
+        match self {
+            MetaMethod::Len => "determine length of",
+            MetaMethod::Call => "call",
+            MetaMethod::Pairs => "get pairs of",
+            MetaMethod::ToString => "convert to string", // a bit awkward, but works
+            MetaMethod::Index => "index into",
+            MetaMethod::NewIndex => "index-assign into",
+            MetaMethod::Eq => "compare equality of",
         }
     }
 }
@@ -63,11 +79,23 @@ impl<'gc, const N: usize> From<MetaCall<'gc, N>> for MetaResult<'gc, N> {
     }
 }
 
+#[derive(Debug, Clone, Error)]
+pub enum MetaOperatorError {
+    #[error("could not call metamethod {}: {}", .0.name(), .1)]
+    Call(MetaMethod, #[source] MetaCallError),
+    #[error("could not {} a {} value", .0.verb(), .1)]
+    Unary(MetaMethod, &'static str),
+}
+
+#[derive(Debug, Copy, Clone, Error)]
+#[error("could not call a {} value", .0)]
+pub struct MetaCallError(&'static str);
+
 pub fn index<'gc>(
     ctx: Context<'gc>,
     table: Value<'gc>,
     key: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     let idx = match table {
         Value::Table(table) => {
             let v = table.get(ctx, key);
@@ -95,19 +123,19 @@ pub fn index<'gc>(
             };
 
             if idx.is_nil() {
-                return Err(TypeError {
-                    expected: "table",
-                    found: table.type_name(),
-                });
+                return Err(MetaOperatorError::Unary(
+                    MetaMethod::Index,
+                    table.type_name(),
+                ));
             }
 
             idx
         }
         _ => {
-            return Err(TypeError {
-                expected: "table",
-                found: table.type_name(),
-            })
+            return Err(MetaOperatorError::Unary(
+                MetaMethod::Index,
+                table.type_name(),
+            ))
         }
     };
 
@@ -117,26 +145,28 @@ pub fn index<'gc>(
                 let table = stack.get(0);
                 let key = stack.get(1);
                 stack.clear();
+                // TODO: detect index chain length, error if too long
+                // Example: t = {}; setmetatable(t, { __index = t }); t.a
+                // TODO: note chain depth in other errors?
                 match index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         stack.push_back(v);
-                        Ok(CallbackReturn::Return.into())
+                        Ok(CallbackReturn::Return)
                     }
                     MetaResult::Call(call) => {
                         stack.extend(call.args);
                         Ok(CallbackReturn::Call {
                             function: call.function,
                             then: None,
-                        }
-                        .into())
+                        })
                     }
                 }
             })
             .into(),
-            args: [table.into(), key],
+            args: [table, key],
         },
         _ => MetaCall {
-            function: call(ctx, idx)?,
+            function: call(ctx, idx).map_err(|e| MetaOperatorError::Call(MetaMethod::Index, e))?,
             args: [table, key],
         },
     }))
@@ -180,21 +210,15 @@ pub fn new_index<'gc>(
             };
 
             if idx.is_nil() {
-                return Err(TypeError {
-                    expected: "table",
-                    found: table.type_name(),
-                }
-                .into());
+                return Err(
+                    MetaOperatorError::Unary(MetaMethod::NewIndex, table.type_name()).into(),
+                );
             }
 
             idx
         }
         _ => {
-            return Err(TypeError {
-                expected: "table",
-                found: table.type_name(),
-            }
-            .into())
+            return Err(MetaOperatorError::Unary(MetaMethod::NewIndex, table.type_name()).into());
         }
     };
 
@@ -207,54 +231,50 @@ pub fn new_index<'gc>(
                     Ok(CallbackReturn::Call {
                         function: call.function,
                         then: None,
-                    }
-                    .into())
+                    })
                 } else {
                     Ok(CallbackReturn::Return)
                 }
             })
             .into(),
-            args: [table.into(), key, value],
+            args: [table, key, value],
         },
         _ => MetaCall {
-            function: call(ctx, idx)?,
+            function: call(ctx, idx)
+                .map_err(|e| MetaOperatorError::Call(MetaMethod::NewIndex, e))?,
             args: [table, key, value],
         },
     }))
 }
 
-pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, TypeError> {
+pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, MetaCallError> {
     let metatable = match v {
         Value::Function(f) => return Ok(f),
         Value::Table(t) => t.metatable(),
         Value::UserData(ud) => ud.metatable(),
         _ => None,
     }
-    .ok_or(TypeError {
-        expected: "function",
-        found: v.type_name(),
-    })?;
+    .ok_or(MetaCallError(v.type_name()))?;
 
     match metatable.get(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
+            // TODO: detect call chain length, error if too long
+            // Example: t = {}; setmetatable(t, { __call = t }); t()
+            // (though PUC-Rio Lua only detects long index chains, not long call chains)
             Callback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, mut stack| {
                 stack.push_front(v);
                 Ok(CallbackReturn::Call {
                     function: call(ctx, f)?,
                     then: None,
-                }
-                .into())
+                })
             })
             .into(),
         ),
-        f => Err(TypeError {
-            expected: "function",
-            found: f.type_name(),
-        }),
+        f => Err(MetaCallError(f.type_name())),
     }
 }
 
-pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, TypeError> {
+pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, MetaOperatorError> {
     if let Some(metatable) = match v {
         Value::Table(t) => t.metatable(),
         Value::UserData(u) => u.metatable(),
@@ -263,7 +283,8 @@ pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, 
         let len = metatable.get(ctx, MetaMethod::Len);
         if !len.is_nil() {
             return Ok(MetaResult::Call(MetaCall {
-                function: call(ctx, len)?,
+                function: call(ctx, len)
+                    .map_err(|e| MetaOperatorError::Call(MetaMethod::Len, e))?,
                 args: [v],
             }));
         }
@@ -272,14 +293,14 @@ pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, 
     match v {
         Value::String(s) => Ok(MetaResult::Value(s.len().into())),
         Value::Table(t) => Ok(MetaResult::Value(t.length().into())),
-        f => Err(TypeError {
-            expected: "string or table",
-            found: f.type_name(),
-        }),
+        f => Err(MetaOperatorError::Unary(MetaMethod::Len, f.type_name())),
     }
 }
 
-pub fn tostring<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, TypeError> {
+pub fn tostring<'gc>(
+    ctx: Context<'gc>,
+    v: Value<'gc>,
+) -> Result<MetaResult<'gc, 1>, MetaOperatorError> {
     if let Some(metatable) = match v {
         Value::Table(t) => t.metatable(),
         Value::UserData(u) => u.metatable(),
@@ -288,7 +309,8 @@ pub fn tostring<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc,
         let tostring = metatable.get(ctx, MetaMethod::ToString);
         if !tostring.is_nil() {
             return Ok(MetaResult::Call(MetaCall {
-                function: call(ctx, tostring)?,
+                function: call(ctx, tostring)
+                    .map_err(|e| MetaOperatorError::Call(MetaMethod::ToString, e))?,
                 args: [v],
             }));
         }
@@ -304,7 +326,7 @@ pub fn equal<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, TypeError> {
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     Ok(match (lhs, rhs) {
         (Value::Nil, Value::Nil) => Value::Boolean(true).into(),
         (Value::Nil, _) => Value::Boolean(false).into(),
@@ -347,12 +369,14 @@ pub fn equal<'gc>(
                 };
                 if let Some(a_eq) = get_eq(a) {
                     MetaResult::Call(MetaCall {
-                        function: call(ctx, a_eq)?,
+                        function: call(ctx, a_eq)
+                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
                         args: [a.into(), b.into()],
                     })
                 } else if let Some(b_eq) = get_eq(b) {
                     MetaResult::Call(MetaCall {
-                        function: call(ctx, b_eq)?,
+                        function: call(ctx, b_eq)
+                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
                         args: [a.into(), b.into()],
                     })
                 } else {
@@ -380,12 +404,14 @@ pub fn equal<'gc>(
                 };
                 if let Some(a_eq) = get_eq(a) {
                     MetaResult::Call(MetaCall {
-                        function: call(ctx, a_eq)?,
+                        function: call(ctx, a_eq)
+                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
                         args: [a.into(), b.into()],
                     })
                 } else if let Some(b_eq) = get_eq(b) {
                     MetaResult::Call(MetaCall {
-                        function: call(ctx, b_eq)?,
+                        function: call(ctx, b_eq)
+                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
                         args: [a.into(), b.into()],
                     })
                 } else {

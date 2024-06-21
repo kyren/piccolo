@@ -4,6 +4,7 @@ mod vm;
 
 use thiserror::Error;
 
+use crate::meta_ops::MetaCallError;
 use crate::TypeError;
 
 pub use self::{
@@ -25,6 +26,8 @@ pub enum VMError {
     ExpectedVariableStack(bool),
     #[error(transparent)]
     BadType(#[from] TypeError),
+    #[error(transparent)]
+    BadCall(#[from] MetaCallError),
     #[error("_ENV upvalue is only allowed on top-level closure")]
     BadEnvUpValue,
 }
