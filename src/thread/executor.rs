@@ -82,6 +82,8 @@ impl<'gc> Hash for Executor<'gc> {
 }
 
 impl<'gc> Executor<'gc> {
+    const VM_GRANULARITY: u32 = 64;
+
     const FUEL_PER_CALLBACK: i32 = 8;
     const FUEL_PER_SEQ_STEP: i32 = 4;
     const FUEL_PER_STEP: i32 = 4;
@@ -396,14 +398,12 @@ impl<'gc> Executor<'gc> {
                     Some(frame @ Frame::Lua { .. }) => {
                         top_state.frames.push(frame);
 
-                        const VM_GRANULARITY: u32 = 64;
-
                         let lua_frame = LuaFrame {
                             state: top_state,
                             thread: top_thread,
                             fuel,
                         };
-                        match run_vm(ctx, lua_frame, VM_GRANULARITY) {
+                        match run_vm(ctx, lua_frame, Self::VM_GRANULARITY) {
                             Err(err) => {
                                 top_state.frames.push(Frame::Error(err.into()));
                             }

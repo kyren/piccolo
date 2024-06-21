@@ -583,19 +583,23 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         let dest = *base + dest.0 as usize;
         if let Some(count) = count.to_constant() {
-            for i in 0..count as usize {
-                self.state.stack[dest + i] = if i < varargs_len {
-                    self.state.stack[varargs_start + i]
-                } else {
-                    Value::Nil
-                };
+            let count = count as usize;
+            if count <= varargs_len {
+                self.state
+                    .stack
+                    .copy_within(varargs_start..varargs_start + count, dest);
+            } else {
+                self.state
+                    .stack
+                    .copy_within(varargs_start..varargs_start + varargs_len, dest);
+                self.state.stack[dest + varargs_len..dest + count].fill(Value::Nil);
             }
         } else {
             *is_variable = true;
-            self.state.stack.resize(dest + varargs_len, Value::Nil);
-            for i in 0..varargs_len {
-                self.state.stack[dest + i] = self.state.stack[varargs_start + i];
-            }
+            self.state.stack.truncate(dest);
+            self.state
+                .stack
+                .extend_from_within(varargs_start..varargs_start + varargs_len);
         }
 
         Ok(())
@@ -778,12 +782,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         match meta_ops::call(ctx, self.state.stack[function_index])? {
             Function::Closure(closure) => {
-                self.state.stack.resize(top + 1 + arg_count, Value::Nil);
-                for i in 1..arg_count + 1 {
-                    self.state.stack[top + i] = self.state.stack[function_index + i];
-                }
+                self.state.stack.truncate(top);
+                self.state.stack.push(closure.into());
+                self.state
+                    .stack
+                    .extend_from_within(function_index + 1..function_index + 1 + arg_count);
 
-                self.state.stack[top] = closure.into();
                 let proto = closure.prototype();
                 let fixed_params = proto.fixed_params as usize;
                 let stack_size = proto.stack_size as usize;
@@ -851,13 +855,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .consume(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
         *expected_return = Some(LuaReturn::Meta(meta_ret));
-        let top = *base + *stack_size;
+        let top = self.state.stack.len();
+        debug_assert_eq!(top, *base + *stack_size);
 
         match meta_ops::call(ctx, func.into())? {
             Function::Closure(closure) => {
-                self.state.stack.resize(top + 1 + args.len(), Value::Nil);
-                self.state.stack[top] = closure.into();
-                self.state.stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
+                self.state.stack.push(closure.into());
+                self.state.stack.extend_from_slice(args);
 
                 let proto = closure.prototype();
                 let fixed_params = proto.fixed_params as usize;
@@ -932,9 +936,10 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         match call {
             Function::Closure(closure) => {
                 self.state.stack[bottom] = closure.into();
-                for i in 0..arg_count {
-                    self.state.stack[bottom + 1 + i] = self.state.stack[function_index + 1 + i];
-                }
+                self.state.stack.copy_within(
+                    function_index + 1..function_index + 1 + arg_count,
+                    bottom + 1,
+                );
 
                 let proto = closure.prototype();
                 let fixed_params = proto.fixed_params as usize;
@@ -1027,16 +1032,15 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                         .map(|c| c as usize)
                         .unwrap_or(count);
 
-                    for i in 0..returning.min(count) {
-                        self.state.stack[bottom + i] = self.state.stack[start + i]
-                    }
-
-                    self.state.stack.resize(bottom + returning, Value::Nil);
-                    for i in count..returning {
-                        self.state.stack[bottom + i] = Value::Nil;
+                    self.state
+                        .stack
+                        .copy_within(start..start + returning.min(count), bottom);
+                    if count < returning {
+                        self.state.stack[bottom + count..bottom + returning].fill(Value::Nil);
                     }
 
                     if expected_return.is_variable() {
+                        self.state.stack.truncate(bottom + returning);
                         *is_variable = true;
                     } else {
                         self.state.stack.resize(*base + *stack_size, Value::Nil);
