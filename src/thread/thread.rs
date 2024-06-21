@@ -281,6 +281,7 @@ pub(super) enum Frame<'gc> {
     // A running Lua frame.
     Lua {
         bottom: usize,
+        closure: Closure<'gc>,
         base: usize,
         is_variable: bool,
         pc: usize,
@@ -364,14 +365,14 @@ impl<'gc> ThreadState<'gc> {
                 } else {
                     0
                 };
-                self.stack.insert(bottom, closure.into());
-                self.stack[bottom + 1..].rotate_right(var_params);
-                let base = bottom + 1 + var_params;
+                self.stack[bottom..].rotate_right(var_params);
+                let base = bottom + var_params;
 
                 self.stack.resize(base + stack_size, Value::Nil);
 
                 self.frames.push(Frame::Lua {
                     bottom,
+                    closure,
                     base,
                     is_variable: false,
                     pc: 0,
@@ -529,10 +530,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Returns the active closure for this Lua frame
     pub(super) fn closure(&self) -> Closure<'gc> {
         match self.state.frames.last() {
-            Some(Frame::Lua { bottom, .. }) => match self.state.stack[*bottom] {
-                Value::Function(Function::Closure(c)) => c,
-                _ => panic!("lua frame bottom is not a closure"),
-            },
+            Some(Frame::Lua { closure, .. }) => *closure,
             _ => panic!("top frame is not lua frame"),
         }
     }
@@ -574,16 +572,16 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(false));
         }
 
-        let varargs_start = *bottom + 1;
-        let varargs_len = *base - varargs_start;
-
         self.fuel.consume(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
+
+        let varargs_start = *bottom;
+        let varargs_len = *base - varargs_start;
 
         let dest = *base + dest.0 as usize;
         if let Some(count) = count.to_constant() {
             let count = count as usize;
+            self.fuel.consume(count_fuel(Self::FUEL_PER_ITEM, count));
+
             if count <= varargs_len {
                 self.state
                     .stack
@@ -595,6 +593,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
                 self.state.stack[dest + varargs_len..dest + count].fill(Value::Nil);
             }
         } else {
+            self.fuel
+                .consume(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
+
             *is_variable = true;
             self.state.stack.truncate(dest);
             self.state
@@ -697,52 +698,25 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(args.is_variable()));
         }
 
-        *expected_return = Some(LuaReturn::Normal(returns));
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let function_index = *base + func.0 as usize;
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - function_index - 1);
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
+        let call = meta_ops::call(ctx, self.state.stack[function_index])?;
+        *expected_return = Some(LuaReturn::Normal(returns));
+
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-        match meta_ops::call(ctx, self.state.stack[function_index])? {
-            Function::Closure(closure) => {
-                self.state.stack[function_index] = closure.into();
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.state.stack.remove(function_index);
+        self.state.stack.truncate(function_index + arg_count);
 
-                self.state.stack.truncate(function_index + 1 + arg_count);
-                let base = if arg_count > fixed_params {
-                    self.state.stack[function_index + 1..].rotate_left(fixed_params);
-                    function_index + 1 + (arg_count - fixed_params)
-                } else {
-                    function_index + 1
-                };
+        self.state.push_call(function_index, call);
 
-                self.state.stack.resize(base + stack_size, Value::Nil);
-
-                self.state.frames.push(Frame::Lua {
-                    bottom: function_index,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.remove(function_index);
-                self.state.stack.truncate(function_index + arg_count);
-                self.state.frames.push(Frame::Callback {
-                    bottom: function_index,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
@@ -770,57 +744,26 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(false));
         }
 
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let arg_count = arg_count as usize;
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
-
-        *expected_return = Some(LuaReturn::Normal(returns));
         let function_index = *base + func.0 as usize;
         let top = function_index + 1 + arg_count;
 
-        match meta_ops::call(ctx, self.state.stack[function_index])? {
-            Function::Closure(closure) => {
-                self.state.stack.truncate(top);
-                self.state.stack.push(closure.into());
-                self.state
-                    .stack
-                    .extend_from_within(function_index + 1..function_index + 1 + arg_count);
+        let call = meta_ops::call(ctx, self.state.stack[function_index])?;
+        *expected_return = Some(LuaReturn::Normal(returns));
 
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.fuel
+            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-                let base = if arg_count > fixed_params {
-                    self.state.stack[top + 1..].rotate_left(fixed_params);
-                    top + 1 + (arg_count - fixed_params)
-                } else {
-                    top + 1
-                };
+        self.state.stack.truncate(top);
+        self.state
+            .stack
+            .extend_from_within(function_index + 1..function_index + 1 + arg_count);
 
-                self.state.stack.resize(base + stack_size, Value::Nil);
+        self.state.push_call(top, call);
 
-                self.state.frames.push(Frame::Lua {
-                    bottom: top,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.truncate(top);
-                self.state
-                    .stack
-                    .extend_from_within(function_index + 1..function_index + 1 + arg_count);
-                self.state.frames.push(Frame::Callback {
-                    bottom: top,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
@@ -851,48 +794,20 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
 
         self.fuel.consume(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
-        *expected_return = Some(LuaReturn::Meta(meta_ret));
         let top = self.state.stack.len();
         debug_assert_eq!(top, *base + *stack_size);
 
-        match meta_ops::call(ctx, func.into())? {
-            Function::Closure(closure) => {
-                self.state.stack.push(closure.into());
-                self.state.stack.extend_from_slice(args);
+        let call = meta_ops::call(ctx, func.into())?;
+        *expected_return = Some(LuaReturn::Meta(meta_ret));
 
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.fuel
+            .consume(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
-                let base = if args.len() > fixed_params {
-                    self.state.stack[top + 1..].rotate_left(fixed_params);
-                    top + 1 + (args.len() - fixed_params)
-                } else {
-                    top + 1
-                };
+        self.state.stack.extend_from_slice(args);
 
-                self.state.stack.resize(base + stack_size, Value::Nil);
+        self.state.push_call(top, call);
 
-                self.state.frames.push(Frame::Lua {
-                    bottom: top,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.extend(args);
-                self.state.frames.push(Frame::Callback {
-                    bottom: top,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
@@ -918,6 +833,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(args.is_variable()));
         }
 
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let function_index = base + func.0 as usize;
         let arg_count = args
             .to_constant()
@@ -929,53 +846,16 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         self.state.close_upvalues(&ctx, bottom);
         self.state.frames.pop();
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-        match call {
-            Function::Closure(closure) => {
-                self.state.stack[bottom] = closure.into();
-                self.state.stack.copy_within(
-                    function_index + 1..function_index + 1 + arg_count,
-                    bottom + 1,
-                );
+        self.state
+            .stack
+            .copy_within(function_index + 1..function_index + 1 + arg_count, bottom);
+        self.state.stack.truncate(bottom + arg_count);
 
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.state.push_call(bottom, call);
 
-                let base = if arg_count > fixed_params {
-                    self.state.stack.truncate(bottom + 1 + arg_count);
-                    self.state.stack[bottom + 1..].rotate_left(fixed_params);
-                    bottom + 1 + (arg_count - fixed_params)
-                } else {
-                    if arg_count < fixed_params {
-                        self.state.stack[bottom + 1 + arg_count..bottom + 1 + fixed_params]
-                            .fill(Value::Nil);
-                    }
-                    bottom + 1
-                };
-
-                self.state.stack.resize(base + stack_size, Value::Nil);
-
-                self.state.frames.push(Frame::Lua {
-                    bottom,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state
-                    .stack
-                    .copy_within(function_index + 1..function_index + 1 + arg_count, bottom);
-                self.state.stack.truncate(bottom + arg_count);
-                self.state.frames.push(Frame::Callback { bottom, callback });
-            }
-        }
         Ok(())
     }
 
@@ -999,6 +879,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         if is_variable != count.is_variable() {
             return Err(VMError::ExpectedVariableStack(count.is_variable()));
         }
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         self.state.close_upvalues(mc, bottom);
 
         let start = base + start.0 as usize;
@@ -1007,79 +890,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - start);
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel.consume(count_fuel(Self::FUEL_PER_ITEM, count));
 
-        match self.state.frames.last_mut() {
-            Some(Frame::Sequence {
-                bottom: seq_bottom, ..
-            }) => {
-                assert_eq!(bottom, *seq_bottom);
-                self.state.stack.copy_within(start..start + count, bottom);
-                self.state.stack.truncate(bottom + count);
-            }
-            Some(Frame::Lua {
-                expected_return,
-                is_variable,
-                base,
-                stack_size,
-                pc,
-                ..
-            }) => match expected_return.take() {
-                Some(LuaReturn::Normal(expected_return)) => {
-                    let returning = expected_return
-                        .to_constant()
-                        .map(|c| c as usize)
-                        .unwrap_or(count);
+        self.state.stack.copy_within(start..start + count, bottom);
+        self.state.stack.truncate(bottom + count);
+        self.state.return_to(bottom);
 
-                    self.state
-                        .stack
-                        .copy_within(start..start + returning.min(count), bottom);
-                    if count < returning {
-                        self.state.stack[bottom + count..bottom + returning].fill(Value::Nil);
-                    }
-
-                    if expected_return.is_variable() {
-                        self.state.stack.truncate(bottom + returning);
-                        *is_variable = true;
-                    } else {
-                        self.state.stack.resize(*base + *stack_size, Value::Nil);
-                        *is_variable = false;
-                    }
-                }
-                Some(LuaReturn::Meta(meta_ret)) => {
-                    let meta_val = if count > 0 {
-                        self.state.stack[start]
-                    } else {
-                        Value::Nil
-                    };
-                    self.state.stack.resize(*base + *stack_size, Value::Nil);
-                    *is_variable = false;
-
-                    match meta_ret {
-                        MetaReturn::None => {}
-                        MetaReturn::Register(reg) => {
-                            self.state.stack[*base + reg.0 as usize] = meta_val;
-                        }
-                        MetaReturn::SkipIf(skip_if) => {
-                            if meta_val.to_bool() == skip_if {
-                                *pc += 1;
-                            }
-                        }
-                    }
-                }
-                None => {
-                    panic!("no expected returns set for returned to lua frame")
-                }
-            },
-            None => {
-                assert_eq!(bottom, 0);
-                self.state.stack.copy_within(start..start + count, bottom);
-                self.state.stack.truncate(bottom + count);
-                self.state.frames.push(Frame::Result { bottom });
-            }
-            _ => panic!("lua frame must be above a sequence or lua frame"),
-        }
         Ok(())
     }
 }
