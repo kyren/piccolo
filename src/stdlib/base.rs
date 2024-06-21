@@ -26,7 +26,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 let sign = if is_neg { -1 } else { 1 };
                 (bytes, sign)
             }
-            if stack.len() == 1 {
+
+            if stack.is_empty() {
+                Err("Missing argument(s) to tonumber".into_value(ctx))?
+            } else if stack.len() == 1 {
                 let prenumber = stack.consume::<Value>(ctx)?;
                 stack.replace(
                     ctx,
