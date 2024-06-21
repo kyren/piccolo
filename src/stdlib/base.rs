@@ -9,6 +9,165 @@ use crate::{
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
+        "tonumber",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (prenumber, maybe_base) = stack.consume::<(Value, Option<u8>)>(ctx)?;
+            stack.replace(
+                ctx,
+                match prenumber {
+                    v @ (Value::Integer(_) | Value::Number(_)) => v,
+                    Value::String(s) => {
+                        if let Some(base) = maybe_base {
+                            if !(2..=36).contains(&base) {
+                                Err("base out of range".into_value(ctx))?;
+                            }
+                            // Since a base [2 - 36 are the only valid values] was specified, this *must*
+                            // represent an integer of the base
+                            const BASE_ELEMENTS: &[u8; 36] =
+                                b"0123456789abcdefghijklmnopqrstuvwxyz";
+                            let is_neg = s.first().is_some_and(|b| *b == b'-');
+                            let byte_values = if is_neg {
+                                &s.as_bytes()[1..]
+                            } else {
+                                s.as_bytes()
+                            }
+                            .iter()
+                            .map(|b| {
+                                BASE_ELEMENTS
+                                    .iter()
+                                    .position(|i| b.to_ascii_lowercase() == *i)
+                            })
+                            .collect::<Vec<_>>();
+                            if byte_values
+                                .iter()
+                                .any(|v| v.is_none() || v.is_some_and(|v| v >= base as usize))
+                            {
+                                Value::Nil
+                            } else {
+                                let mut value: i64 = 0;
+                                for (idx, elem) in byte_values.into_iter().rev().enumerate() {
+                                    let Some(elem) = elem else {
+                                        // The earlier byte value check means that this should not be hit
+                                        unreachable!();
+                                    };
+                                    value += (base as i64).pow(idx.try_into()?) * elem as i64;
+                                }
+                                Value::Integer(value)
+                            }
+                        } else {
+                            // Just try to decimal-numberify it
+                            let is_neg = s.first().is_some_and(|b| *b == b'-');
+                            let bytes = if is_neg {
+                                &s.as_bytes()[1..]
+                            } else {
+                                s.as_bytes()
+                            };
+                            let dot_positions = bytes
+                                .iter()
+                                .copied()
+                                .enumerate()
+                                .filter_map(|(idx, b)| if b == b'.' { Some(idx) } else { None })
+                                .collect::<Vec<_>>();
+                            let e_positions = bytes
+                                .iter()
+                                .copied()
+                                .enumerate()
+                                .filter_map(|(idx, b)| if b == b'e' { Some(idx) } else { None })
+                                .collect::<Vec<_>>();
+
+                            if dot_positions.len() > 1 && e_positions.len() > 1 {
+                                Value::Nil
+                            } else {
+                                let dot_position = dot_positions.first();
+                                let e_position = e_positions.first();
+                                if bytes
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(idx, _)| {
+                                        !dot_position.is_some_and(|dp| dp == idx)
+                                            && !e_position.is_some_and(|ep| ep == idx)
+                                    })
+                                    .any(|(_, b)| !b.is_ascii_digit())
+                                {
+                                    Value::Nil
+                                } else {
+                                    // 4 cases 1 1e 1. 1.e
+                                    fn parse_whole_value(data: &[u8]) -> u64 {
+                                        let mut whole_value = 0;
+                                        for b in data {
+                                            whole_value = (whole_value * 10) + (b - b'0') as u64;
+                                        }
+                                        whole_value
+                                    }
+                                    fn parse_fract_value(data: &[u8]) -> f64 {
+                                        let mut fract_value = 0.0f64;
+                                        for (idx, b) in data.iter().enumerate() {
+                                            fract_value +=
+                                                (b - b'0') as f64 / (10 * (idx + 1)) as f64;
+                                        }
+                                        fract_value
+                                    }
+                                    match (dot_position, e_position) {
+                                        (Some(dp), Some(ep)) => {
+                                            if ep < dp {
+                                                Value::Nil
+                                            } else {
+                                                let whole_value = parse_whole_value(&bytes[..*dp]);
+                                                let fract_value = parse_fract_value(
+                                                    &bytes[(*dp + 1).min(bytes.len() - 1)..*ep],
+                                                );
+                                                let exponent = parse_whole_value(
+                                                    &bytes[(*ep + 1).min(bytes.len() - 1)..],
+                                                );
+                                                Value::Number(
+                                                    if is_neg { -1.0 } else { 1.0 }
+                                                        * (whole_value as f64 + fract_value)
+                                                        * 10f64.powf(exponent as f64),
+                                                )
+                                            }
+                                        }
+                                        (Some(dp), None) => {
+                                            let whole_value = parse_whole_value(&bytes[..*dp]);
+                                            let fract_value = parse_fract_value(
+                                                &bytes[(*dp + 1).min(bytes.len() - 1)..],
+                                            );
+                                            Value::Number(
+                                                if is_neg { -1.0 } else { 1.0 }
+                                                    * (whole_value as f64 + fract_value),
+                                            )
+                                        }
+                                        (None, Some(ep)) => {
+                                            let whole_value = parse_whole_value(&bytes[..*ep]);
+                                            let exponent = parse_whole_value(
+                                                &bytes[(*ep + 1).min(bytes.len() - 1)..],
+                                            );
+                                            Value::Number(
+                                                if is_neg { -1.0 } else { 1.0 }
+                                                    * whole_value as f64
+                                                    * 10f64.powf(exponent as f64),
+                                            )
+                                        }
+                                        (None, None) => {
+                                            let whole_value: i64 =
+                                                parse_whole_value(bytes).try_into()?;
+                                            Value::Integer(
+                                                if is_neg { -1 } else { 1 } * whole_value,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => Value::Nil,
+                },
+            );
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
         "tostring",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if stack.is_empty() {
