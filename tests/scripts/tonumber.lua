@@ -15,5 +15,6 @@ do
     assert(tonumber("Z0", 36) == 36 * 35)
     assert(tonumber("") == nil)
     assert(tonumber("-") == nil)
+    assert(tonumber("1 1") == nil)
     assert(tonumber({}) == nil)
 end
