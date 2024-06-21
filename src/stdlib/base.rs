@@ -17,15 +17,24 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 match prenumber {
                     v @ (Value::Integer(_) | Value::Number(_)) => v,
                     Value::String(s) => {
-                        let is_neg = s.first().is_some_and(|b| *b == b'-');
-                        let bytes = if is_neg {
-                            &s.as_bytes()[1..]
-                        } else {
-                            s.as_bytes()
+                        let first_nonspace =
+                            s.as_bytes().iter().position(|b| !b.is_ascii_whitespace());
+                        let last_nonspace =
+                            s.as_bytes().iter().rposition(|b| !b.is_ascii_whitespace());
+                        let bytes = match (first_nonspace, last_nonspace) {
+                            (Some(f), Some(l)) => &s.as_bytes()[f..=l],
+                            (Some(f), None) => &s.as_bytes()[f..],
+                            (None, Some(l)) => &s.as_bytes()[..l],
+                            (None, None) => s.as_bytes(),
                         };
 
+                        let is_neg = bytes.first().is_some_and(|b| *b == b'-');
+                        let bytes = if is_neg { &bytes[1..] } else { bytes };
                         let sign = if is_neg { -1 } else { 1 };
-                        if let Some(base) = maybe_base {
+
+                        if bytes.is_empty() {
+                            Value::Nil
+                        } else if let Some(base) = maybe_base {
                             if !(2..=36).contains(&base) {
                                 Err("base out of range".into_value(ctx))?;
                             }
@@ -72,7 +81,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                 .filter_map(|(idx, b)| if b == b'e' { Some(idx) } else { None })
                                 .collect::<Vec<_>>();
 
-                            if dot_positions.len() > 1 && e_positions.len() > 1 {
+                            if dot_positions.len() > 1 || e_positions.len() > 1 {
                                 Value::Nil
                             } else {
                                 let dot_position = dot_positions.first();
@@ -110,10 +119,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                             } else {
                                                 let whole_value = parse_whole_value(&bytes[..*dp]);
                                                 let fract_value = parse_fract_value(
-                                                    &bytes[(*dp + 1).min(bytes.len() - 1)..*ep],
+                                                    &bytes[(*dp + 1).min(bytes.len())..*ep],
                                                 );
                                                 let exponent = parse_whole_value(
-                                                    &bytes[(*ep + 1).min(bytes.len() - 1)..],
+                                                    &bytes[(*ep + 1).min(bytes.len())..],
                                                 );
                                                 Value::Number(
                                                     sign as f64
@@ -125,7 +134,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                         (Some(dp), None) => {
                                             let whole_value = parse_whole_value(&bytes[..*dp]);
                                             let fract_value = parse_fract_value(
-                                                &bytes[(*dp + 1).min(bytes.len() - 1)..],
+                                                &bytes[(*dp + 1).min(bytes.len())..],
                                             );
                                             Value::Number(
                                                 sign as f64 * (whole_value as f64 + fract_value),
@@ -134,7 +143,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                         (None, Some(ep)) => {
                                             let whole_value = parse_whole_value(&bytes[..*ep]);
                                             let exponent = parse_whole_value(
-                                                &bytes[(*ep + 1).min(bytes.len() - 1)..],
+                                                &bytes[(*ep + 1).min(bytes.len())..],
                                             );
                                             Value::Number(
                                                 sign as f64
