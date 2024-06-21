@@ -471,29 +471,69 @@ pub(super) fn run_vm<'gc>(
             Operation::Add { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::add(left, right).ok_or(BinaryOperatorError::Add)?;
+                match meta_ops::add(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Sub { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::subtract(left, right).ok_or(BinaryOperatorError::Add)?;
+                match meta_ops::subtract(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Mul { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::multiply(left, right).ok_or(BinaryOperatorError::Multiply)?;
+                match meta_ops::multiply(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Div { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::float_divide(left, right).ok_or(BinaryOperatorError::FloatDivide)?;
+                match meta_ops::float_divide(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::IDiv { dest, left, right } => {

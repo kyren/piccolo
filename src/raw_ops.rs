@@ -2,20 +2,8 @@ use crate::Value;
 
 // TODO: This module should be entirely replaced by `meta_ops` as they are added.
 
-pub fn add<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
-    Some(lhs.to_constant()?.add(&rhs.to_constant()?)?.into())
-}
-
 pub fn subtract<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
     Some(lhs.to_constant()?.subtract(&rhs.to_constant()?)?.into())
-}
-
-pub fn multiply<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
-    Some(lhs.to_constant()?.multiply(&rhs.to_constant()?)?.into())
-}
-
-pub fn float_divide<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
-    Some(lhs.to_constant()?.float_divide(&rhs.to_constant()?)?.into())
 }
 
 pub fn floor_divide<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {

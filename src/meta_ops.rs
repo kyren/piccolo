@@ -1,9 +1,7 @@
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{
-    Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, UserData, Value,
-};
+use crate::{Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, Value};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
@@ -15,6 +13,10 @@ pub enum MetaMethod {
     Pairs,
     ToString,
     Eq,
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 impl MetaMethod {
@@ -27,6 +29,10 @@ impl MetaMethod {
             MetaMethod::Pairs => "__pairs",
             MetaMethod::ToString => "__tostring",
             MetaMethod::Eq => "__eq",
+            MetaMethod::Add => "__add",
+            MetaMethod::Sub => "__sub",
+            MetaMethod::Mul => "__mul",
+            MetaMethod::Div => "__div",
         }
     }
     /// Sentence-form verb of this metamethod's action
@@ -43,6 +49,10 @@ impl MetaMethod {
             MetaMethod::Index => "index into",
             MetaMethod::NewIndex => "index-assign into",
             MetaMethod::Eq => "compare equality of",
+            MetaMethod::Add => "add",
+            MetaMethod::Sub => "subtract",
+            MetaMethod::Mul => "multiply",
+            MetaMethod::Div => "divide",
         }
     }
 }
@@ -85,11 +95,30 @@ pub enum MetaOperatorError {
     Call(MetaMethod, #[source] MetaCallError),
     #[error("could not {} a {} value", .0.verb(), .1)]
     Unary(MetaMethod, &'static str),
+    #[error("could not {} values of type {} and {}", .0.verb(), .1, .2)]
+    Binary(MetaMethod, &'static str, &'static str),
 }
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("could not call a {} value", .0)]
 pub struct MetaCallError(&'static str);
+
+fn get_metatable<'gc>(val: Value<'gc>) -> Option<Table<'gc>> {
+    match val {
+        Value::Table(t) => t.metatable(),
+        Value::UserData(u) => u.metatable(),
+        _ => None,
+    }
+}
+fn get_metamethod<'gc>(
+    ctx: Context<'gc>,
+    val: Value<'gc>,
+    method: MetaMethod,
+) -> Option<Value<'gc>> {
+    get_metatable(val)
+        .map(|mt| mt.get(ctx, method))
+        .filter(|v| !v.is_nil())
+}
 
 pub fn index<'gc>(
     ctx: Context<'gc>,
@@ -352,73 +381,169 @@ pub fn equal<'gc>(
         (Value::Thread(_), _) => Value::Boolean(false).into(),
 
         (Value::Table(a), Value::Table(b)) if a == b => Value::Boolean(true).into(),
-        (Value::Table(a), Value::Table(b)) => {
-            if a == b {
-                Value::Boolean(true).into()
+        (Value::Table(_), Value::Table(_)) => {
+            if let Some(m) = get_metamethod(ctx, lhs, MetaMethod::Eq) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m)
+                        .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
+                    args: [lhs, rhs],
+                })
+            } else if let Some(m) = get_metamethod(ctx, rhs, MetaMethod::Eq) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m)
+                        .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
+                    args: [lhs, rhs],
+                })
             } else {
-                let get_eq = |t: Table<'gc>| {
-                    let eq = t
-                        .metatable()
-                        .map(|t| t.get(ctx, MetaMethod::Eq))
-                        .unwrap_or_default();
-                    if eq.is_nil() {
-                        None
-                    } else {
-                        Some(eq)
-                    }
-                };
-                if let Some(a_eq) = get_eq(a) {
-                    MetaResult::Call(MetaCall {
-                        function: call(ctx, a_eq)
-                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
-                        args: [a.into(), b.into()],
-                    })
-                } else if let Some(b_eq) = get_eq(b) {
-                    MetaResult::Call(MetaCall {
-                        function: call(ctx, b_eq)
-                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
-                        args: [a.into(), b.into()],
-                    })
-                } else {
-                    Value::Boolean(false).into()
-                }
+                Value::Boolean(false).into()
             }
         }
         (Value::Table(_), _) => Value::Boolean(false).into(),
 
         (Value::UserData(a), Value::UserData(b)) if a == b => Value::Boolean(true).into(),
-        (Value::UserData(a), Value::UserData(b)) => {
-            if a == b {
-                Value::Boolean(true).into()
+        (Value::UserData(_), Value::UserData(_)) => {
+            if let Some(m) = get_metamethod(ctx, lhs, MetaMethod::Eq) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m)
+                        .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
+                    args: [lhs, rhs],
+                })
+            } else if let Some(m) = get_metamethod(ctx, rhs, MetaMethod::Eq) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m)
+                        .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
+                    args: [lhs, rhs],
+                })
             } else {
-                let get_eq = |u: UserData<'gc>| {
-                    let eq = u
-                        .metatable()
-                        .map(|t| t.get(ctx, MetaMethod::Eq))
-                        .unwrap_or_default();
-                    if eq.is_nil() {
-                        None
-                    } else {
-                        Some(eq)
-                    }
-                };
-                if let Some(a_eq) = get_eq(a) {
-                    MetaResult::Call(MetaCall {
-                        function: call(ctx, a_eq)
-                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
-                        args: [a.into(), b.into()],
-                    })
-                } else if let Some(b_eq) = get_eq(b) {
-                    MetaResult::Call(MetaCall {
-                        function: call(ctx, b_eq)
-                            .map_err(|e| MetaOperatorError::Call(MetaMethod::Eq, e))?,
-                        args: [a.into(), b.into()],
-                    })
-                } else {
-                    Value::Boolean(false).into()
-                }
+                Value::Boolean(false).into()
             }
         }
         (Value::UserData(_), _) => Value::Boolean(false).into(),
     })
+}
+
+fn meta_metaop<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+    method: MetaMethod,
+    int_op: impl Fn(i64, i64) -> Value<'gc>,
+    float_op: impl Fn(f64, f64) -> Value<'gc>,
+    const_op: impl Fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    Ok(match (lhs, rhs) {
+        (Value::Table(_) | Value::UserData(_), Value::Table(_) | Value::UserData(_)) => {
+            if let Some(m) = get_metamethod(ctx, lhs, method) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m).map_err(|e| MetaOperatorError::Call(method, e))?,
+                    args: [lhs, rhs],
+                })
+            } else if let Some(m) = get_metamethod(ctx, rhs, method) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m).map_err(|e| MetaOperatorError::Call(method, e))?,
+                    args: [lhs, rhs],
+                })
+            } else {
+                return Err(MetaOperatorError::Binary(
+                    method,
+                    lhs.type_name(),
+                    rhs.type_name(),
+                ));
+            }
+        }
+        (Value::Table(_) | Value::UserData(_), _) => {
+            if let Some(m) = get_metamethod(ctx, lhs, method) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m).map_err(|e| MetaOperatorError::Call(method, e))?,
+                    args: [lhs, rhs],
+                })
+            } else {
+                return Err(MetaOperatorError::Binary(
+                    method,
+                    lhs.type_name(),
+                    rhs.type_name(),
+                ));
+            }
+        }
+        (_, Value::Table(_) | Value::UserData(_)) => {
+            if let Some(m) = get_metamethod(ctx, rhs, method) {
+                MetaResult::Call(MetaCall {
+                    function: call(ctx, m).map_err(|e| MetaOperatorError::Call(method, e))?,
+                    args: [lhs, rhs],
+                })
+            } else {
+                return Err(MetaOperatorError::Binary(
+                    method,
+                    lhs.type_name(),
+                    rhs.type_name(),
+                ));
+            }
+        }
+        (Value::Integer(a), Value::Integer(b)) => int_op(a, b).into(),
+        (Value::Number(a), Value::Number(b)) => float_op(a, b).into(),
+        (a, b) => const_op(a, b)
+            .ok_or_else(|| MetaOperatorError::Binary(method, lhs.type_name(), rhs.type_name()))?
+            .into(),
+    })
+}
+
+pub fn add<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Add,
+        |a, b| Value::Integer(a.wrapping_add(b)),
+        |a, b| Value::Number(a + b),
+        |a, b| Some(a.to_constant()?.add(&b.to_constant()?)?.into()),
+    )
+}
+pub fn subtract<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Sub,
+        |a, b| Value::Integer(a.wrapping_sub(b)),
+        |a, b| Value::Number(a - b),
+        |a, b| Some(a.to_constant()?.subtract(&b.to_constant()?)?.into()),
+    )
+}
+pub fn multiply<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Mul,
+        |a, b| Value::Integer(a.wrapping_mul(b)),
+        |a, b| Value::Number(a * b),
+        |a, b| Some(a.to_constant()?.multiply(&b.to_constant()?)?.into()),
+    )
+}
+pub fn float_divide<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(
+        ctx,
+        lhs,
+        rhs,
+        MetaMethod::Div,
+        |a, b| Value::Number(a as f64 / b as f64),
+        |a, b| Value::Number(a / b),
+        |a, b| Some(a.to_constant()?.float_divide(&b.to_constant()?)?.into()),
+    )
 }
