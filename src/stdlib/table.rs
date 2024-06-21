@@ -1,10 +1,9 @@
-use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Collect};
+use gc_arena::Collect;
 
 use crate::meta_ops::{self, MetaResult};
 use crate::{
-    Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod, Sequence,
-    SequencePoll, Stack, Table, Value,
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
+    Sequence, SequencePoll, Stack, Table,
 };
 
 // PUC-Rio Lua's maximum argument count, on my machine, is about 1000000;
@@ -73,33 +72,35 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                     // - if the index metamethod redefines the metatable or index metamethod for the struct, should it be respected?
                     // - if the index metamethod redefines the length of the table, should it be respected?
                     let seq = if has_len {
-                        Unpack::FindLength { cur: start, table }
+                        UnpackMeta::FindLength { start, table }
                     } else {
                         if start > end {
                             return Ok(CallbackReturn::Return);
                         }
                         let length = try_compute_length(start, end)
                             .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                        let mut inner_stack = vec::Vec::new_in(MetricsAlloc::new(&ctx));
-                        inner_stack.reserve_exact(length);
-                        Unpack::MainLoop {
-                            first: true,
-                            cur: start,
-                            end,
+                        UnpackMeta::MainLoop {
+                            callback_return: false,
+                            start,
+                            length,
+                            index: 0,
+                            reserved: 0,
                             table,
-                            inner_stack,
                         }
                     };
-                    return Ok(CallbackReturn::Sequence(crate::BoxSequence::new(&ctx, seq)));
+                    return Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)));
                 }
 
                 if start <= end {
                     let length = try_compute_length(start, end)
                         .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                    stack.resize(length);
-                    for i in start..=end {
-                        stack[(i - start) as usize] = table.get_value(i.into());
-                    }
+                    let seq = Unpack {
+                        start,
+                        length,
+                        index: 0,
+                        table,
+                    };
+                    return Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)));
                 }
 
                 Ok(CallbackReturn::Return)
@@ -110,36 +111,91 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     ctx.set_global("table", table).unwrap();
 }
 
+const RAW_ELEMS_PER_FUEL: usize = 8;
+const RAW_MIN_BATCH_SIZE: usize = 4096;
+
 #[derive(Collect)]
 #[collect(no_drop)]
-enum Unpack<'gc> {
-    FindLength {
-        cur: i64,
-        table: Table<'gc>,
-    },
-    LengthFound {
-        cur: i64,
-        table: Table<'gc>,
-    },
-    MainLoop {
-        first: bool,
-        cur: i64,
-        end: i64,
-        table: Table<'gc>,
-        inner_stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    },
+struct Unpack<'gc> {
+    start: i64,
+    length: usize,
+    index: usize,
+    table: Table<'gc>,
 }
+
 impl<'gc> Sequence<'gc> for Unpack<'gc> {
     fn poll(
         &mut self,
+        _ctx: Context<'gc>,
+        mut exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        let Self {
+            start,
+            length,
+            ref mut index,
+            table,
+        } = *self;
+
+        let fuel = exec.fuel();
+        while *index < length && fuel.should_continue() {
+            let remaining_fuel = fuel.remaining().clamp(0, i32::MAX) as usize;
+            let available_elems = remaining_fuel / RAW_ELEMS_PER_FUEL;
+
+            let remaining = length - *index;
+            let batch_size = available_elems.max(RAW_MIN_BATCH_SIZE).min(remaining);
+            stack.resize(*index + batch_size);
+            fuel.consume((batch_size / RAW_ELEMS_PER_FUEL) as i32);
+
+            for i in *index..*index + batch_size {
+                stack[i] = table.get_value((start + i as i64).into());
+            }
+            *index += batch_size;
+        }
+        if !fuel.should_continue() {
+            return Ok(SequencePoll::Pending);
+        }
+        debug_assert_eq!(*index, length, "all elements must have been accessed");
+        debug_assert_eq!(length, stack.len(), "all elements must be on the stack");
+        // Return values are already in-place on the stack
+        return Ok(SequencePoll::Return);
+    }
+}
+
+const META_ELEMS_PER_FUEL: usize = 8;
+const META_MIN_BATCH_SIZE: usize = 4096;
+
+#[derive(Collect)]
+#[collect(no_drop)]
+enum UnpackMeta<'gc> {
+    FindLength {
+        start: i64,
+        table: Table<'gc>,
+    },
+    LengthFound {
+        start: i64,
+        table: Table<'gc>,
+    },
+    MainLoop {
+        callback_return: bool,
+        start: i64,
+        length: usize,
+        index: usize,
+        reserved: usize,
+        table: Table<'gc>,
+    },
+}
+impl<'gc> Sequence<'gc> for UnpackMeta<'gc> {
+    fn poll(
+        &mut self,
         ctx: Context<'gc>,
-        _exec: Execution<'gc, '_>,
+        mut exec: Execution<'gc, '_>,
         mut stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         loop {
             match *self {
-                Unpack::FindLength { cur, table } => {
-                    *self = Unpack::LengthFound { cur, table };
+                UnpackMeta::FindLength { start, table } => {
+                    *self = UnpackMeta::LengthFound { start, table };
                     match meta_ops::len(ctx, table.into())? {
                         MetaResult::Value(v) => stack.push_back(v),
                         MetaResult::Call(call) => {
@@ -151,52 +207,86 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
                         }
                     }
                 }
-                Unpack::LengthFound { cur, table } => {
+                UnpackMeta::LengthFound { start, table } => {
                     let end: i64 = stack.consume(ctx)?;
-                    if cur > end {
+                    if start > end {
                         return Ok(SequencePoll::Return);
                     }
-                    let length = try_compute_length(cur, end)
+                    let length = try_compute_length(start, end)
                         .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                    let mut inner_stack = vec::Vec::new_in(MetricsAlloc::new(&ctx));
-                    inner_stack.reserve_exact(length);
-                    *self = Unpack::MainLoop {
-                        first: true,
-                        cur,
-                        end,
+                    *self = UnpackMeta::MainLoop {
+                        callback_return: false,
+                        start,
+                        length,
+                        index: 0,
+                        reserved: 0,
                         table,
-                        inner_stack,
                     };
                 }
-                Unpack::MainLoop {
-                    ref mut first,
-                    ref mut cur,
-                    end,
+                UnpackMeta::MainLoop {
+                    ref mut callback_return,
+                    start,
+                    length,
+                    ref mut index,
+                    ref mut reserved,
                     table,
-                    ref mut inner_stack,
                 } => {
-                    if !*first {
-                        let value: Value = stack.consume(ctx)?;
-                        inner_stack.push(value);
-                    } else {
-                        *first = false;
+                    if *callback_return {
+                        *callback_return = false;
+                        // The return value for __index was pushed onto the top
+                        // of the stack, precisely where it's needed.
+                        *index += 1;
+                        // truncate stack to the current height
+                        stack.resize(*index);
                     }
+                    debug_assert_eq!(stack.len(), *index, "index must match stack height");
 
-                    while *cur <= end {
-                        let index = *cur;
-                        *cur += 1;
-                        match meta_ops::index(ctx, table.into(), index.into())? {
-                            MetaResult::Value(v) => inner_stack.push(v),
-                            MetaResult::Call(call) => {
-                                stack.extend(call.args);
-                                return Ok(SequencePoll::Call {
-                                    function: call.function,
-                                    bottom: 0,
-                                });
+                    let fuel = exec.fuel();
+                    while *index < length && fuel.should_continue() {
+                        let batch_remaining = *reserved - *index;
+                        if batch_remaining == 0 {
+                            let remaining_fuel = fuel.remaining().clamp(0, i32::MAX) as usize;
+                            let available_elems = remaining_fuel / META_ELEMS_PER_FUEL;
+
+                            let remaining_elems = length - *index;
+                            let batch_size = available_elems
+                                .max(META_MIN_BATCH_SIZE)
+                                .min(remaining_elems);
+                            stack.reserve(batch_size);
+                            *reserved = *index + batch_size;
+
+                            fuel.consume((batch_size / META_ELEMS_PER_FUEL) as i32);
+                        }
+
+                        for i in *index..*reserved {
+                            // It would be nice to be able to cache the index metamethod here,
+                            // but that would require tracking infrastructure elsewhere.
+                            // (In theory this *could* cache it for the case where __index is
+                            // a table and never calls back into Lua code, but it's not worth
+                            // splitting the logic.)
+                            match meta_ops::index(ctx, table.into(), (start + i as i64).into())? {
+                                MetaResult::Value(v) => {
+                                    stack.push_back(v);
+                                }
+                                MetaResult::Call(call) => {
+                                    *callback_return = true;
+                                    *index = i;
+                                    stack.extend(call.args);
+                                    return Ok(SequencePoll::Call {
+                                        function: call.function,
+                                        bottom: *index,
+                                    });
+                                }
                             }
                         }
+                        *index = *reserved;
                     }
-                    stack.extend(inner_stack.iter().copied());
+                    if !fuel.should_continue() {
+                        return Ok(SequencePoll::Pending);
+                    }
+                    debug_assert_eq!(*index, length, "all elements must have been accessed");
+                    debug_assert_eq!(length, stack.len(), "all elements must be on the stack");
+                    // Return values are already in-place on the stack
                     return Ok(SequencePoll::Return);
                 }
             }
