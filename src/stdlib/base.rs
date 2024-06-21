@@ -81,9 +81,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                                         }
                                         fn parse_fract_value(data: &[u8]) -> f64 {
                                             let mut fract_value = 0.0f64;
-                                            for (idx, b) in data.iter().enumerate() {
-                                                fract_value +=
-                                                    (b - b'0') as f64 / (10 * (idx + 1)) as f64;
+                                            for b in data.iter().rev() {
+                                                fract_value =
+                                                    ((b - b'0') as f64 + fract_value) / 10.;
                                             }
                                             fract_value
                                         }
