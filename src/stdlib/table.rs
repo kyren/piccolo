@@ -3,9 +3,25 @@ use gc_arena::{allocator_api::MetricsAlloc, Collect};
 
 use crate::meta_ops::{self, MetaResult};
 use crate::{
-    Callback, CallbackReturn, Context, Error, Execution, MetaMethod, Sequence, SequencePoll, Stack,
-    Table, Value,
+    Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod, Sequence,
+    SequencePoll, Stack, Table, Value,
 };
+
+// PUC-Rio Lua's maximum argument count, on my machine, is about 1000000;
+// this is slightly larger.
+const MAXIMUM_UNPACK_ARGS: usize = 1 << 20;
+
+// Try to compute the length of a range for unpack, accounting for
+// potential overflow and limiting the length to MAXIMUM_UNPACK_ARGS
+//
+// Without this, users can relatively easily hang the VM (or OOM) with large ranges:
+// table.unpack({}, 1, 1 << 32)
+fn try_compute_length(start: i64, end: i64) -> Option<usize> {
+    end.checked_sub(start)
+        .and_then(|l| l.checked_add(1))
+        .and_then(|l| usize::try_from(l).ok())
+        .filter(|&l| matches!(l, 0..=MAXIMUM_UNPACK_ARGS))
+}
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
     let table = Table::new(&ctx);
@@ -37,10 +53,6 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                 let start = start_arg.unwrap_or(1);
                 let end = end_arg.unwrap_or_else(|| table.length());
 
-                // TODO: limit maximum size
-                // Users can relatively easily hang the VM (or OOM) with large ranges:
-                // table.unpack({}, 1, 1 << 32)
-
                 // Respect the user provided __index and __len metamethods, if they exist
                 let metatable = table.metatable();
                 let has_len = end_arg.is_none()
@@ -63,8 +75,13 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                     let seq = if has_len {
                         Unpack::FindLength { cur: start, table }
                     } else {
+                        if start > end {
+                            return Ok(CallbackReturn::Return);
+                        }
+                        let length = try_compute_length(start, end)
+                            .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
                         let mut inner_stack = vec::Vec::new_in(MetricsAlloc::new(&ctx));
-                        inner_stack.reserve_exact((end - start + 1) as usize);
+                        inner_stack.reserve_exact(length);
                         Unpack::MainLoop {
                             first: true,
                             cur: start,
@@ -77,7 +94,9 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                 }
 
                 if start <= end {
-                    stack.resize((end - start + 1) as usize);
+                    let length = try_compute_length(start, end)
+                        .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+                    stack.resize(length);
                     for i in start..=end {
                         stack[(i - start) as usize] = table.get_value(i.into());
                     }
@@ -134,7 +153,11 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
                 }
                 Unpack::LengthFound { cur, table } => {
                     let end: i64 = stack.consume(ctx)?;
-                    let length = (end - cur + 1).max(0) as usize;
+                    if cur > end {
+                        return Ok(SequencePoll::Return);
+                    }
+                    let length = try_compute_length(cur, end)
+                        .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
                     let mut inner_stack = vec::Vec::new_in(MetricsAlloc::new(&ctx));
                     inner_stack.reserve_exact(length);
                     *self = Unpack::MainLoop {
