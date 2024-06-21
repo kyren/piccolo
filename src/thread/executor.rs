@@ -323,7 +323,7 @@ impl<'gc> Executor<'gc> {
                         }
                     }
                     Some(Frame::Sequence {
-                        bottom: seq_bottom,
+                        bottom,
                         mut sequence,
                         pending_error,
                     }) => {
@@ -336,41 +336,42 @@ impl<'gc> Executor<'gc> {
                             upper_frames: &top_state.frames,
                         };
                         let poll = if let Some(err) = pending_error {
-                            sequence.error(
-                                ctx,
-                                exec,
-                                err,
-                                Stack::new(&mut top_state.stack, seq_bottom),
-                            )
+                            sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))
                         } else {
-                            sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, seq_bottom))
+                            sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, bottom))
                         };
 
                         match poll {
                             Ok(SequencePoll::Pending) => {
                                 top_state.frames.push(Frame::Sequence {
-                                    bottom: seq_bottom,
+                                    bottom,
                                     sequence,
                                     pending_error: None,
                                 });
                             }
                             Ok(SequencePoll::Return) => {
-                                top_state.return_to(seq_bottom);
+                                top_state.return_to(bottom);
                             }
-                            Ok(SequencePoll::Call { function, bottom }) => {
+                            Ok(SequencePoll::Call {
+                                function,
+                                bottom: rel_bottom,
+                            }) => {
                                 top_state.frames.push(Frame::Sequence {
-                                    bottom: seq_bottom,
+                                    bottom,
                                     sequence,
                                     pending_error: None,
                                 });
-                                top_state.push_call(bottom, function);
+                                top_state.push_call(bottom + rel_bottom, function);
                             }
                             Ok(SequencePoll::TailCall { function }) => {
-                                top_state.push_call(seq_bottom, function);
+                                top_state.push_call(bottom, function);
                             }
-                            Ok(SequencePoll::Yield { to_thread, bottom }) => {
+                            Ok(SequencePoll::Yield {
+                                to_thread,
+                                bottom: rel_bottom,
+                            }) => {
                                 top_state.frames.push(Frame::Sequence {
-                                    bottom: seq_bottom,
+                                    bottom,
                                     sequence,
                                     pending_error: None,
                                 });
@@ -379,7 +380,7 @@ impl<'gc> Executor<'gc> {
                                     &mut state.thread_stack,
                                     top_state,
                                     to_thread,
-                                    bottom,
+                                    bottom + rel_bottom,
                                 );
                             }
                             Ok(SequencePoll::TailYield { to_thread }) => {
@@ -388,28 +389,31 @@ impl<'gc> Executor<'gc> {
                                     &mut state.thread_stack,
                                     top_state,
                                     to_thread,
-                                    seq_bottom,
+                                    bottom,
                                 );
                             }
-                            Ok(SequencePoll::Resume { thread, bottom }) => {
+                            Ok(SequencePoll::Resume {
+                                thread,
+                                bottom: rel_bottom,
+                            }) => {
                                 top_state.frames.push(Frame::Sequence {
-                                    bottom: seq_bottom,
+                                    bottom,
                                     sequence,
                                     pending_error: None,
                                 });
-                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
-                            }
-                            Ok(SequencePoll::TailResume { thread }) => {
                                 do_resume(
                                     ctx,
                                     &mut state.thread_stack,
                                     top_state,
                                     thread,
-                                    seq_bottom,
+                                    bottom + rel_bottom,
                                 );
                             }
+                            Ok(SequencePoll::TailResume { thread }) => {
+                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
+                            }
                             Err(error) => {
-                                top_state.stack.truncate(seq_bottom);
+                                top_state.stack.truncate(bottom);
                                 top_state.frames.push(Frame::Error(error));
                             }
                         }
