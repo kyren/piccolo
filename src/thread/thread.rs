@@ -257,28 +257,28 @@ impl<'gc> OpenUpValue<'gc> {
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
 pub(super) enum MetaReturn {
-    // No return value is expected.
+    /// No return value is expected.
     None,
-    // Place a single return value at an index relative to the returned to function's stack bottom.
+    /// Place a single return value at an index relative to the returned to function's stack bottom.
     Register(RegisterIndex),
-    // Increment the PC by one if the returned value converted to a boolean is equal to this.
+    /// Increment the PC by one if the returned value converted to a boolean is equal to this.
     SkipIf(bool),
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
 pub(super) enum LuaReturn {
-    // Normal function call, place return values at the bottom of the returning function's stack,
-    // as normal.
+    /// Normal function call, place return values at the bottom of the returning function's stack,
+    /// as normal.
     Normal(VarCount),
-    // Synthetic metamethod call, do the operation specified in MetaReturn.
+    /// Synthetic metamethod call, do the operation specified in MetaReturn.
     Meta(MetaReturn),
 }
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub(super) enum Frame<'gc> {
-    // A running Lua frame.
+    /// A running Lua frame.
     Lua {
         bottom: usize,
         closure: Closure<'gc>,
@@ -288,19 +288,19 @@ pub(super) enum Frame<'gc> {
         stack_size: usize,
         expected_return: Option<LuaReturn>,
     },
-    // A suspended function call that has not yet been run. Must be the only frame in the stack.
+    /// A suspended function call that has not yet been run. Must be the only frame in the stack.
     Start(Function<'gc>),
-    // Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
-    // below a results frame.
+    /// Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
+    /// below a results frame.
     Yielded,
-    // A callback that has been queued but not called yet. Must be the top frame of the stack.
+    /// A callback that has been queued but not called yet. Must be the top frame of the stack.
     Callback {
         bottom: usize,
         callback: Callback<'gc>,
     },
-    // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
-    // will be called the next time this thread is stepped, depending on whether there is a pending
-    // error.
+    /// A frame for a running sequence. When it is the top frame, either the `poll` or `error`
+    /// method will be called the next time this thread is stepped, depending on whether there is a
+    /// pending error.
     Sequence {
         bottom: usize,
         sequence: BoxSequence<'gc>,
@@ -308,13 +308,11 @@ pub(super) enum Frame<'gc> {
         // of the stack.
         pending_error: Option<Error<'gc>>,
     },
-    // We are waiting on an upper thread to finish. Must be the top frame of the stack.
+    /// We are waiting on an upper thread to finish. Must be the top frame of the stack.
     WaitThread,
-    // Results are waiting to be taken. Must be the top frame of the stack.
-    Result {
-        bottom: usize,
-    },
-    // An error is currently unwinding. Must be the top frame of the stack.
+    /// Results are waiting to be taken. Must be the top frame of the stack.
+    Result { bottom: usize },
+    /// An error is currently unwinding. Must be the top frame of the stack.
     Error(Error<'gc>),
 }
 
@@ -351,7 +349,7 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    // Pushes a function call frame, arguments start at the given stack bottom.
+    /// Pushes a function call frame, arguments start at the given stack bottom.
     pub(super) fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
         match function {
             Function::Closure(closure) => {
@@ -386,8 +384,8 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    // Return to the current top frame from a popped frame. The current top frame must be a
-    // sequence, lua frame, or there must be no frames at all.
+    /// Return to the current top frame from a popped frame. The current top frame must be a
+    /// sequence, lua frame, or there must be no frames at all.
     pub(super) fn return_to(&mut self, bottom: usize) {
         match self.frames.last_mut() {
             Some(Frame::Sequence {
@@ -535,7 +533,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
     }
 
-    // returns a view of the Lua frame's registers
+    /// returns a view of the Lua frame's registers
     pub(super) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
@@ -556,7 +554,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
     }
 
-    // Place the current frame's varargs at the given register, expecting the given count
+    /// Place the current frame's varargs at the given register, expecting the given count
     pub(super) fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), VMError> {
         let Some(Frame::Lua {
             bottom,
@@ -606,6 +604,10 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
+    /// Set elements of a table as a group according to the `SetList` opcode protocol.
+    ///
+    /// Expects a table at register `table_base`, the current table index at `table_base + 1`, and
+    /// `count` elements following this.
     pub(super) fn set_table_list(
         &mut self,
         mc: &Mutation<'gc>,
@@ -675,8 +677,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Call the function at the given register with the given arguments. On return, results will be
-    // placed starting at the function register.
+    /// Call the function at the given register with the given arguments. On return, results will be
+    /// placed starting at the function register.
     pub(super) fn call_function(
         self,
         ctx: Context<'gc>,
@@ -720,9 +722,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Calls the function at the given index with a constant number of arguments without
-    // invalidating the function or its arguments. Returns are placed *after* the function and its
-    // aruments, and all registers past this are invalidated as normal.
+    /// Calls the function at the given index with a constant number of arguments without
+    /// invalidating the function or its arguments. Returns are placed *after* the function and its
+    /// aruments, and all registers past this are invalidated as normal.
     pub(super) fn call_function_keep(
         self,
         ctx: Context<'gc>,
@@ -767,10 +769,10 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Calls an externally defined function in a completely non-destructive way in a new frame, and
-    // places an optional single result of this function call at the given register.
-    //
-    // Nothing at all in the frame is invalidated, other than optionally placing the return value.
+    /// Calls an externally defined function in a completely non-destructive way in a new frame, and
+    /// places an optional single result of this function call at the given register.
+    ///
+    /// Nothing at all in the frame is invalidated, other than optionally placing the return value.
     pub(super) fn call_meta_function(
         self,
         ctx: Context<'gc>,
@@ -811,8 +813,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Tail-call the function at the given register with the given arguments. Pops the current Lua
-    // frame, pushing a new frame for the given function.
+    /// Tail-call the function at the given register with the given arguments. Pops the current Lua
+    /// frame, pushing a new frame for the given function.
     pub(super) fn tail_call_function(
         self,
         ctx: Context<'gc>,
@@ -859,7 +861,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Return to the upper frame with results starting at the given register index.
+    /// Return to the upper frame with results starting at the given register index.
     pub(super) fn return_upper(
         self,
         mc: &Mutation<'gc>,

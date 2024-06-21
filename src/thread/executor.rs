@@ -48,7 +48,7 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 
 /// The entry-point for the Lua VM.
 ///
-/// `Executor` runs networks of `Threads` that may depend on each other and may pass control
+/// `Executor` runs networks of `Thread`s that may depend on each other and may pass control
 /// back and forth. All Lua code that is run is done so directly or indirectly by calling
 /// `Executor::step`.
 ///

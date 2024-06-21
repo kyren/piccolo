@@ -75,9 +75,9 @@ pub enum Operation {
     /// Expects the table to be at the `base` index, and it expects a register for the last set
     /// table index at `base + 1`. The register at `base + 1` must *always* be an integer.
     ///
-    /// On execution, it will set N values in the table at `base + 1 + n`, offset all of the indexes
-    /// by the `base + 1` startind index, and increment the starting index by however many values
-    /// were set.
+    /// On execution, it will set N values in the table from indexes `base + 1..base + 1 + n`,
+    /// offset all of the indexes by the `base + 1` starting index, and increment the starting index
+    /// by however many values were set.
     SetList {
         base: RegisterIndex,
         count: VarCount,
