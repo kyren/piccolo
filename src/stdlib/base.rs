@@ -11,7 +11,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "tonumber",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let (prenumber, maybe_base) = stack.consume::<(Value, Option<u8>)>(ctx)?;
+            let (prenumber, maybe_base) = stack.consume::<(Value, Option<i64>)>(ctx)?;
             stack.replace(
                 ctx,
                 match prenumber {
