@@ -244,6 +244,7 @@ enum ExprDescriptor<S> {
         args: Vec<ExprDescriptor<S>>,
     },
     Concat(VecDeque<ExprDescriptor<S>>),
+    Group(Box<ExprDescriptor<S>>),
 }
 
 #[derive(Debug)]
@@ -1181,7 +1182,11 @@ impl<S: StringInterner> Compiler<S> {
             PrimaryExpression::Name(name) => {
                 Ok(ExprDescriptor::Variable(self.find_variable(name.clone())?))
             }
-            PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
+            PrimaryExpression::GroupedExpression(expr) => {
+                // Exists to prevent grouped expressions from pushing multiple
+                // values to the stack. (No case for Group in expr_push_count.)
+                Ok(ExprDescriptor::Group(Box::new(self.expression(expr)?)))
+            }
         }
     }
 
@@ -2226,6 +2231,10 @@ impl<S: StringInterner> Compiler<S> {
                     .register_allocator
                     .pop_to(source.0 as u16);
                 dest
+            }
+
+            ExprDescriptor::Group(expr) => {
+                return self.expr_discharge(*expr, dest);
             }
         };
 
