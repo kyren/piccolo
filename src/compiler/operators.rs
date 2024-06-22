@@ -143,15 +143,15 @@ pub fn comparison_binop_operation(
             left,
             right,
         },
-        ComparisonBinOp::GreaterThan => Operation::LessEq {
-            skip_if: !skip_if,
-            left,
-            right,
+        ComparisonBinOp::GreaterThan => Operation::Less {
+            skip_if,
+            left: right,
+            right: left,
         },
-        ComparisonBinOp::GreaterEqual => Operation::Less {
-            skip_if: !skip_if,
-            left,
-            right,
+        ComparisonBinOp::GreaterEqual => Operation::LessEq {
+            skip_if,
+            left: right,
+            right: left,
         },
     }
 }
