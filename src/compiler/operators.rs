@@ -163,15 +163,11 @@ pub fn comparison_binop_const_fold<S: AsRef<[u8]>>(
 ) -> Option<Constant<S>> {
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.is_equal(right))),
-        ComparisonBinOp::LessThan => match left.less_than(right) {
-            Some(a) => Some(Constant::Boolean(a)),
-            _ => None,
-        },
-        ComparisonBinOp::LessEqual => match left.less_equal(right) {
-            Some(a) => Some(Constant::Boolean(a)),
-            _ => None,
-        },
-        _ => None,
+        ComparisonBinOp::NotEqual => Some(Constant::Boolean(!left.is_equal(right))),
+        ComparisonBinOp::LessThan => Some(Constant::Boolean(left.less_than(right)?)),
+        ComparisonBinOp::LessEqual => Some(Constant::Boolean(left.less_equal(right)?)),
+        ComparisonBinOp::GreaterThan => Some(Constant::Boolean(right.less_than(left)?)),
+        ComparisonBinOp::GreaterEqual => Some(Constant::Boolean(right.less_equal(left)?)),
     }
 }
 

@@ -303,12 +303,30 @@ do
 end
 
 do
+    -- We need to test both const-folded and non-const folded variants
+
+    assert(is_nan(0/0))
+    assert(not (0/0 == 0))
+    assert(not (0/0 > 0))
+    assert(not (0/0 >= 0))
+    assert(not (0/0 < 0))
+    assert(not (0/0 <= 0))
+    assert(not (0 == 0/0))
+    assert(not (0 < 0/0))
+    assert(not (0 <= 0/0))
+    assert(not (0 > 0/0))
+    assert(not (0 >= 0/0))
+
     nan = 0/0
     assert(is_nan(nan))
-    assert(not (nan > 0))
-    assert(not (nan < 0))
     assert(not (nan == 0))
-    assert(not (0 < nan))
-    assert(not (0 > nan))
+    assert(not (nan > 0))
+    assert(not (nan >= 0))
+    assert(not (nan < 0))
+    assert(not (nan <= 0))
     assert(not (0 == nan))
+    assert(not (0 < nan))
+    assert(not (0 <= nan))
+    assert(not (0 > nan))
+    assert(not (0 >= nan))
 end
