@@ -330,3 +330,8 @@ do
     assert(not (0 > nan))
     assert(not (0 >= nan))
 end
+
+do
+    assert("  4 " + "3" == 7)
+    assert("4.0 " + "  3.0   " == 7.0)
+end

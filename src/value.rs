@@ -74,6 +74,13 @@ impl<'gc> Value<'gc> {
         Value::Boolean(!self.to_bool())
     }
 
+    /// Converts value to either a Number or an Integer, if possible.
+    pub fn to_numeric(self) -> Option<Self> {
+        self.to_constant()
+            .and_then(|c| c.to_numeric())
+            .map(|c| c.into())
+    }
+
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
     pub fn to_number(self) -> Option<f64> {
         self.to_constant().and_then(|c| c.to_number())

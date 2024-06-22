@@ -887,12 +887,22 @@ where
     }
 }
 
+pub fn trim_whitespace(mut s: &[u8]) -> &[u8] {
+    s = &s[s.iter().position(|&c| !is_space(c)).unwrap_or(s.len())..];
+    s = &s[0..s.len() - s.iter().rev().position(|&c| !is_space(c)).unwrap_or(0)];
+    s
+}
+
 pub fn read_integer(s: &[u8]) -> Option<i64> {
     read_hex_integer(s).or_else(|| read_dec_integer(s))
 }
 
 pub fn read_dec_integer(s: &[u8]) -> Option<i64> {
     let (is_neg, s) = read_neg(s);
+
+    if s.is_empty() {
+        return None;
+    }
 
     let mut i: i64 = 0;
     for &c in s {
@@ -910,7 +920,7 @@ pub fn read_dec_integer(s: &[u8]) -> Option<i64> {
 pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
     let (is_neg, s) = read_neg(s);
 
-    if s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
+    if s.len() < 3 || s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
         return None;
     }
 
@@ -941,11 +951,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
 
     let (is_neg, s) = read_neg(s);
 
-    if s.len() < 2 {
-        return None;
-    }
-
-    if s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
+    if s.len() < 3 || s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
         return None;
     }
 
@@ -1338,5 +1344,15 @@ mod tests {
                 Token::RightBrace,
             ],
         );
+    }
+
+    #[test]
+    fn trim_whitespace_works() {
+        assert_eq!(trim_whitespace(b"foo  "), b"foo");
+        assert_eq!(trim_whitespace(b"  foo"), b"foo");
+        assert_eq!(trim_whitespace(b"  foo  "), b"foo");
+        assert_eq!(trim_whitespace(b"   "), b"");
+        assert_eq!(trim_whitespace(b""), b"");
+        assert_eq!(trim_whitespace(b" . "), b".");
     }
 }
