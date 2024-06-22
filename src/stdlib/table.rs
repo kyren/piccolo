@@ -3,6 +3,7 @@ use std::pin::Pin;
 use gc_arena::Collect;
 
 use crate::meta_ops::{self, MetaResult};
+use crate::table::RawArrayOpResult;
 use crate::{
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, Sequence,
     SequencePoll, Stack, Table, Value,
@@ -53,6 +54,113 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             };
 
             Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+        }),
+    );
+
+    table.set_field(
+        ctx,
+        "remove",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (table, index): (Table, Option<i64>) = stack.consume(ctx)?;
+            let length;
+
+            // Try the fast path
+            match table
+                .into_inner()
+                .borrow_mut(&ctx)
+                .raw_table
+                .array_remove_shift(index)
+            {
+                (RawArrayOpResult::Success(val), _) => {
+                    stack.push_back(val);
+                    return Ok(CallbackReturn::Return);
+                }
+                (RawArrayOpResult::Possible, len) => length = len,
+                (RawArrayOpResult::Failed, _) => {
+                    return Err("Invalid index passed to table.remove"
+                        .into_value(ctx)
+                        .into());
+                }
+            }
+
+            // Fast path failed, fall back to direct indexing
+            // TODO: variant that respects metamethods?
+            let length = length as i64;
+            let index = index.unwrap_or(length);
+
+            if index == 0 && length == 0 || index == length + 1 {
+                stack.push_back(Value::Nil);
+                Ok(CallbackReturn::Return)
+            } else if index >= 1 && index <= length {
+                let mut prev = Value::Nil;
+                for i in (index..=length).rev() {
+                    prev = table.set(ctx, i, prev)?;
+                }
+                // Last value is the value at index
+                stack.push_back(prev);
+                Ok(CallbackReturn::Return)
+            } else {
+                Err("Invalid index passed to table.remove"
+                    .into_value(ctx)
+                    .into())
+            }
+        }),
+    );
+
+    table.set_field(
+        ctx,
+        "insert",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let table: Table;
+            let index: Option<i64>;
+            let value: Value;
+            match stack.len() {
+                0..=1 => return Err("Missing arguments to insert".into_value(ctx).into()),
+                2 => {
+                    (table, value) = stack.consume(ctx)?;
+                    index = None;
+                }
+                _ => (table, index, value) = stack.consume(ctx)?,
+            }
+
+            let length;
+
+            // Try the fast path
+            match table
+                .into_inner()
+                .borrow_mut(&ctx)
+                .raw_table
+                .array_insert_shift(index, value)
+            {
+                (RawArrayOpResult::Success(_), _) => {
+                    return Ok(CallbackReturn::Return);
+                }
+                (RawArrayOpResult::Possible, len) => length = len,
+                (RawArrayOpResult::Failed, _) => {
+                    return Err("Invalid index passed to table.insert"
+                        .into_value(ctx)
+                        .into());
+                }
+            }
+
+            // Fast path failed, fall back to direct indexing
+            // TODO: variant that respects metamethods?
+            let length = length as i64;
+            let index = index.unwrap_or(length + 1);
+
+            if index >= 1 && index <= length + 1 {
+                let mut prev = value;
+                for i in index..=length + 1 {
+                    prev = table.set(ctx, i, prev)?;
+                }
+                // Last value is the value at index
+                stack.push_back(prev);
+                Ok(CallbackReturn::Return)
+            } else {
+                Err("Invalid index passed to table.insert"
+                    .into_value(ctx)
+                    .into())
+            }
         }),
     );
 

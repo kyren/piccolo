@@ -1,4 +1,4 @@
-use std::{fmt, hash::Hash, i64, mem};
+use std::{cmp::Ordering, fmt, hash::Hash, i64, mem};
 
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
@@ -386,6 +386,110 @@ impl<'gc> RawTable<'gc> {
         NextValue::NotFound
     }
 
+    // Returns the removed key, if any, and the result of length()
+    //
+    // `key` is 1-indexed.
+    pub fn array_remove_shift(
+        &mut self,
+        key: Option<i64>,
+    ) -> (RawArrayOpResult<Value<'gc>>, usize) {
+        let length = self.length() as usize;
+        (self.array_remove_shift_inner(length, key), length)
+    }
+
+    fn array_remove_shift_inner(
+        &mut self,
+        length: usize,
+        key: Option<i64>,
+    ) -> RawArrayOpResult<Value<'gc>> {
+        let index;
+        if let Some(k) = key {
+            if k == 0 && length == 0 || k == length as i64 + 1 {
+                return RawArrayOpResult::Success(Value::Nil);
+            } else if k >= 1 && k <= length as i64 {
+                index = (k - 1) as usize;
+            } else {
+                return RawArrayOpResult::Failed;
+            }
+        } else {
+            if length == 0 {
+                return RawArrayOpResult::Success(Value::Nil);
+            } else {
+                index = length - 1;
+            }
+        }
+        if length > self.array.len() {
+            return RawArrayOpResult::Possible;
+        }
+
+        let value = mem::replace(&mut self.array[index], Value::Nil);
+        if length - index > 1 {
+            self.array[index..length].rotate_left(1);
+        }
+        RawArrayOpResult::Success(value)
+    }
+
+    // Returns whether the insert succeeded, and the result of length()
+    //
+    // `key` is 1-indexed.
+    pub fn array_insert_shift(
+        &mut self,
+        key: Option<i64>,
+        value: Value<'gc>,
+    ) -> (RawArrayOpResult<()>, usize) {
+        let length = self.length() as usize;
+        (self.array_insert_shift_inner(length, key, value), length)
+    }
+
+    fn array_insert_shift_inner(
+        &mut self,
+        length: usize,
+        key: Option<i64>,
+        value: Value<'gc>,
+    ) -> RawArrayOpResult<()> {
+        let index;
+        if let Some(k) = key {
+            if k >= 1 && k <= length as i64 + 1 {
+                index = (k - 1) as usize;
+            } else {
+                return RawArrayOpResult::Failed;
+            }
+        } else {
+            index = length;
+        }
+        if length > self.array.len() {
+            return RawArrayOpResult::Possible;
+        }
+
+        match index.cmp(&length) {
+            Ordering::Greater => unreachable!(),
+            Ordering::Equal => {
+                // Length guarantees that (0-inx) arr[length] == nil,
+                // so it shouldn't be in the map. (TODO: check; dead keys?)
+                if index == self.array.len() {
+                    // TODO: move array growing logic out of set
+                    self.array.push(value);
+                } else {
+                    self.array[length] = value;
+                }
+                RawArrayOpResult::Success(())
+            }
+            Ordering::Less => {
+                // Length guarantees that (0-inx) arr[length] == nil,
+                // so it shouldn't be in the map. (TODO: check; dead keys?)
+                if length == self.array.len() {
+                    // TODO: move array growing logic out of set
+                    self.array.push(value); // Make rotate do the work for us
+                    self.array[index..=length].rotate_right(1);
+                } else {
+                    self.array[index] = value;
+                    self.array[index..=length].rotate_right(1);
+                }
+                RawArrayOpResult::Success(())
+            }
+        }
+    }
+
     pub fn reserve_array(&mut self, additional: usize) {
         self.array.reserve(additional);
     }
@@ -402,6 +506,13 @@ impl<'gc> RawTable<'gc> {
             });
         }
     }
+}
+
+#[derive(PartialEq, Debug)]
+pub enum RawArrayOpResult<T> {
+    Success(T),
+    Possible,
+    Failed,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -569,4 +680,59 @@ fn to_array_index<'gc>(key: Value<'gc>) -> Option<usize> {
 // returns 2, i = 3 returns 2, and so on.
 fn highest_bit(i: usize) -> usize {
     i.checked_ilog2().map(|i| i + 1).unwrap_or(0) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use gc_arena::rootless_arena;
+
+    use super::*;
+
+    fn dbg_table(table: &RawTable<'_>) -> std::string::String {
+        format!("{:?} {:?}", table.array, table.map)
+    }
+
+    // This test will break if the table logic changes, but
+    // it would implicitly break in that case anyways.
+    #[test]
+    fn test_raw_table_insert() {
+        rootless_arena(|mc| {
+            let mut table = RawTable::new(mc);
+
+            assert_eq!("[] {}", dbg_table(&table));
+
+            table.set(Value::Integer(1), Value::Integer(1)).unwrap();
+
+            table.set(Value::Integer(5), Value::Integer(5)).unwrap();
+
+            table.set(Value::Integer(2), Value::Integer(2)).unwrap();
+            table.set(Value::Integer(3), Value::Integer(3)).unwrap();
+
+            assert_eq!(
+                "[Integer(1), Integer(2), Integer(3), Nil] {Live(Integer(5)): Integer(5)}",
+                dbg_table(&table)
+            );
+
+            assert_eq!(table.length(), 3);
+            assert_eq!(
+                (RawArrayOpResult::Success(()), 3),
+                table.array_insert_shift(Some(4), Value::Integer(4))
+            );
+
+            assert_eq!(
+                "[Integer(1), Integer(2), Integer(3), Integer(4)] {Live(Integer(5)): Integer(5)}",
+                dbg_table(&table)
+            );
+
+            assert_eq!(
+                (RawArrayOpResult::Possible, 5),
+                table.array_insert_shift(Some(5), Value::Integer(5))
+            );
+
+            assert_eq!(
+                "[Integer(1), Integer(2), Integer(3), Integer(4)] {Live(Integer(5)): Integer(5)}",
+                dbg_table(&table)
+            );
+        });
+    }
 }
