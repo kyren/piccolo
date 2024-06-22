@@ -11,15 +11,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "tonumber",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            use crate::compiler::lexer::trim_whitespace;
             fn extract_number_data(bytes: &[u8]) -> (&[u8], i64) {
-                let first_nonspace = bytes.iter().position(|b| !b.is_ascii_whitespace());
-                let last_nonspace = bytes.iter().rposition(|b| !b.is_ascii_whitespace());
-                let bytes = match (first_nonspace, last_nonspace) {
-                    (Some(f), Some(l)) => &bytes[f..=l],
-                    (Some(f), None) => &bytes[f..],
-                    (None, Some(l)) => &bytes[..=l],
-                    (None, None) => bytes,
-                };
+                let bytes = trim_whitespace(bytes);
 
                 let is_neg = bytes.first().is_some_and(|b| *b == b'-');
                 let bytes = if is_neg || bytes.first().is_some_and(|b| *b == b'+') {
@@ -39,38 +33,28 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             } else {
                 let (s, base) = stack.consume::<(String, i64)>(ctx)?;
                 let (bytes, sign) = extract_number_data(s.as_bytes());
-                stack.replace(ctx, {
-                    if !(2..=36).contains(&base) {
-                        Err("base out of range".into_value(ctx))?;
-                    }
-                    // Since a base [2 - 36 are the only valid values] was specified, this *must*
-                    // represent an integer of the base
-                    const BASE_ELEMENTS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-                    let byte_values = bytes
-                        .iter()
-                        .map(|b| {
-                            BASE_ELEMENTS
-                                .iter()
-                                .position(|i| b.to_ascii_lowercase() == *i)
-                        })
-                        .collect::<Vec<_>>();
-                    if byte_values
-                        .iter()
-                        .any(|v| v.is_none() || v.is_some_and(|v| v >= base as usize))
-                    {
-                        Value::Nil
-                    } else {
-                        let mut value: i64 = 0;
-                        for (idx, elem) in byte_values.into_iter().rev().enumerate() {
-                            let Some(elem) = elem else {
-                                // The earlier byte value check means that this should not be hit
-                                unreachable!();
-                            };
-                            value += base.pow(idx.try_into()?) * elem as i64;
+                if !(2..=36).contains(&base) {
+                    Err("base out of range".into_value(ctx))?;
+                }
+                let result = bytes
+                    .iter()
+                    .map(|b| {
+                        if b.is_ascii_digit() {
+                            Some((*b - b'0') as i64)
+                        } else if b.is_ascii_lowercase() {
+                            Some((*b - b'a') as i64 + 10)
+                        } else if b.is_ascii_uppercase() {
+                            Some((*b - b'A') as i64 + 10)
+                        } else {
+                            None
                         }
-                        Value::Integer(value * sign)
-                    }
-                });
+                    })
+                    .try_fold(0i64, |acc, v| match v {
+                        Some(v) if v < base => Some(acc * base + v),
+                        _ => None,
+                    })
+                    .map(|v| v * sign);
+                stack.replace(ctx, result.map(Value::Integer).unwrap_or(Value::Nil));
             }
 
             Ok(CallbackReturn::Return)
