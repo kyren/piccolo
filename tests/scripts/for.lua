@@ -81,10 +81,51 @@ function test_break_scope()
     return true
 end
 
+function test_overflow()
+    local iters = 0
+    for i = math.maxinteger - 32, math.maxinteger, 1 do
+        iters = iters + 1
+        assert(i > 0)
+    end
+    assert(iters == 33)
+
+    iters = 0
+    for i = 0, 10, math.maxinteger do
+        iters = iters + 1
+        assert(i == 0)
+    end
+    assert(iters == 1)
+
+    return true
+end
+
+function test_mixed_floats()
+    -- if initial and step are ints, the loop will use ints,
+    -- even if limit is a float
+    local iters = 0
+    for i = math.maxinteger - 32, math.maxinteger - 0.5, 1 do
+        iters = iters + 1
+        assert(iters < 50)
+    end
+    assert(iters == 33)
+
+    -- loops exit on integer overflow, even if the limit isn't reached
+    iters = 0
+    for i = math.maxinteger - 4, math.huge, 1 do
+        iters = iters + 1
+        assert(iters < 50)
+    end
+    assert(iters == 5)
+
+    return true
+end
+
 assert(
     test_generic() and
     test_numeric() and
     test_numeric_closure() and
     test_generic_closure() and
-    test_break_scope()
+    test_break_scope() and
+    test_mixed_floats() and
+    test_overflow()
 )

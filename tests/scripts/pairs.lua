@@ -61,3 +61,10 @@ do
     assert(t2[i] == i, i)
   end
 end
+
+do
+  local t = { [math.mininteger] = 4 }
+  local inext = ipairs(t)
+  local a, b = inext(t, math.maxinteger)
+  assert(a == -9223372036854775808 and b == 4)
+end
