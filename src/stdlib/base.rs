@@ -212,13 +212,31 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Value::UserData(u) => u.metatable(),
                 _ => None,
             } {
+                /// Simply matches PUC-Rio behavior of returning the first 3 elements of the __pairs metacall
+                #[derive(Collect)]
+                #[collect(require_static)]
+                struct PairsReturn;
+
+                impl<'gc> Sequence<'gc> for PairsReturn {
+                    fn poll(
+                        &mut self,
+                        _ctx: Context<'gc>,
+                        _exec: Execution<'gc, '_>,
+                        mut stack: Stack<'gc, '_>,
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                        // QUESTION how do you just consume the data w/o doing anything?
+                        _ = stack.drain(3..).count();
+                        Ok(SequencePoll::Return)
+                    }
+                }
+
                 let pairs = mt.get(ctx, MetaMethod::Pairs);
                 if !pairs.is_nil() {
                     let function = meta_ops::call(ctx, pairs)?;
                     stack.replace(ctx, (table, Value::Nil));
                     return Ok(CallbackReturn::Call {
                         function,
-                        then: None,
+                        then: Some(BoxSequence::new(&ctx, PairsReturn)),
                     });
                 }
             }

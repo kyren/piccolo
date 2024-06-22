@@ -61,3 +61,17 @@ do
     assert(t2[i] == i, i)
   end
 end
+
+do
+  local t = {}
+  setmetatable(t, {
+    __pairs = function()
+        return 1, 2, 3, 4
+      end
+  })
+  a, b, c, d = pairs(t)
+  assert(a == 1)
+  assert(b == 2)
+  assert(c == 3)
+  assert(d == nil)
+end
