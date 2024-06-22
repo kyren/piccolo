@@ -256,17 +256,41 @@ pub(super) fn run_vm<'gc>(
                     registers.stack_frame[base.0 as usize + 2],
                 ) {
                     (Value::Integer(index), Value::Integer(limit), Value::Integer(step)) => {
-                        let index = index + step;
+                        let (index, overflow) = index.overflowing_add(step);
                         registers.stack_frame[base.0 as usize] = Value::Integer(index);
 
-                        let past_end = if step < 0 {
-                            index < limit
-                        } else {
-                            limit < index
-                        };
+                        let past_end = overflow
+                            || if step < 0 {
+                                index < limit
+                            } else {
+                                index > limit
+                            };
                         if !past_end {
                             *registers.pc = add_offset(*registers.pc, jump);
                             registers.stack_frame[base.0 as usize + 3] = Value::Integer(index);
+                        }
+                    }
+                    (Value::Integer(index), limit, Value::Integer(step)) => {
+                        if let Some(limit) = limit.to_number() {
+                            let (index, overflow) = index.overflowing_add(step);
+                            registers.stack_frame[base.0 as usize] = Value::Integer(index);
+
+                            let past_end = overflow
+                                || if step < 0 {
+                                    !(index as f64 >= limit)
+                                } else {
+                                    !(index as f64 <= limit)
+                                };
+                            if !past_end {
+                                *registers.pc = add_offset(*registers.pc, jump);
+                                registers.stack_frame[base.0 as usize + 3] = Value::Integer(index);
+                            }
+                        } else {
+                            return Err(VMError::BadForLoop(
+                                "integer",
+                                limit.type_name(),
+                                "integer",
+                            ));
                         }
                     }
                     (index, limit, step) => {
@@ -277,9 +301,9 @@ pub(super) fn run_vm<'gc>(
                             registers.stack_frame[base.0 as usize] = Value::Number(index);
 
                             let past_end = if step < 0.0 {
-                                index < limit
+                                !(index >= limit)
                             } else {
-                                limit < index
+                                !(index <= limit)
                             };
                             if !past_end {
                                 *registers.pc = add_offset(*registers.pc, jump);

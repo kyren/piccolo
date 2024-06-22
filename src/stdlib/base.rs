@@ -289,7 +289,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
     let inext = Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
-        let next_index = index.unwrap_or(0) + 1;
+        let next_index = index.unwrap_or(0).wrapping_add(1);
         Ok(match meta_ops::index(ctx, table, next_index.into())? {
             MetaResult::Value(v) => {
                 if !v.is_nil() {
