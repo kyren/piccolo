@@ -17,12 +17,16 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 let bytes = match (first_nonspace, last_nonspace) {
                     (Some(f), Some(l)) => &bytes[f..=l],
                     (Some(f), None) => &bytes[f..],
-                    (None, Some(l)) => &bytes[..l],
+                    (None, Some(l)) => &bytes[..=l],
                     (None, None) => bytes,
                 };
 
                 let is_neg = bytes.first().is_some_and(|b| *b == b'-');
-                let bytes = if is_neg { &bytes[1..] } else { bytes };
+                let bytes = if is_neg || bytes.first().is_some_and(|b| *b == b'+') {
+                    &bytes[1..]
+                } else {
+                    bytes
+                };
                 let sign = if is_neg { -1 } else { 1 };
                 (bytes, sign)
             }
@@ -31,116 +35,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Err("Missing argument(s) to tonumber".into_value(ctx))?
             } else if stack.len() == 1 {
                 let prenumber = stack.consume::<Value>(ctx)?;
-                stack.replace(
-                    ctx,
-                    match prenumber {
-                        v @ (Value::Integer(_) | Value::Number(_)) => v,
-                        Value::String(s) => {
-                            let (bytes, sign) = extract_number_data(s.as_bytes());
-
-                            if bytes.is_empty() {
-                                Value::Nil
-                            } else {
-                                // Just try to decimal-numberify it
-                                let dot_positions = bytes
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .filter_map(|(idx, b)| if b == b'.' { Some(idx) } else { None })
-                                    .collect::<Vec<_>>();
-                                let e_positions = bytes
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .filter_map(|(idx, b)| if b == b'e' { Some(idx) } else { None })
-                                    .collect::<Vec<_>>();
-
-                                if dot_positions.len() > 1 || e_positions.len() > 1 {
-                                    Value::Nil
-                                } else {
-                                    let dot_position = dot_positions.first();
-                                    let e_position = e_positions.first();
-                                    if bytes
-                                        .iter()
-                                        .enumerate()
-                                        .filter(|(idx, _)| {
-                                            !dot_position.is_some_and(|dp| dp == idx)
-                                                && !e_position.is_some_and(|ep| ep == idx)
-                                        })
-                                        .any(|(_, b)| !b.is_ascii_digit())
-                                    {
-                                        Value::Nil
-                                    } else {
-                                        fn parse_whole_value(data: &[u8]) -> u64 {
-                                            let mut whole_value = 0;
-                                            for b in data {
-                                                whole_value =
-                                                    (whole_value * 10) + (b - b'0') as u64;
-                                            }
-                                            whole_value
-                                        }
-                                        fn parse_fract_value(data: &[u8]) -> f64 {
-                                            let mut fract_value = 0.0f64;
-                                            for b in data.iter().rev() {
-                                                fract_value =
-                                                    ((b - b'0') as f64 + fract_value) / 10.;
-                                            }
-                                            fract_value
-                                        }
-                                        match (dot_position, e_position) {
-                                            (Some(dp), Some(ep)) => {
-                                                if ep < dp {
-                                                    Value::Nil
-                                                } else {
-                                                    let whole_value =
-                                                        parse_whole_value(&bytes[..*dp]);
-                                                    let fract_value = parse_fract_value(
-                                                        &bytes[(*dp + 1).min(bytes.len())..*ep],
-                                                    );
-                                                    let exponent = parse_whole_value(
-                                                        &bytes[(*ep + 1).min(bytes.len())..],
-                                                    );
-                                                    Value::Number(
-                                                        sign as f64
-                                                            * (whole_value as f64 + fract_value)
-                                                            * 10f64.powf(exponent as f64),
-                                                    )
-                                                }
-                                            }
-                                            (Some(dp), None) => {
-                                                let whole_value = parse_whole_value(&bytes[..*dp]);
-                                                let fract_value = parse_fract_value(
-                                                    &bytes[(*dp + 1).min(bytes.len())..],
-                                                );
-                                                Value::Number(
-                                                    sign as f64
-                                                        * (whole_value as f64 + fract_value),
-                                                )
-                                            }
-                                            (None, Some(ep)) => {
-                                                let whole_value = parse_whole_value(&bytes[..*ep]);
-                                                let exponent = parse_whole_value(
-                                                    &bytes[(*ep + 1).min(bytes.len())..],
-                                                );
-                                                Value::Number(
-                                                    sign as f64
-                                                        * whole_value as f64
-                                                        * 10f64.powf(exponent as f64),
-                                                )
-                                            }
-                                            (None, None) => {
-                                                let whole_value: i64 =
-                                                    parse_whole_value(bytes).try_into()?;
-                                                Value::Integer(sign * whole_value)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => Value::Nil,
-                    },
-                );
+                stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
             } else {
                 let (s, base) = stack.consume::<(String, i64)>(ctx)?;
                 let (bytes, sign) = extract_number_data(s.as_bytes());
