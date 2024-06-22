@@ -334,4 +334,8 @@ end
 do
     assert("  4 " + "3" == 7)
     assert("4.0 " + "  3.0   " == 7.0)
+
+    assert(is_err(function() return "0x" + 2 end))
+    assert(is_err(function() return "" + 2 end))
+    assert(" 0x0 " + 2 == 2)
 end
