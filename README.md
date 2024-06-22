@@ -21,6 +21,9 @@ Project Goals, in roughly descending priority:
   * Don't be obnoxiously slow (for example, avoid abstractions that would make
     the interpreter fundamentally slower than PUC-Rio Lua).
 
+You read more about the design of `piccolo` (and try it out a live REPL!) in
+[this blog post](https://kyju.org/blog/piccolo-a-stackless-lua-interpreter/).
+
 ## API Instability
 
 Expect *frequent* pre-1.0 API breakage, this crate is still very experimental.
@@ -52,8 +55,8 @@ might be practically impossible anwyay.)*
 ## A unique system for Rust <-> GC interaction
 
 *The garbage collector system for `piccolo` is now in its [own repo](
-https://github.com/kyren/gc-arena), and also on crates.io. See the
-README in the linked repo for more detail about the GC design.*
+https://github.com/kyren/gc-arena), and also on crates.io. See the README in the
+linked repo for more detail about the GC design.*
 
 `piccolo` has a real, cycle detecting, incremental garbage collector with
 zero-cost `Gc` pointers (they are machine pointer sized and implement `Copy`)
