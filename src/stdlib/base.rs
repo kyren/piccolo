@@ -224,9 +224,8 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
                     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                        // QUESTION how do you just consume the data w/o doing anything?
                         if stack.len() > 3 {
-                            _ = stack.drain(3..).count();
+                            stack.drain(3..);
                         }
                         Ok(SequencePoll::Return)
                     }
