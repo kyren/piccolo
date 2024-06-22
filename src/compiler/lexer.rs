@@ -889,8 +889,11 @@ where
 
 pub fn trim_whitespace(mut s: &[u8]) -> &[u8] {
     s = &s[s.iter().position(|&c| !is_space(c)).unwrap_or(s.len())..];
-    s = &s[0..s.len() - s.iter().rev().position(|&c| !is_space(c)).unwrap_or(0)];
-    s
+    &s[0..s
+        .iter()
+        .rposition(|&c| !is_space(c))
+        .map(|i| i + 1)
+        .unwrap_or(0)]
 }
 
 pub fn read_integer(s: &[u8]) -> Option<i64> {
