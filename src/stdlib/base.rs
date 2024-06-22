@@ -26,10 +26,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
             } else {
                 let (s, base) = stack.consume::<(String, i64)>(ctx)?;
-                let (bytes, sign) = extract_number_data(s.as_bytes());
                 if !(2..=36).contains(&base) {
                     Err("base out of range".into_value(ctx))?;
                 }
+                let (bytes, sign) = extract_number_data(s.as_bytes());
                 let result = bytes
                     .iter()
                     .map(|b| {
