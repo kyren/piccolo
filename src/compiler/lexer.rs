@@ -1018,7 +1018,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
     Some(base * (exp as f64).exp2())
 }
 
-fn read_neg(s: &[u8]) -> (bool, &[u8]) {
+pub fn read_neg(s: &[u8]) -> (bool, &[u8]) {
     if s.len() > 0 {
         if s[0] == b'-' {
             (true, &s[1..])

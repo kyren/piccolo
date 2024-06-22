@@ -9,6 +9,54 @@ use crate::{
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
+        "tonumber",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            use crate::compiler::lexer::{read_neg, trim_whitespace};
+            fn extract_number_data(bytes: &[u8]) -> (&[u8], i64) {
+                let bytes = trim_whitespace(bytes);
+                let (is_neg, bytes) = read_neg(bytes);
+                let sign = if is_neg { -1 } else { 1 };
+                (bytes, sign)
+            }
+
+            if stack.is_empty() {
+                Err("Missing argument(s) to tonumber".into_value(ctx))?
+            } else if stack.len() == 1 {
+                let prenumber = stack.consume::<Value>(ctx)?;
+                stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
+            } else {
+                let (s, base) = stack.consume::<(String, i64)>(ctx)?;
+                if !(2..=36).contains(&base) {
+                    Err("base out of range".into_value(ctx))?;
+                }
+                let (bytes, sign) = extract_number_data(s.as_bytes());
+                let result = bytes
+                    .iter()
+                    .map(|b| {
+                        if b.is_ascii_digit() {
+                            Some((*b - b'0') as i64)
+                        } else if b.is_ascii_lowercase() {
+                            Some((*b - b'a') as i64 + 10)
+                        } else if b.is_ascii_uppercase() {
+                            Some((*b - b'A') as i64 + 10)
+                        } else {
+                            None
+                        }
+                    })
+                    .try_fold(0i64, |acc, v| match v {
+                        Some(v) if v < base => Some(acc * base + v),
+                        _ => None,
+                    })
+                    .map(|v| v * sign);
+                stack.replace(ctx, result.map(Value::Integer).unwrap_or(Value::Nil));
+            }
+
+            Ok(CallbackReturn::Return)
+        }),
+    )
+    .unwrap();
+
+    ctx.set_global(
         "tostring",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if stack.is_empty() {
