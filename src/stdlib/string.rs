@@ -1,4 +1,4 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, TypeError, Value};
+use crate::{Callback, CallbackReturn, Context, String, Table};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -8,18 +8,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "len",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let v: Option<Value> = stack.consume(ctx)?;
-                if let Some(len) = v.and_then(|v| match v {
-                    Value::Integer(i) => Some(i.to_string().as_bytes().len().try_into().unwrap()),
-                    Value::Number(n) => Some(n.to_string().as_bytes().len().try_into().unwrap()),
-                    Value::String(s) => Some(s.len()),
-                    _ => None,
-                }) {
-                    stack.replace(ctx, len);
-                    Ok(CallbackReturn::Return)
-                } else {
-                    Err("Bad argument to len".into_value(ctx).into())
-                }
+                let string = stack.consume::<String>(ctx)?;
+                let len = string.len();
+                stack.replace(ctx, len);
+                Ok(CallbackReturn::Return)
             }),
         )
         .unwrap();
@@ -58,26 +50,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                     })
                 }
 
-                let (string, i, j) = stack.consume::<(Value, i64, Option<i64>)>(ctx)?;
-                let string = match string {
-                    Value::Integer(int) => {
-                        ctx.intern(operate_sub(int.to_string().as_bytes(), i, j)?)
-                    }
-                    Value::Number(num) => {
-                        ctx.intern(operate_sub(num.to_string().as_bytes(), i, j)?)
-                    }
-                    Value::String(string) => ctx.intern(operate_sub(string.as_bytes(), i, j)?),
-                    v => {
-                        return Err(format!(
-                            "Bad argument to sub: expected string, got {}",
-                            v.type_name()
-                        )
-                        .into_value(ctx)
-                        .into())
-                    }
-                };
-
-                stack.replace(ctx, string);
+                let (string, i, j) = stack.consume::<(String, i64, Option<i64>)>(ctx)?;
+                let substr = ctx.intern(operate_sub(string.as_bytes(), i, j)?);
+                stack.replace(ctx, substr);
                 Ok(CallbackReturn::Return)
             }),
         )
@@ -88,20 +63,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "lower",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s = match stack.consume::<Value>(ctx)? {
-                    Value::String(s) => s,
-                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
-                    v => {
-                        return Err(TypeError {
-                            expected: "string, integer or number",
-                            found: v.type_name(),
-                        }
-                        .into())
-                    }
-                };
+                let string = stack.consume::<String>(ctx)?;
                 let lowered = ctx.intern(
-                    &s.as_bytes()
+                    &string
+                        .as_bytes()
                         .iter()
                         .map(u8::to_ascii_lowercase)
                         .collect::<Vec<_>>(),
@@ -117,22 +82,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "reverse",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s = match stack.consume::<Value>(ctx)? {
-                    Value::String(s) => s,
-                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
-                    v => {
-                        return Err(TypeError {
-                            expected: "string, integer or number",
-                            found: v.type_name(),
-                        }
-                        .into())
-                    }
-                };
-                stack.replace(
-                    ctx,
-                    ctx.intern(&s.as_bytes().iter().copied().rev().collect::<Vec<_>>()),
-                );
+                let string = stack.consume::<String>(ctx)?;
+                let reversed =
+                    ctx.intern(&string.as_bytes().iter().copied().rev().collect::<Vec<_>>());
+                stack.replace(ctx, reversed);
                 Ok(CallbackReturn::Return)
             }),
         )
@@ -143,20 +96,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             ctx,
             "upper",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let s = match stack.consume::<Value>(ctx)? {
-                    Value::String(s) => s,
-                    Value::Integer(i) => String::from_slice(&ctx, i.to_string()),
-                    Value::Number(f) => String::from_slice(&ctx, f.to_string()),
-                    v => {
-                        return Err(TypeError {
-                            expected: "string, integer or number",
-                            found: v.type_name(),
-                        }
-                        .into())
-                    }
-                };
+                let string = stack.consume::<String>(ctx)?;
                 let uppered = ctx.intern(
-                    &s.as_bytes()
+                    &string
+                        .as_bytes()
                         .iter()
                         .map(u8::to_ascii_uppercase)
                         .collect::<Vec<_>>(),

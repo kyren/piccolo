@@ -35,7 +35,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                                 } else {
                                     stdout.write_all(b"\t")?;
                                 }
-                                v.display(&mut stdout)?
+                                v.write(&mut stdout)?
                             }
                             MetaResult::Call(call) => {
                                 let bottom = stack.len();

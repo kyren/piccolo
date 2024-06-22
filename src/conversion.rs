@@ -286,7 +286,6 @@ macro_rules! impl_from {
 }
 impl_from! {
     [Boolean bool],
-    [String String<'gc>],
     [Table Table<'gc>],
     [Function Function<'gc>],
     [Thread Thread<'gc>],
@@ -325,22 +324,22 @@ impl<'gc> FromValue<'gc> for Callback<'gc> {
     }
 }
 
+impl<'gc> FromValue<'gc> for String<'gc> {
+    fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        value.into_string(ctx).ok_or_else(|| TypeError {
+            expected: "string",
+            found: value.type_name(),
+        })
+    }
+}
+
 impl<'gc> FromValue<'gc> for StdString {
-    fn from_value(_: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
-        let Value::String(str) = value else {
-            return Err(TypeError {
-                expected: "String",
-                found: value.type_name(),
-            });
-        };
-
-        let Ok(str) = str.to_str() else {
-            return Err(TypeError {
-                expected: "UTF-8 String",
-                found: "non-UTF-8 String",
-            });
-        };
-
+    fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        let str = String::from_value(ctx, value)?;
+        let str = str.to_str().map_err(|_| TypeError {
+            expected: "UTF-8 String",
+            found: "non-UTF-8 String",
+        })?;
         Ok(str.to_owned())
     }
 }
