@@ -26,7 +26,9 @@ do
     assert(tonumber("-") == nil)
     assert(tonumber("1 1") == nil)
     assert(tonumber({}) == nil)
+    assert(tonumber(nil) == nil)
     assert(tonumber("-3.51234567e7") == -35123456.7)
     assert(is_err(function() tonumber(3, 4) end))
     assert(is_err(function() tonumber(3., 4) end))
+    assert(is_err(function() tonumber(nil, 4) end))
 end
