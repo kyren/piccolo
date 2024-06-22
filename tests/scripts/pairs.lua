@@ -69,9 +69,18 @@ do
         return 1, 2, 3, 4
       end
   })
-  a, b, c, d = pairs(t)
+  local a, b, c, d = pairs(t)
   assert(a == 1)
   assert(b == 2)
   assert(c == 3)
   assert(d == nil)
+  setmetatable(t, {
+    __pairs = function()
+        return 1, 2
+      end
+  })
+  local a, b, c = pairs(t)
+  assert(a == 1)
+  assert(b == 2)
+  assert(c == nil)
 end
