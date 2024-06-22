@@ -349,7 +349,10 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    /// Pushes a function call frame, arguments start at the given stack bottom.
+    /// Pushes a new function call frame.
+    ///
+    /// Arguments are taken from the top of the stack starting at `bottom`, which will become the
+    /// bottom of the newly pushed frame.
     pub(super) fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
         match function {
             Function::Closure(closure) => {
@@ -384,8 +387,13 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    /// Return to the current top frame from a popped frame. The current top frame must be a
-    /// sequence, lua frame, or there must be no frames at all.
+    /// Return to the current top frame from a popped frame.
+    ///
+    /// The current top frame (the frame we are returning to) must be a Lua frame, Sequence, or
+    /// there must be no frames at all (in which case this will push a new `Result` frame.)
+    ///
+    /// `bottom` must be the bottom of the popped, returning frame, and the return values are taken
+    /// from the top of the stack starting at `bottom`.
     pub(super) fn return_to(&mut self, bottom: usize) {
         match self.frames.last_mut() {
             Some(Frame::Sequence { .. }) => {}
