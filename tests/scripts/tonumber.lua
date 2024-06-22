@@ -22,6 +22,7 @@ do
     assert(tonumber("+") == nil)
     assert(tonumber("+42.3") == 42.3)
     assert(tonumber("+42", 10) == 42)
+    assert(tonumber("2", 2) == nil)
     assert(tonumber("-") == nil)
     assert(tonumber("1 1") == nil)
     assert(tonumber({}) == nil)
