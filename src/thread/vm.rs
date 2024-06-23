@@ -1,54 +1,17 @@
 use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
-use thiserror::Error;
 
 use crate::{
-    meta_ops::{self, MetaResult},
+    meta_ops::{self, MetaOperatorError, MetaResult},
     opcode::{Operation, RCIndex},
     raw_ops,
     table::RawTable,
     thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
-    Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
+    Closure, Constant, Context, Function, MetaMethod, String, Table, Value,
 };
 
 use super::{thread::LuaFrame, VMError};
-
-#[derive(Debug, Copy, Clone, Error)]
-pub enum BinaryOperatorError {
-    #[error("cannot add values")]
-    Add,
-    #[error("cannot subtract values")]
-    Subtract,
-    #[error("cannot multiply values")]
-    Multiply,
-    #[error("cannot float divide values")]
-    FloatDivide,
-    #[error("cannot floor divide values")]
-    FloorDivide,
-    #[error("cannot modulo values")]
-    Modulo,
-    #[error("cannot exponentiate values")]
-    Exponentiate,
-    #[error("cannot negate value")]
-    UnaryNegate,
-    #[error("cannot bitwise AND values")]
-    BitAnd,
-    #[error("cannot bitwise OR values")]
-    BitOr,
-    #[error("cannot bitwise XOR values")]
-    BitXor,
-    #[error("cannot bitwise NOT value")]
-    BitNot,
-    #[error("cannot shift value left")]
-    ShiftLeft,
-    #[error("cannot shift value right")]
-    ShiftRight,
-    #[error("cannot compare values with <")]
-    LessThan,
-    #[error("cannot compare values with <=")]
-    LessEqual,
-}
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed.
@@ -58,7 +21,7 @@ pub(super) fn run_vm<'gc>(
     ctx: Context<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     max_instructions: u32,
-) -> Result<u32, RuntimeError> {
+) -> Result<u32, VMError> {
     if max_instructions == 0 {
         return Ok(0);
     }
@@ -277,7 +240,12 @@ pub(super) fn run_vm<'gc>(
                     registers.stack_frame[base.0 as usize],
                     registers.stack_frame[base.0 as usize + 2],
                 )
-                .ok_or(BinaryOperatorError::Subtract)?;
+                .ok_or_else(|| {
+                    VMError::BadForLoopPrep(
+                        registers.stack_frame[base.0 as usize].type_name(),
+                        registers.stack_frame[base.0 as usize + 2].type_name(),
+                    )
+                })?;
                 *registers.pc = add_offset(*registers.pc, jump);
             }
 
@@ -318,7 +286,11 @@ pub(super) fn run_vm<'gc>(
                                 registers.stack_frame[base.0 as usize + 3] = Value::Number(index);
                             }
                         } else {
-                            return Err(BinaryOperatorError::Add.into());
+                            return Err(VMError::BadForLoop(
+                                index.type_name(),
+                                limit.type_name(),
+                                step.type_name(),
+                            ));
                         }
                     }
                 }
@@ -430,8 +402,9 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_than(left, right).ok_or(BinaryOperatorError::LessThan)?)
-                    == skip_if
+                if (raw_ops::less_than(left, right).ok_or_else(|| {
+                    MetaOperatorError::Binary(MetaMethod::Lt, left.type_name(), right.type_name())
+                })?) == skip_if
                 {
                     *registers.pc += 1;
                 }
@@ -444,8 +417,9 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_equal(left, right).ok_or(BinaryOperatorError::LessEqual)?)
-                    == skip_if
+                if (raw_ops::less_equal(left, right).ok_or_else(|| {
+                    MetaOperatorError::Binary(MetaMethod::Le, left.type_name(), right.type_name())
+                })?) == skip_if
                 {
                     *registers.pc += 1;
                 }

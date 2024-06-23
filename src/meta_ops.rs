@@ -1,7 +1,9 @@
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{Callback, CallbackReturn, Context, Function, IntoValue, RuntimeError, Table, Value};
+use crate::{
+    Callback, CallbackReturn, Context, Function, IntoValue, InvalidTableKey, Table, Value,
+};
 
 // TODO: Remaining metamethods to implement:
 // - Lt
@@ -141,6 +143,8 @@ pub enum MetaOperatorError {
     Unary(MetaMethod, &'static str),
     #[error("could not {} values of type {} and {}", .0.verb(), .1, .2)]
     Binary(MetaMethod, &'static str, &'static str),
+    #[error(transparent)]
+    IndexKeyError(#[from] InvalidTableKey),
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -218,9 +222,12 @@ pub fn index<'gc>(
                 let table = stack.get(0);
                 let key = stack.get(1);
                 stack.clear();
-                // TODO: detect index chain length, error if too long
+
+                // Note: it could be useful to detect and error on long index
+                // chains here and error, though it isn't necessary for
+                // correctness.  (In addition, tracking the chain depth would
+                // be useful for errors.)
                 // Example: t = {}; setmetatable(t, { __index = t }); t.a
-                // TODO: note chain depth in other errors?
                 match index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         stack.push_back(v);
@@ -250,7 +257,7 @@ pub fn new_index<'gc>(
     table: Value<'gc>,
     key: Value<'gc>,
     value: Value<'gc>,
-) -> Result<Option<MetaCall<'gc, 3>>, RuntimeError> {
+) -> Result<Option<MetaCall<'gc, 3>>, MetaOperatorError> {
     let idx = match table {
         Value::Table(table) => {
             let v = table.get(ctx, key);
@@ -298,6 +305,7 @@ pub fn new_index<'gc>(
     Ok(Some(match idx {
         table @ (Value::Table(_) | Value::UserData(_)) => MetaCall {
             function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                // Note: potential for indexing loop here, see note in index.
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
@@ -331,9 +339,10 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Meta
 
     match metatable.get(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            // TODO: detect call chain length, error if too long
+            // Note: it could be useful to detect and error on long call
+            // chains here and error, though it isn't necessary for
+            // correctness.
             // Example: t = {}; setmetatable(t, { __call = t }); t()
-            // (though PUC-Rio Lua only detects long index chains, not long call chains)
             Callback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, mut stack| {
                 stack.push_front(v);
                 Ok(CallbackReturn::Call {
@@ -559,6 +568,7 @@ pub fn add<'gc>(
         Some(a.to_constant()?.add(&b.to_constant()?)?.into())
     })
 }
+
 pub fn subtract<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
@@ -568,6 +578,7 @@ pub fn subtract<'gc>(
         Some(a.to_constant()?.subtract(&b.to_constant()?)?.into())
     })
 }
+
 pub fn multiply<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
@@ -577,6 +588,7 @@ pub fn multiply<'gc>(
         Some(a.to_constant()?.multiply(&b.to_constant()?)?.into())
     })
 }
+
 pub fn float_divide<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
