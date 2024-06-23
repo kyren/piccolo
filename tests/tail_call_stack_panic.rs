@@ -22,6 +22,6 @@ fn tail_call_stack_panic() {
 
     assert!(matches!(
         lua.execute::<StdString>(&exec),
-        Err(StaticError::Runtime(err)) if matches!(err.downcast::<VMError>(), Some(VMError::BadType(_)))
+        Err(StaticError::Runtime(err)) if matches!(err.downcast::<VMError>(), Some(VMError::BadCall(_)))
     ));
 }
