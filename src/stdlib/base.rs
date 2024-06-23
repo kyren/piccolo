@@ -47,7 +47,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         Some(v) if v < base => Some(acc.wrapping_mul(base).wrapping_add(v)),
                         _ => None,
                     })
-                    .map(|v| v * sign);
+                    .map(|v| v.wrapping_mul(sign));
                 stack.replace(ctx, result.map(Value::Integer).unwrap_or(Value::Nil));
             }
 
