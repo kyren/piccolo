@@ -123,7 +123,7 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
         while *index < length {
             if index == current_batch_end {
                 let remaining_fuel = fuel.remaining().max(0) as usize;
-                let available_elems = remaining_fuel * PACK_ELEMS_PER_FUEL;
+                let available_elems = remaining_fuel.saturating_mul(PACK_ELEMS_PER_FUEL);
 
                 let remaining_elems = length - *index;
                 let batch_size = available_elems
@@ -267,7 +267,7 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
             let batch_remaining = *reserved - *index;
             if batch_remaining == 0 {
                 let remaining_fuel = fuel.remaining().max(0) as usize;
-                let available_elems = remaining_fuel * UNPACK_ELEMS_PER_FUEL;
+                let available_elems = remaining_fuel.saturating_mul(UNPACK_ELEMS_PER_FUEL);
 
                 let remaining_elems = length - *index;
                 let batch_size = available_elems
