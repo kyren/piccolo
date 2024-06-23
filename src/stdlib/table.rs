@@ -42,12 +42,12 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                     let length = try_compute_length(start, end)
                         .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
                     Unpack::MainLoop {
-                        callback_return: false,
                         start,
+                        table,
                         length,
                         index: 0,
-                        reserved: 0,
-                        table,
+                        batch_end: 0,
+                        callback_return: false,
                     }
                 } else {
                     Unpack::FindLength { start, table }
@@ -75,7 +75,7 @@ enum Pack<'gc> {
         table: Value<'gc>,
         length: usize,
         index: usize,
-        current_batch_end: usize,
+        batch_end: usize,
     },
 }
 
@@ -91,7 +91,7 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
                 table,
                 length,
                 index: 0,
-                current_batch_end: 0,
+                batch_end: 0,
             };
 
             if let Some(call) =
@@ -109,7 +109,7 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
             table,
             length,
             ref mut index,
-            ref mut current_batch_end,
+            ref mut batch_end,
         } = *self
         else {
             unreachable!();
@@ -121,7 +121,7 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
 
         let fuel = exec.fuel();
         while *index < length {
-            if index == current_batch_end {
+            if index == batch_end {
                 let remaining_fuel = fuel.remaining().max(0) as usize;
                 let available_elems = remaining_fuel.saturating_mul(PACK_ELEMS_PER_FUEL);
 
@@ -130,12 +130,12 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
                     .max(PACK_MIN_BATCH_SIZE)
                     .min(remaining_elems);
                 stack.reserve(batch_size);
-                *current_batch_end = *index + batch_size;
+                *batch_end = *index + batch_size;
 
                 fuel.consume((batch_size / PACK_ELEMS_PER_FUEL) as i32);
             }
 
-            while *index < *current_batch_end {
+            while *index < *batch_end {
                 if let Some(call) =
                     meta_ops::new_index(ctx, table, (*index as i64 + 1).into(), stack[*index])?
                 {
@@ -162,17 +162,12 @@ impl<'gc> Sequence<'gc> for Pack<'gc> {
     }
 }
 
-// PUC-Rio Lua's maximum argument count, on my machine, is about 1000000; this is slightly larger.
-const MAXIMUM_UNPACK_ARGS: usize = 1 << 20;
-
-// Try to compute the length of a range for unpack, accounting for potential overflow and limiting
-// the length to MAXIMUM_UNPACK_ARGS
+// Try to compute the length of a range for unpack, accounting for potential overflow.
 fn try_compute_length(start: i64, end: i64) -> Option<usize> {
     assert!(start <= end);
     end.checked_sub(start)
         .and_then(|l| l.checked_add(1))
         .and_then(|l| usize::try_from(l).ok())
-        .filter(|&l| matches!(l, 0..=MAXIMUM_UNPACK_ARGS))
 }
 
 const UNPACK_ELEMS_PER_FUEL: usize = 8;
@@ -190,12 +185,12 @@ enum Unpack<'gc> {
         table: Value<'gc>,
     },
     MainLoop {
-        callback_return: bool,
         start: i64,
+        table: Value<'gc>,
         length: usize,
         index: usize,
-        reserved: usize,
-        table: Value<'gc>,
+        batch_end: usize,
+        callback_return: bool,
     },
 }
 
@@ -231,22 +226,22 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
             let length = try_compute_length(start, end)
                 .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
             *self = Unpack::MainLoop {
-                callback_return: false,
                 start,
+                table,
                 length,
                 index: 0,
-                reserved: 0,
-                table,
+                batch_end: 0,
+                callback_return: false,
             };
         }
 
         let Unpack::MainLoop {
-            ref mut callback_return,
             start,
+            table,
             length,
             ref mut index,
-            ref mut reserved,
-            table,
+            ref mut batch_end,
+            ref mut callback_return,
         } = *self
         else {
             unreachable!();
@@ -264,7 +259,7 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
 
         let fuel = exec.fuel();
         while *index < length {
-            let batch_remaining = *reserved - *index;
+            let batch_remaining = *batch_end - *index;
             if batch_remaining == 0 {
                 let remaining_fuel = fuel.remaining().max(0) as usize;
                 let available_elems = remaining_fuel.saturating_mul(UNPACK_ELEMS_PER_FUEL);
@@ -274,16 +269,12 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
                     .max(UNPACK_MIN_BATCH_SIZE)
                     .min(remaining_elems);
                 stack.reserve(batch_size);
-                *reserved = *index + batch_size;
+                *batch_end = *index + batch_size;
 
                 fuel.consume((batch_size / UNPACK_ELEMS_PER_FUEL) as i32);
             }
 
-            while *index < *reserved {
-                // It would be nice to be able to cache the index metamethod here, but that would
-                // require tracking infrastructure elsewhere. (In theory this *could* cache it for
-                // the case where __index is a table and never calls back into Lua code, but it's
-                // not worth splitting the logic.)
+            while *index < *batch_end {
                 match meta_ops::index(ctx, table, (start + *index as i64).into())? {
                     MetaResult::Value(v) => {
                         stack.push_back(v);

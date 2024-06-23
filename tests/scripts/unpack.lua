@@ -64,13 +64,6 @@ do
 end
 
 do
-    local ok, status = pcall(function()
-        local _ = table.unpack({}, 1, 1 << 31)
-    end)
-    assert(not ok)
-end
-
-do
     local val = { [-1] = 1, [0] = 2, 3, 4 }
 
     local first = -1
@@ -139,29 +132,14 @@ do
     assert(not ok)
 end
 
--- Note: this test is a bit slow, but should only use 16MiB of RAM
--- for the unpacked values.  (Potentially multiplied by copies?)
 do
     local val = {}
-    assert(count_args(table.unpack(val, 1, (1 << 20))) == (1 << 20))
-
-    local ok, status = pcall(function()
-        local _ = count_args(table.unpack(val, 1, (1 << 20) + 1))
-    end)
-    assert(not ok)
+    assert(count_args(table.unpack(val, 1, (1 << 16))) == (1 << 16))
 end
 
 do
     local val = setmetatable({ }, {
-        __len = function() return (1 << 20) end
+        __len = function() return (1 << 16) end
     })
-    assert(count_args(table.unpack(val)) == (1 << 20))
-
-    local ok, status = pcall(function()
-        val = setmetatable({ }, {
-            __len = function() return (1 << 20) + 1 end
-        })
-        local _ = count_args(table.unpack(val))
-    end)
-    assert(not ok)
+    assert(count_args(table.unpack(val)) == (1 << 16))
 end
