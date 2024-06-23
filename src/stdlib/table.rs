@@ -104,6 +104,7 @@ enum Unpack<'gc> {
         table: Table<'gc>,
     },
 }
+
 impl<'gc> Sequence<'gc> for Unpack<'gc> {
     fn poll(
         &mut self,
@@ -111,106 +112,109 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
         mut exec: Execution<'gc, '_>,
         mut stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        loop {
-            match *self {
-                Unpack::FindLength { start, table } => {
-                    *self = Unpack::LengthFound { start, table };
-                    // We match PUC-Rio Lua here by finding the length at the *start* of the loop
-                    // only. If the __index metamethod or some other triggered Lua code changes the
-                    // length of the table, this will not be considered.
-                    match meta_ops::len(ctx, table.into())? {
-                        MetaResult::Value(v) => stack.push_back(v),
-                        MetaResult::Call(call) => {
-                            stack.extend(call.args);
-                            return Ok(SequencePoll::Call {
-                                function: call.function,
-                                bottom: 0,
-                            });
-                        }
-                    }
-                }
-                Unpack::LengthFound { start, table } => {
-                    let end: i64 = stack.consume(ctx)?;
-                    if start > end {
-                        return Ok(SequencePoll::Return);
-                    }
-                    let length = try_compute_length(start, end)
-                        .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                    *self = Unpack::MainLoop {
-                        callback_return: false,
-                        start,
-                        length,
-                        index: 0,
-                        reserved: 0,
-                        table,
-                    };
-                }
-                Unpack::MainLoop {
-                    ref mut callback_return,
-                    start,
-                    length,
-                    ref mut index,
-                    ref mut reserved,
-                    table,
-                } => {
-                    if *callback_return {
-                        *callback_return = false;
-                        // The return value for __index was pushed onto the top of the stack,
-                        // precisely where it's needed.
-                        *index += 1;
-                        // truncate stack to the current height
-                        stack.resize(*index);
-                    }
-                    debug_assert_eq!(stack.len(), *index, "index must match stack height");
-
-                    let fuel = exec.fuel();
-                    while *index < length && fuel.should_continue() {
-                        let batch_remaining = *reserved - *index;
-                        if batch_remaining == 0 {
-                            let remaining_fuel = fuel.remaining().clamp(0, i32::MAX) as usize;
-                            let available_elems = remaining_fuel / UNPACK_ELEMS_PER_FUEL;
-
-                            let remaining_elems = length - *index;
-                            let batch_size = available_elems
-                                .max(UNPACK_MIN_BATCH_SIZE)
-                                .min(remaining_elems);
-                            stack.reserve(batch_size);
-                            *reserved = *index + batch_size;
-
-                            fuel.consume((batch_size / UNPACK_ELEMS_PER_FUEL) as i32);
-                        }
-
-                        for i in *index..*reserved {
-                            // It would be nice to be able to cache the index metamethod here, but
-                            // that would require tracking infrastructure elsewhere. (In theory
-                            // this *could* cache it for the case where __index is a table and never
-                            // calls back into Lua code, but it's not worth splitting the logic.)
-                            match meta_ops::index(ctx, table.into(), (start + i as i64).into())? {
-                                MetaResult::Value(v) => {
-                                    stack.push_back(v);
-                                }
-                                MetaResult::Call(call) => {
-                                    *callback_return = true;
-                                    *index = i;
-                                    stack.extend(call.args);
-                                    return Ok(SequencePoll::Call {
-                                        function: call.function,
-                                        bottom: *index,
-                                    });
-                                }
-                            }
-                        }
-                        *index = *reserved;
-                    }
-                    if !fuel.should_continue() {
-                        return Ok(SequencePoll::Pending);
-                    }
-                    debug_assert_eq!(*index, length, "all elements must have been accessed");
-                    debug_assert_eq!(length, stack.len(), "all elements must be on the stack");
-                    // Return values are already in-place on the stack
-                    return Ok(SequencePoll::Return);
+        if let Unpack::FindLength { start, table } = *self {
+            *self = Unpack::LengthFound { start, table };
+            // We match PUC-Rio Lua here by finding the length at the *start* of the loop
+            // only. If the __index metamethod or some other triggered Lua code changes the
+            // length of the table, this will not be considered.
+            match meta_ops::len(ctx, table.into())? {
+                MetaResult::Value(v) => stack.push_back(v),
+                MetaResult::Call(call) => {
+                    stack.extend(call.args);
+                    return Ok(SequencePoll::Call {
+                        function: call.function,
+                        bottom: 0,
+                    });
                 }
             }
         }
+
+        if let Unpack::LengthFound { start, table } = *self {
+            let end: i64 = stack.consume(ctx)?;
+            if start > end {
+                return Ok(SequencePoll::Return);
+            }
+            let length = try_compute_length(start, end)
+                .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+            *self = Unpack::MainLoop {
+                callback_return: false,
+                start,
+                length,
+                index: 0,
+                reserved: 0,
+                table,
+            };
+        }
+
+        let Unpack::MainLoop {
+            ref mut callback_return,
+            start,
+            length,
+            ref mut index,
+            ref mut reserved,
+            table,
+        } = *self
+        else {
+            unreachable!();
+        };
+
+        if *callback_return {
+            *callback_return = false;
+            // The return value for __index was pushed onto the top of the stack,
+            // precisely where it's needed.
+            *index += 1;
+            // truncate stack to the current height
+            stack.resize(*index);
+        }
+        debug_assert_eq!(stack.len(), *index, "index must match stack height");
+
+        let fuel = exec.fuel();
+        while *index < length {
+            let batch_remaining = *reserved - *index;
+            if batch_remaining == 0 {
+                let remaining_fuel = fuel.remaining().clamp(0, i32::MAX) as usize;
+                let available_elems = remaining_fuel / UNPACK_ELEMS_PER_FUEL;
+
+                let remaining_elems = length - *index;
+                let batch_size = available_elems
+                    .max(UNPACK_MIN_BATCH_SIZE)
+                    .min(remaining_elems);
+                stack.reserve(batch_size);
+                *reserved = *index + batch_size;
+
+                fuel.consume((batch_size / UNPACK_ELEMS_PER_FUEL) as i32);
+            }
+
+            for i in *index..*reserved {
+                // It would be nice to be able to cache the index metamethod here, but
+                // that would require tracking infrastructure elsewhere. (In theory
+                // this *could* cache it for the case where __index is a table and never
+                // calls back into Lua code, but it's not worth splitting the logic.)
+                match meta_ops::index(ctx, table.into(), (start + i as i64).into())? {
+                    MetaResult::Value(v) => {
+                        stack.push_back(v);
+                    }
+                    MetaResult::Call(call) => {
+                        *callback_return = true;
+                        *index = i;
+                        stack.extend(call.args);
+                        return Ok(SequencePoll::Call {
+                            function: call.function,
+                            bottom: *index,
+                        });
+                    }
+                }
+            }
+            *index = *reserved;
+
+            if *index < length && !fuel.should_continue() {
+                return Ok(SequencePoll::Pending);
+            }
+        }
+
+        debug_assert_eq!(*index, length, "all elements must have been accessed");
+        debug_assert_eq!(length, stack.len(), "all elements must be on the stack");
+        // Return values are already in-place on the stack
+        Ok(SequencePoll::Return)
     }
 }

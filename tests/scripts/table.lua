@@ -107,6 +107,7 @@ do
     assert(t[1] == 1)
     assert(t[2] == 2)
     assert(t[3] == 3)
+    assert(t.n == 3)
 
     local x, y, z = table.unpack(t)
     assert(x == 1)
