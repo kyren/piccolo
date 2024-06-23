@@ -63,19 +63,3 @@ do
     assert(count_args(table.unpack(val, first, last)) == 6)
     assert(a == 1 and b == 2 and c == 3 and d == 2 and e == 2 and f == 2)
 end
-
--- Note: with PUC-Rio, length returns the last border, and
--- thus the following works implicitly.  However, length
--- may return any border for a non-sequence, and piccolo
--- uses the first.
-if false then
-    local val = { 1, nil, nil, 3, nil, 4 }
-    setmetatable(val, {
-        __index = function() return 2 end,
-    })
-    local a, b, c, d, e, f = table.unpack(val)
-
-    assert(count_args(table.unpack(val)) == 6)
-    assert(a == 1 and b == 2 and c == 2 and d == 3 and e == 2 and f == 4)
-end
-

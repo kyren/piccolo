@@ -6,22 +6,6 @@ use crate::{
     Sequence, SequencePoll, Stack, Table,
 };
 
-// PUC-Rio Lua's maximum argument count, on my machine, is about 1000000;
-// this is slightly larger.
-const MAXIMUM_UNPACK_ARGS: usize = 1 << 20;
-
-// Try to compute the length of a range for unpack, accounting for
-// potential overflow and limiting the length to MAXIMUM_UNPACK_ARGS
-//
-// Without this, users can relatively easily hang the VM (or OOM) with large ranges:
-// table.unpack({}, 1, 1 << 32)
-fn try_compute_length(start: i64, end: i64) -> Option<usize> {
-    end.checked_sub(start)
-        .and_then(|l| l.checked_add(1))
-        .and_then(|l| usize::try_from(l).ok())
-        .filter(|&l| matches!(l, 0..=MAXIMUM_UNPACK_ARGS))
-}
-
 pub fn load_table<'gc>(ctx: Context<'gc>) {
     let table = Table::new(&ctx);
 
@@ -59,13 +43,9 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                         .map(|mt| !mt.get(ctx, MetaMethod::Len).is_nil())
                         .unwrap_or(false);
 
-                // If the default length returns the first border, as it currently does,
-                // a custom index metamethod is only observable if and end argument is
-                // provided or the length metamethod is overridden.
-                let has_index = (end_arg.is_some() || has_len)
-                    && metatable
-                        .map(|mt| !mt.get(ctx, MetaMethod::Index).is_nil())
-                        .unwrap_or(false);
+                let has_index = metatable
+                    .map(|mt| !mt.get(ctx, MetaMethod::Index).is_nil())
+                    .unwrap_or(false);
 
                 if has_index || has_len {
                     // This will have some messy edge-cases:
@@ -109,6 +89,22 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         .unwrap();
 
     ctx.set_global("table", table).unwrap();
+}
+
+// PUC-Rio Lua's maximum argument count, on my machine, is about 1000000;
+// this is slightly larger.
+const MAXIMUM_UNPACK_ARGS: usize = 1 << 20;
+
+// Try to compute the length of a range for unpack, accounting for
+// potential overflow and limiting the length to MAXIMUM_UNPACK_ARGS
+//
+// Without this, users can relatively easily hang the VM (or OOM) with large ranges:
+// table.unpack({}, 1, 1 << 32)
+fn try_compute_length(start: i64, end: i64) -> Option<usize> {
+    end.checked_sub(start)
+        .and_then(|l| l.checked_add(1))
+        .and_then(|l| usize::try_from(l).ok())
+        .filter(|&l| matches!(l, 0..=MAXIMUM_UNPACK_ARGS))
 }
 
 const RAW_ELEMS_PER_FUEL: usize = 8;
