@@ -14,7 +14,7 @@ use crate::{
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    String, Table, TypeError, UserData, VMError, Value,
+    String, Table, UserData, VMError, Value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,27 +638,18 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         let table_ind = base + table_base.0 as usize;
         let start_ind = table_ind + 1;
+
         let table = self.state.stack[table_ind];
-        let Value::Table(table) = table else {
-            return Err(TypeError {
-                expected: "table",
-                found: table.type_name(),
-            }
-            .into());
+        let start = self.state.stack[start_ind];
+
+        let (Value::Table(table), Value::Integer(mut start)) = (table, start) else {
+            return Err(VMError::BadSetList(table.type_name(), start.type_name()));
         };
 
         let set_count = count
             .to_constant()
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - table_ind - 2);
-
-        let Value::Integer(mut start) = self.state.stack[start_ind] else {
-            return Err(TypeError {
-                expected: "integer",
-                found: self.state.stack[start_ind].type_name(),
-            }
-            .into());
-        };
 
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, set_count));
