@@ -27,7 +27,9 @@ do
     assert(tonumber("1 1") == nil)
     assert(tonumber({}) == nil)
     assert(tonumber(nil) == nil)
-    assert(tonumber("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ", 36) == -1)
+    -- This differs from PUC-Rio behavior (which wraps),
+    -- but we don't have to match 1:1.
+    assert(tonumber("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ", 36) == math.maxinteger)
     assert(tonumber("-3.51234567e7") == -35123456.7)
     assert(is_err(function() tonumber(3, 4) end))
     assert(is_err(function() tonumber(3., 4) end))

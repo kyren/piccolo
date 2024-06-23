@@ -44,7 +44,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         }
                     })
                     .try_fold(0i64, |acc, v| match v {
-                        Some(v) if v < base => Some(acc.wrapping_mul(base).wrapping_add(v)),
+                        Some(v) if v < base => Some(acc.saturating_mul(base).saturating_add(v)),
                         _ => None,
                     })
                     .map(|v| v * sign);
