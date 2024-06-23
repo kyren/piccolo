@@ -44,7 +44,16 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         }
                     })
                     .try_fold(0i64, |acc, v| match v {
-                        Some(v) if v < base => Some(acc * base + v),
+                        Some(v) if v < base => {
+                            /*
+                                Unless stated otherwise, any overflow when manipulating integer values wrap
+                                around, according to the usual rules of two-complement arithmetic. (In other
+                                words, the actual result is the unique representable integer that is equal
+                                modulo 2n to the mathematical result, where n is the number of bits of the
+                                integer type.)
+                            */
+                            Some(acc.wrapping_mul(base).wrapping_add(v))
+                        }
                         _ => None,
                     })
                     .map(|v| v * sign);
