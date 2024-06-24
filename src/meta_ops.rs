@@ -68,6 +68,7 @@ impl MetaMethod {
             MetaMethod::Le => "__le",
         }
     }
+
     /// Sentence-form verb of this metamethod's action
     ///
     /// - unary: "Could not {verb} a {type} value"
@@ -158,6 +159,7 @@ fn get_metatable<'gc>(val: Value<'gc>) -> Option<Table<'gc>> {
         _ => None,
     }
 }
+
 fn get_metamethod<'gc>(
     ctx: Context<'gc>,
     val: Value<'gc>,
@@ -216,6 +218,27 @@ pub fn index<'gc>(
         }
     };
 
+    // NOTE: The __index metamethod (and others) can easily infinite loop or enter arbitrarily long
+    // chains:
+    //
+    // `t = {}; setmetatable(t, { __index = t }); t.a`
+    //
+    // PUC-Rio Lua guards the maximum length of metamethod chains to `MAXTAGLOOP` in cases where no
+    // Lua code is invoked. It must do this, because otherwise Lua code could cause the interpreter
+    // to infinite loop without triggering hook functions. We don't HAVE to mimic this behavior here
+    // due to piccolo's flexibility: the `Executor` design allows us to ensure that control is still
+    // periodically returned by performing the access through a separate callback.
+    //
+    // We could introduce a maximum chain depth, or try to detect infinite chains in simple cases,
+    // or just follow chains of metamethods in blocks to reduce the number of separate callback
+    // calls. Right now, it works in the absolute *simplest* possible way.
+    //
+    // We could also make it a little nicer to deal with arbitrary long metamethod chains by
+    // replacing the `MetaCall` machinery with a `Sequence` and allowing `Sequence` impls to
+    // participate in custom backtrace printing. If done generically, every metamethod chain call
+    // could print its current chain depth as part of the backtrace, helping to debug infinite
+    // loops due to metamethod chains. Changing `MetaCall` to use sequences also has a potential
+    // performance benefit because a `BoxSequence` can avoid allocation when the sequence is a ZST.
     Ok(MetaResult::Call(match idx {
         table @ (Value::Table(_) | Value::UserData(_)) => MetaCall {
             function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
@@ -223,11 +246,6 @@ pub fn index<'gc>(
                 let key = stack.get(1);
                 stack.clear();
 
-                // Note: it could be useful to detect and error on long index
-                // chains here and error, though it isn't necessary for
-                // correctness.  (In addition, tracking the chain depth would
-                // be useful for errors.)
-                // Example: t = {}; setmetatable(t, { __index = t }); t.a
                 match index(ctx, table, key)? {
                     MetaResult::Value(v) => {
                         stack.push_back(v);
@@ -305,7 +323,7 @@ pub fn new_index<'gc>(
     Ok(Some(match idx {
         table @ (Value::Table(_) | Value::UserData(_)) => MetaCall {
             function: Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                // Note: potential for indexing loop here, see note in index.
+                // NOTE: Potential for indexing loop here, see note in __index.
                 let (table, key, value): (Value, Value, Value) = stack.consume(ctx)?;
                 if let Some(call) = new_index(ctx, table, key, value)? {
                     stack.extend(call.args);
@@ -339,10 +357,9 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Meta
 
     match metatable.get(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
-            // Note: it could be useful to detect and error on long call
-            // chains here and error, though it isn't necessary for
-            // correctness.
-            // Example: t = {}; setmetatable(t, { __call = t }); t()
+            // NOTE: Potential for infinite or arbitrarily long chains here, see note in __index.
+            //
+            // Example: `t = {}; setmetatable(t, { __call = t }); t()`
             Callback::from_fn_with(&ctx, (v, f), |&(v, f), ctx, _, mut stack| {
                 stack.push_front(v);
                 Ok(CallbackReturn::Call {
