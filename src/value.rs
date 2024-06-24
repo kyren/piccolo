@@ -40,20 +40,8 @@ impl<'gc> Value<'gc> {
 
     pub fn write<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
         match self {
-            Value::Nil => write!(w, "nil"),
-            Value::Boolean(b) => write!(w, "{}", b),
-            Value::Integer(i) => write!(w, "{}", i),
-            Value::Number(f) => write!(w, "{}", f),
             Value::String(s) => w.write_all(s.as_bytes()),
-            Value::Table(t) => write!(w, "<table {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::Function(Function::Closure(c)) => {
-                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
-            }
-            Value::Function(Function::Callback(c)) => {
-                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
-            }
-            Value::Thread(t) => write!(w, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::UserData(u) => write!(w, "<userdata {:p}>", Gc::as_ptr(u.into_inner())),
+            v => write!(w, "{}", v.display()),
         }
     }
     pub fn display(self) -> impl fmt::Display + 'gc {
