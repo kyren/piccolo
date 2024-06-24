@@ -2,6 +2,12 @@ function is_err(f)
     return pcall(f) == false
 end
 
+function roundtrips(orig)
+    local str = tostring(orig)
+    local num = tonumber(str)
+    return num == orig and tostring(num) == str
+end
+
 do
     assert(tonumber("3.4e0") == 3.4)
     assert(tonumber("-3.4") == -3.4)
@@ -33,4 +39,25 @@ do
     assert(is_err(function() tonumber(3, 4) end))
     assert(is_err(function() tonumber(3., 4) end))
     assert(is_err(function() tonumber(nil, 4) end))
+
+    assert(tonumber("15", nil) == 15)
+end
+
+-- Boundary cases
+do
+    assert(roundtrips(math.maxinteger))
+    assert(roundtrips(math.mininteger))
+
+    assert(tonumber("-9223372036854775808") == -9223372036854775807 - 1)
+    -- Use integer wrapping to check that it returned an integer
+    assert(tonumber("-9223372036854775808") - 1 == math.maxinteger)
+
+    -- Value too large, converted to float
+    assert(tostring(tonumber("-9223372036854775809")) ~= "-9223372036854775809")
+
+    assert(tonumber("8000000000000000", 16) == math.mininteger)
+    assert(tonumber("-8000000000000000", 16) == math.mininteger)
+    -- Use integer wrapping to check that it returned an integer
+    assert(tonumber("8000000000000000", 16) - 1 == math.maxinteger)
+    assert(tonumber("-8000000000000000", 16) - 1 == math.maxinteger)
 end
