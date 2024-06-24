@@ -4,7 +4,7 @@ use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
-    Sequence, SequencePoll, Stack, String, Table, Value, Variadic,
+    Sequence, SequencePoll, Stack, String, Table, TypeError, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -25,7 +25,18 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 let prenumber = stack.consume::<Value>(ctx)?;
                 stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
             } else {
-                let (s, base) = stack.consume::<(String, i64)>(ctx)?;
+                let (value, base) = stack.consume::<(Value, i64)>(ctx)?;
+                // Avoid implicitly converting value to a string
+                let s = match value {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(TypeError {
+                            expected: "string",
+                            found: value.type_name(),
+                        }
+                        .into())
+                    }
+                };
                 if !(2..=36).contains(&base) {
                     Err("base out of range".into_value(ctx))?;
                 }
