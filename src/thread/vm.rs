@@ -236,7 +236,7 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::NumericForPrep { base, jump } => {
-                registers.stack_frame[base.0 as usize] = raw_ops::subtract(
+                registers.stack_frame[base.0 as usize] = raw_subtract(
                     registers.stack_frame[base.0 as usize],
                     registers.stack_frame[base.0 as usize + 2],
                 )
@@ -684,4 +684,8 @@ fn add_offset(pc: usize, offset: i16) -> usize {
     } else {
         pc
     }
+}
+
+fn raw_subtract<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
+    Some(lhs.to_constant()?.subtract(&rhs.to_constant()?)?.into())
 }
