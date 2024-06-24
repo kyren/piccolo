@@ -12,16 +12,15 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "tonumber",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             use crate::compiler::lexer::{read_neg, trim_whitespace};
-            fn extract_number_data(bytes: &[u8]) -> (&[u8], i64) {
+            fn extract_number_data(bytes: &[u8]) -> (&[u8], bool) {
                 let bytes = trim_whitespace(bytes);
                 let (is_neg, bytes) = read_neg(bytes);
-                let sign = if is_neg { -1 } else { 1 };
-                (bytes, sign)
+                (bytes, is_neg)
             }
 
             if stack.is_empty() {
                 Err("Missing argument(s) to tonumber".into_value(ctx))?
-            } else if stack.len() == 1 {
+            } else if stack.len() == 1 || stack.get(1).is_nil() {
                 let prenumber = stack.consume::<Value>(ctx)?;
                 stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
             } else {
@@ -29,7 +28,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 if !(2..=36).contains(&base) {
                     Err("base out of range".into_value(ctx))?;
                 }
-                let (bytes, sign) = extract_number_data(s.as_bytes());
+                let (bytes, is_neg) = extract_number_data(s.as_bytes());
                 let result = bytes
                     .iter()
                     .map(|b| {
@@ -47,7 +46,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                         Some(v) if v < base => Some(acc.wrapping_mul(base).wrapping_add(v)),
                         _ => None,
                     })
-                    .map(|v| v.wrapping_mul(sign));
+                    .map(|v| if is_neg { v.wrapping_neg() } else { v });
                 stack.replace(ctx, result.map(Value::Integer).unwrap_or(Value::Nil));
             }
 
