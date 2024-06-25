@@ -5,7 +5,7 @@ use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Root
 use crate::{
     finalizers::Finalizers,
     registry::{Fetchable, Stashable},
-    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
+    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table, load_utf8},
     string::InternedStringSet,
     Error, FromMultiValue, Fuel, IntoValue, InvalidTableKey, Registry, Singleton, StashedExecutor,
     StaticError, String, Table, Value,
@@ -132,6 +132,7 @@ impl Lua {
             load_coroutine(ctx);
             load_math(ctx);
             load_string(ctx);
+            load_utf8(ctx);
             load_table(ctx);
         })
     }
