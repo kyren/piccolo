@@ -168,7 +168,8 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
                 Cow::Owned(s) => visitor.visit_string(s),
             }
         } else {
-            visitor.visit_string(self.value.to_string())
+            // Note: this lossily discards non-utf8 data
+            visitor.visit_string(self.value.display().to_string())
         }
     }
 
