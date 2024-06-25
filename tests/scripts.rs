@@ -2,10 +2,27 @@ mod table;
 
 use std::{
     fs::{read_dir, File},
-    io::{stdout, Write},
+    io::{stdout, Read, Write},
 };
 
-use piccolo::{io, Closure, Executor, Lua};
+use piccolo::{io, Closure, Executor, Lua, StaticError, Value};
+
+fn run_lua_code(name: &str, code: impl Read) -> Result<(), StaticError> {
+    let mut lua = Lua::full();
+
+    lua.enter(|ctx| {
+        ctx.set_global("piccolo", Value::Boolean(true)).unwrap();
+    });
+
+    let exec = lua.try_enter(|ctx| {
+        let closure = Closure::load(ctx, Some(name), code)?;
+        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
+    })?;
+
+    lua.execute::<()>(&exec)?;
+
+    Ok(())
+}
 
 fn run_tests(dir: &str) -> bool {
     let _ = writeln!(stdout(), "running all test scripts in {dir:?}");
@@ -17,16 +34,7 @@ fn run_tests(dir: &str) -> bool {
         if let Some(ext) = path.extension() {
             if ext == "lua" {
                 let _ = writeln!(stdout(), "running {:?}", path);
-                let mut lua = Lua::full();
-
-                if let Err(err) = lua
-                    .try_enter(|ctx| {
-                        let closure =
-                            Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
-                        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
-                    })
-                    .and_then(|executor| lua.execute::<()>(&executor))
-                {
+                if let Err(err) = run_lua_code(path.to_string_lossy().as_ref(), file) {
                     let _ = writeln!(stdout(), "error encountered running: {:?}", err);
                     file_failed = true;
                 }
