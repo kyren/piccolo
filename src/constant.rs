@@ -128,7 +128,15 @@ impl<S: AsRef<[u8]>> Constant<S> {
                 if b == 0 {
                     None
                 } else {
-                    Some(Self::Integer(a.wrapping_div(b)))
+                    // Wrapping version of std's div_floor
+                    let d = a.wrapping_div(b);
+                    let r = a.wrapping_rem(b);
+                    let d = if (r > 0 && b < 0) || (r < 0 && b > 0) {
+                        d - 1
+                    } else {
+                        d
+                    };
+                    Some(Self::Integer(d))
                 }
             }
             (a, b) => Some(Self::Number((a.to_number()? / b.to_number()?).floor())),
@@ -185,13 +193,24 @@ impl<S: AsRef<[u8]>> Constant<S> {
     }
 
     pub fn shift_left(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Integer(self.to_integer()? << rhs.to_integer()?))
+        let rhs = rhs.to_integer()?;
+        if rhs < 0 {
+            return None;
+        }
+        let rhs = rhs.try_into().ok().unwrap_or(u32::MAX);
+        Some(Self::Integer(
+            self.to_integer()?.checked_shl(rhs).unwrap_or(0),
+        ))
     }
 
     pub fn shift_right(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Integer(
-            (self.to_integer()? as u64 >> rhs.to_integer()? as u64) as i64,
-        ))
+        let rhs = rhs.to_integer()?;
+        if rhs < 0 {
+            return None;
+        }
+        let lhs = self.to_integer()? as u64;
+        let rhs = rhs.try_into().ok().unwrap_or(u32::MAX);
+        Some(Self::Integer(lhs.checked_shr(rhs).unwrap_or(0) as i64))
     }
 
     // Comparison operators

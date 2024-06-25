@@ -4,7 +4,8 @@ mod vm;
 
 use thiserror::Error;
 
-use crate::TypeError;
+use crate::meta_ops::{MetaCallError, MetaOperatorError};
+use crate::BadConcatType;
 
 pub use self::{
     executor::{
@@ -12,10 +13,9 @@ pub use self::{
         UpperLuaFrame,
     },
     thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode},
-    vm::BinaryOperatorError,
 };
 
-#[derive(Debug, Copy, Clone, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum VMError {
     #[error("{}", if *.0 {
         "operation expects variable stack"
@@ -23,8 +23,18 @@ pub enum VMError {
         "unexpected variable stack during operation"
     })]
     ExpectedVariableStack(bool),
+    #[error("Bad types for SetList op, expected table, integer, found {0}, {1}")]
+    BadSetList(&'static str, &'static str),
     #[error(transparent)]
-    BadType(#[from] TypeError),
+    BadCall(#[from] MetaCallError),
+    #[error(transparent)]
+    OperatorError(#[from] MetaOperatorError),
+    #[error(transparent)]
+    BadConcatType(#[from] BadConcatType),
     #[error("_ENV upvalue is only allowed on top-level closure")]
     BadEnvUpValue,
+    #[error("Invalid types in for loop; expected numbers, found {0}, {1}, and {2}")]
+    BadForLoop(&'static str, &'static str, &'static str),
+    #[error("Invalid types in for loop; expected numbers, found {0} and {1}")]
+    BadForLoopPrep(&'static str, &'static str),
 }

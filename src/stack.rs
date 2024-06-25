@@ -74,6 +74,14 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.resize(self.bottom + size, Value::Nil);
     }
 
+    pub fn reserve(&mut self, additional: usize) {
+        self.values.reserve(additional);
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.values.capacity() - self.bottom
+    }
+
     pub fn drain<R: RangeBounds<usize>>(
         &mut self,
         range: R,

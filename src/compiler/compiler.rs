@@ -244,6 +244,17 @@ enum ExprDescriptor<S> {
         args: Vec<ExprDescriptor<S>>,
     },
     Concat(VecDeque<ExprDescriptor<S>>),
+    // Marks that an expression was in a group (parens). We need to treat these expressions
+    // differently than bare expressions to prevent them from ever resulting in multiple values.
+    //
+    // ```lua
+    //    local a, b, c = table.unpack({1, 2, 3})
+    //    -- a, b, c should be 1, 2, 3
+    //
+    //    local a, b, c = (table.unpack({1, 2, 3}))
+    //    -- a, b, c should be 1, nil, nil
+    // ````
+    Group(Box<ExprDescriptor<S>>),
 }
 
 #[derive(Debug)]
@@ -1181,7 +1192,9 @@ impl<S: StringInterner> Compiler<S> {
             PrimaryExpression::Name(name) => {
                 Ok(ExprDescriptor::Variable(self.find_variable(name.clone())?))
             }
-            PrimaryExpression::GroupedExpression(expr) => self.expression(expr),
+            PrimaryExpression::GroupedExpression(expr) => {
+                Ok(ExprDescriptor::Group(Box::new(self.expression(expr)?)))
+            }
         }
     }
 
@@ -1750,6 +1763,7 @@ impl<S: StringInterner> Compiler<S> {
                     });
                     VarCount::variable()
                 }
+                // `ExprDescriptor::Group` must always become a single value.
                 last_arg => {
                     self.expr_discharge(last_arg, ExprDestination::PushNew)?;
                     (args_len)
@@ -2227,6 +2241,10 @@ impl<S: StringInterner> Compiler<S> {
                     .pop_to(source.0 as u16);
                 dest
             }
+
+            ExprDescriptor::Group(expr) => {
+                return self.expr_discharge(*expr, dest);
+            }
         };
 
         Ok(result)
@@ -2299,6 +2317,7 @@ impl<S: StringInterner> Compiler<S> {
                     .push(Operation::LoadNil { dest, count });
                 dest
             }
+            // `ExprDescriptor::Group` must always become a single value.
             expr => {
                 let dest = self.expr_discharge(expr, ExprDestination::PushNew)?;
                 if count > 1 {

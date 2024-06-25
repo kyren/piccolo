@@ -907,17 +907,23 @@ pub fn read_dec_integer(s: &[u8]) -> Option<i64> {
         return None;
     }
 
-    let mut i: i64 = 0;
+    let mut i: u64 = 0;
     for &c in s {
-        let d = from_digit(c)? as i64;
+        let d = from_digit(c)? as u64;
         i = i.checked_mul(10)?.checked_add(d)?;
     }
 
     if is_neg {
-        i = i.checked_neg()?;
+        if i <= i64::MAX as u64 {
+            Some(-(i as i64))
+        } else if i == i64::MAX as u64 + 1 {
+            Some(i64::MIN)
+        } else {
+            None
+        }
+    } else {
+        i.try_into().ok()
     }
-
-    Some(i)
 }
 
 pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
@@ -927,17 +933,23 @@ pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
         return None;
     }
 
-    let mut i: i64 = 0;
+    let mut i: u64 = 0;
     for &c in &s[2..] {
-        let d = from_hex_digit(c)? as i64;
+        let d = from_hex_digit(c)? as u64;
         i = i.checked_mul(16)?.checked_add(d)?;
     }
 
     if is_neg {
-        i = i.checked_neg()?;
+        if i <= i64::MAX as u64 {
+            Some(-(i as i64))
+        } else if i == i64::MAX as u64 + 1 {
+            Some(i64::MIN)
+        } else {
+            None
+        }
+    } else {
+        i.try_into().ok()
     }
-
-    Some(i)
 }
 
 pub fn read_float(s: &[u8]) -> Option<f64> {
@@ -1018,7 +1030,7 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
     Some(base * (exp as f64).exp2())
 }
 
-fn read_neg(s: &[u8]) -> (bool, &[u8]) {
+pub fn read_neg(s: &[u8]) -> (bool, &[u8]) {
     if s.len() > 0 {
         if s[0] == b'-' {
             (true, &s[1..])
