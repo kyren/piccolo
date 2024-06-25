@@ -5,11 +5,10 @@ use std::{
     mem,
     pin::Pin,
     ptr,
-    rc::Rc,
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use gc_arena::{Collect, DynamicRootSet, Gc, Mutation};
+use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
 
 use crate::{
     stash::{Fetchable, Stashable},
@@ -33,14 +32,7 @@ impl<'gc> AsyncSequence<'gc> {
     where
         F: for<'seq> FnOnce(SeqState<'seq>) -> SeqFuture<'seq> + 'static,
     {
-        BoxSequence::new(
-            mc,
-            Self {
-                fut: SeqFut::new((), move |_, seq| create(seq)),
-                locals: DynamicRootSet::new(mc),
-                _invariant: PhantomData,
-            },
-        )
+        Self::new_seq_with(mc, (), move |_, seq| create(seq))
     }
 
     pub fn new_seq_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
@@ -62,13 +54,7 @@ impl<'gc> AsyncSequence<'gc> {
     where
         F: for<'seq> Fn(SeqState<'seq>) -> SeqFuture<'seq> + 'static,
     {
-        let create = Rc::new(create);
-        Callback::from_fn(mc, move |ctx, _, _| {
-            let create = create.clone();
-            Ok(CallbackReturn::Sequence(Self::new_seq(&ctx, move |seq| {
-                create(seq)
-            })))
-        })
+        Self::new_callback_with(mc, (), move |_, seq| create(seq))
     }
 
     pub fn new_callback_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> Callback<'gc>
@@ -76,14 +62,15 @@ impl<'gc> AsyncSequence<'gc> {
         R: Collect + 'gc,
         F: for<'seq> Fn(&R, SeqState<'seq>) -> SeqFuture<'seq> + 'static,
     {
-        let create = Rc::new(create);
-        let root = Gc::new(mc, root);
-        Callback::from_fn_with(mc, root, move |root, ctx, _, _| {
-            let create = create.clone();
+        let state = Gc::new(mc, (root, StaticCollect(create)));
+        Callback::from_fn_with(mc, state, |state, ctx, _, _| {
             Ok(CallbackReturn::Sequence(Self::new_seq_with(
                 &ctx,
-                *root,
-                move |root, seq| create(&root, seq),
+                *state,
+                |state, seq| {
+                    let (root, create) = state.as_ref();
+                    (create.0)(&root, seq)
+                },
             )))
         })
     }
