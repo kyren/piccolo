@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt};
+use std::fmt;
 
 use piccolo::{table::NextValue, Table, Value};
 use serde::de;
@@ -163,13 +163,21 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         if let Value::String(s) = self.value {
-            match s.to_str_lossy() {
-                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
-                Cow::Owned(s) => visitor.visit_string(s),
+            if let Ok(s) = s.to_str() {
+                visitor.visit_borrowed_str(s)
+            } else {
+                Err(Error::TypeError {
+                    expected: "utf8 string",
+                    found: "non-utf8 string",
+                })
             }
-        } else {
-            // Note: this lossily discards non-utf8 data
+        } else if self.value.is_implicit_string() {
             visitor.visit_string(self.value.display().to_string())
+        } else {
+            Err(Error::TypeError {
+                expected: "utf8 string",
+                found: self.value.type_name(),
+            })
         }
     }
 
