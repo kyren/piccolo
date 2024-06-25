@@ -4,7 +4,7 @@ do
     assert(9223372036854775807 << 0 == 9223372036854775807)
     assert((1 << 63) - 1 == 9223372036854775807)
 
-    -- Shift right is arithmetic (unsigned)
+    -- Shift right is logical (unsigned)
     assert(-1 >> 1 == 9223372036854775807)
 end
 
