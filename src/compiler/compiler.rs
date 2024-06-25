@@ -244,6 +244,16 @@ enum ExprDescriptor<S> {
         args: Vec<ExprDescriptor<S>>,
     },
     Concat(VecDeque<ExprDescriptor<S>>),
+    // Marks that an expression was in a group (parens). We need to treat these expressions
+    // differently than bare expressions to prevent them from ever resulting in multiple values.
+    //
+    // ```lua
+    //    local a, b, c = table.unpack({1, 2, 3})
+    //    -- a, b, c should be 1, 2, 3
+    //
+    //    local a, b, c = (table.unpack({1, 2, 3}))
+    //    -- a, b, c should be 1, nil, nil
+    // ````
     Group(Box<ExprDescriptor<S>>),
 }
 
@@ -1183,8 +1193,6 @@ impl<S: StringInterner> Compiler<S> {
                 Ok(ExprDescriptor::Variable(self.find_variable(name.clone())?))
             }
             PrimaryExpression::GroupedExpression(expr) => {
-                // Exists to prevent grouped expressions from pushing multiple
-                // values to the stack. (No case for Group in expr_push_count.)
                 Ok(ExprDescriptor::Group(Box::new(self.expression(expr)?)))
             }
         }
@@ -1755,6 +1763,7 @@ impl<S: StringInterner> Compiler<S> {
                     });
                     VarCount::variable()
                 }
+                // `ExprDescriptor::Group` must always become a single value.
                 last_arg => {
                     self.expr_discharge(last_arg, ExprDestination::PushNew)?;
                     (args_len)
@@ -2308,6 +2317,7 @@ impl<S: StringInterner> Compiler<S> {
                     .push(Operation::LoadNil { dest, count });
                 dest
             }
+            // `ExprDescriptor::Group` must always become a single value.
             expr => {
                 let dest = self.expr_discharge(expr, ExprDestination::PushNew)?;
                 if count > 1 {
