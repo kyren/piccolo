@@ -561,6 +561,15 @@ pub struct Execution<'gc, 'a> {
 }
 
 impl<'gc, 'a> Execution<'gc, 'a> {
+    pub fn reborrow(&mut self) -> Execution<'gc, '_> {
+        Execution {
+            executor: self.executor,
+            fuel: self.fuel,
+            threads: self.threads,
+            upper_frames: self.upper_frames,
+        }
+    }
+
     /// The fuel parameter passed to `Executor::step`.
     pub fn fuel(&mut self) -> &mut Fuel {
         self.fuel

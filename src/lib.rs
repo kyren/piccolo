@@ -14,7 +14,9 @@ pub mod meta_ops;
 pub mod opcode;
 pub mod raw_ops;
 pub mod registry;
+pub mod sequence;
 pub mod stack;
+pub mod stash;
 pub mod stdlib;
 pub mod string;
 pub mod table;
@@ -25,7 +27,7 @@ pub mod value;
 
 #[doc(inline)]
 pub use self::{
-    callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
+    callback::{Callback, CallbackFn, CallbackReturn},
     closure::{Closure, ClosureError, FunctionPrototype, PrototypeError},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
@@ -35,11 +37,13 @@ pub use self::{
     function::Function,
     lua::{Context, Lua},
     meta_ops::MetaMethod,
-    registry::{
-        Registry, Singleton, StashedCallback, StashedClosure, StashedExecutor, StashedFunction,
-        StashedTable, StashedThread, StashedUserData, StaticValue,
-    },
+    registry::{Registry, Singleton},
+    sequence::{BoxSequence, Sequence, SequencePoll},
     stack::Stack,
+    stash::{
+        StashedCallback, StashedClosure, StashedError, StashedExecutor, StashedFunction,
+        StashedString, StashedTable, StashedThread, StashedUserData, StashedValue,
+    },
     string::{BadConcatType, String},
     table::{InvalidTableKey, Table},
     thread::{

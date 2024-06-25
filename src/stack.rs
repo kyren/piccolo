@@ -20,6 +20,13 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         Self { values, bottom }
     }
 
+    pub fn reborrow(&mut self) -> Stack<'gc, '_> {
+        Stack {
+            values: self.values,
+            bottom: self.bottom,
+        }
+    }
+
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
         Stack {
             values: self.values,
