@@ -5,14 +5,10 @@ use std::{
     io::{stdout, Read, Write},
 };
 
-use piccolo::{io, Closure, Executor, Lua, StaticError, Value};
+use piccolo::{io, Closure, Executor, Lua, StaticError};
 
 fn run_lua_code(name: &str, code: impl Read) -> Result<(), StaticError> {
     let mut lua = Lua::full();
-
-    lua.enter(|ctx| {
-        ctx.set_global("piccolo", Value::Boolean(true)).unwrap();
-    });
 
     let exec = lua.try_enter(|ctx| {
         let closure = Closure::load(ctx, Some(name), code)?;

@@ -360,4 +360,6 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         }),
     )
     .unwrap();
+
+    ctx.set_global("_VERSION", "piccolo").unwrap();
 }
