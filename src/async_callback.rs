@@ -234,8 +234,9 @@ impl<'seq> SequenceState<'seq> {
     ///
     /// Unfortunately, today's Rust does not provide any way for generator (async block) state
     /// machines to possibly implement `gc_arena::Collect`. Therefore, we must ensure that garbage
-    /// collected values **cannot** be directly stored by the enclosing async block. Thus, we must
-    /// guard access to the garbage collector context.
+    /// collected values **cannot** be directly stored by the enclosing async block. We guard all
+    /// access to the garbage collector context to prevent this from happening, similar to the
+    /// interface we use from the outside (like `Lua::enter`).
     pub fn enter<F, R>(&mut self, f: F) -> R
     where
         F: for<'gc> FnOnce(
@@ -412,8 +413,8 @@ impl<'seq> SequenceState<'seq> {
 ///
 /// `Local` values are branded by `'seq` and cannot escape their parent `AsyncSequence` and are (for
 /// the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`. Because of
-/// this, they correctly mimic what we could do if async blocks themselves could be traced and can't
-/// lead to uncollectable cycles with their parent.
+/// this, they correctly mimic what we could do if async blocks themselves could be traced, and so
+/// can't lead to uncollectable cycles with their parent.
 ///
 /// NOTE: Calling `mem::forget` on a `Local` or creating cylces withing a single set of `Local`
 /// values, unlike a plain `Gc` pointers, can result in a (mostly) *temporary* leak. All `Local`
@@ -541,7 +542,8 @@ fn with_shared<'gc, 'a, R>(shared: &mut Shared<'gc, 'a>, f: impl FnOnce() -> R) 
 
 fn visit_shared<R>(f: impl for<'gc, 'a> FnOnce(&'a mut Shared<'gc, 'a>) -> R) -> R {
     // SAFETY: This function must work for any lifetimes 'gc and 'a, so this is sound as long as the
-    // call occurs within the callback given to `with_shared`. See the note in `with_shared`.
+    // call occurs within the callback given to `with_shared` (and this is guarded by setting the
+    // SHARED ptr to null outside of `with_shared`). See the safety note in `with_shared`.
     unsafe {
         let shared =
             mem::transmute::<*mut Shared<'static, 'static>, *mut Shared<'_, '_>>(SHARED.get());
