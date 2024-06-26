@@ -289,7 +289,7 @@ impl<'seq> SequenceState<'seq> {
     }
 
     /// A version of [`SequenceState::enter`] which supports failure, and automatically turns any
-    /// returned error into a async sequence [`Local`].
+    /// returned error into an async sequence [`Local`].
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, LocalError<'seq>>
     where
         F: for<'gc> FnOnce(
