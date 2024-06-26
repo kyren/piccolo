@@ -193,7 +193,11 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         if let Value::String(s) = self.value {
-            visitor.visit_borrowed_bytes(s.as_bytes())
+            if let Ok(utf8) = std::str::from_utf8(s.as_bytes()) {
+                visitor.visit_borrowed_str(utf8)
+            } else {
+                visitor.visit_borrowed_bytes(s.as_bytes())
+            }
         } else {
             Err(Error::TypeError {
                 expected: "string",
