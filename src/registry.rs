@@ -77,12 +77,9 @@ impl<'gc> Registry<'gc> {
     /// It can be implemented for external types by implementing the `Stashable` trait.
     ///
     /// Values stashed in the global registry are not designed to be held within the Lua state!
-    /// They are 'static handles, not garbage collected values, and thus they are not *traced* like
-    /// garbage collected values to enable cycle collection.
-    ///
-    /// Any value stashed in the global registry will never be freed as long as:
-    ///   1) The global registry itself is alive, and...
-    ///   2) The returned stashed handle is not dropped.
+    /// They are 'static handles, not garbage collected values, and thus they are not *traced*
+    /// like garbage collected values to enable cycle collection. Any value stashed in the global
+    /// registry will only be freed when the stashed handle is *dropped*.
     ///
     /// This means that if there is a cycle through a stashed handle (e.g. the stashed handle points
     /// to a Lua value which in turn points directly or indirectly to whatever Lua value owns the

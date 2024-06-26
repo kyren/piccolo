@@ -29,17 +29,17 @@ pub struct AsyncSequence<'gc> {
 
 impl<'gc> AsyncSequence<'gc> {
     /// Create a `Sequence` impl from a Rust future that can suspend, call Lua functions, yield to
-    /// Lua, and resume threads as async method calls on a held `SequenceState`.
+    /// Lua, and resume threads as async method calls on a held [`SequenceState`].
     ///
     /// Can be used to implement `Sequence` in a way MUCH easier than manual state machines.
     ///
     /// Currently uses `async` to express what in the future could be better expressed by the
-    /// unstable `std::ops::Coroutine`. The `std::task::Context` available within the created future
-    /// is *meaningless* and has a NOOP waker, we are only using `async` as a stable way to express
-    /// a more simple Rust coroutine.
+    /// unstable [`std::ops::Coroutine`]. The [`std::task::Context`] available within the created
+    /// future is *meaningless* and has a NOOP waker, we are only using `async` as a stable way to
+    /// express a more simple Rust coroutine.
     ///
     /// It is possible to integrate async code with `piccolo`, and to even have a method to "wake"
-    /// `Lua` coroutines with a real `std::task::Waker`, but simply calling an external async method
+    /// Lua coroutines with a real [`std::task::Waker`], but simply calling an external async method
     /// from the created future here is *not* the way to do it. It will not do what you want, and
     /// probably will result in panics.
     ///
@@ -55,7 +55,7 @@ impl<'gc> AsyncSequence<'gc> {
         Self::new_seq_with(mc, (), move |_, seq| create(seq))
     }
 
-    /// A version of `AsyncSequence::new_seq` that accepts an associated GC root object passed to
+    /// A version of [`AsyncSequence::new_seq`] that accepts an associated GC root object passed to
     /// the create function.
     ///
     /// This is important because the create function must be 'static, and is not called until the
@@ -185,16 +185,16 @@ impl<'gc> Sequence<'gc> for AsyncSequence<'gc> {
 ///
 /// Like "stashed values" in the registry, `Local`s are *not* branded with `'gc`. Unlike registry
 /// stashed values, they are instead branded by `'seq`, which ensures that they cannot escape the
-/// body of the async block driving the `AsyncSequence`.
+/// body of the async block driving the [`AsyncSequence`].
 ///
 /// Locals cannot escape their parent future, but they *can* be safely stored outside of
-/// `SeqContext::enter` *and* across await points. If *only* `Local` variables are used to store
-/// all garbage collected values within the future, then resulting `AsyncSequence` will always be
-/// properly garbage collected, *even if* there are reference cycles between the held locals and the
-/// sequence itself.
+/// [`SequenceState::enter`] *and* across await points. If *only* `Local` variables are used to
+/// store all garbage collected values within the future, then resulting `AsyncSequence` will always
+/// be properly garbage collected, *even if* there are reference cycles between the held locals and
+/// the sequence itself.
 ///
 /// The same cannot be said for registry stashed values! An `AsyncSequence` has its own
-/// `gc_arena::DynamicRootSet` which allows `Local`s ownership to be tied to that *particular*
+/// [`gc_arena::DynamicRootSet`] which allows `Local`s ownership to be tied to that *particular*
 /// `AsyncSequence`. If GC values are instead stashed in the global registry, for example with
 /// `ctx.stash()`, then those values will live as long as *the global registry itself*, which is as
 /// long as the `Lua` instance itself is alive. If such a stashed value indirectly points back to
@@ -242,12 +242,12 @@ pub type LocalError<'seq> = Local<'seq, StashedError>;
 
 /// The held state for a `Sequence` being driven by a Rust async block.
 ///
-/// `SequenceState` and `Local` are both branded by a generative `'seq` lifetime to ensure that
+/// `SequenceState` and [`Local`] are both branded by a generative `'seq` lifetime to ensure that
 /// neither can escape their enclosing async block.
 ///
-/// Methods which trigger the outer `Sequence::poll` or `Sequence::error` to return a *non-tail*
-/// `SequencePoll` value are always marked as `async`. If the triggered action (like a
-/// function call) results in an error, the async method will return the `Error` provided to
+/// Methods which trigger the outer [`Sequence::poll`] or [`Sequence::error`] to return a
+/// *non-tail* `SequencePoll` value are always marked as `async`. If the triggered action (like
+/// a function call) results in an error, the async method will return the `Error` provided to
 /// `Sequence::error`.
 ///
 /// Methods which trigger the outer `Sequence` method to return a *tail* `SequencePoll` value always
@@ -261,7 +261,7 @@ impl<'seq> SequenceState<'seq> {
     /// Enter the garbage collector context within an async sequence.
     ///
     /// Unfortunately, today's Rust does not provide any way for generator (async block) state
-    /// machines to possibly implement `gc_arena::Collect`. Therefore, we must ensure that garbage
+    /// machines to possibly implement [`gc_arena::Collect`]. Therefore, we must ensure that garbage
     /// collected values **cannot** be directly stored by the enclosing async block. We guard all
     /// access to the garbage collector context to prevent this from happening, similar to the
     /// interface we use from the outside (like `Lua::enter`).
@@ -288,8 +288,8 @@ impl<'seq> SequenceState<'seq> {
         })
     }
 
-    /// A version of `SequenceState::enter` which supports failure, and automatically turns any
-    /// returned error into a async sequence `Local`.
+    /// A version of [`SequenceState::enter`] which supports failure, and automatically turns any
+    /// returned error into a async sequence [`Local`].
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, LocalError<'seq>>
     where
         F: for<'gc> FnOnce(
@@ -314,7 +314,7 @@ impl<'seq> SequenceState<'seq> {
         })
     }
 
-    /// Return `SequencePoll::Pending` to the code driving the `Sequence`.
+    /// Return [`SequencePoll::Pending`] to the code driving the `Sequence`.
     ///
     /// In normal use, this will return control to the calling `Executor` and potentially the
     /// calling Rust code.
@@ -330,7 +330,7 @@ impl<'seq> SequenceState<'seq> {
 
     /// Finish the async sequence and return the values currently in the stack to the caller.
     ///
-    /// Ending an async block *without* calling `SequenceState::return_to` will instead *drop* the
+    /// Ending an async block *without* calling [`SequenceState::return_to`] will instead *drop* the
     /// values in the stack.
     pub fn return_to(self) {
         visit_shared(move |shared| {
@@ -437,20 +437,12 @@ impl<'seq> SequenceState<'seq> {
     }
 }
 
-/// A collection of stashed values that are local to a specific `AsyncSequence`.
+/// A collection of stashed values that are local to a specific [`AsyncSequence`].
 ///
-/// `Local` values are branded by `'seq` and cannot escape their parent `AsyncSequence` and are (for
-/// the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`. Because of
-/// this, they correctly mimic what we could do if async blocks themselves could be traced, and so
-/// can't lead to uncollectable cycles with their parent.
-///
-/// NOTE: Calling `mem::forget` on a `Local` or creating cycles withing a single set of `Local`
-/// values, unlike a plain `Gc` pointers, can result in a (mostly) *temporary* leak. All `Local`
-/// handles which are not dropped are considered directly owned by the parent `AsyncSequence`, so
-/// once the `AsyncSequence` is driven to completion (or its parent thread is forgotten), all of
-/// the held `Local` values will be properly collected even if they were "leaked" in this way. (This
-/// does not necessarily include some of the memory used by the handles themselves, if they have
-/// been forgotten with `mem::forget`).
+/// [`Local`] values are branded by `'seq` and cannot escape their parent `AsyncSequence` and are
+/// (for the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`.
+/// Because of this, they correctly mimic what we could do if async blocks themselves could be
+/// traced, and so can't lead to uncollectable cycles with their parent.
 pub struct Locals<'seq, 'gc> {
     locals: DynamicRootSet<'gc>,
     _invariant: Invariant<'seq>,
@@ -464,7 +456,7 @@ impl<'seq, 'gc> Locals<'seq, 'gc> {
     }
 
     /// "Fetch" the real garbage collected value for a handle that has been returned from
-    /// `Locals::stash`.
+    /// [`Locals::stash`].
     pub fn fetch<F: Fetchable<'gc>>(&self, local: &Local<'seq, F>) -> F::Fetched {
         local.fetch(self.locals)
     }
