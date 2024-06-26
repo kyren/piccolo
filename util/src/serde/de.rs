@@ -46,6 +46,9 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             Value::Boolean(_) => self.deserialize_bool(visitor),
             Value::Integer(_) => self.deserialize_i64(visitor),
             Value::Number(_) => self.deserialize_f64(visitor),
+            Value::String(s) if std::str::from_utf8(s.as_bytes()).is_ok() => {
+                self.deserialize_string(visitor)
+            }
             Value::String(_) => self.deserialize_bytes(visitor),
             Value::Table(t) => {
                 if is_sequence(t) {
@@ -193,11 +196,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
         V: de::Visitor<'gc>,
     {
         if let Value::String(s) = self.value {
-            if let Ok(utf8) = std::str::from_utf8(s.as_bytes()) {
-                visitor.visit_borrowed_str(utf8)
-            } else {
-                visitor.visit_borrowed_bytes(s.as_bytes())
-            }
+            visitor.visit_borrowed_bytes(s.as_bytes())
         } else {
             Err(Error::TypeError {
                 expected: "string",
