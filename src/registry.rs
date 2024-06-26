@@ -70,11 +70,28 @@ impl<'gc> Registry<'gc> {
 
     /// "Stash" a value with a `'gc` branding lifetime, creating a `'static` handle to it.
     ///
-    /// This is a wrapper around an internal `gc-arena::DynamicRootSet` that makes it a little
+    /// This is a wrapper around an internal `gc_arena::DynamicRootSet` that makes it a little
     /// simpler to work with common piccolo types without having to manually specify `Rootable`
     /// projections.
     ///
     /// It can be implemented for external types by implementing the `Stashable` trait.
+    ///
+    /// Values stashed in the global registry are not designed to be held within the Lua state!
+    /// They are 'static handles, not garbage collected values, and thus they are not *traced* like
+    /// garbage collected values to enable cycle collection.
+    ///
+    /// Any value stashed in the global registry will never be freed as long as:
+    ///   1) The global registry itself is alive, and...
+    ///   2) The returned stashed handle is not dropped.
+    ///
+    /// This means that if there is a cycle through a stashed handle (e.g. the stashed handle points
+    /// to a Lua value which in turn points directly or indirectly to whatever Lua value owns the
+    /// handle), it cannot ever be freed.
+    ///
+    /// Values stashed in the registry are designed to be held *completely outside* of the Lua
+    /// state by outer Rust code. If storing a value inside the Lua state, always use a proper
+    /// garbage collected type, which in addition to allowing full cycle collection will also be
+    /// significantly cheaper.
     pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed {
         s.stash(mc, self.roots)
     }
