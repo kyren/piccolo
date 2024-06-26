@@ -183,7 +183,7 @@ impl<'gc> Sequence<'gc> for AsyncSequence<'gc> {
 
 /// A local variable for an async sequence.
 ///
-/// Like "stashed values" in the registry, `Local`s are *not* braned with `'gc`. Unlike registry
+/// Like "stashed values" in the registry, `Local`s are *not* branded with `'gc`. Unlike registry
 /// stashed values, they are instead branded by `'seq`, which ensures that they cannot escape the
 /// body of the async block driving the `AsyncSequence`.
 ///
@@ -338,7 +338,7 @@ impl<'seq> SequenceState<'seq> {
         });
     }
 
-    /// Call the given Lua function with arguemnts / returns starting at `bottom` in the Stack.
+    /// Call the given Lua function with arguments / returns starting at `bottom` in the Stack.
     pub async fn call(
         &mut self,
         func: &LocalFunction<'seq>,
