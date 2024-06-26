@@ -46,10 +46,13 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             Value::Boolean(_) => self.deserialize_bool(visitor),
             Value::Integer(_) => self.deserialize_i64(visitor),
             Value::Number(_) => self.deserialize_f64(visitor),
-            Value::String(s) if std::str::from_utf8(s.as_bytes()).is_ok() => {
-                self.deserialize_string(visitor)
+            Value::String(s) => {
+                if let Ok(string) = std::str::from_utf8(s.as_bytes()) {
+                    visitor.visit_borrowed_str(string)
+                } else {
+                    self.deserialize_bytes(visitor)
+                }
             }
-            Value::String(_) => self.deserialize_bytes(visitor),
             Value::Table(t) => {
                 if is_sequence(t) {
                     self.deserialize_seq(visitor)
