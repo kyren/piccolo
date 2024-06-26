@@ -47,7 +47,7 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             Value::Integer(_) => self.deserialize_i64(visitor),
             Value::Number(_) => self.deserialize_f64(visitor),
             Value::String(s) => {
-                if let Ok(string) = std::str::from_utf8(s.as_bytes()) {
+                if let Ok(string) = s.to_str() {
                     visitor.visit_borrowed_str(string)
                 } else {
                     self.deserialize_bytes(visitor)
