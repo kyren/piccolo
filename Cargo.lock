@@ -273,6 +273,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-panic"
+version = "0.1.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8540b7d99a20166178b42a05776aef900cdbfec397f861dfc7819bf1d7760b3d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,6 +300,7 @@ dependencies = [
  "gc-arena",
  "hashbrown",
  "memchr",
+ "no-panic",
  "rand",
  "rustyline",
  "thiserror",

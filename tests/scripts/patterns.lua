@@ -20,3 +20,9 @@ string.gsub("abcd", "", "@")
 
 -- run_match(b".+bc?", b"ab");
 -- run_match(b"%a*", b"aLo_ALO");
+
+local cursed = string.rep("a?", 23) .. string.rep("a", 23)
+local value = string.rep("a", 23)
+
+print(string.find(value, cursed))
+

@@ -48,6 +48,8 @@ memchr.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 
+no-panic = "0.1"
+
 [dev-dependencies]
 clap = { version = "4.5", features = ["cargo"] }
 rustyline = "14.0"
