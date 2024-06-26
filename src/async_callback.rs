@@ -35,8 +35,8 @@ impl<'gc> AsyncSequence<'gc> {
     ///
     /// Currently uses `async` to express what in the future could be better expressed by the
     /// unstable `std::ops::Coroutine`. The `std::task::Context` available within the created future
-    /// is *meaningless* and has a NOOP waker, we are only using `async` to express a simple Rust
-    /// coroutine.
+    /// is *meaningless* and has a NOOP waker, we are only using `async` as a stable way to express
+    /// a more simple Rust coroutine.
     ///
     /// It is possible to integrate async code with `piccolo`, and to even have a method to "wake"
     /// `Lua` coroutines with a real `std::task::Waker`, but simply calling an external async method
@@ -55,6 +55,11 @@ impl<'gc> AsyncSequence<'gc> {
         Self::new_seq_with(mc, (), move |_, seq| create(seq))
     }
 
+    /// A version of `AsyncSequence::new_seq` that accepts an associated GC root object passed to
+    /// the create function.
+    ///
+    /// This is important because the create function must be 'static, and is not called until the
+    /// resulting sequence is first polled.
     pub fn new_seq_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
     where
         R: Collect + 'gc,
