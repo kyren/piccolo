@@ -1,6 +1,4 @@
-use piccolo::{
-    meta_ops, sequence::AsyncSequence, Closure, Executor, Lua, StaticError, Table, Variadic,
-};
+use piccolo::{meta_ops, AsyncSequence, Closure, Executor, Lua, StaticError, Table, Variadic};
 
 #[test]
 fn async_sequence() -> Result<(), StaticError> {

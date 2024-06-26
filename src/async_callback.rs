@@ -461,8 +461,10 @@ impl<'gc> SeqFut<'gc> {
     {
         Self::Create {
             root: Box::new(root),
-            create: Box::new(move |cptr, seq| {
-                let root = unsafe { Box::from_raw(cptr as *mut R) };
+            create: Box::new(move |rptr, seq| {
+                // SAFETY: The pointer is created by `SeqFut::poll` from the `root` field, which is
+                // always a type-erased `R`.
+                let root = unsafe { Box::from_raw(rptr as *mut R) };
                 create(*root, seq)
             }),
         }
@@ -510,6 +512,13 @@ thread_local! {
 }
 
 fn with_shared<'gc, 'a, R>(shared: &mut Shared<'gc, 'a>, f: impl FnOnce() -> R) -> R {
+    // SAFETY: We are erasing the lifetimes of the `Shared` thread local.
+    //
+    // We know this is sound because the only way we *access* the `Shared` local is through
+    // `visit_shared`, which takes a callback which must work for *any* lifetimes 'gc and 'a. In
+    // addition, We know the real lifetimes of `Shared` are valid for the body of this function,
+    // and this function is the only thing that sets the thread local and it is unset before the
+    // function exits using drop guards.
     unsafe {
         SHARED.set(mem::transmute::<
             *mut Shared<'_, '_>,
@@ -531,6 +540,8 @@ fn with_shared<'gc, 'a, R>(shared: &mut Shared<'gc, 'a>, f: impl FnOnce() -> R) 
 }
 
 fn visit_shared<R>(f: impl for<'gc, 'a> FnOnce(&'a mut Shared<'gc, 'a>) -> R) -> R {
+    // SAFETY: This function must work for any lifetimes 'gc and 'a, so this is sound as long as the
+    // call occurs within the callback given to `with_shared`. See the note in `with_shared`.
     unsafe {
         let shared =
             mem::transmute::<*mut Shared<'static, 'static>, *mut Shared<'_, '_>>(SHARED.get());
@@ -546,6 +557,7 @@ fn noop_waker() -> Waker {
         RawWaker::new(ptr::null(), &VTABLE)
     };
 
+    // SAFETY: NOOP_RAW_WAKER VTable is trivial.
     unsafe { Waker::from_raw(NOOP_RAW_WAKER) }
 }
 
