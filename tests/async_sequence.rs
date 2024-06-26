@@ -9,23 +9,23 @@ fn async_sequence() -> Result<(), StaticError> {
     lua.try_enter(|ctx| {
         let callback = AsyncSequence::new_callback(&ctx, |mut seq| {
             Box::new(async move {
-                let (table, length) = seq.try_enter(|ctx, mut seq| {
-                    let table: Table = seq.stack().consume(ctx)?;
+                let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let table: Table = stack.consume(ctx)?;
                     let length = table.length();
-                    Ok((seq.stash(table), length))
+                    Ok((locals.stash(&ctx, table), length))
                 })?;
 
                 for i in 1..=length {
-                    let function = seq.try_enter(|ctx, seq| {
-                        let table = seq.fetch(&table);
+                    let function = seq.try_enter(|ctx, locals, _, _| {
+                        let table = locals.fetch(&table);
                         let func = meta_ops::call(ctx, table.get(ctx, i))?;
-                        Ok(seq.stash(func))
+                        Ok(locals.stash(&ctx, func))
                     })?;
 
                     seq.call(&function, 0).await?
                 }
 
-                Ok(seq.return_())
+                Ok(seq.return_to())
             })
         });
         ctx.set_global("callback", callback)?;

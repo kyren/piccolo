@@ -30,7 +30,7 @@ pub struct AsyncSequence<'gc> {
 impl<'gc> AsyncSequence<'gc> {
     pub fn new_seq<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
     where
-        F: for<'seq> FnOnce(SeqState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
         Self::new_seq_with(mc, (), move |_, seq| create(seq))
     }
@@ -38,7 +38,7 @@ impl<'gc> AsyncSequence<'gc> {
     pub fn new_seq_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
     where
         R: Collect + 'gc,
-        F: for<'seq> FnOnce(R, SeqState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
         BoxSequence::new(
             mc,
@@ -52,7 +52,7 @@ impl<'gc> AsyncSequence<'gc> {
 
     pub fn new_callback<F>(mc: &Mutation<'gc>, create: F) -> Callback<'gc>
     where
-        F: for<'seq> Fn(SeqState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> Fn(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
         Self::new_callback_with(mc, (), move |_, seq| create(seq))
     }
@@ -60,7 +60,7 @@ impl<'gc> AsyncSequence<'gc> {
     pub fn new_callback_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> Callback<'gc>
     where
         R: Collect + 'gc,
-        F: for<'seq> Fn(&R, SeqState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> Fn(&R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
         let state = Gc::new(mc, (root, StaticCollect(create)));
         Callback::from_fn_with(mc, state, |state, ctx, _, _| {
@@ -183,43 +183,55 @@ pub type LocalFunction<'seq> = Local<'seq, StashedFunction>;
 pub type LocalValue<'seq> = Local<'seq, StashedValue>;
 pub type LocalError<'seq> = Local<'seq, StashedError>;
 
-pub struct SeqState<'seq> {
+pub struct SequenceState<'seq> {
     _invariant: Invariant<'seq>,
 }
 
-impl<'seq> SeqState<'seq> {
+impl<'seq> SequenceState<'seq> {
     pub fn enter<F, R>(&mut self, f: F) -> R
     where
-        F: for<'gc> FnOnce(Context<'gc>, SeqContext<'seq, 'gc, '_>) -> R,
+        F: for<'gc> FnOnce(
+            Context<'gc>,
+            Locals<'seq, 'gc>,
+            Execution<'gc, '_>,
+            Stack<'gc, '_>,
+        ) -> R,
         R: 'seq,
     {
         visit_shared(move |shared| {
             f(
                 shared.ctx,
-                SeqContext {
-                    shared,
+                Locals {
+                    locals: shared.locals,
                     _invariant: PhantomData,
                 },
+                shared.exec.reborrow(),
+                shared.stack.reborrow(),
             )
         })
     }
 
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, LocalError<'seq>>
     where
-        F: for<'gc> FnOnce(Context<'gc>, SeqContext<'seq, 'gc, '_>) -> Result<R, Error<'gc>>,
+        F: for<'gc> FnOnce(
+            Context<'gc>,
+            Locals<'seq, 'gc>,
+            Execution<'gc, '_>,
+            Stack<'gc, '_>,
+        ) -> Result<R, Error<'gc>>,
         R: 'seq,
     {
         visit_shared(move |shared| {
-            let locals = shared.locals;
-            let ctx = shared.ctx;
             f(
-                ctx,
-                SeqContext {
-                    shared,
+                shared.ctx,
+                Locals {
+                    locals: shared.locals,
                     _invariant: PhantomData,
                 },
+                shared.exec.reborrow(),
+                shared.stack.reborrow(),
             )
-            .map_err(|e| Local::stash(&ctx, locals, e))
+            .map_err(|e| Local::stash(&shared.ctx, shared.locals, e))
         })
     }
 
@@ -233,7 +245,7 @@ impl<'seq> SeqState<'seq> {
         });
     }
 
-    pub fn return_(self) {
+    pub fn return_to(self) {
         visit_shared(move |shared| {
             *shared.next = SequencePoll::Return;
         });
@@ -268,7 +280,7 @@ impl<'seq> SeqState<'seq> {
         });
     }
 
-    pub async fn yield_(
+    pub async fn yield_to(
         &mut self,
         to_thread: Option<&LocalThread<'seq>>,
         bottom: usize,
@@ -327,26 +339,18 @@ impl<'seq> SeqState<'seq> {
     }
 }
 
-pub struct SeqContext<'seq, 'gc, 'a> {
-    shared: &'a mut Shared<'gc, 'a>,
+pub struct Locals<'seq, 'gc> {
+    locals: DynamicRootSet<'gc>,
     _invariant: Invariant<'seq>,
 }
 
-impl<'seq, 'gc, 'a> SeqContext<'seq, 'gc, 'a> {
-    pub fn stash<S: Stashable<'gc>>(&self, s: S) -> Local<'seq, S::Stashed> {
-        Local::stash(&self.shared.ctx, self.shared.locals, s)
+impl<'seq, 'gc> Locals<'seq, 'gc> {
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> Local<'seq, S::Stashed> {
+        Local::stash(mc, self.locals, s)
     }
 
     pub fn fetch<F: Fetchable<'gc>>(&self, local: &Local<'seq, F>) -> F::Fetched {
-        local.fetch(self.shared.locals)
-    }
-
-    pub fn exec(&mut self) -> Execution<'gc, '_> {
-        self.shared.exec.reborrow()
-    }
-
-    pub fn stack(&mut self) -> Stack<'gc, '_> {
-        self.shared.stack.reborrow()
+        local.fetch(self.locals)
     }
 }
 
@@ -356,7 +360,7 @@ enum SeqFut<'gc> {
     Create {
         root: Box<dyn Collect + 'gc>,
         #[collect(require_static)]
-        create: Box<dyn for<'seq> FnOnce(*mut (), SeqState<'seq>) -> SeqFuture<'seq>>,
+        create: Box<dyn for<'seq> FnOnce(*mut (), SequenceState<'seq>) -> SeqFuture<'seq>>,
     },
     Run(#[collect(require_static)] Pin<Box<dyn Future<Output = Result<(), LocalError<'static>>>>>),
     Empty,
@@ -366,7 +370,7 @@ impl<'gc> SeqFut<'gc> {
     fn new<R, F>(root: R, create: F) -> Self
     where
         R: Collect + 'gc,
-        F: for<'seq> FnOnce(R, SeqState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
         Self::Create {
             root: Box::new(root),
@@ -386,7 +390,7 @@ impl<'gc> SeqFut<'gc> {
                 SeqFut::Create { root, create } => {
                     *self = Self::Run(Box::into_pin(create(
                         Box::into_raw(root) as *mut (),
-                        SeqState {
+                        SequenceState {
                             _invariant: PhantomData,
                         },
                     )));
