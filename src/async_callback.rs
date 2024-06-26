@@ -360,8 +360,8 @@ impl<'seq> SequenceState<'seq> {
         })
     }
 
-    /// Finish the async sequence by calling the given Lua function with the arguments as the
-    /// current contents of the stack.
+    /// Finish the async sequence by calling the given Lua function with the current contents of the
+    /// stack as arguments.
     pub fn tail_call(self, func: &LocalFunction<'seq>) {
         visit_shared(move |shared| {
             shared.set_next(SequencePoll::TailCall {
@@ -393,7 +393,7 @@ impl<'seq> SequenceState<'seq> {
         })
     }
 
-    /// Finish the async sequence by yeilding the current contents of the stack to the caller (or
+    /// Finish the async sequence by yielding the current contents of the stack to the caller (or
     /// to `to_thread`).
     pub fn tail_yield(self, to_thread: Option<&LocalThread<'seq>>) {
         visit_shared(move |shared| {
@@ -444,7 +444,7 @@ impl<'seq> SequenceState<'seq> {
 /// this, they correctly mimic what we could do if async blocks themselves could be traced, and so
 /// can't lead to uncollectable cycles with their parent.
 ///
-/// NOTE: Calling `mem::forget` on a `Local` or creating cylces withing a single set of `Local`
+/// NOTE: Calling `mem::forget` on a `Local` or creating cycles withing a single set of `Local`
 /// values, unlike a plain `Gc` pointers, can result in a (mostly) *temporary* leak. All `Local`
 /// handles which are not dropped are considered directly owned by the parent `AsyncSequence`, so
 /// once the `AsyncSequence` is driven to completion (or its parent thread is forgotten), all of
