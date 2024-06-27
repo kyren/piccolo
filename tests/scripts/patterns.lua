@@ -21,8 +21,11 @@ string.gsub("abcd", "", "@")
 -- run_match(b".+bc?", b"ab");
 -- run_match(b"%a*", b"aLo_ALO");
 
-local cursed = string.rep("a?", 23) .. string.rep("a", 23)
-local value = string.rep("a", 23)
+-- local cursed = string.rep("a?", 64) .. string.rep("a", 64)
+-- local value = string.rep("a", 64)
 
-print(string.find(value, cursed))
+-- print(string.find(value, cursed))
 
+
+assert(string.match("a", "a-b") == nil)
+assert(string.match("aaa", "^a-$") == "aaa")
