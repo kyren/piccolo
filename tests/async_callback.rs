@@ -1,4 +1,6 @@
-use piccolo::{meta_ops, AsyncSequence, Closure, Executor, Lua, StaticError, Table, Variadic};
+use piccolo::{
+    meta_ops, AsyncSequence, Closure, Executor, Lua, SequenceReturn, StaticError, Table, Variadic,
+};
 
 #[test]
 fn async_sequence() -> Result<(), StaticError> {
@@ -23,7 +25,7 @@ fn async_sequence() -> Result<(), StaticError> {
                     seq.call(&function, 0).await?
                 }
 
-                Ok(seq.return_to())
+                Ok(SequenceReturn::Return)
             })
         });
         ctx.set_global("callback", callback)?;

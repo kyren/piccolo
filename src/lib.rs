@@ -27,7 +27,7 @@ pub mod value;
 
 #[doc(inline)]
 pub use self::{
-    async_callback::AsyncSequence,
+    async_callback::{AsyncSequence, SequenceReturn},
     callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
     closure::{Closure, ClosureError, FunctionPrototype, PrototypeError},
     constant::Constant,

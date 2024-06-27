@@ -12,12 +12,27 @@ use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
 
 use crate::{
     stash::{Fetchable, Stashable},
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Sequence, SequencePoll,
-    Stack, StashedCallback, StashedClosure, StashedError, StashedFunction, StashedString,
-    StashedTable, StashedThread, StashedUserData, StashedValue,
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Function, Sequence,
+    SequencePoll, Stack, StashedCallback, StashedClosure, StashedError, StashedFunction,
+    StashedString, StashedTable, StashedThread, StashedUserData, StashedValue, Thread,
 };
 
-pub type SeqFuture<'seq> = Box<dyn Future<Output = Result<(), LocalError<'seq>>> + 'seq>;
+/// Return type for futures that are driving an async sequence.
+pub enum SequenceReturn<'seq> {
+    /// Sequence finished, all of the values in the stack will be returned to the caller.
+    Return,
+    /// Call the given function as a tail call with the entire stack as arguments.
+    TailCall { function: LocalFunction<'seq> },
+    /// Yield all of the values in the stack.
+    TailYield {
+        to_thread: Option<LocalThread<'seq>>,
+    },
+    /// Resume the given thread with the entire stack as arguments.
+    TailResume { thread: LocalThread<'seq> },
+}
+
+pub type SeqFuture<'seq> =
+    Box<dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq>;
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -115,7 +130,7 @@ impl<'gc> AsyncSequence<'gc> {
         mut stack: Stack<'gc, '_>,
         error: Option<Error<'gc>>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        let mut next = None;
+        let mut next_op = None;
 
         let mut shared = Shared {
             locals: self.locals,
@@ -123,40 +138,30 @@ impl<'gc> AsyncSequence<'gc> {
             exec,
             stack: stack.reborrow(),
             error,
-            next: &mut next,
+            next_op: &mut next_op,
         };
-        match self.fut.poll(&mut shared) {
+        Ok(match self.fut.poll(&mut shared) {
             Poll::Ready(res) => {
-                res?;
-                Ok(match next {
-                    None => {
-                        stack.clear();
-                        SequencePoll::Return
-                    }
-                    Some(SequencePoll::Return) => SequencePoll::Return,
-                    Some(SequencePoll::TailCall { function }) => {
-                        SequencePoll::TailCall { function }
-                    }
-                    Some(SequencePoll::TailYield { to_thread }) => {
-                        SequencePoll::TailYield { to_thread }
-                    }
-                    Some(SequencePoll::TailResume { thread }) => {
-                        SequencePoll::TailResume { thread }
-                    }
-                    Some(
-                        SequencePoll::Pending
-                        | SequencePoll::Call { .. }
-                        | SequencePoll::Yield { .. }
-                        | SequencePoll::Resume { .. },
-                    ) => {
-                        panic!("`SequenceState` async method not `await`ed");
-                    }
-                })
+                assert!(
+                    next_op.is_none(),
+                    "`SequenceState` async method not `await`ed"
+                );
+                match res? {
+                    SeqReturn::Return => SequencePoll::Return,
+                    SeqReturn::TailCall { function } => SequencePoll::TailCall { function },
+                    SeqReturn::TailYield { to_thread } => SequencePoll::TailYield { to_thread },
+                    SeqReturn::TailResume { thread } => SequencePoll::TailResume { thread },
+                }
             }
             Poll::Pending => {
-                Ok(next.expect("`await` of a future other than `SequenceState` methods"))
+                match next_op.expect("`await` of a future other than `SequenceState` methods") {
+                    SeqOp::Pending => SequencePoll::Pending,
+                    SeqOp::Call { function, bottom } => SequencePoll::Call { function, bottom },
+                    SeqOp::Yield { to_thread, bottom } => SequencePoll::Yield { to_thread, bottom },
+                    SeqOp::Resume { thread, bottom } => SequencePoll::Resume { thread, bottom },
+                }
             }
-        }
+        })
     }
 }
 
@@ -245,14 +250,12 @@ pub type LocalError<'seq> = Local<'seq, StashedError>;
 /// `SequenceState` and [`Local`] are both branded by a generative `'seq` lifetime to ensure that
 /// neither can escape their enclosing async block.
 ///
-/// Methods which trigger the outer [`Sequence::poll`] or [`Sequence::error`] to return a
-/// *non-tail* `SequencePoll` value are always marked as `async`. If the triggered action (like
-/// a function call) results in an error, the async method will return the `Error` provided to
-/// `Sequence::error`.
+/// Many methods on `SequenceState` are async; `.await`ing them causes the outer [`AsyncSequence`]
+/// to return a non-tail [`SequencePoll`] value, triggering the appropriate action. If this action
+/// results in an error, the async method will return the [`Error`] provided to [`Sequence::error`].
 ///
-/// Methods which trigger the outer `Sequence` method to return a *tail* `SequencePoll` value always
-/// *consume* the `SequenceState`. The async block is expected to return `Ok(())` immediately after
-/// calling one of these methods.
+/// All async methods on `SequenceState` should be `.await`ed immediately, not doing so may result
+/// in panics.
 pub struct SequenceState<'seq> {
     _invariant: Invariant<'seq>,
 }
@@ -318,23 +321,19 @@ impl<'seq> SequenceState<'seq> {
     ///
     /// In normal use, this will return control to the calling `Executor` and potentially the
     /// calling Rust code.
+    ///
+    /// This usually also allows garbage collection to take place, (depending on how the `Executor`
+    /// is being driven).
     pub async fn pending(&mut self) {
+        visit_shared(move |shared| {
+            shared.set_next_op(SeqOp::Pending);
+        });
         wait_once().await;
         visit_shared(move |shared| {
             assert!(
                 shared.error.is_none(),
                 "SequencePoll::Pending cannot be followed by an error"
             );
-        });
-    }
-
-    /// Finish the async sequence and return the values currently in the stack to the caller.
-    ///
-    /// Ending an async block *without* calling [`SequenceState::return_to`] will instead *drop* the
-    /// values in the stack.
-    pub fn return_to(self) {
-        visit_shared(move |shared| {
-            shared.set_next(SequencePoll::Return);
         });
     }
 
@@ -345,7 +344,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next(SequencePoll::Call {
+            shared.set_next_op(SeqOp::Call {
                 function: func.fetch(shared.locals),
                 bottom,
             });
@@ -358,16 +357,6 @@ impl<'seq> SequenceState<'seq> {
                 Ok(())
             }
         })
-    }
-
-    /// Finish the async sequence by calling the given Lua function with the current contents of the
-    /// stack as arguments.
-    pub fn tail_call(self, func: &LocalFunction<'seq>) {
-        visit_shared(move |shared| {
-            shared.set_next(SequencePoll::TailCall {
-                function: func.fetch(shared.locals),
-            });
-        });
     }
 
     /// Yield to the calling code (or to `to_thread`) values starting at `bottom` in the stack. When
@@ -378,7 +367,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next(SequencePoll::Yield {
+            shared.set_next_op(SeqOp::Yield {
                 to_thread: to_thread.map(|t| t.fetch(shared.locals)),
                 bottom,
             });
@@ -391,16 +380,6 @@ impl<'seq> SequenceState<'seq> {
                 Ok(())
             }
         })
-    }
-
-    /// Finish the async sequence by yielding the current contents of the stack to the caller (or
-    /// to `to_thread`).
-    pub fn tail_yield(self, to_thread: Option<&LocalThread<'seq>>) {
-        visit_shared(move |shared| {
-            shared.set_next(SequencePoll::TailYield {
-                to_thread: to_thread.map(|t| t.fetch(shared.locals)),
-            });
-        });
     }
 
     /// Resume `thread` with arguments starting at `bottom` in the stack. When the thread completes,
@@ -411,7 +390,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next(SequencePoll::Resume {
+            shared.set_next_op(SeqOp::Resume {
                 thread: thread.fetch(shared.locals),
                 bottom,
             });
@@ -424,16 +403,6 @@ impl<'seq> SequenceState<'seq> {
                 Ok(())
             }
         })
-    }
-
-    /// Finish the async sequence by resuming `thread`, using the current contents of the stack
-    /// as arguments.
-    pub fn tail_resume(self, thread: &LocalThread<'seq>) {
-        visit_shared(move |shared| {
-            shared.set_next(SequencePoll::TailResume {
-                thread: thread.fetch(shared.locals),
-            });
-        });
     }
 }
 
@@ -462,6 +431,29 @@ impl<'seq, 'gc> Locals<'seq, 'gc> {
     }
 }
 
+enum SeqOp<'gc> {
+    Pending,
+    Call {
+        function: Function<'gc>,
+        bottom: usize,
+    },
+    Yield {
+        to_thread: Option<Thread<'gc>>,
+        bottom: usize,
+    },
+    Resume {
+        thread: Thread<'gc>,
+        bottom: usize,
+    },
+}
+
+enum SeqReturn<'gc> {
+    Return,
+    TailCall { function: Function<'gc> },
+    TailYield { to_thread: Option<Thread<'gc>> },
+    TailResume { thread: Thread<'gc> },
+}
+
 #[derive(Collect)]
 #[collect(no_drop)]
 enum SeqFut<'gc> {
@@ -470,7 +462,10 @@ enum SeqFut<'gc> {
         #[collect(require_static)]
         create: Box<dyn for<'seq> FnOnce(*mut (), SequenceState<'seq>) -> SeqFuture<'seq>>,
     },
-    Run(#[collect(require_static)] Pin<Box<dyn Future<Output = Result<(), LocalError<'static>>>>>),
+    Run(
+        #[collect(require_static)]
+        Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>,
+    ),
     Empty,
 }
 
@@ -493,7 +488,7 @@ impl<'gc> SeqFut<'gc> {
 }
 
 impl<'gc> SeqFut<'gc> {
-    fn poll(&mut self, shared: &mut Shared<'gc, '_>) -> Poll<Result<(), Error<'gc>>> {
+    fn poll(&mut self, shared: &mut Shared<'gc, '_>) -> Poll<Result<SeqReturn<'gc>, Error<'gc>>> {
         let locals = shared.locals;
         with_shared(shared, || {
             match mem::replace(self, SeqFut::Empty) {
@@ -511,7 +506,21 @@ impl<'gc> SeqFut<'gc> {
             let SeqFut::Run(f) = self else { unreachable!() };
             f.as_mut()
                 .poll(&mut task::Context::from_waker(&noop_waker()))
-                .map_err(|e| e.fetch(locals))
+                .map(|r| match r {
+                    Ok(seq_ret) => Ok(match seq_ret {
+                        SequenceReturn::Return => SeqReturn::Return,
+                        SequenceReturn::TailCall { function } => SeqReturn::TailCall {
+                            function: function.fetch(locals),
+                        },
+                        SequenceReturn::TailYield { to_thread } => SeqReturn::TailYield {
+                            to_thread: to_thread.map(|t| t.fetch(locals)),
+                        },
+                        SequenceReturn::TailResume { thread } => SeqReturn::TailResume {
+                            thread: thread.fetch(locals),
+                        },
+                    }),
+                    Err(err) => Err(err.fetch(locals)),
+                })
         })
     }
 }
@@ -525,16 +534,16 @@ struct Shared<'gc, 'a> {
     exec: Execution<'gc, 'a>,
     stack: Stack<'gc, 'a>,
     error: Option<Error<'gc>>,
-    next: &'a mut Option<SequencePoll<'gc>>,
+    next_op: &'a mut Option<SeqOp<'gc>>,
 }
 
 impl<'gc, 'a> Shared<'gc, 'a> {
-    fn set_next(&mut self, poll: SequencePoll<'gc>) {
+    fn set_next_op(&mut self, op: SeqOp<'gc>) {
         assert!(
-            self.next.is_none(),
+            self.next_op.is_none(),
             "`SequenceState` async method not `await`ed"
         );
-        *self.next = Some(poll);
+        *self.next_op = Some(op);
     }
 }
 
