@@ -52,7 +52,7 @@ impl<'gc> Context<'gc> {
     pub fn singleton<S>(self) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a>,
-        Root<'gc, S>: Singleton<'gc>,
+        Root<'gc, S>: Sized + Singleton<'gc> + Collect,
     {
         self.state.registry.singleton::<S>(self)
     }

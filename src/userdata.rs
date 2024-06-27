@@ -56,6 +56,7 @@ impl<'gc> UserData<'gc> {
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a>,
+        Root<'gc, R>: Sized + Collect,
     {
         UserData(Any::new::<R>(mc, val))
     }
@@ -86,6 +87,7 @@ impl<'gc> UserData<'gc> {
     pub fn downcast<R>(self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
     where
         R: for<'b> Rootable<'b>,
+        Root<'gc, R>: Sized,
     {
         self.0.downcast::<R>().ok_or(BadUserDataType)
     }
@@ -96,6 +98,7 @@ impl<'gc> UserData<'gc> {
     ) -> Result<&'gc barrier::Write<Root<'gc, R>>, BadUserDataType>
     where
         R: for<'b> Rootable<'b>,
+        Root<'gc, R>: Sized,
     {
         self.0.downcast_write::<R>(mc).ok_or(BadUserDataType)
     }

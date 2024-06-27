@@ -21,7 +21,10 @@ impl<'gc, U: for<'a> Rootable<'a>> Clone for UserMethods<'gc, U> {
     }
 }
 
-impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
+impl<'gc, U> UserMethods<'gc, U>
+where
+    U: for<'a> Rootable<'a>,
+{
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             table: Table::new(mc),
@@ -29,6 +32,18 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
         }
     }
 
+    pub fn metatable(self, ctx: Context<'gc>) -> Table<'gc> {
+        let metatable = Table::new(&ctx);
+        metatable.set(ctx, MetaMethod::Index, self.table).unwrap();
+        metatable
+    }
+}
+
+impl<'gc, U> UserMethods<'gc, U>
+where
+    U: for<'a> Rootable<'a>,
+    for<'a> Root<'a, U>: Sized,
+{
     pub fn add<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
     where
         F: Fn(&Root<'gc, U>, Context<'gc>, Execution<'gc, '_>, A) -> Result<R, Error<'gc>>
@@ -71,13 +86,13 @@ impl<'gc, U: for<'a> Rootable<'a>> UserMethods<'gc, U> {
 
         !self.table.set(ctx, name, callback).unwrap().is_nil()
     }
+}
 
-    pub fn metatable(self, ctx: Context<'gc>) -> Table<'gc> {
-        let metatable = Table::new(&ctx);
-        metatable.set(ctx, MetaMethod::Index, self.table).unwrap();
-        metatable
-    }
-
+impl<'gc, U> UserMethods<'gc, U>
+where
+    U: for<'a> Rootable<'a>,
+    for<'a> Root<'a, U>: Sized + Collect,
+{
     pub fn wrap(self, ctx: Context<'gc>, ud: Root<'gc, U>) -> UserData<'gc> {
         let ud = UserData::new::<U>(&ctx, ud);
         ud.set_metatable(&ctx, Some(self.metatable(ctx)));

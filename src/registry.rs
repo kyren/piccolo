@@ -53,7 +53,7 @@ impl<'gc> Registry<'gc> {
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a>,
-        Root<'gc, S>: Singleton<'gc>,
+        Root<'gc, S>: Sized + Singleton<'gc> + Collect,
     {
         let mut singletons = self.singletons.borrow_mut(&ctx);
         match singletons.entry(TypeId::of::<S>()) {
