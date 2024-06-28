@@ -2,7 +2,7 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
-    Callback, CallbackReturn, Context, Function, IntoValue, InvalidTableKey, Table, Value,
+    table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
 };
 
 // TODO: Remaining metamethods to implement:

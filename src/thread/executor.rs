@@ -6,8 +6,9 @@ use thiserror::Error;
 
 use crate::{
     compiler::{FunctionRef, LineNumber},
-    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    SequencePoll, Stack, String, Thread, ThreadMode, Variadic,
+    thread::BadThreadMode,
+    CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll,
+    Stack, String, Thread, ThreadMode, Variadic,
 };
 
 use super::{
@@ -48,7 +49,7 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 
 /// The entry-point for the Lua VM.
 ///
-/// `Executor` runs networks of `Thread`s that may depend on each other and may pass control
+/// An `Executor` runs networks of `Thread`s that may depend on each other and may yield control
 /// back and forth. All Lua code that is run is done so directly or indirectly by calling
 /// `Executor::step`.
 ///

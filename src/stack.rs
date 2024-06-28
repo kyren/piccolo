@@ -9,6 +9,14 @@ use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
+/// The mechanism through which all callbacks receive parameters and return values.
+///
+/// Each [`Thread`](crate::Thread) has its own internal stack of [`Value`]s, and this stack is
+/// shared for all running Lua functions *and* callbacks.
+///
+/// The `Stack` is actually a mutable reference to the *top* of the internal stack inside a
+/// `Thread`. In this way, we avoid needing to constantly allocate space for callback arguments
+/// and returns.
 pub struct Stack<'gc, 'a> {
     values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     bottom: usize,

@@ -13,6 +13,10 @@ use crate::{
     Context,
 };
 
+/// A type which can have a single registered value per [`Lua`](crate::Lua) instance.
+///
+/// By implementing this trait, you can store things like metatables globally per `Lua` instance,
+/// and avoid needlessly duplicating the same values.
 pub trait Singleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self;
 }
@@ -23,6 +27,9 @@ impl<'gc, T: Default> Singleton<'gc> for T {
     }
 }
 
+/// A collection of stashed values and [`Singleton`]s.
+///
+/// Generally, there is one globally accessible `Registry` per [`Lua`](crate::Lua) instance.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Registry<'gc> {
@@ -46,7 +53,7 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
-    /// Create an instance of a type that exists at most once per `Lua` instance.
+    /// Create an instance of a type that exists at most once per [`Lua`](crate::Lua) instance.
     ///
     /// If the type has already been created, returns the already created instance, otherwise calls
     /// `S::create` to create a new instance and returns it.

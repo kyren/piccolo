@@ -7,10 +7,38 @@ use crate::{
     stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, Fuel, IntoValue, InvalidTableKey, Registry, Singleton, StashedExecutor,
-    StaticError, String, Table, Value,
+    table::InvalidTableKey,
+    Error, FromMultiValue, Fuel, IntoValue, Registry, Singleton, StashedExecutor, StaticError,
+    String, Table, Value,
 };
 
+/// A value representing the main "execution context" of a Lua state.
+///
+/// It provides access to the table of global variables, the registry, the string interner, and
+/// other state that most every piece of running Lua code will need access to.
+///
+/// It is a cheap, copyable reference type that references internal state variables inside a [`Lua`]
+/// instance.
+///
+/// As a convenience, it also contains the [`gc_arena::Mutation`] reference provided by `gc-arena`
+/// when mutating a [`gc_arena::Arena`]. This allows code that uses piccolo to accept a single `ctx:
+/// Context<'gc>` parameter, rather than having to accept both the piccolo `ctx` *and* the usual
+/// `mc: &Mutation<'gc>` parameter.
+///
+/// To access the contained [`Mutation`] context, there is a `Deref` impl on `Context` that derefs
+/// to `Mutation` that can be used like so:
+///
+/// ```rust
+/// # use gc_arena::Gc;
+/// # use piccolo::Lua;
+/// # fn main() {
+/// # let mut lua = Lua::empty();
+/// lua.enter(|ctx| {
+///     // Create a new `Gc<'gc, i32>` pointer using the `&Mutation` held inside `ctx`
+///     let p = Gc::new(&ctx, 13);
+/// });
+/// # }
+/// ```
 #[derive(Copy, Clone)]
 pub struct Context<'gc> {
     mutation: &'gc Mutation<'gc>,
@@ -86,6 +114,10 @@ impl<'gc> ops::Deref for Context<'gc> {
     }
 }
 
+/// A Lua execution environment.
+///
+/// This is the top-level `piccolo` type. In order to load and call any Lua code, the first step is
+/// to create a `Lua` instance.
 pub struct Lua {
     arena: Arena<Rootable![State<'_>]>,
 }

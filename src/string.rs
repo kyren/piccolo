@@ -19,12 +19,16 @@ use thiserror::Error;
 
 use crate::{Context, Value};
 
-// Represents `String` as either a pointer to an external / owned slice pointer or a size prefixed
-// inline array.
+/// The Lua string type.
+///
+/// Unlike Rust strings, Lua strings may contain *arbitrary bytes*, and as such are not necessarily
+// UTF-8.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, StringInner>);
 
+// We represent `String` as either a pointer to an external / owned slice pointer or a size prefixed
+// inline array.
 #[derive(Copy, Clone, Collect)]
 #[collect(require_static)]
 pub struct StringInner {

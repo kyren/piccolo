@@ -4,8 +4,10 @@ mod vm;
 
 use thiserror::Error;
 
-use crate::meta_ops::{MetaCallError, MetaOperatorError};
-use crate::BadConcatType;
+use crate::{
+    meta_ops::{MetaCallError, MetaOperatorError},
+    string::BadConcatType,
+};
 
 pub use self::{
     executor::{

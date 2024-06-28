@@ -11,6 +11,26 @@ use super::raw::{InvalidTableKey, NextValue, RawTable};
 
 pub type TableInner<'gc> = RefLock<TableState<'gc>>;
 
+/// The primary Lua data structure.
+///
+/// A `Table` is a combination of an array and a map. It a map of [`Value`]s to other `Value`s, but
+/// as an optimization, when keys are integral and start from 1, it stores them within an internal
+/// array.
+///
+/// Entries with values of [`Value::Nil`] are transparently removed from the table.
+///
+/// When a `Table` has only integral keys starting from 1, and every value is non-nil, then it is
+/// also known as a "sequence" and acts similar to how an array would in other languages.
+///
+/// All Lua tables can have another associated table called a "metatable" which governs how they
+/// act in Lua code. In Lua code, operations on a table can trigger special "metamethods" in the
+/// metatable (if they are present).
+///
+/// On the Rust side, all methods on `Table` are "raw", which in Lua jargon means that they
+/// never trigger metamethods. This MUST be true, because `piccolo` does not (and cannot)
+/// silently trigger running Lua code. In order to trigger metamethods, you must use the
+/// [`meta_ops`](crate::meta_ops) module and manually run any triggered code on an
+/// [`Executor`](crate::Executor).
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Table<'gc>(Gc<'gc, TableInner<'gc>>);

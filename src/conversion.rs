@@ -374,6 +374,14 @@ impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
     }
 }
 
+/// A marker newtype that converts to / from *multiple* Lua values.
+///
+/// A `Vec<T>` has [`IntoValue`] / [`FromValue`] implementations that conver to / from a [`Table`],
+/// while a `Variadic<Vec<T>>` has [`IntoMultiValue`] and [`FromMultiValue`] implementations that
+/// convert to / from multiple Lua values at once.
+///
+/// Use this to provide a variable number of arguments to a function, or to collect multiple return
+/// values into a single container.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Variadic<T>(pub T);
 

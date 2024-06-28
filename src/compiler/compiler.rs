@@ -248,11 +248,11 @@ enum ExprDescriptor<S> {
     // differently than bare expressions to prevent them from ever resulting in multiple values.
     //
     // ```lua
-    //    local a, b, c = table.unpack({1, 2, 3})
-    //    -- a, b, c should be 1, 2, 3
+    // local a, b, c = table.unpack({1, 2, 3})
+    // -- a, b, c should be 1, 2, 3
     //
-    //    local a, b, c = (table.unpack({1, 2, 3}))
-    //    -- a, b, c should be 1, nil, nil
+    // local a, b, c = (table.unpack({1, 2, 3}))
+    // -- a, b, c should be 1, nil, nil
     // ````
     Group(Box<ExprDescriptor<S>>),
 }

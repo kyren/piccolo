@@ -1,6 +1,6 @@
 use std::string::String as StdString;
 
-use piccolo::{Closure, Executor, Lua, StaticError, VMError};
+use piccolo::{thread::VMError, Closure, Executor, Lua, StaticError};
 
 const SOURCE: &str = r#"
     -- Purposeful typo of 'tostring'

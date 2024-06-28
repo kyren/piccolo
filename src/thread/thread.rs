@@ -14,9 +14,12 @@ use crate::{
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    String, Table, UserData, VMError, Value,
+    String, Table, UserData, Value,
 };
 
+use super::VMError;
+
+/// The current state of a [`Thread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
     /// No frames are on the thread and there are no available results, the thread can be started.
@@ -47,6 +50,10 @@ pub struct BadThreadMode {
 
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
+/// A Lua coroutine.
+///
+/// All running Lua or callback code is run as part of a larger `Thread`. `Thread`s may create other
+/// `Thread`s, suspend them, resume them, and may yield to calling `Thread`s.
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);

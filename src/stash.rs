@@ -13,12 +13,14 @@ use crate::{
     Value,
 };
 
+/// A trait for types that can be stashed into a [`DynamicRootSet`].
 pub trait Stashable<'gc> {
     type Stashed;
 
     fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed;
 }
 
+/// A trait for types that can be fetched from a [`DynamicRootSet`].
 pub trait Fetchable<'gc> {
     type Fetched;
 
@@ -26,7 +28,7 @@ pub trait Fetchable<'gc> {
 }
 
 #[derive(Clone)]
-pub struct StashedString(pub DynamicRoot<Rootable![StringInner]>);
+pub struct StashedString(DynamicRoot<Rootable![StringInner]>);
 
 impl fmt::Debug for StashedString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -53,7 +55,7 @@ impl<'gc> Fetchable<'gc> for StashedString {
 }
 
 #[derive(Clone)]
-pub struct StashedTable(pub DynamicRoot<Rootable![TableInner<'_>]>);
+pub struct StashedTable(DynamicRoot<Rootable![TableInner<'_>]>);
 
 impl fmt::Debug for StashedTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -80,7 +82,7 @@ impl<'gc> Fetchable<'gc> for StashedTable {
 }
 
 #[derive(Clone)]
-pub struct StashedClosure(pub DynamicRoot<Rootable![ClosureInner<'_>]>);
+pub struct StashedClosure(DynamicRoot<Rootable![ClosureInner<'_>]>);
 
 impl fmt::Debug for StashedClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -107,7 +109,7 @@ impl<'gc> Fetchable<'gc> for StashedClosure {
 }
 
 #[derive(Clone)]
-pub struct StashedCallback(pub DynamicRoot<Rootable![CallbackInner<'_>]>);
+pub struct StashedCallback(DynamicRoot<Rootable![CallbackInner<'_>]>);
 
 impl fmt::Debug for StashedCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -134,7 +136,7 @@ impl<'gc> Fetchable<'gc> for StashedCallback {
 }
 
 #[derive(Clone)]
-pub struct StashedThread(pub DynamicRoot<Rootable![ThreadInner<'_>]>);
+pub struct StashedThread(DynamicRoot<Rootable![ThreadInner<'_>]>);
 
 impl fmt::Debug for StashedThread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -161,7 +163,7 @@ impl<'gc> Fetchable<'gc> for StashedThread {
 }
 
 #[derive(Clone)]
-pub struct StashedUserData(pub DynamicRoot<Rootable![UserDataInner<'_>]>);
+pub struct StashedUserData(DynamicRoot<Rootable![UserDataInner<'_>]>);
 
 impl fmt::Debug for StashedUserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -188,7 +190,7 @@ impl<'gc> Fetchable<'gc> for StashedUserData {
 }
 
 #[derive(Clone)]
-pub struct StashedExecutor(pub DynamicRoot<Rootable![ExecutorInner<'_>]>);
+pub struct StashedExecutor(DynamicRoot<Rootable![ExecutorInner<'_>]>);
 
 impl fmt::Debug for StashedExecutor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
