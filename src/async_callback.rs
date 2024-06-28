@@ -19,7 +19,7 @@ use crate::{
 
 /// Return type for futures that are driving an async sequence.
 ///
-/// This performs equivalent actions to [`CallbackReturn`] and the returning variants of
+/// This performs equivalent actions to [`CallbackReturn`] and the tail variants of
 /// [`SequencePoll`], so check those for more information on precisely what these actions mean.
 pub enum SequenceReturn<'seq> {
     /// Sequence finished, all of the values in the stack will be returned to the caller.
@@ -49,21 +49,21 @@ impl<'gc> AsyncSequence<'gc> {
     ///
     /// Can be used to implement `Sequence` in a way MUCH easier than manual state machines.
     ///
-    /// Currently uses `async` to express what in the future could be better expressed by the
-    /// unstable [`std::ops::Coroutine`]. The [`std::task::Context`] available within the created
-    /// future is *meaningless* and has a NOOP waker, we are only using `async` as a stable way to
-    /// express a more simple Rust coroutine.
+    /// Currently uses `async` to do what in the future could be more directly accomplished with
+    /// coroutines (see the unstable [`std::ops::Coroutine`] trait). The [`std::task::Context`]
+    /// available within the created future is **meaningless** and has a NOOP waker; we are
+    /// only using `async` as a stable way to express what would be better expressed as a simple
+    /// coroutine.
     ///
     /// It is possible to integrate async code with `piccolo`, and to even have a method to "wake"
-    /// Lua coroutines with a real [`std::task::Waker`], but simply calling an external async method
-    /// from the created future here is *not* the way to do it. It will not do what you want, and
-    /// probably will result in panics.
+    /// Lua coroutines with a *real* [`std::task::Waker`], but simply calling an external async
+    /// method from the async block provided here is *not* the way to do it. It will not do what you
+    /// want, and probably will result in panics.
     ///
     /// # Panics
     ///
     /// All Rust yields (`.await`) within the created future must occur from calling an async method
-    /// on `SequenceState`, and all async methods on `SequenceState` must be `.await`ed when they
-    /// are called. Not doing so may result in panics.
+    /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
     pub fn new_seq<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
     where
         F: for<'seq> FnOnce(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
@@ -74,8 +74,8 @@ impl<'gc> AsyncSequence<'gc> {
     /// A version of [`AsyncSequence::new_seq`] that accepts an associated GC root object passed to
     /// the create function.
     ///
-    /// This is important because the create function must be 'static, and is not called until the
-    /// resulting sequence is first polled.
+    /// This is important because the create function must be `'static`, and it is not called until
+    /// the resulting sequence is first polled.
     pub fn new_seq_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
     where
         R: Collect + 'gc,
@@ -254,9 +254,6 @@ pub type LocalError<'seq> = Local<'seq, StashedError>;
 /// Many methods on `SequenceState` are async; `.await`ing them causes the outer [`AsyncSequence`]
 /// to return a non-tail [`SequencePoll`] value, triggering the appropriate action. If this action
 /// results in an error, the async method will return the [`Error`] provided to [`Sequence::error`].
-///
-/// All async methods on `SequenceState` should be `.await`ed immediately, not doing so may result
-/// in panics.
 pub struct SequenceState<'seq> {
     _invariant: Invariant<'seq>,
 }
@@ -268,7 +265,7 @@ impl<'seq> SequenceState<'seq> {
     /// machines to possibly implement [`gc_arena::Collect`]. Therefore, we must ensure that garbage
     /// collected values **cannot** be directly stored by the enclosing async block. We guard all
     /// access to the garbage collector context to prevent this from happening, similar to the
-    /// interface we use from the outside (like `Lua::enter`).
+    /// interface we use from the outside of the `Lua` context (like `Lua::enter`).
     pub fn enter<F, R>(&mut self, f: F) -> R
     where
         F: for<'gc> FnOnce(
@@ -293,7 +290,7 @@ impl<'seq> SequenceState<'seq> {
     }
 
     /// A version of [`SequenceState::enter`] which supports failure, and automatically turns any
-    /// returned error into an async sequence [`Local`].
+    /// returned error into a [`LocalError`].
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, LocalError<'seq>>
     where
         F: for<'gc> FnOnce(
@@ -362,7 +359,7 @@ impl<'seq> SequenceState<'seq> {
 
     /// Yield to the calling code (or to `to_thread`) values starting at `bottom` in the stack. When
     /// this `Sequence` is resumed, resume arguments will be placed at `bottom` in the stack.
-    pub async fn yield_to(
+    pub async fn _yield(
         &mut self,
         to_thread: Option<&LocalThread<'seq>>,
         bottom: usize,

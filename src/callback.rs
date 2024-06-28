@@ -14,7 +14,7 @@ use crate::{Context, Error, Execution, Function, Stack, Thread};
 #[derive(Collect)]
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
-    /// Return all values currently in the stack to the caller.
+    /// Return all values in the stack to the caller.
     Return,
     /// Start polling the given [`Sequence`].
     ///
@@ -30,7 +30,7 @@ pub enum CallbackReturn<'gc> {
         function: Function<'gc>,
         then: Option<BoxSequence<'gc>>,
     },
-    /// Yield the values currently in the stack.
+    /// Yield the values in the stack.
     ///
     /// If no `to_thread` is given, then this yields values to the calling thread. If
     /// this is the top thread in an `Executor`, then this will put the `Executor` in the
