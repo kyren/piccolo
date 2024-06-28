@@ -47,7 +47,7 @@ impl<'gc> Function<'gc> {
                 let function = fns[self.1];
                 self.1 += 1;
                 if self.1 == fns.len() {
-                    Ok(SequencePoll::TailCall { function })
+                    Ok(SequencePoll::TailCall(function))
                 } else {
                     Ok(SequencePoll::Call {
                         function,

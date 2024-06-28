@@ -9,25 +9,64 @@ use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
 
 use crate::{Context, Error, Execution, Function, Stack, Thread};
 
+/// Describes the next action for an [`Executor`](crate::Executor) to take after a callback has
+/// returned.
 #[derive(Collect)]
 #[collect(no_drop)]
 pub enum CallbackReturn<'gc> {
+    /// Return all values currently in the stack to the caller.
     Return,
+    /// Start polling the given [`Sequence`].
+    ///
+    /// The running `Executor` will begin polling the given sequence with the values currently in
+    /// the stack. Once the sequence returns, the return values will be returned to the caller.
     Sequence(BoxSequence<'gc>),
+    /// Call the given function with the values in the stack.
+    ///
+    /// Once the called function returns, if a `then` sequence is given, the sequence will begin
+    /// being be polled with the values returned by the called function. Otherwise, the return
+    /// values of the called function will be returned to the caller of this callback.
     Call {
         function: Function<'gc>,
         then: Option<BoxSequence<'gc>>,
     },
+    /// Yield the values currently in the stack.
+    ///
+    /// If no `to_thread` is given, then this yields values to the calling thread. If
+    /// this is the top thread in an `Executor`, then this will put the `Executor` in the
+    /// [`ExecutorMode::Result`](crate::ExecutorMode::Result) mode.
+    ///
+    /// If `to_thread` is given, then this yields to that thread rather than the caller. This has
+    /// no direct equivalent in other Lua variants, but it is roughly equivalent to this Lua code,
+    /// *without* keeping the currently running thread in the thread stack:
+    ///
+    /// ```lua
+    /// coroutine.yield(coroutine.resume(to_thread))
+    /// ```
+    ///
+    /// In other words, it *replaces* the currently running thread by resuming the target thread.
+    ///
+    /// If a `then` sequence is given, then once the current thread is resumed, it will be resumed
+    /// by polling the given sequence with the resume arguments in the stack.
+    ///
+    /// If no `then` sequence is given, then once the current thread is resumed, it will act as
+    /// though this callback has returned with the provided resume arguments.
     Yield {
         to_thread: Option<Thread<'gc>>,
         then: Option<BoxSequence<'gc>>,
     },
+    /// Resume the given thread, with resume arguments in the current stack.
+    ///
+    /// If a `then` sequence is given, then once the thread returns, the `Executor` will begin
+    /// polling the given sequence with the return values from the thread. Otherwise, the return
+    /// values from the thread will be returned directly to the caller.
     Resume {
         thread: Thread<'gc>,
         then: Option<BoxSequence<'gc>>,
     },
 }
 
+/// A trait for values that can be called as Rust callbacks.
 pub trait CallbackFn<'gc>: Collect {
     fn call(
         &self,
@@ -37,11 +76,12 @@ pub trait CallbackFn<'gc>: Collect {
     ) -> Result<CallbackReturn<'gc>, Error<'gc>>;
 }
 
-// Represents a callback as a single pointer with an inline VTable header.
+/// A garbage collected instance of an object that impelments [`CallbackFn`].
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Callback<'gc>(Gc<'gc, CallbackInner<'gc>>);
 
+// We represent a callback as a single pointer with an inline VTable header.
 pub struct CallbackInner<'gc> {
     call: unsafe fn(
         *const CallbackInner<'gc>,
@@ -185,46 +225,62 @@ impl<'gc> Hash for Callback<'gc> {
     }
 }
 
+/// Value returned by [`Sequence::poll`], describing the next action that the
+/// [`Executor`](crate::Executor) should take.
+///
+/// These actions mirror the same ones that one-shot callbacks can perform with `CallbackReturn`, so
+/// see [`CallbackReturn`] for more information.
 pub enum SequencePoll<'gc> {
-    /// Sequence pending, `Sequence::poll` will be called on the next step with the stack unchanged.
+    /// `Sequence` is pending, `Sequence::poll` will be called on the next step with the stack
+    /// unchanged.
     Pending,
-    /// Sequence finished, all of the values in the stack will be returned to the caller.
-    Return,
     /// Call the given functions with the arguments in the stack starting at `bottom`. When the
     /// function returns, `Sequence::poll` will be called with the return values will be placed into
     /// the stack starting at `bottom`. If the given function errors, then `Sequence::error` will be
     /// called and the stack will instead be truncated to `bottom`.
     Call {
-        function: Function<'gc>,
         bottom: usize,
+        function: Function<'gc>,
     },
-    /// Call the given function as a tail call with the entire stack as arguments and finish the
-    /// sequence.
-    TailCall { function: Function<'gc> },
     /// Yield the values in the stack starting at `bottom`. When the `Sequence` is resumed, the
     /// resume arguments will be on the stack starting at `bottom`.
     Yield {
-        to_thread: Option<Thread<'gc>>,
         bottom: usize,
+        to_thread: Option<Thread<'gc>>,
     },
-    /// Yield all of the values in the stack and finish the sequence.
-    TailYield { to_thread: Option<Thread<'gc>> },
     /// Resume the given thread with arguments starting at `bottom`. When the thread returns values,
     /// those values will be placed on the stack starting at `bottom`.
-    Resume { thread: Thread<'gc>, bottom: usize },
-    /// Resume the given thread with the entire stack as arguments and finish the sequence.
-    TailResume { thread: Thread<'gc> },
+    Resume { bottom: usize, thread: Thread<'gc> },
+    /// Finish polling this `Sequence` and return the values in the stack to the caller.
+    Return,
+    /// Finish polling this `Sequence` by calling the given function with the arguments in the
+    /// stack. The return values of the called function will be returned to the caller of this
+    /// sequence.
+    TailCall(Function<'gc>),
+    /// Finish polling this `Sequence` by yielding the values in the stack. Once the current thread
+    /// is resumed, the resume arguments will be returned to the caller of this sequence.
+    TailYield(Option<Thread<'gc>>),
+    /// Finish polling this `Sequence` by resuming the given thread with arguments in the stack.
+    /// Once the given thread returns, the return values will be returned to the caller of this
+    /// sequence.
+    TailResume(Thread<'gc>),
 }
 
+/// A suspended callback.
+///
+/// When started by a [`Callback`], the [`Executor`](crate::Executor) will begin polling the object
+/// implementing this trait.
+///
+/// The `Sequence` implementer can trigger actions in the `Executor` by returning [`SequencePoll`]
+/// values from [`Sequence::poll`]. Once the triggered action completes, then either
+/// [`Sequence::poll`] or [`Sequence::error`] will be called, depending on whether the triggered
+/// action has errored.
 pub trait Sequence<'gc>: Collect {
-    /// Called when a `Sequence` is first run with the stack unchanged from the returned `Callback`
-    /// that spawned it.
+    /// Called by the running [`Executor`](crate::Executor) when the `Sequence` is first started
+    /// with the arguments to the `Sequence`, and whenever a triggered action completes with the
+    /// action's return values.
     ///
-    /// If a sub-function is called and succeeds, this will be called when that function finishes
-    /// successfully with its return values.
-    ///
-    /// If the `Sequence` yields values, this will suspend the containing coroutine and
-    /// `Sequence::poll` will be called again with the resume parameters.
+    /// The [`SequencePoll`] return value tells the running `Executor` what action to take next.
     fn poll(
         &mut self,
         ctx: Context<'gc>,
@@ -232,8 +288,11 @@ pub trait Sequence<'gc>: Collect {
         stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>>;
 
-    /// Called if a sub-function errors to handle the error, or if a `Sequence` has yielded and the
-    /// containing coroutine is resumed with an error.
+    /// Called if triggered action has errored, allowing the `Sequence` to potentially handle the
+    /// error.
+    ///
+    /// By default, this method will simply fail with the provided error, bubbling it up to the
+    /// caller.
     fn error(
         &mut self,
         _ctx: Context<'gc>,
@@ -245,6 +304,7 @@ pub trait Sequence<'gc>: Collect {
     }
 }
 
+/// A boxed value that implements [`Sequence`].
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct BoxSequence<'gc>(boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);

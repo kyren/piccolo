@@ -18,17 +18,18 @@ use crate::{
 };
 
 /// Return type for futures that are driving an async sequence.
+///
+/// This performs equivalent actions to [`CallbackReturn`] and the returning variants of
+/// [`SequencePoll`], so check those for more information on precisely what these actions mean.
 pub enum SequenceReturn<'seq> {
     /// Sequence finished, all of the values in the stack will be returned to the caller.
     Return,
-    /// Call the given function as a tail call with the entire stack as arguments.
-    TailCall { function: LocalFunction<'seq> },
-    /// Yield all of the values in the stack.
-    TailYield {
-        to_thread: Option<LocalThread<'seq>>,
-    },
-    /// Resume the given thread with the entire stack as arguments.
-    TailResume { thread: LocalThread<'seq> },
+    /// Call the given function with the values in the stack as arguments.
+    Call(LocalFunction<'seq>),
+    /// Yield the values in the stack.
+    Yield(Option<LocalThread<'seq>>),
+    /// Resume the given thread with the values in the stack as arguments.
+    Resume(LocalThread<'seq>),
 }
 
 pub type SeqFuture<'seq> =
@@ -148,9 +149,9 @@ impl<'gc> AsyncSequence<'gc> {
                 );
                 match res? {
                     SeqReturn::Return => SequencePoll::Return,
-                    SeqReturn::TailCall { function } => SequencePoll::TailCall { function },
-                    SeqReturn::TailYield { to_thread } => SequencePoll::TailYield { to_thread },
-                    SeqReturn::TailResume { thread } => SequencePoll::TailResume { thread },
+                    SeqReturn::TailCall { function } => SequencePoll::TailCall(function),
+                    SeqReturn::TailYield { to_thread } => SequencePoll::TailYield(to_thread),
+                    SeqReturn::TailResume { thread } => SequencePoll::TailResume(thread),
                 }
             }
             Poll::Pending => {
@@ -509,13 +510,13 @@ impl<'gc> SeqFut<'gc> {
                 .map(|r| match r {
                     Ok(seq_ret) => Ok(match seq_ret {
                         SequenceReturn::Return => SeqReturn::Return,
-                        SequenceReturn::TailCall { function } => SeqReturn::TailCall {
+                        SequenceReturn::Call(function) => SeqReturn::TailCall {
                             function: function.fetch(locals),
                         },
-                        SequenceReturn::TailYield { to_thread } => SeqReturn::TailYield {
+                        SequenceReturn::Yield(to_thread) => SeqReturn::TailYield {
                             to_thread: to_thread.map(|t| t.fetch(locals)),
                         },
-                        SequenceReturn::TailResume { thread } => SeqReturn::TailResume {
+                        SequenceReturn::Resume(thread) => SeqReturn::TailResume {
                             thread: thread.fetch(locals),
                         },
                     }),

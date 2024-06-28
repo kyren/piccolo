@@ -363,7 +363,7 @@ impl<'gc> Executor<'gc> {
                                 });
                                 top_state.push_call(bottom + rel_bottom, function);
                             }
-                            Ok(SequencePoll::TailCall { function }) => {
+                            Ok(SequencePoll::TailCall(function)) => {
                                 top_state.push_call(bottom, function);
                             }
                             Ok(SequencePoll::Yield {
@@ -383,7 +383,7 @@ impl<'gc> Executor<'gc> {
                                     bottom + rel_bottom,
                                 );
                             }
-                            Ok(SequencePoll::TailYield { to_thread }) => {
+                            Ok(SequencePoll::TailYield(to_thread)) => {
                                 do_yield(
                                     ctx,
                                     &mut state.thread_stack,
@@ -409,7 +409,7 @@ impl<'gc> Executor<'gc> {
                                     bottom + rel_bottom,
                                 );
                             }
-                            Ok(SequencePoll::TailResume { thread }) => {
+                            Ok(SequencePoll::TailResume(thread)) => {
                                 do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
                             }
                             Err(error) => {
