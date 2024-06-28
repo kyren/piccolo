@@ -235,8 +235,8 @@ pub enum SequencePoll<'gc> {
     /// unchanged.
     Pending,
     /// Call the given functions with the arguments in the stack starting at `bottom`. When the
-    /// function returns, `Sequence::poll` will be called with the return values will be placed into
-    /// the stack starting at `bottom`. If the given function errors, then `Sequence::error` will be
+    /// function returns, `Sequence::poll` will be called with the return values placed into the
+    /// stack starting at `bottom`. If the given function errors, then `Sequence::error` will be
     /// called and the stack will instead be truncated to `bottom`.
     Call {
         bottom: usize,
