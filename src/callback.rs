@@ -228,7 +228,7 @@ impl<'gc> Hash for Callback<'gc> {
 /// Value returned by [`Sequence::poll`], describing the next action that the
 /// [`Executor`](crate::Executor) should take.
 ///
-/// These actions mirror the same ones that one-shot callbacks can perform with `CallbackReturn`, so
+/// These actions mirror the same ones that one-shot callbacks can perform with `CallbackReturn`,
 /// see [`CallbackReturn`] for more information.
 pub enum SequencePoll<'gc> {
     /// `Sequence` is pending, `Sequence::poll` will be called on the next step with the stack
@@ -248,8 +248,8 @@ pub enum SequencePoll<'gc> {
         bottom: usize,
         to_thread: Option<Thread<'gc>>,
     },
-    /// Resume the given thread with arguments starting at `bottom`. When the thread returns values,
-    /// those values will be placed on the stack starting at `bottom`.
+    /// Resume the given thread with arguments starting at `bottom`. When the thread returns, the
+    /// return values will be placed on the stack starting at `bottom`.
     Resume { bottom: usize, thread: Thread<'gc> },
     /// Finish polling this `Sequence` and return the values in the stack to the caller.
     Return,
