@@ -266,15 +266,16 @@ pub enum SequencePoll<'gc> {
     TailResume(Thread<'gc>),
 }
 
-/// A suspended callback.
+/// A callback that can suspend itself, waiting on other actions to complete before being resumed.
 ///
-/// When started by a [`Callback`], the [`Executor`](crate::Executor) will begin polling the object
-/// implementing this trait.
+/// `Sequence`s are started when a [`Callback`] triggers them by returning them inside a
+/// [`CallbackReturn`]. Once started, the running [`Executor`](crate::Executor) will poll them to
+/// completion.
 ///
-/// The `Sequence` implementer can trigger actions in the `Executor` by returning [`SequencePoll`]
-/// values from [`Sequence::poll`]. Once the triggered action completes, then either
+/// Types implementing `Sequence` can trigger actions in the `Executor` by returning
+/// [`SequencePoll`] values from [`Sequence::poll`]. Once the triggered action completes, either
 /// [`Sequence::poll`] or [`Sequence::error`] will be called, depending on whether the triggered
-/// action has errored.
+/// action has completed successfully or errored.
 pub trait Sequence<'gc>: Collect {
     /// Called by the running [`Executor`](crate::Executor) when the `Sequence` is first started
     /// with the arguments to the `Sequence`, and whenever a triggered action completes with the

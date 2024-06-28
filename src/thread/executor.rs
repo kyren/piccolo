@@ -55,14 +55,15 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 ///
 /// # Panics
 ///
-/// `Executor` is dangerous to use from within any kind of Lua callback. It has no protection
-/// against re-entrency, and calling `Executor` methods from within a callback that it is running
-/// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
-/// used, cross-thread upvalues may cause a panic if one `Executor` is used within the other.
+/// `Executor` is dangerous to use from within any kind of Lua callback. It it not meant to be
+/// used reentrantly, and calling running `Executor` methods from within a running callback (other
+/// than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is used,
+/// cross-thread upvalues can still panic when the inner `Executor` tries to change an upvalue in a
+/// `Thread` that the outer `Executor` has mutably borrowed.
 ///
 /// `Executor`s are not meant to be used from callbacks at all, and `Executor`s should not be
-/// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that it is run on
-/// the same executor calling the callback.
+/// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that everything is
+/// run by the same `Executor` which called the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Executor<'gc>(Gc<'gc, ExecutorInner<'gc>>);
