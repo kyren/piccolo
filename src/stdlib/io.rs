@@ -5,7 +5,7 @@ use gc_arena::Collect;
 use crate::{
     meta_ops::{self, MetaResult},
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Sequence, SequencePoll,
-    Stack,
+    Stack, Value,
 };
 
 pub fn load_io<'gc>(ctx: Context<'gc>) {
@@ -35,7 +35,11 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                                 } else {
                                     stdout.write_all(b"\t")?;
                                 }
-                                v.write(&mut stdout)?
+                                if let Value::String(s) = v {
+                                    stdout.write_all(s.as_bytes())?;
+                                } else {
+                                    write!(stdout, "{}", v.display())?;
+                                }
                             }
                             MetaResult::Call(call) => {
                                 let bottom = stack.len();

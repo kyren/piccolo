@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::Collect;
 
-use crate::compiler::lexer::{read_float, read_integer, trim_whitespace};
+use crate::compiler::string_utils::{read_float, read_integer, trim_whitespace};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]

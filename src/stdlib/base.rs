@@ -11,7 +11,8 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "tonumber",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            use crate::compiler::lexer::{read_neg, trim_whitespace};
+            use crate::compiler::string_utils::{read_neg, trim_whitespace};
+
             fn extract_number_data(bytes: &[u8]) -> (&[u8], bool) {
                 let bytes = trim_whitespace(bytes);
                 let (is_neg, bytes) = read_neg(bytes);

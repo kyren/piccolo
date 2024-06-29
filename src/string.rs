@@ -1,12 +1,9 @@
 use std::{
-    alloc,
-    borrow::Cow,
-    fmt,
+    alloc, fmt,
     hash::{BuildHasherDefault, Hash, Hasher},
     io::Write,
     ops, slice,
     str::{self, Utf8Error},
-    string::String as StdString,
 };
 
 use ahash::AHasher;
@@ -17,7 +14,7 @@ use gc_arena::{
 use hashbrown::{hash_map, raw::RawTable, HashMap};
 use thiserror::Error;
 
-use crate::{Context, Value};
+use crate::{compiler::string_utils::display_utf8_lossy, Context, Value};
 
 /// The Lua string type.
 ///
@@ -171,16 +168,13 @@ fn str_hash(s: &[u8]) -> u64 {
 
 impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str("String(")?;
-        fmt.write_str(&self.to_str_lossy())?;
-        fmt.write_str(")")?;
-        Ok(())
+        write!(fmt, "String({})", self.display_lossy())
     }
 }
 
 impl<'gc> fmt::Display for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&self.to_str_lossy())
+        write!(fmt, "{}", self.display_lossy())
     }
 }
 
@@ -227,8 +221,9 @@ impl<'gc> String<'gc> {
         str::from_utf8(self.as_bytes())
     }
 
-    pub fn to_str_lossy(self) -> Cow<'gc, str> {
-        StdString::from_utf8_lossy(self.as_bytes())
+    /// Display a potentially non-utf8 `String` in a lossy way.
+    pub fn display_lossy(self) -> impl fmt::Display + 'gc {
+        display_utf8_lossy(self.as_bytes())
     }
 }
 

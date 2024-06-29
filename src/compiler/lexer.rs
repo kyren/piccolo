@@ -1,13 +1,20 @@
 use std::{
-    char, fmt, i32, i64,
+    char, fmt,
     io::{self, Read},
-    str,
 };
 
 use gc_arena::Collect;
 use thiserror::Error;
 
-use super::StringInterner;
+use crate::compiler::string_utils::{
+    from_digit, from_hex_digit, is_hex_digit, is_space, read_dec_float, read_dec_integer,
+    read_hex_float, read_hex_integer, ALERT_BEEP, BACKSPACE,
+};
+
+use super::{
+    string_utils::{debug_utf8_lossy, is_alpha, is_digit, is_newline, FORM_FEED, VERTICAL_TAB},
+    StringInterner,
+};
 
 #[derive(Clone)]
 pub enum Token<S> {
@@ -201,8 +208,8 @@ impl<S: AsRef<[u8]>> fmt::Debug for Token<S> {
             Token::RightBrace => write!(f, "RightBrace"),
             Token::Integer(i) => write!(f, "Integer({})", *i),
             Token::Float(d) => write!(f, "Float({})", *d),
-            Token::Name(n) => write!(f, "Name({:?})", String::from_utf8_lossy(n.as_ref())),
-            Token::String(s) => write!(f, "String({:?})", String::from_utf8_lossy(s.as_ref())),
+            Token::Name(n) => write!(f, "Name({:?})", debug_utf8_lossy(n.as_ref())),
+            Token::String(s) => write!(f, "String({:?})", debug_utf8_lossy(s.as_ref())),
         }
     }
 }
@@ -887,168 +894,6 @@ where
     }
 }
 
-pub fn trim_whitespace(mut s: &[u8]) -> &[u8] {
-    s = &s[s.iter().position(|&c| !is_space(c)).unwrap_or(s.len())..];
-    &s[0..s
-        .iter()
-        .rposition(|&c| !is_space(c))
-        .map(|i| i + 1)
-        .unwrap_or(0)]
-}
-
-pub fn read_integer(s: &[u8]) -> Option<i64> {
-    read_hex_integer(s).or_else(|| read_dec_integer(s))
-}
-
-pub fn read_dec_integer(s: &[u8]) -> Option<i64> {
-    let (is_neg, s) = read_neg(s);
-
-    if s.is_empty() {
-        return None;
-    }
-
-    let mut i: u64 = 0;
-    for &c in s {
-        let d = from_digit(c)? as u64;
-        i = i.checked_mul(10)?.checked_add(d)?;
-    }
-
-    if is_neg {
-        if i <= i64::MAX as u64 {
-            Some(-(i as i64))
-        } else if i == i64::MAX as u64 + 1 {
-            Some(i64::MIN)
-        } else {
-            None
-        }
-    } else {
-        i.try_into().ok()
-    }
-}
-
-pub fn read_hex_integer(s: &[u8]) -> Option<i64> {
-    let (is_neg, s) = read_neg(s);
-
-    if s.len() < 3 || s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
-        return None;
-    }
-
-    let mut i: u64 = 0;
-    for &c in &s[2..] {
-        let d = from_hex_digit(c)? as u64;
-        i = i.checked_mul(16)?.checked_add(d)?;
-    }
-
-    if is_neg {
-        if i <= i64::MAX as u64 {
-            Some(-(i as i64))
-        } else if i == i64::MAX as u64 + 1 {
-            Some(i64::MIN)
-        } else {
-            None
-        }
-    } else {
-        i.try_into().ok()
-    }
-}
-
-pub fn read_float(s: &[u8]) -> Option<f64> {
-    read_hex_float(s).or_else(|| read_dec_float(s))
-}
-
-pub fn read_dec_float(s: &[u8]) -> Option<f64> {
-    let s = str::from_utf8(s).ok()?;
-    str::parse(s).ok()
-}
-
-pub fn read_hex_float(s: &[u8]) -> Option<f64> {
-    const MAX_SIGNIFICANT_DIGITS: u32 = 30;
-
-    let (is_neg, s) = read_neg(s);
-
-    if s.len() < 3 || s[0] != b'0' || (s[1] != b'x' && s[1] != b'X') {
-        return None;
-    }
-
-    let mut significant_digits: u32 = 0;
-    let mut non_significant_digits: u32 = 0;
-    let mut found_dot = false;
-    let mut base: f64 = 0.0;
-    let mut exp: i32 = 0;
-    let mut i = 2;
-
-    while i < s.len() {
-        let c = s[i];
-        if c == b'.' {
-            if found_dot {
-                return None;
-            }
-            found_dot = true;
-        } else if let Some(d) = from_hex_digit(c) {
-            if significant_digits == 0 && d == 0 {
-                non_significant_digits += 1;
-            } else if significant_digits < MAX_SIGNIFICANT_DIGITS {
-                significant_digits += 1;
-                base = (base * 16.0) + d as f64;
-            } else {
-                // ignore the digit, but count it towards the expontent
-                exp = exp.checked_add(4)?;
-            }
-            if found_dot {
-                // Correct exponent for the fractional part
-                exp = exp.checked_sub(4)?;
-            }
-        } else {
-            break;
-        }
-        i += 1;
-    }
-
-    if non_significant_digits + significant_digits == 0 {
-        return None;
-    }
-
-    if i + 1 < s.len() && (s[i] == b'p' || s[i] == b'P') {
-        let (exp_neg, exp_s) = read_neg(&s[i + 1..]);
-        let mut exp1: i32 = 0;
-        for &c in exp_s {
-            let d = from_digit(c)?;
-            exp1 = exp1.saturating_mul(10).saturating_add(d as i32);
-        }
-        if exp_neg {
-            exp1 = -exp1;
-        }
-        exp = exp.saturating_add(exp1);
-    } else if i != s.len() {
-        return None;
-    }
-
-    if is_neg {
-        base = -base;
-    }
-
-    Some(base * (exp as f64).exp2())
-}
-
-pub fn read_neg(s: &[u8]) -> (bool, &[u8]) {
-    if s.len() > 0 {
-        if s[0] == b'-' {
-            (true, &s[1..])
-        } else if s[0] == b'+' {
-            (false, &s[1..])
-        } else {
-            (false, s)
-        }
-    } else {
-        (false, s)
-    }
-}
-
-const ALERT_BEEP: u8 = 0x07;
-const BACKSPACE: u8 = 0x08;
-const VERTICAL_TAB: u8 = 0x0b;
-const FORM_FEED: u8 = 0x0c;
-
 fn get_char_token<S>(c: u8) -> Option<Token<S>> {
     match c {
         b'-' => Some(Token::Minus),
@@ -1096,47 +941,6 @@ fn get_reserved_word_token<S>(word: &[u8]) -> Option<Token<S>> {
         b"or" => Some(Token::Or),
         _ => None,
     }
-}
-
-fn is_newline(c: u8) -> bool {
-    c == b'\n' || c == b'\r'
-}
-
-fn is_space(c: u8) -> bool {
-    c == b' ' || c == b'\t' || c == VERTICAL_TAB || c == FORM_FEED || is_newline(c)
-}
-
-// Is this character a lua alpha, which is A-Z, a-z, and _
-fn is_alpha(c: u8) -> bool {
-    (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_'
-}
-
-fn from_digit(c: u8) -> Option<u8> {
-    if c >= b'0' && c <= b'9' {
-        Some(c - b'0')
-    } else {
-        None
-    }
-}
-
-fn is_digit(c: u8) -> bool {
-    from_digit(c).is_some()
-}
-
-fn from_hex_digit(c: u8) -> Option<u8> {
-    if c >= b'0' && c <= b'9' {
-        Some(c - b'0')
-    } else if c >= b'a' && c <= b'f' {
-        Some(10 + c - b'a')
-    } else if c >= b'A' && c <= b'F' {
-        Some(10 + c - b'A')
-    } else {
-        None
-    }
-}
-
-fn is_hex_digit(c: u8) -> bool {
-    from_hex_digit(c).is_some()
 }
 
 #[cfg(test)]
@@ -1359,15 +1163,5 @@ mod tests {
                 Token::RightBrace,
             ],
         );
-    }
-
-    #[test]
-    fn trim_whitespace_works() {
-        assert_eq!(trim_whitespace(b"foo  "), b"foo");
-        assert_eq!(trim_whitespace(b"  foo"), b"foo");
-        assert_eq!(trim_whitespace(b"  foo  "), b"foo");
-        assert_eq!(trim_whitespace(b"   "), b"");
-        assert_eq!(trim_whitespace(b""), b"");
-        assert_eq!(trim_whitespace(b" . "), b".");
     }
 }
