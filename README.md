@@ -123,12 +123,46 @@ This "stackless" style has many benefits, it allows for concurrency patterns
 that are difficult in some other VMs (like tasklets), and makes the VM much more
 resilient against untrusted script DoS.
 
-The downside of the "stackless" style is that sometimes writing things as a
-`Sequence` is much more difficult than writing in normal, straight control
-flow. It would be great if async Rust / generators could help here someday, to
-allow for painlessly implementing `Sequence`, but there are *several* current
-compiler limitations that make this currently infeasible or so unergonomic that
-it is no longer worth it.
+## Async `Sequence`s
+
+The downside of the "stackless" style is that writing things as a `Sequence`
+implementation is much more difficult than writing in normal, straight control
+flow. This is identical to the problem Rust had before proper `async` support,
+where it required implementing `Future` manually or using difficult to use
+combinators. Ideally, if we could somehow implement `Collect` for the generated
+state machine for a rust `async` block, then we could use rust `async` (or more
+directly, unstable Rust coroutines) to implement our `Sequence` state machines.
+
+Unfortunately, implementing a trait like this for a Rust async (coroutine) state
+machine is not currently possible. HOWEVER, `piccolo` is currently still able to
+provide a safe way to implement `Sequence` using async blocks by using a clever
+trick: a shadow stack.
+
+`AsyncSequence` implements `Sequence` and holds a Rust future that it polls,
+and this rust future tells the `AsyncSequence` what actions to take on its
+behalf. Since the Rust future cannot (safely) hold GC pointers (since it cannot
+possibly implement `Collect` in todays Rust), we instead allow it to hold proxy
+values called `Local`s. These `Local` values point to a shadow stack held inside
+`AsyncSequence` which allows them to be traced and collected properly! Normal
+`gc-arena` machinery helps us prevent `Gc` pointers from being stored directly
+inside the Rust future, but in addition, similar machinery prevents `Local`
+values from being improperly stored *outside* of the Rust future. By combining
+these two techniques, we end up with a way to have a Rust future that can store
+GC values safely, both in the sense of being sound and not leading to dangling
+`Gc` pointers, but also in a way that cannot possibly lead to things like
+uncollectable cycles. It is slightly more inconvenient than if Rust async blocks
+could implement `Collect` directly (it requires entering and exiting the GC
+context manually and converting values to / from `Local`), but it is MUCH easier
+than manually implementing a custom `Sequence` state machine!
+
+Using this, it is easy to write very complex Rust callbacks that can themselves
+call into Lua or resume threads or yield values back to Lua (or simply return
+control to the outermost Rust code), while also maintaining complex internal
+state. In addition, these running callbacks are themselves *proper* garbage
+collected values, and all they and all of the GC values they hold will be
+collected if they are (for example) forgotten as part of a suspended Lua
+coroutine. Without async sequences, this would require writing complex state
+machines by hand, so this is *critical* for very complex uses of `piccolo`.
 
 ## Executor "fuel" and VM memory tracking
 
@@ -173,15 +207,16 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
   * Gotos with label handling that matches Lua 5.3 / 5.4
   * Proper _ENV handling
   * Metatables and metamethods, including fully recursive metamethods that
-    trigger other metamethods (Not all metamethods implemented yet, particularly
-    `__gc` finalizers).
+    trigger other metamethods (Not every metamethod is implemented yet,
+    particularly `__gc` finalizers).
 * A robust Rust callback system with sequencing callbacks that don't block the
   interpreter and allow calling into and returning from Lua without using the
-  Rust stack.
+  Rust stack, and a way to integrate Rust async into this so that it is not
+  wildly painful.
 * Garbage collected "userdata" with safe downcasting.
-* Some of the stdlib (most of the more core, fundamental parts of the stdlib are
-  implemented, e.g. things like the `coroutine` library, `pcall`, `error`, most
-  everything that exposes some fundamental runtime feature is implemented).
+* Some of the stdlib (almost all of the core, fundamental parts of the stdlib
+  are implemented, e.g. things like the `coroutine` library, `pcall`, `error`,
+  most everything that exposes some fundamental runtime feature is implemented).
 * A simple REPL (try it with `cargo run --example interpreter`)
 
 ## What currently doesn't work
@@ -199,8 +234,9 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
-* Aggressive optimization and *real* effort towards ensuring that it matches
-  PUC-Rio Lua's performance in all cases.
+* Aggressive optimization and *real* effort towards matching or beating (or
+  even just being within a respectable distance of) PUC-Rio Lua's performance in
+  all cases.
 * Probably much more I've forgotten about
 
 ## What will probably never be implemented
@@ -234,8 +270,8 @@ consider *almost definite* non-goals.
 
 It's a cute little "pico" Lua, get it?
 
-It's not really all that "pico", but it's still a cute little instrument you can
-safely carry with you anywhere!
+It's not really all that "pico" anymore, but it's still a cute little instrument
+you can safely carry with you anywhere!
 
 ## Wasn't this project called something else? Luster? Deimos?
 

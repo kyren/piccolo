@@ -55,10 +55,10 @@ impl<'gc> AsyncSequence<'gc> {
     /// only using `async` as a stable way to express what would be better expressed as a simple
     /// coroutine.
     ///
-    /// It is possible to integrate async code with `piccolo`, and to even have a method to "wake"
-    /// Lua coroutines with a *real* [`std::task::Waker`], but simply calling an external async
-    /// method from the async block provided here is *not* the way to do it. It will not do what you
-    /// want, and probably will result in panics.
+    /// It is possible to integrate proper async APIs with `piccolo`, and to even have a method to
+    /// "wake" Lua coroutines with a *real* [`std::task::Waker`], but simply calling an external
+    /// async function from the created future here is *not* the way to do it. It will not do what
+    /// you want, and probably will result in panics.
     ///
     /// # Panics
     ///
