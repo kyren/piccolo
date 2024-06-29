@@ -4,7 +4,10 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
+use gc_arena::{
+    barrier::{self, Write},
+    Collect, Gc, Mutation, Root, Rootable,
+};
 
 /// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
 ///
@@ -142,7 +145,7 @@ impl<'gc, M> Any<'gc, M> {
     }
 
     pub fn write_metadata(self, mc: &Mutation<'gc>) -> &'gc Write<M> {
-        gc_arena::barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
+        barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
     }
 
     pub fn type_id(self) -> TypeId {
