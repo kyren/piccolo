@@ -19,7 +19,7 @@ repository = "https://github.com/kyren/piccolo"
 ahash = "0.8"
 allocator-api2 = "0.2"
 anyhow = "1.0"
-gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "ca5dd21d313d53e2a4ff38c6866c9b7aceb943c0", features = ["allocator-api2", "hashbrown"] }
+gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "9ee9dcf97c530c53e155a1588d84e567632878ef", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 serde = "1.0"

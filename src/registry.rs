@@ -59,7 +59,7 @@ impl<'gc> Registry<'gc> {
     /// `S::create` to create a new instance and returns it.
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
-        S: for<'a> Rootable<'a>,
+        S: for<'a> Rootable<'a> + 'static,
         Root<'gc, S>: Sized + Singleton<'gc> + Collect,
     {
         let mut singletons = self.singletons.borrow_mut(&ctx);

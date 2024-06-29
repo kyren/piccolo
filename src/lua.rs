@@ -79,7 +79,7 @@ impl<'gc> Context<'gc> {
     /// Calls `ctx.registry().singleton::<S>(ctx)`.
     pub fn singleton<S>(self) -> &'gc Root<'gc, S>
     where
-        S: for<'a> Rootable<'a>,
+        S: for<'a> Rootable<'a> + 'static,
         Root<'gc, S>: Sized + Singleton<'gc> + Collect,
     {
         self.state.registry.singleton::<S>(self)

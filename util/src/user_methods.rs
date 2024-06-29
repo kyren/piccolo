@@ -41,7 +41,7 @@ where
 
 impl<'gc, U> UserMethods<'gc, U>
 where
-    U: for<'a> Rootable<'a>,
+    U: for<'a> Rootable<'a> + 'static,
     for<'a> Root<'a, U>: Sized,
 {
     pub fn add<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
@@ -90,7 +90,7 @@ where
 
 impl<'gc, U> UserMethods<'gc, U>
 where
-    U: for<'a> Rootable<'a>,
+    U: for<'a> Rootable<'a> + 'static,
     for<'a> Root<'a, U>: Sized + Collect,
 {
     pub fn wrap(self, ctx: Context<'gc>, ud: Root<'gc, U>) -> UserData<'gc> {

@@ -101,7 +101,7 @@ impl<'gc, M> Any<'gc, M> {
     pub fn new<R>(mc: &Mutation<'gc>, data: Root<'gc, R>) -> Self
     where
         M: Collect + Default,
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
         Root<'gc, R>: Sized + Collect,
     {
         Self::with_metadata::<R>(mc, M::default(), data)
@@ -110,7 +110,7 @@ impl<'gc, M> Any<'gc, M> {
     pub fn with_metadata<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
         Root<'gc, R>: Sized + Collect,
     {
         let val = Gc::new(
@@ -151,14 +151,14 @@ impl<'gc, M> Any<'gc, M> {
 
     pub fn is<R>(self) -> bool
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
     {
         TypeId::of::<R>() == self.0.type_id
     }
 
     pub fn downcast<R>(self) -> Option<&'gc Root<'gc, R>>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
         Root<'gc, R>: Sized,
     {
         if TypeId::of::<R>() == self.0.type_id {
@@ -171,7 +171,7 @@ impl<'gc, M> Any<'gc, M> {
 
     pub fn downcast_write<R>(self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
         Root<'gc, R>: Sized,
     {
         let root = self.downcast::<R>()?;

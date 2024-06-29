@@ -86,7 +86,7 @@ impl<'gc> UserData<'gc> {
     /// type, then this happens automatically.
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
         Root<'gc, R>: Sized + Collect,
     {
         UserData(Any::new::<R>(mc, val))
@@ -116,7 +116,7 @@ impl<'gc> UserData<'gc> {
     /// their `TypeId` in the first place).
     pub fn is<R>(self) -> bool
     where
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
     {
         self.0.is::<R>()
     }
@@ -132,7 +132,7 @@ impl<'gc> UserData<'gc> {
     /// reference to the held type, otherwise it will return `Err(BadUserDataType)`.
     pub fn downcast<R>(self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
         Root<'gc, R>: Sized,
     {
         self.0.downcast::<R>().ok_or(BadUserDataType)
@@ -151,7 +151,7 @@ impl<'gc> UserData<'gc> {
         mc: &Mutation<'gc>,
     ) -> Result<&'gc barrier::Write<Root<'gc, R>>, BadUserDataType>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
         Root<'gc, R>: Sized,
     {
         self.0.downcast_write::<R>(mc).ok_or(BadUserDataType)
