@@ -1,9 +1,6 @@
-use gc_arena::Collect;
+use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Table, Thread, ThreadMode};
 
-use crate::{
-    meta_ops, BoxSequence, Callback, CallbackReturn, Context, Execution, Sequence, SequencePoll,
-    Stack, Table, Thread, ThreadMode,
-};
+use super::base::PCall;
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
     let coroutine = Table::new(&ctx);
@@ -29,37 +26,9 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             "resume",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let thread: Thread = stack.from_front(ctx)?;
-
-                #[derive(Collect)]
-                #[collect(require_static)]
-                struct ResumeHandler;
-
-                impl<'gc> Sequence<'gc> for ResumeHandler {
-                    fn poll(
-                        &mut self,
-                        ctx: Context<'gc>,
-                        _exec: Execution<'gc, '_>,
-                        mut stack: Stack<'gc, '_>,
-                    ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
-                        stack.into_front(ctx, true);
-                        Ok(SequencePoll::Return)
-                    }
-
-                    fn error(
-                        &mut self,
-                        ctx: Context<'gc>,
-                        _exec: Execution<'gc, '_>,
-                        error: crate::Error<'gc>,
-                        mut stack: Stack<'gc, '_>,
-                    ) -> Result<SequencePoll<'gc>, crate::Error<'gc>> {
-                        stack.replace(ctx, (false, error.to_value(ctx)));
-                        Ok(SequencePoll::Return)
-                    }
-                }
-
                 Ok(CallbackReturn::Resume {
                     thread,
-                    then: Some(BoxSequence::new(&ctx, ResumeHandler)),
+                    then: Some(BoxSequence::new(&ctx, PCall)),
                 })
             }),
         )

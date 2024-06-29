@@ -114,34 +114,6 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     ctx.set_global(
         "pcall",
         Callback::from_fn(&ctx, move |ctx, _, mut stack| {
-            #[derive(Collect)]
-            #[collect(require_static)]
-            struct PCall;
-
-            impl<'gc> Sequence<'gc> for PCall {
-                fn poll(
-                    &mut self,
-                    _ctx: Context<'gc>,
-                    _exec: Execution<'gc, '_>,
-                    mut stack: Stack<'gc, '_>,
-                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    stack.push_front(Value::Boolean(true));
-                    Ok(SequencePoll::Return)
-                }
-
-                fn error(
-                    &mut self,
-                    ctx: Context<'gc>,
-                    _exec: Execution<'gc, '_>,
-                    error: Error<'gc>,
-                    mut stack: Stack<'gc, '_>,
-                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    stack.clear();
-                    stack.extend([Value::Boolean(false), error.to_value(ctx)]);
-                    Ok(SequencePoll::Return)
-                }
-            }
-
             let function = meta_ops::call(ctx, stack.get(0))?;
             stack.pop_front();
             Ok(CallbackReturn::Call {
@@ -362,4 +334,31 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
     .unwrap();
 
     ctx.set_global("_VERSION", "piccolo").unwrap();
+}
+
+#[derive(Collect)]
+#[collect(require_static)]
+pub struct PCall;
+
+impl<'gc> Sequence<'gc> for PCall {
+    fn poll(
+        &mut self,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        stack.into_front(ctx, true);
+        Ok(SequencePoll::Return)
+    }
+
+    fn error(
+        &mut self,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        error: Error<'gc>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        stack.replace(ctx, (false, error.to_value(ctx)));
+        Ok(SequencePoll::Return)
+    }
 }
