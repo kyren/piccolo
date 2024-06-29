@@ -55,12 +55,8 @@ macro_rules! unsafe_assert_unchecked {
        // };
 }
 
-#[path = "pattern_seq.rs"]
 pub mod seq;
-
-#[path = "pattern_stack.rs"]
 pub mod stack;
-
 pub mod lua;
 
 use std::borrow::Cow;
