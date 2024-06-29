@@ -280,7 +280,7 @@ fn resume_with_err() {
 
         thread.resume(ctx, "resume").unwrap();
 
-        ctx.stash(Executor::run(&ctx, thread))
+        ctx.stash(Executor::run(&ctx, thread).unwrap())
     });
 
     lua.finish(&executor);

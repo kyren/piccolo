@@ -305,7 +305,10 @@ pub trait Sequence<'gc>: Collect {
     }
 }
 
-/// A boxed value that implements [`Sequence`].
+/// A `Box` containing a value that implements [`Sequence`].
+///
+/// We use a `Box` rather than `Gc` because a `Sequence` is mutable and not shared -- it is
+/// generally owned only by the `Thread` in which it is running.
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct BoxSequence<'gc>(boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);

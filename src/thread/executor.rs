@@ -49,17 +49,23 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 
 /// The entry-point for the Lua VM.
 ///
-/// An `Executor` runs networks of `Thread`s that may depend on each other and may yield control
-/// back and forth. All Lua code that is run is done so directly or indirectly by calling
-/// `Executor::step`.
+/// An `Executor` runs networks of [`Thread`]s that may depend on each other and may yield
+/// control back and forth. All Lua code that is run is done so directly or indirectly by calling
+/// [`Executor::step`].
+///
+/// If a `Thread` is currently in the network of threads being run by the `Executor`, then the
+/// `Executor` expects that the state of these threads will not be externally changed (by, for
+/// example, calling [`Thread::take_result`] or [`Thread::reset`]). This should not result in
+/// panics, but may result in `Executor::step` erroring in a way that means that no further progress
+/// can be amde.
 ///
 /// # Panics
 ///
-/// `Executor` is dangerous to use from within any kind of Lua callback. It it not meant to be
-/// used reentrantly, and calling running `Executor` methods from within a running callback (other
-/// than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is used,
-/// cross-thread upvalues can still panic when the inner `Executor` tries to change an upvalue in a
-/// `Thread` that the outer `Executor` has mutably borrowed.
+/// `Executor` is dangerous to use from within any kind of Lua callback. It it not meant to be used
+/// reentrantly, and calling `Executor` methods from within a callback which it itself is running
+/// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
+/// used, cross-thread upvalues can still panic when an inner `Executor` tries to change an upvalue
+/// in a `Thread` that an outer `Executor` has mutably borrowed.
 ///
 /// `Executor`s are not meant to be used from callbacks at all, and `Executor`s should not be
 /// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that everything is
@@ -91,14 +97,22 @@ impl<'gc> Executor<'gc> {
 
     /// Creates a new `Executor` with a stopped main thread.
     pub fn new(ctx: Context<'gc>) -> Self {
-        Self::run(&ctx, Thread::new(ctx))
+        Self::run(&ctx, Thread::new(ctx)).unwrap()
     }
 
-    /// Creates a new `Executor` that begins running the given thread.
-    pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Self {
-        let mut thread_stack = vec::Vec::new_in(MetricsAlloc::new(mc));
-        thread_stack.push(thread);
-        Executor(Gc::new(mc, RefLock::new(ExecutorState { thread_stack })))
+    /// Creates a new `Executor` that begins running the given [`Thread`].
+    ///
+    /// If the provided thread is in [`ThreadMode::Waiting`] or [`ThreadMode::Running`], then this
+    /// will return `Err(BadThreadMode)`.
+    pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Result<Self, BadThreadMode> {
+        let executor = Executor(Gc::new(
+            mc,
+            RefLock::new(ExecutorState {
+                thread_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
+            }),
+        ));
+        executor.reset(mc, thread)?;
+        Ok(executor)
     }
 
     pub fn from_inner(inner: Gc<'gc, ExecutorInner<'gc>>) -> Self {
@@ -109,7 +123,7 @@ impl<'gc> Executor<'gc> {
         self.0
     }
 
-    /// Creates a new `Executor` with a new `Thread` running the given function.
+    /// Creates a new `Executor` with a new [`Thread`] running the given function.
     pub fn start(
         ctx: Context<'gc>,
         function: Function<'gc>,
@@ -117,7 +131,7 @@ impl<'gc> Executor<'gc> {
     ) -> Self {
         let thread = Thread::new(ctx);
         thread.start(ctx, function, args).unwrap();
-        Self::run(&ctx, thread)
+        Self::run(&ctx, thread).unwrap()
     }
 
     pub fn mode(self) -> ExecutorMode {
@@ -202,7 +216,7 @@ impl<'gc> Executor<'gc> {
                         )),
                     }
                 } else {
-                    // Shenanigans have happened and the upper thread has had its state externally
+                    // Shenanigans have happened and the top thread has had its state externally
                     // changed.
                     top_state.frames.push(Frame::Error(
                         BadThreadMode {
@@ -531,12 +545,21 @@ impl<'gc> Executor<'gc> {
         state.thread_stack[0].reset(mc).unwrap();
     }
 
-    /// Reset this `Executor` entirely and begins running the given thread. Equivalent to
-    /// creating a new executor with `Executor::run`.
-    pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
+    /// Reset this `Executor` entirely and begins running the given thread.
+    ///
+    /// This is equivalent to creating a new executor with `Executor::run`.
+    pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) -> Result<(), BadThreadMode> {
+        let thread_mode = thread.mode();
+        if matches!(thread_mode, ThreadMode::Waiting | ThreadMode::Running) {
+            return Err(BadThreadMode {
+                found: thread_mode,
+                expected: Some(ThreadMode::Normal),
+            });
+        }
         let mut state = self.0.borrow_mut(mc);
         state.thread_stack.clear();
         state.thread_stack.push(thread);
+        Ok(())
     }
 
     /// Reset this `Executor` entirely and begins running the given function, equivalent to
