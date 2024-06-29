@@ -10,6 +10,11 @@ use crate::{
 // - Le
 // - Concat
 
+/// An enum of every possible Lua metamethod.
+///
+/// The [`MetaMethod::name`] method will return the name that Lua expects to be the key
+/// for the metamethod in a metatable. For example, `MetaMethod::Add.name()` is `"__add"`,
+/// `MetaMethod::Sub.name()` is `"__sub"`, etc.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
 pub enum MetaMethod {
@@ -110,6 +115,8 @@ impl<'gc> IntoValue<'gc> for MetaMethod {
     }
 }
 
+/// If invoking a metamethod must call Lua code, this will contain a function and arguments to call
+/// to trigger it.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct MetaCall<'gc, const N: usize> {
@@ -117,6 +124,7 @@ pub struct MetaCall<'gc, const N: usize> {
     pub args: [Value<'gc>; N],
 }
 
+/// Return value for metamethods that return a value *or* require calling into Lua.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum MetaResult<'gc, const N: usize> {

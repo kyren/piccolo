@@ -5,6 +5,7 @@ use crate::{
     Sequence, SequencePoll, Stack,
 };
 
+/// Any callable Lua value (either a [`Closure`] or a [`Callback`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
 pub enum Function<'gc> {
@@ -25,6 +26,12 @@ impl<'gc> From<Callback<'gc>> for Function<'gc> {
 }
 
 impl<'gc> Function<'gc> {
+    /// Compose functions together to form a single function.
+    ///
+    /// If given an array of functions `[f, g, h]`, then this will return a function equivalent to
+    /// one that calls `h(g(f(...)))`. Note that functions compose "backwards" from how you might
+    /// think, the first function given will be called first, and the second function called second,
+    /// etc.
     pub fn compose<I>(mc: &Mutation<'gc>, functions: I) -> Self
     where
         I: AsRef<[Function<'gc>]> + Collect + 'gc,
@@ -73,6 +80,10 @@ impl<'gc> Function<'gc> {
         ))
     }
 
+    /// Bind arguments to the given function and return a new function.
+    ///
+    /// If called on a function `f` with arguments `[a, b, c]`, then this will produce a function
+    /// that calls `f(a, b, c, ...)`.
     pub fn bind<A>(self, mc: &Mutation<'gc>, args: A) -> Self
     where
         A: IntoMultiValue<'gc> + Collect + Clone + 'gc,

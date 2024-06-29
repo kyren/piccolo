@@ -16,11 +16,11 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum PrototypeError {
+pub enum CompilerError {
     #[error(transparent)]
-    Parser(#[from] compiler::ParseError),
+    Parsing(#[from] compiler::ParseError),
     #[error(transparent)]
-    Compiler(#[from] compiler::CompileError),
+    Compilation(#[from] compiler::CompileError),
 }
 
 /// A compiled Lua function.
@@ -116,7 +116,7 @@ impl<'gc> FunctionPrototype<'gc> {
         ctx: Context<'gc>,
         source_name: &str,
         source: impl Read,
-    ) -> Result<FunctionPrototype<'gc>, PrototypeError> {
+    ) -> Result<FunctionPrototype<'gc>, CompilerError> {
         #[derive(Copy, Clone)]
         struct Interner<'gc>(Context<'gc>);
 
@@ -262,7 +262,7 @@ impl<'gc> Closure<'gc> {
         ctx: Context<'gc>,
         name: Option<&str>,
         source: impl Read,
-    ) -> Result<Closure<'gc>, PrototypeError> {
+    ) -> Result<Closure<'gc>, CompilerError> {
         Self::load_with_env(ctx, name, source, ctx.globals())
     }
 
@@ -272,7 +272,7 @@ impl<'gc> Closure<'gc> {
         name: Option<&str>,
         source: impl Read,
         env: Table<'gc>,
-    ) -> Result<Closure<'gc>, PrototypeError> {
+    ) -> Result<Closure<'gc>, CompilerError> {
         let proto = FunctionPrototype::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }

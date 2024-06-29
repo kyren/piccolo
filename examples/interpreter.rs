@@ -5,10 +5,9 @@ use clap::{crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    closure::PrototypeError,
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, Callback, CallbackReturn, Closure, Executor, Function, Lua, StashedExecutor,
-    StaticError,
+    io, meta_ops, Callback, CallbackReturn, Closure, CompilerError, Executor, Function, Lua,
+    StashedExecutor, StaticError,
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
@@ -64,8 +63,8 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
                 Err(StaticError::Runtime(err))
                     if !read_empty
                         && matches!(
-                            err.downcast::<PrototypeError>(),
-                            Some(PrototypeError::Parser(ParseError {
+                            err.downcast::<CompilerError>(),
+                            Some(CompilerError::Parsing(ParseError {
                                 kind: ParseErrorKind::EndOfStream { .. },
                                 ..
                             }))

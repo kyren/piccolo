@@ -35,6 +35,7 @@ pub enum SequenceReturn<'seq> {
 pub type SeqFuture<'seq> =
     Box<dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq>;
 
+/// An implementation of `Sequence` that drives an inner `async` block.
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct AsyncSequence<'gc> {
@@ -71,8 +72,8 @@ impl<'gc> AsyncSequence<'gc> {
         Self::new_sequence_with(mc, (), move |_, seq| create(seq))
     }
 
-    /// A version of [`AsyncSequence::new_seq`] that accepts an associated GC root object passed to
-    /// the create function.
+    /// A version of [`AsyncSequence::new_sequence`] that accepts an associated GC root object
+    /// passed to the create function.
     ///
     /// This is important because the create function must be `'static`, and it is not called until
     /// the resulting sequence is first polled.

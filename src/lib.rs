@@ -25,11 +25,10 @@ pub mod types;
 pub mod userdata;
 pub mod value;
 
-#[doc(inline)]
 pub use self::{
     async_callback::{AsyncSequence, SequenceReturn},
     callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
-    closure::{Closure, FunctionPrototype},
+    closure::{Closure, CompilerError, FunctionPrototype},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
     error::{Error, RuntimeError, StaticError, TypeError},
