@@ -64,11 +64,11 @@ impl<'gc> AsyncSequence<'gc> {
     ///
     /// All Rust yields (`.await`) within the created future must occur from calling an async method
     /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
-    pub fn new_seq<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
+    pub fn new_sequence<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
     where
         F: for<'seq> FnOnce(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
     {
-        Self::new_seq_with(mc, (), move |_, seq| create(seq))
+        Self::new_sequence_with(mc, (), move |_, seq| create(seq))
     }
 
     /// A version of [`AsyncSequence::new_seq`] that accepts an associated GC root object passed to
@@ -76,7 +76,7 @@ impl<'gc> AsyncSequence<'gc> {
     ///
     /// This is important because the create function must be `'static`, and it is not called until
     /// the resulting sequence is first polled.
-    pub fn new_seq_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
+    pub fn new_sequence_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
     where
         R: Collect + 'gc,
         F: for<'seq> FnOnce(R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
@@ -113,7 +113,7 @@ impl<'gc> AsyncSequence<'gc> {
     {
         let state = Gc::new(mc, (root, StaticCollect(create)));
         Callback::from_fn_with(mc, state, |state, ctx, _, _| {
-            Ok(CallbackReturn::Sequence(Self::new_seq_with(
+            Ok(CallbackReturn::Sequence(Self::new_sequence_with(
                 &ctx,
                 *state,
                 |state, seq| {
