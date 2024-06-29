@@ -159,10 +159,10 @@ Using this, it is easy to write very complex Rust callbacks that can themselves
 call into Lua or resume threads or yield values back to Lua (or simply return
 control to the outermost Rust code), while also maintaining complex internal
 state. In addition, these running callbacks are themselves *proper* garbage
-collected values, and all they and all of the GC values they hold will be
-collected if they are (for example) forgotten as part of a suspended Lua
-coroutine. Without async sequences, this would require writing complex state
-machines by hand, so this is *critical* for very complex uses of `piccolo`.
+collected values, and all of the GC values they hold will be collected if they
+are (for example) forgotten as part of a suspended Lua coroutine. Without async
+sequences, this would require writing complex state machines by hand, so this is
+*critical* for very complex uses of `piccolo`.
 
 ## Executor "fuel" and VM memory tracking
 
@@ -209,10 +209,10 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
   * Metatables and metamethods, including fully recursive metamethods that
     trigger other metamethods (Not every metamethod is implemented yet,
     particularly `__gc` finalizers).
-* A robust Rust callback system with sequencing callbacks that don't block the
-  interpreter and allow calling into and returning from Lua without using the
-  Rust stack, and a way to integrate Rust async into this so that it is not
-  wildly painful.
+* A robust Rust callback system with sequencing callbacks that don't block
+  the interpreter and allow calling into and returning from Lua without using
+  the Rust stack, and a way to integrate Rust async so that implementing these
+  callbacks is not wildly painful.
 * Garbage collected "userdata" with safe downcasting.
 * Some of the stdlib (almost all of the core, fundamental parts of the stdlib
   are implemented, e.g. things like the `coroutine` library, `pcall`, `error`,
