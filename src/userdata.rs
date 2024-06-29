@@ -3,7 +3,7 @@ use std::{
     mem,
 };
 
-use gc_arena::{barrier, lock, Collect, Gc, Mutation, Root, Rootable};
+use gc_arena::{barrier, lock, Collect, Gc, Mutation, Root, Rootable, StaticCollect};
 use thiserror::Error;
 
 use crate::{
@@ -63,16 +63,6 @@ impl<'gc> Hash for UserData<'gc> {
     }
 }
 
-#[derive(Collect)]
-#[collect(require_static)]
-struct StaticRoot<R> {
-    root: R,
-}
-
-impl<'a, R: 'static> Rootable<'a> for StaticRoot<R> {
-    type Root = StaticRoot<R>;
-}
-
 impl<'gc> UserData<'gc> {
     /// Create a new `UserData` from any GC value.
     ///
@@ -98,7 +88,7 @@ impl<'gc> UserData<'gc> {
     /// trait. In order to downcast values created with this method, you must use the *static*
     /// variants of `UserData` methods, like [`UserData::downcast_static`].
     pub fn new_static<T: 'static>(mc: &Mutation<'gc>, val: T) -> Self {
-        Self::new::<StaticRoot<T>>(mc, StaticRoot { root: val })
+        Self::new::<StaticCollect<T>>(mc, StaticCollect(val))
     }
 
     pub fn from_inner(inner: Gc<'gc, UserDataInner<'gc>>) -> Self {
@@ -123,7 +113,7 @@ impl<'gc> UserData<'gc> {
 
     /// Check if a `UserData` is of type `T` created with [`UserData::new_static`].
     pub fn is_static<T: 'static>(self) -> bool {
-        self.is::<StaticRoot<T>>()
+        self.is::<StaticCollect<T>>()
     }
 
     /// Downcast a GC `UserData` and get a reference to it.
@@ -163,8 +153,8 @@ impl<'gc> UserData<'gc> {
     /// reference to the held type, otherwise it will return `Err(BadUserDataType)`.
     pub fn downcast_static<T: 'static>(self) -> Result<&'gc T, BadUserDataType> {
         self.0
-            .downcast::<StaticRoot<T>>()
-            .map(|r| &r.root)
+            .downcast::<StaticCollect<T>>()
+            .map(|r| &r.0)
             .ok_or(BadUserDataType)
     }
 
