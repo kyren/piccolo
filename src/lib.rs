@@ -1,3 +1,5 @@
+pub use gc_arena;
+
 pub mod any;
 pub mod async_callback;
 pub mod callback;
