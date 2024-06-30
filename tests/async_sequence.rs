@@ -9,30 +9,28 @@ fn async_sequence_works() -> Result<(), StaticError> {
 
     lua.try_enter(|ctx| {
         let callback = Callback::from_fn(&ctx, |ctx, _, _| {
-            Ok(CallbackReturn::Sequence(async_sequence(
-                &ctx,
-                |_locals, mut seq, builder| {
-                    builder.build(async move {
-                        let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
-                            let table: Table = stack.consume(ctx)?;
-                            let length = table.length();
-                            Ok((locals.stash(&ctx, table), length))
+            let seq = async_sequence(&ctx, |_, builder| {
+                builder.build(|mut seq| async move {
+                    let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let table: Table = stack.consume(ctx)?;
+                        let length = table.length();
+                        Ok((locals.stash(&ctx, table), length))
+                    })?;
+
+                    for i in 1..=length {
+                        let function = seq.try_enter(|ctx, locals, _, _| {
+                            let table = locals.fetch(&table);
+                            let func = meta_ops::call(ctx, table.get(ctx, i))?;
+                            Ok(locals.stash(&ctx, func))
                         })?;
 
-                        for i in 1..=length {
-                            let function = seq.try_enter(|ctx, locals, _, _| {
-                                let table = locals.fetch(&table);
-                                let func = meta_ops::call(ctx, table.get(ctx, i))?;
-                                Ok(locals.stash(&ctx, func))
-                            })?;
+                        seq.call(&function, 0).await?
+                    }
 
-                            seq.call(&function, 0).await?
-                        }
-
-                        Ok(SequenceReturn::Return)
-                    })
-                },
-            )))
+                    Ok(SequenceReturn::Return)
+                })
+            });
+            Ok(CallbackReturn::Sequence(seq))
         });
         ctx.set_global("callback", callback)?;
         Ok(())

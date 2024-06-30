@@ -18,8 +18,8 @@ use crate::{
     StashedThread, StashedUserData, StashedValue, Thread,
 };
 
-/// Create a `Sequence` impl from a Rust future that can suspend, call Lua functions, yield to Lua,
-/// and resume threads as async method calls via a held [`AsyncSequence`] object.
+/// Create a [`Sequence`] impl from a [`Future`] that can suspend, call Lua functions, yield to Lua,
+/// and resume threads as async method calls via a held [`AsyncSequence`] proxy.
 ///
 /// Can be used to implement `Sequence` in a way MUCH easier than manual state machines.
 ///
@@ -33,37 +33,20 @@ use crate::{
 /// function from the created future here is *not* the way to do it. It will not do what you want,
 /// and probably will result in panics.
 ///
-/// The provided `create` function is given three parameters: a [`Locals`] handle to create
-/// [`Local`]s that will be owned by the future, an `AsyncSequence` object to move into the
-/// future, and a [`Builder`] object. The callback is called immediately and is not required
-/// to be `'static`, it exists only to make the `'seq` lifetime generative and is required for
-/// correctness. The function should stash any local variables needed by the future from the outer
-/// context, then move *only* those locals and the provided `AsyncSequence` object into an `async`
-/// block, and create a `BoxSequence` from this by calling [`Builder::build`]. You should *not*
-/// try to move anything branded with a `'gc` lifetime into the future, because this will cause
-/// a compiler error: there is no way for Rust futures created from async blocks to implement the
-/// `Collect` trait so we cannot allow it to directly store `'gc` branded values.
-///
-/// # Panics
-///
-/// All Rust yields (`.await`) within the created future must occur from calling an async method on
-/// `AsyncSequence`. Otherwise, the outer `AsyncSequence` poll methods will panic.
-///
-/// Methods on `AsyncSequence` must *only* be called from the async block provided to
-/// [`Builder::build`]. `AsyncSequence` is passed to the provided function only so that it can be
-/// *moved into* the future and called there. Calling methods on `AsyncSequence` from the provided
-/// function directly will result in a panic.
+/// The provided `create` function is given two parameters: a [`Locals`] handle to create [`Local`]s
+/// that will be owned by the future, and a [`Builder`] object to actually create the resulting
+/// [`BoxSequence`]. The callback is called immediately and is not required to be `'static`, it
+/// exists only to create the generative `'seq` lifetime and is required for correctness. The
+/// function should stash any local variables needed by the future from the outer context, then move
+/// those locals into the future provided to [`Builder::build`].
 pub fn async_sequence<'gc, R>(
     mc: &Mutation<'gc>,
-    f: impl for<'seq> FnOnce(Locals<'seq, 'gc>, AsyncSequence<'seq>, Builder<'seq, 'gc>) -> R,
+    f: impl for<'seq> FnOnce(Locals<'seq, 'gc>, Builder<'seq, 'gc>) -> R,
 ) -> R {
     let locals = DynamicRootSet::new(mc);
     f(
         Locals {
             locals,
-            _invariant: PhantomData,
-        },
-        AsyncSequence {
             _invariant: PhantomData,
         },
         Builder {
@@ -98,18 +81,45 @@ pub struct Builder<'seq, 'gc> {
 }
 
 impl<'seq, 'gc> Builder<'seq, 'gc> {
-    /// Build a [`BoxSequence`] out of the provided future.
+    /// Build a [`BoxSequence`] out of a [`Future`].
     ///
-    /// Usually, you will want to move the [`AsyncSequence`] provided by [`async_sequence`] any
-    /// created [`Local`]s into the future provided here.
+    /// The provided function is given an [`AsyncSequence`] handle, which the future should use to
+    /// control the `Sequence` from the inside.
+    ///
+    /// We accept a function here rather than accepting an `impl Future` directly only because we
+    /// need a way to provide an `AsyncSequence` handle that is moved into an `async` block. There
+    /// is no reason for the given function to do *anything* other than accept a `seq` parameter and
+    /// *immediately* move it into the returned `async` block. It is NOT legal to call methods on
+    /// `AsyncSequence` outside of this future, calling methods on this handle directly in the given
+    /// callback will panic!
+    ///
+    /// The returned async block can also capture created [`Local`] variables, and things from outer
+    /// scopes IF they are `'static`. You should *not* try to move anything branded with a `'gc`
+    /// lifetime into the future, because this will result in  compiler errors. There is no way in
+    /// today's Rust for futures created from `async` blocks to implement the `Collect` trait, so we
+    /// must accept futures that do *not* implement `Collect` and *can't* hold `'gc` branded values.
+    /// This is the reason why `Local`s exist in the first place, to allow the future to hold onto
+    /// these GC values, if only indirectly.
     ///
     /// The odd and circumlocutious way that the final `BoxSequence` is constructed is due to
-    /// current limitations of Rust and avoiding the need to unnecessarily box the provided future.
-    /// This may be improved in the future.
-    pub fn build(
-        self,
-        fut: impl Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
-    ) -> BoxSequence<'gc> {
+    /// current limitations of Rust and avoiding the need to unnecessarily box the provided
+    /// `impl Future`. This may be able to be improved in the future.
+    ///
+    /// # Panics
+    ///
+    /// All Rust yields (`.await`) within the created future must occur from calling an async method
+    /// on the `AsyncSequence` handle. If some other future is `.await`ed, this will cause the outer
+    /// `Sequence` poll methods to panic.
+    ///
+    /// Methods on `AsyncSequence` must *only* be called from the returned `async` block. Calling
+    /// methods on `AsyncSequence` from the provided function directly will result in a panic.
+    pub fn build<F>(self, f: impl FnOnce(AsyncSequence<'seq>) -> F) -> BoxSequence<'gc>
+    where
+        F: Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
+    {
+        let fut = f(AsyncSequence {
+            _invariant: PhantomData,
+        });
         let sequence = boxed::Box::new_in(
             SequenceImpl {
                 locals: self.locals,
