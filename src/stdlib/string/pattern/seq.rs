@@ -56,10 +56,10 @@ fn convert_captures(captures: Vec<PartialCapture>) -> Vec<Capture> {
         .collect()
 }
 
-pub async fn str_find_async<'seq>(
-    seq: &mut crate::async_sequence::AsyncSequence<'seq>,
-    pat: &crate::async_sequence::LocalString<'seq>,
-    str: &crate::async_sequence::LocalString<'seq>,
+pub async fn str_find_async(
+    seq: &mut crate::async_callback::AsyncSequence,
+    pat: &crate::StashedString,
+    str: &crate::StashedString,
     start: usize,
     plain: bool,
 ) -> Result<Option<Match>, MatchError> {
@@ -69,8 +69,8 @@ pub async fn str_find_async<'seq>(
     }
 
     let res = seq.enter(|_, locals, _, _| {
-        let str = locals.fetch(&str);
-        let pat = locals.fetch(&pat);
+        let str = locals.fetch(str);
+        let pat = locals.fetch(pat);
         let str = str.as_bytes();
         let pat = pat.as_bytes();
         if start > str.len() {
@@ -102,10 +102,10 @@ pub async fn str_find_async<'seq>(
     }
 }
 
-pub async fn str_find_impl_async<'seq>(
-    seq: &mut crate::async_sequence::AsyncSequence<'seq>,
-    pat: &crate::async_sequence::LocalString<'seq>,
-    str: &crate::async_sequence::LocalString<'seq>,
+pub async fn str_find_impl_async(
+    seq: &mut crate::async_callback::AsyncSequence,
+    pat: &crate::StashedString,
+    str: &crate::StashedString,
     start: usize,
     anchored: bool,
     len: usize,
@@ -126,8 +126,8 @@ pub async fn str_find_impl_async<'seq>(
         let result = loop {
             let result;
             (captures, result) = seq.enter(|_, locals, _, _| {
-                let str = locals.fetch(&str);
-                let pat = locals.fetch(&pat);
+                let str = locals.fetch(str);
+                let pat = locals.fetch(pat);
                 let str = str.as_bytes();
                 let pat = pat.as_bytes();
                 let mut state = MatchState { pat, str, captures };

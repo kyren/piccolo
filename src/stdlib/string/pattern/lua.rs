@@ -1,13 +1,14 @@
-use super::{expand_substitution, Capture, FindBackend};
+use std::borrow::Cow;
+use std::ops::ControlFlow;
+
+use super::{expand_substitution, seq, Capture, FindBackend};
 use crate::async_callback::Locals;
 use crate::meta_ops::MetaResult;
 use crate::stdlib::string::convert_index;
 use crate::{
-    async_sequence, meta_ops, string, Callback, CallbackReturn, Context, Error, FromValue,
-    IntoValue, SequenceReturn, Stack, StashedFunction, String, Value,
+    async_sequence, meta_ops, Callback, CallbackReturn, Context, Error, FromValue, IntoValue,
+    SequenceReturn, Stack, StashedFunction, String, Value,
 };
-use std::borrow::Cow;
-use std::ops::ControlFlow;
 
 fn lua_capture_value<'gc>(ctx: Context<'gc>, cap: &Capture, str: &[u8]) -> Value<'gc> {
     if cap.pos {
@@ -21,17 +22,16 @@ pub fn lua_find_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
     Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (str, pat, init, plain) =
             stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
+
         let start = convert_index(init.unwrap_or(1), str.len())?;
-        let s = async_sequence(&ctx, |locals, builder| {
+        let plain = plain.unwrap_or(false);
+
+        let s = async_sequence(&ctx, |locals, mut seq| {
             let (str, pat) = (locals.stash(&ctx, str), locals.stash(&ctx, pat));
-            builder.build(|mut seq| async move {
-                let res =
-                    super::seq::str_find_async(&mut seq, &pat, &str, start, plain.unwrap_or(false))
-                        .await;
+            async move {
+                let res = seq::str_find_async(&mut seq, &pat, &str, start, plain).await?;
 
                 seq.try_enter(|ctx, locals, _, mut stack| {
-                    let res = res?; // TODO: can't convert 'static error to LocalError?
-
                     if let Some(m) = res {
                         let str = locals.fetch(&str);
                         let str = str.as_bytes();
@@ -47,7 +47,7 @@ pub fn lua_find_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
                     Ok(())
                 })?;
                 Ok(SequenceReturn::Return)
-            })
+            }
         });
         Ok(CallbackReturn::Sequence(s))
     })
@@ -56,15 +56,15 @@ pub fn lua_find_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
 pub fn lua_match_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
     Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (str, pat, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
+
         let start = convert_index(init.unwrap_or(1), str.len())?;
-        let s = async_sequence(&ctx, |locals, builder| {
+
+        let s = async_sequence(&ctx, |locals, mut seq| {
             let (str, pat) = (locals.stash(&ctx, str), locals.stash(&ctx, pat));
-            builder.build(|mut seq| async move {
-                let res = super::seq::str_find_async(&mut seq, &pat, &str, start, false).await;
+            async move {
+                let res = seq::str_find_async(&mut seq, &pat, &str, start, false).await?;
 
                 seq.try_enter(|ctx, locals, _, mut stack| {
-                    let res = res?; // TODO: can't convert 'static error to LocalError?
-
                     if let Some(m) = res {
                         let str = locals.fetch(&str);
                         let str = str.as_bytes();
@@ -82,7 +82,7 @@ pub fn lua_match_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
                     Ok(())
                 })?;
                 Ok(SequenceReturn::Return)
-            })
+            }
         });
         Ok(CallbackReturn::Sequence(s))
     })
@@ -90,8 +90,7 @@ pub fn lua_match_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
 
 pub fn lua_gmatch_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
     Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let (str, pat, init) =
-            stack.consume::<(string::String, string::String, Option<i64>)>(ctx)?;
+        let (str, pat, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
         let start = convert_index(init.unwrap_or(1), str.len())?;
 
         #[derive(gc_arena::Collect)]
@@ -108,19 +107,18 @@ pub fn lua_gmatch_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
         let root = (str, pat, state);
         let gmatch = Callback::from_fn_with(&ctx, root, |root, ctx, _, mut stack| {
             let (str, pat, state) = root;
-            let s = async_sequence(&ctx, |locals, builder| {
+            let s = async_sequence(&ctx, |locals, mut seq| {
                 stack.clear();
                 let (str, pat) = (locals.stash(&ctx, *str), locals.stash(&ctx, *pat));
                 let state = std::rc::Rc::clone(&state);
-                builder.build(|mut seq| async move {
+
+                async move {
                     loop {
                         let start = state.cur_idx.get();
 
-                        let res =
-                            super::seq::str_find_async(&mut seq, &pat, &str, start, false).await;
+                        let res = seq::str_find_async(&mut seq, &pat, &str, start, false).await?;
 
                         let flow = seq.try_enter(|ctx, locals, _, mut stack| {
-                            let res = res?; // TODO: can't convert 'static error to LocalError?
                             let str = locals.fetch(&str);
                             let str = str.as_bytes();
 
@@ -154,7 +152,7 @@ pub fn lua_gmatch_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
                         }
                     }
                     Ok(SequenceReturn::Return)
-                })
+                }
             });
             Ok(CallbackReturn::Sequence(s))
         });
@@ -168,13 +166,14 @@ pub fn lua_gsub_impl_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
     Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (str, pat, repl, end) = stack.consume::<(String, String, Value, Option<i64>)>(ctx)?;
         let match_limit = end;
-        let s = async_sequence(&ctx, |locals, builder| {
+
+        let s = async_sequence(&ctx, |locals, mut seq| {
             let (str, pat, repl) = (
                 locals.stash(&ctx, str),
                 locals.stash(&ctx, pat),
                 locals.stash(&ctx, repl),
             );
-            builder.build(|mut seq| async move {
+            async move {
                 let mut match_count = 0;
                 let mut cur_idx = 0;
                 let mut last_end = None;
@@ -182,12 +181,9 @@ pub fn lua_gsub_impl_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
                 let mut buffer: Option<Vec<u8>> = None;
 
                 loop {
-                    let match_res =
-                        super::seq::str_find_async(&mut seq, &pat, &str, cur_idx, false).await;
+                    let res = seq::str_find_async(&mut seq, &pat, &str, cur_idx, false).await?;
 
-                    let match_res = seq.try_enter(|_, _, _, _| Ok(match_res?))?;
-
-                    let m = if let Some(m) = match_res {
+                    let m = if let Some(m) = res {
                         m
                     } else {
                         break;
@@ -295,7 +291,7 @@ pub fn lua_gsub_impl_async<'gc>(ctx: Context<'gc>) -> Callback<'gc> {
                 });
 
                 Ok(SequenceReturn::Return)
-            })
+            }
         });
         Ok(CallbackReturn::Sequence(s))
     })
@@ -306,10 +302,11 @@ pub fn lua_find<'gc, F: FindBackend>(
     stack: &mut Stack<'gc, '_>,
 ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
     let (str, pat, init, plain) =
-        stack.consume::<(string::String, string::String, Option<i64>, Option<bool>)>(ctx)?;
+        stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
     let start = convert_index(init.unwrap_or(1), str.len())?;
+    let plain = plain.unwrap_or(false);
 
-    let res = F::str_find(&pat, &str, start, plain.unwrap_or(false))?;
+    let res = F::str_find(&pat, &str, start, plain)?;
 
     if let Some(m) = res {
         // Lua expects inclusive 1-indexed ranges
@@ -327,7 +324,7 @@ pub fn lua_match<'gc, F: FindBackend>(
     ctx: Context<'gc>,
     stack: &mut Stack<'gc, '_>,
 ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-    let (str, pat, init) = stack.consume::<(string::String, string::String, Option<i64>)>(ctx)?;
+    let (str, pat, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
     let start = convert_index(init.unwrap_or(1), str.len())?;
 
     let res = F::str_find(&pat, &str, start, false)?;

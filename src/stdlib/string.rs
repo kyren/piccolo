@@ -214,12 +214,12 @@ pub fn load_pattern<'gc, F: pattern::FindBackend>(ctx: Context<'gc>) {
 }
 
 pub fn load_pattern_async<'gc>(ctx: Context<'gc>) {
-    let table = <Option<Table>>::from_value(ctx, ctx.get_global("string")).unwrap();
+    let table: Option<Table> = ctx.get_global("string").unwrap();
     let string = match table {
         Some(t) => t,
         None => {
             let string = Table::new(&ctx);
-            ctx.set_global("string", string).unwrap();
+            ctx.set_global("string", string);
             string
         }
     };
