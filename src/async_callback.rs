@@ -8,7 +8,7 @@ use std::{
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
+use gc_arena::{Collect, Collection, DynamicRootSet, Gc, Mutation, StaticCollect};
 
 use crate::{
     stash::{Fetchable, Stashable},
@@ -67,9 +67,14 @@ impl<'gc> AsyncSequence<'gc> {
     /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
     pub fn new_sequence<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
     where
-        F: for<'seq> FnOnce(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(
+                Context<'gc>,
+                Locals<'seq, 'gc>,
+                SequenceState<'seq>,
+            ) -> SeqFuture<'seq>
+            + 'static,
     {
-        Self::new_sequence_with(mc, (), move |_, seq| create(seq))
+        Self::new_sequence_with(mc, (), move |_, ctx, locals, seq| create(ctx, locals, seq))
     }
 
     /// A version of [`AsyncSequence::new_sequence`] that accepts an associated GC root object
@@ -80,7 +85,13 @@ impl<'gc> AsyncSequence<'gc> {
     pub fn new_sequence_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
     where
         R: Collect + 'gc,
-        F: for<'seq> FnOnce(R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(
+                R,
+                Context<'gc>,
+                Locals<'seq, 'gc>,
+                SequenceState<'seq>,
+            ) -> SeqFuture<'seq>
+            + 'static,
     {
         BoxSequence::new(
             mc,
@@ -98,9 +109,10 @@ impl<'gc> AsyncSequence<'gc> {
     /// callback can be called any number of times.
     pub fn new_callback<F>(mc: &Mutation<'gc>, create: F) -> Callback<'gc>
     where
-        F: for<'seq> Fn(SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> Fn(Context<'gc>, Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>
+            + 'static,
     {
-        Self::new_callback_with(mc, (), move |_, seq| create(seq))
+        Self::new_callback_with(mc, (), move |_, ctx, locals, seq| create(ctx, locals, seq))
     }
 
     /// Create a new callback which invokes the given async sequence in a single step.
@@ -110,16 +122,22 @@ impl<'gc> AsyncSequence<'gc> {
     pub fn new_callback_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> Callback<'gc>
     where
         R: Collect + 'gc,
-        F: for<'seq> Fn(&R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> Fn(
+                &R,
+                Context<'gc>,
+                Locals<'seq, 'gc>,
+                SequenceState<'seq>,
+            ) -> SeqFuture<'seq>
+            + 'static,
     {
         let state = Gc::new(mc, (root, StaticCollect(create)));
         Callback::from_fn_with(mc, state, |state, ctx, _, _| {
             Ok(CallbackReturn::Sequence(Self::new_sequence_with(
                 &ctx,
                 *state,
-                |state, seq| {
+                |state, ctx, locals, seq| {
                     let (root, create) = state.as_ref();
-                    (create.0)(&root, seq)
+                    (create.0)(&root, ctx, locals, seq)
                 },
             )))
         })
@@ -453,34 +471,49 @@ enum SeqReturn<'gc> {
     TailResume { thread: Thread<'gc> },
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
 enum SeqFut<'gc> {
     Create {
         root: Box<dyn Collect + 'gc>,
-        #[collect(require_static)]
-        create: Box<dyn for<'seq> FnOnce(*mut (), SequenceState<'seq>) -> SeqFuture<'seq>>,
+        create: Box<
+            dyn for<'seq> FnOnce(
+                Box<dyn Collect + 'gc>,
+                Context<'gc>,
+                Locals<'seq, 'gc>,
+                SequenceState<'seq>,
+            ) -> SeqFuture<'seq>,
+        >,
     },
-    Run(
-        #[collect(require_static)]
-        Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>,
-    ),
+    Run(Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>),
     Empty,
+}
+
+unsafe impl<'gc> Collect for SeqFut<'gc> {
+    fn trace(&self, cc: &Collection) {
+        if let Self::Create { root, .. } = self {
+            root.trace(cc);
+        }
+    }
 }
 
 impl<'gc> SeqFut<'gc> {
     fn new<R, F>(root: R, create: F) -> Self
     where
         R: Collect + 'gc,
-        F: for<'seq> FnOnce(R, SequenceState<'seq>) -> SeqFuture<'seq> + 'static,
+        F: for<'seq> FnOnce(
+                R,
+                Context<'gc>,
+                Locals<'seq, 'gc>,
+                SequenceState<'seq>,
+            ) -> SeqFuture<'seq>
+            + 'static,
     {
         Self::Create {
             root: Box::new(root),
-            create: Box::new(move |rptr, seq| {
+            create: Box::new(move |root, ctx, locals, seq| {
                 // SAFETY: The pointer is created by `SeqFut::poll` from the `root` field, which is
                 // always a type-erased `R`.
-                let root = unsafe { Box::from_raw(rptr as *mut R) };
-                create(*root, seq)
+                let root = unsafe { Box::from_raw(Box::into_raw(root) as *mut R) };
+                create(*root, ctx, locals, seq)
             }),
         }
     }
@@ -488,12 +521,18 @@ impl<'gc> SeqFut<'gc> {
 
 impl<'gc> SeqFut<'gc> {
     fn poll(&mut self, shared: &mut Shared<'gc, '_>) -> Poll<Result<SeqReturn<'gc>, Error<'gc>>> {
+        let ctx = shared.ctx;
         let locals = shared.locals;
         with_shared(shared, || {
             match mem::replace(self, SeqFut::Empty) {
                 SeqFut::Create { root, create } => {
                     *self = Self::Run(Box::into_pin(create(
-                        Box::into_raw(root) as *mut (),
+                        root,
+                        ctx,
+                        Locals {
+                            locals,
+                            _invariant: PhantomData,
+                        },
                         SequenceState {
                             _invariant: PhantomData,
                         },

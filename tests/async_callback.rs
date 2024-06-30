@@ -7,7 +7,7 @@ fn async_sequence() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
-        let callback = AsyncSequence::new_callback(&ctx, |mut seq| {
+        let callback = AsyncSequence::new_callback(&ctx, |_, _, mut seq| {
             Box::new(async move {
                 let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
                     let table: Table = stack.consume(ctx)?;
