@@ -43,9 +43,14 @@ impl<'gc> Value<'gc> {
 
     /// Returns a proxy object which can display any `Value`.
     ///
-    /// Nil is printed as "nil", booleans, numbers, and strings are always printed as directly.
+    /// Nil is printed as "nil", booleans, integers, and numbers are always printed as directly as
+    /// they would be from Rust.
     ///
-    /// Tables, functions, threads, and userdata are all printed as `"<typename {:p}>"`.
+    /// [`String`] is printed using its [`Display`](fmt::Display) impl, which displays strings in a
+    /// lossy fashion if they are not UTF-8 internally.
+    ///
+    /// [`Table`]s, [`Function`]s, [`Thread`]s, and [`UserData`] are all printed as
+    /// `"<typename {:p}>"`, where 'typename' is the value returned by [`Value::type_name`].
     pub fn display(self) -> impl fmt::Display + 'gc {
         struct ValueDisplay<'gc>(Value<'gc>);
 
@@ -88,10 +93,6 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    pub fn not(self) -> Value<'gc> {
-        Value::Boolean(!self.to_bool())
-    }
-
     /// Converts value to either a Number or an Integer, if possible.
     pub fn to_numeric(self) -> Option<Self> {
         self.to_constant()
@@ -119,12 +120,8 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    /// Indicates whether the value can be implicitly converted to a String;
-    /// if so, [`Value::into_string`] will return `Some` with the same result
-    /// that [`Value::write`] will output.
-    ///
-    /// Note that [`Value::display`] may not result in the same output, when
-    /// handling non-utf8 strings.
+    /// Indicates whether the value can be implicitly converted to a [`String`]; if so,
+    /// [`Value::into_string`] will return `Some` with the `String` value.
     pub fn is_implicit_string(self) -> bool {
         match self {
             Value::Integer(_) => true,

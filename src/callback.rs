@@ -66,7 +66,10 @@ pub enum CallbackReturn<'gc> {
     },
 }
 
-/// A trait for values that can be called as Rust callbacks.
+/// A trait for Lua functions that are implemented in Rust.
+///
+/// All arguments and returns are handled through the provided `stack`, which avoids allocating
+/// space on the heap for them on each call.
 pub trait CallbackFn<'gc>: Collect {
     fn call(
         &self,
@@ -130,6 +133,10 @@ impl<'gc> Callback<'gc> {
         Self(unsafe { Gc::cast::<CallbackInner>(hc) })
     }
 
+    /// Create a callback from a Rust function.
+    ///
+    /// The function must be `'static` because Rust closures cannot implement `Collect`. If you need
+    /// to associate GC data with this function, use [`Callback::from_fn_with`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
         F: 'static
@@ -142,6 +149,7 @@ impl<'gc> Callback<'gc> {
         Self::from_fn_with(mc, (), move |_, ctx, exec, stack| call(ctx, exec, stack))
     }
 
+    /// Create a callback from a Rust function together with a GC object.
     pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect,

@@ -451,7 +451,7 @@ pub(super) fn run_vm<'gc>(
 
             Operation::Not { dest, source } => {
                 let source = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] = source.not();
+                registers.stack_frame[dest.0 as usize] = (!source.to_bool()).into();
             }
 
             Operation::Minus { dest, source } => {

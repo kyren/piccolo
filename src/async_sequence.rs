@@ -19,8 +19,9 @@ use crate::{
 
 /// Return type for futures that are driving an async sequence.
 ///
-/// This performs equivalent actions to [`CallbackReturn`] and the tail variants of
-/// [`SequencePoll`], so check those for more information on precisely what these actions mean.
+/// This performs equivalent actions to [`CallbackReturn`](crate::CallbackReturn) and the tail
+/// variants of [`SequencePoll`], so check those for more information on precisely what these
+/// actions mean.
 pub enum SequenceReturn<'seq> {
     /// Sequence finished, all of the values in the stack will be returned to the caller.
     Return,
@@ -98,6 +99,7 @@ impl<'gc> AsyncSequence<'gc> {
         }
     }
 
+    /// A convenience function equivalent to `BoxSequence::new(mc, AsyncSequence::new(mc, create))`.
     pub fn new_box(
         mc: &Mutation<'gc>,
         create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
