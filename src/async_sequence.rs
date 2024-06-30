@@ -586,7 +586,7 @@ fn noop_waker() -> Waker {
 
 async fn wait_once() {
     let mut done = false;
-    poll_fn(|_| {
+    poll_fn(move |_| {
         if done {
             Poll::Ready(())
         } else {
