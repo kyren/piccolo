@@ -120,10 +120,7 @@ impl<'gc> From<RuntimeError> for Error<'gc> {
     }
 }
 
-impl<'gc, E> From<E> for Error<'gc>
-where
-    E: Into<anyhow::Error>,
-{
+impl<'gc, E: Into<anyhow::Error>> From<E> for Error<'gc> {
     fn from(error: E) -> Self {
         Self::Runtime(RuntimeError::from(error))
     }

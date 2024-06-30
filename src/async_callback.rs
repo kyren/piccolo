@@ -12,8 +12,8 @@ use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
 
 use crate::{
     stash::{Fetchable, Stashable},
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Function, Sequence,
-    SequencePoll, Stack, StashedCallback, StashedClosure, StashedError, StashedFunction,
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Function, RuntimeError,
+    Sequence, SequencePoll, Stack, StashedCallback, StashedClosure, StashedError, StashedFunction,
     StashedString, StashedTable, StashedThread, StashedUserData, StashedValue, Thread,
 };
 
@@ -62,11 +62,11 @@ impl<'gc> AsyncSequence<'gc> {
     /// you want, and probably will result in panics.
     ///
     /// The provided `create` function is given two parameters: a [`Locals`] handle to create
-    /// [`Local`]s that will be owned by the future, and a `SequenceState` to move into the future.
-    /// The callback is called immediately and is not required to be `'static`, it exists only to
-    /// make the `'seq` lifetime generative and is required for correctness. The function should
-    /// stash any local variables needed by the future from the outer context, then move *only*
-    /// those locals and the provided `SequenceState` object into the returned future.
+    /// [`Local`]s that will be owned by the future, and a [`SequenceState`] to move into the
+    /// future. The callback is called immediately and is not required to be `'static`, it exists
+    /// only to make the `'seq` lifetime generative and is required for correctness. The function
+    /// should stash any local variables needed by the future from the outer context, then move
+    /// *only* those locals and the provided `SequenceState` object into the returned future.
     ///
     /// # Panics
     ///
@@ -74,8 +74,8 @@ impl<'gc> AsyncSequence<'gc> {
     /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
     ///
     /// Methods on `SequenceState` must *only* be called from the returned `SeqFuture`.
-    /// `SequenceState` is passed to the provided function *so that* it can be moved *into* the
-    /// future and called there. Calling methods on `SequenceState` from the provided function
+    /// `SequenceState` is passed to the provided function only so that it can be *moved into*
+    /// the future and called there. Calling methods on `SequenceState` from the provided function
     /// directly will result in a panic.
     pub fn new_sequence(
         mc: &Mutation<'gc>,
@@ -212,6 +212,32 @@ impl<'gc> Sequence<'gc> for AsyncSequence<'gc> {
     }
 }
 
+/// A collection of stashed values that are local to a specific [`AsyncSequence`].
+///
+/// [`Local`] values are branded by `'seq` and cannot escape their parent `AsyncSequence` and are
+/// (for the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`.
+/// Because of this, they correctly mimic what we could do if async blocks themselves could be
+/// traced, and so can't lead to uncollectable cycles with their parent.
+#[derive(Copy, Clone)]
+pub struct Locals<'seq, 'gc> {
+    locals: DynamicRootSet<'gc>,
+    _invariant: Invariant<'seq>,
+}
+
+impl<'seq, 'gc> Locals<'seq, 'gc> {
+    /// "Stash" a garbage collected value and return a handle branded with `'seq` that can be stored
+    /// in the parent sequence async block.
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> Local<'seq, S::Stashed> {
+        Local::stash(mc, self.locals, s)
+    }
+
+    /// "Fetch" the real garbage collected value for a handle that has been returned from
+    /// [`Locals::stash`].
+    pub fn fetch<F: Fetchable<'gc>>(&self, local: &Local<'seq, F>) -> F::Fetched {
+        local.fetch(self.locals)
+    }
+}
+
 /// A local variable for an async sequence.
 ///
 /// Like "stashed values" in the registry, `Local`s are *not* branded with `'gc`. Unlike registry
@@ -270,6 +296,21 @@ pub type LocalUserData<'seq> = Local<'seq, StashedUserData>;
 pub type LocalFunction<'seq> = Local<'seq, StashedFunction>;
 pub type LocalValue<'seq> = Local<'seq, StashedValue>;
 pub type LocalError<'seq> = Local<'seq, StashedError>;
+
+impl<'seq> From<RuntimeError> for LocalError<'seq> {
+    fn from(error: RuntimeError) -> Self {
+        Local {
+            stashed: StashedError::Runtime(error),
+            _invariant: PhantomData,
+        }
+    }
+}
+
+impl<'seq, E: Into<anyhow::Error>> From<E> for LocalError<'seq> {
+    fn from(error: E) -> Self {
+        RuntimeError::from(error).into()
+    }
+}
 
 /// The held state for a `Sequence` being driven by a Rust async block.
 ///
@@ -426,32 +467,6 @@ impl<'seq> SequenceState<'seq> {
                 Ok(())
             }
         })
-    }
-}
-
-/// A collection of stashed values that are local to a specific [`AsyncSequence`].
-///
-/// [`Local`] values are branded by `'seq` and cannot escape their parent `AsyncSequence` and are
-/// (for the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`.
-/// Because of this, they correctly mimic what we could do if async blocks themselves could be
-/// traced, and so can't lead to uncollectable cycles with their parent.
-#[derive(Copy, Clone)]
-pub struct Locals<'seq, 'gc> {
-    locals: DynamicRootSet<'gc>,
-    _invariant: Invariant<'seq>,
-}
-
-impl<'seq, 'gc> Locals<'seq, 'gc> {
-    /// "Stash" a garbage collected value and return a handle branded with `'seq` that can be stored
-    /// in the parent sequence async block.
-    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> Local<'seq, S::Stashed> {
-        Local::stash(mc, self.locals, s)
-    }
-
-    /// "Fetch" the real garbage collected value for a handle that has been returned from
-    /// [`Locals::stash`].
-    pub fn fetch<F: Fetchable<'gc>>(&self, local: &Local<'seq, F>) -> F::Fetched {
-        local.fetch(self.locals)
     }
 }
 
