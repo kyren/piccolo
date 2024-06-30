@@ -24,37 +24,6 @@
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ******************************************************************************/
 
-//! This is what you get for not having defined a syntax...
-//!
-//! string.match("$", "[#-%%]") -> "$"
-//! string.match("&", "[%-']") -> nil
-//! string.match("&", "[%%-']") -> nil
-//! string.match("]", "[]]") -> "]"
-
-macro_rules! unsafe_optionally_unchecked {
-    ( & $($ident:ident).* [ $ind:expr ] ) => {
-        unsafe { $($ident).* .get_unchecked($ind) }
-    };
-    ( $($ident:ident).* [ $ind:expr ] ) => {
-        *unsafe { $($ident).* .get_unchecked($ind) }
-    };
-    // ( & $($ident:ident).* [ $ind:expr ] ) => {
-    //     & $($ident).* [ $ind ]
-    // };
-    // ( $($ident:ident).* [ $ind:expr ] ) => {
-    //     $($ident).* [ $ind ]
-    // };
-}
-macro_rules! unsafe_assert_unchecked {
-    ($cond:expr) => {
-        if !$cond {
-            unsafe { core::hint::unreachable_unchecked() }
-        }
-    }; // ($cond:expr) => {
-       //     if !$cond { unreachable!() }
-       // };
-}
-
 pub mod lua;
 pub mod seq;
 pub mod stack;
@@ -246,7 +215,6 @@ fn plain_find(pat: &[u8], str: &[u8]) -> Option<usize> {
 }
 
 /// Returns whether a string has any pattern special characters
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn has_specials(pat: &[u8]) -> bool {
     pat.iter().any(|b| {
         matches!(
@@ -259,7 +227,6 @@ fn has_specials(pat: &[u8]) -> bool {
 /// Parse the given slice as a set, assuming it starts the character
 /// after the initial `[`.  Returns whether the set starts with `^`,
 /// and the index of end of the set.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn parse_set(s: &[u8]) -> Option<(bool, usize)> {
     let invert = matches!(s.get(0), Some(b'^'));
     let mut i = invert as usize;
@@ -284,7 +251,6 @@ fn parse_set(s: &[u8]) -> Option<(bool, usize)> {
 /// Check whether the given character is contained within the given set.
 /// The set slice should be the range `s[inverted .. end - 1]`, from the
 /// results of a [`parse_set`] call.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn match_set(char: u8, invert: bool, set: &[u8]) -> bool {
     // Get the optimizer to remove overflow checks on i + 2 < set.len()
     if set.len() == usize::MAX {
@@ -318,7 +284,6 @@ fn match_set(char: u8, invert: bool, set: &[u8]) -> bool {
 /// Match a sequence of nested balanced pairs of the given `start` and
 /// `end` chars, with a `start` at the current index.  If successful,
 /// return an index one past the last `end` char.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn match_balanced(str: &[u8], start: u8, end: u8, str_idx: usize) -> Option<usize> {
     if str.get(str_idx) != Some(&start) {
         return None;
@@ -343,7 +308,6 @@ fn match_balanced(str: &[u8], start: u8, end: u8, str_idx: usize) -> Option<usiz
 /// of the form `%[c]`; if the class char is not recognized, it is
 /// compared directly with the char; otherwise, if the class char is
 /// uppercase, the match is inverted.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn match_char_class(class: u8, c: u8) -> bool {
     let invert = class.is_ascii_uppercase();
     (match class.to_ascii_lowercase() {

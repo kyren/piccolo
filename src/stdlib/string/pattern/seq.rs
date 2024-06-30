@@ -623,7 +623,6 @@ enum Class {
 /// Parses a character class from the pattern slice; returns the class
 /// enum, the index of the end of this class, and (for sets) a slice
 /// containing the inner contents of the set.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn parse_class(pat: &[u8]) -> Option<(Class, usize, &[u8])> {
     if pat.len() == 0 {
         return None;
@@ -651,7 +650,6 @@ fn parse_class(pat: &[u8]) -> Option<(Class, usize, &[u8])> {
 /// Specifically, the slice is only used in the `Set` case, and must be
 /// a slice containing the contents of the set, between the open bracket
 /// (excluding the `^`), and the closing bracket.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 #[inline]
 fn match_class(ch: u8, class: Class, set_slice: &[u8]) -> bool {
     match class {

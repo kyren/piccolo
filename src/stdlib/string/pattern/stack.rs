@@ -293,7 +293,6 @@ fn do_match(
     Ok(Some(MatchEnd(str_idx)))
 }
 
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn last_unclosed_capture_idx(state: &MatchState<'_>) -> Option<usize> {
     for i in (0..state.captures.len()).rev() {
         if !state.captures[i].closed {
@@ -313,7 +312,6 @@ enum Class<'a> {
 
 /// Parses a character class from the pattern slice; returns the class
 /// enum and the index of the end of this class.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn parse_class(pat: &[u8]) -> Option<(Class<'_>, usize)> {
     if pat.len() == 0 {
         return None;
@@ -336,7 +334,6 @@ fn parse_class(pat: &[u8]) -> Option<(Class<'_>, usize)> {
 }
 
 /// Evaluates whether a character matches a character class.
-#[cfg_attr(feature = "no-panic", no_panic::no_panic)]
 fn match_class(ch: u8, class: Class<'_>) -> bool {
     match class {
         Class::Any => true,
