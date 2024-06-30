@@ -21,3 +21,19 @@ do
     assert(_G == nil and old_g.b == b)
     _G = old_g
 end
+
+-- Load uses the global context
+do
+    local res = load("return _G")()
+    assert(res == _G)
+end
+
+-- global context is used, even if _G is modified
+-- (_G is not used internally)
+do
+    old_G = _G
+    _G = nil
+    local res = load("return old_G")()
+    assert(res == old_G)
+    _G = old_G
+end
