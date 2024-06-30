@@ -8,7 +8,7 @@ use std::{
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use gc_arena::{Collect, Collection, DynamicRootSet, Gc, Mutation, StaticCollect};
+use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
 
 use crate::{
     stash::{Fetchable, Stashable},
@@ -39,9 +39,9 @@ pub type SeqFuture<'seq> =
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct AsyncSequence<'gc> {
-    fut: SeqFut<'gc>,
     locals: DynamicRootSet<'gc>,
-    _invariant: Invariant<'gc>,
+    #[collect(require_static)]
+    fut: Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>,
 }
 
 impl<'gc> AsyncSequence<'gc> {
@@ -61,52 +61,47 @@ impl<'gc> AsyncSequence<'gc> {
     /// async function from the created future here is *not* the way to do it. It will not do what
     /// you want, and probably will result in panics.
     ///
+    /// The provided `create` function is given two parameters: a [`Locals`] handle to create
+    /// [`Local`]s that will be owned by the future, and a `SequenceState` to move into the future.
+    /// The callback is called immediately and is not required to be `'static`, it exists only to
+    /// make the `'seq` lifetime generative and is required for correctness. The function should
+    /// stash any local variables needed by the future from the outer context, then move *only*
+    /// those locals and the provided `SequenceState` object into the returned future.
+    ///
     /// # Panics
     ///
     /// All Rust yields (`.await`) within the created future must occur from calling an async method
     /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
-    pub fn new_sequence<F>(mc: &Mutation<'gc>, create: F) -> BoxSequence<'gc>
-    where
-        F: for<'seq> FnOnce(
-                Context<'gc>,
-                Locals<'seq, 'gc>,
-                SequenceState<'seq>,
-            ) -> SeqFuture<'seq>
-            + 'static,
-    {
-        Self::new_sequence_with(mc, (), move |_, ctx, locals, seq| create(ctx, locals, seq))
-    }
-
-    /// A version of [`AsyncSequence::new_sequence`] that accepts an associated GC root object
-    /// passed to the create function.
     ///
-    /// This is important because the create function must be `'static`, and it is not called until
-    /// the resulting sequence is first polled.
-    pub fn new_sequence_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> BoxSequence<'gc>
-    where
-        R: Collect + 'gc,
-        F: for<'seq> FnOnce(
-                R,
-                Context<'gc>,
-                Locals<'seq, 'gc>,
-                SequenceState<'seq>,
-            ) -> SeqFuture<'seq>
-            + 'static,
-    {
+    /// Methods on `SequenceState` must *only* be called from the returned `SeqFuture`.
+    /// `SequenceState` is passed to the provided function *so that* it can be moved *into* the
+    /// future and called there. Calling methods on `SequenceState` from the provided function
+    /// directly will result in a panic.
+    pub fn new_sequence(
+        mc: &Mutation<'gc>,
+        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
+    ) -> BoxSequence<'gc> {
+        let locals = DynamicRootSet::new(mc);
+        let fut = create(
+            Locals {
+                locals,
+                _invariant: PhantomData,
+            },
+            SequenceState {
+                _invariant: PhantomData,
+            },
+        );
+
         BoxSequence::new(
             mc,
             Self {
-                fut: SeqFut::new(root, create),
-                locals: DynamicRootSet::new(mc),
-                _invariant: PhantomData,
+                locals,
+                fut: Box::into_pin(fut),
             },
         )
     }
 
     /// Create a new callback which invokes the given async sequence in a single step.
-    ///
-    /// The given create function must implement `Fn` rather than `FnOnce`, becuase the resulting
-    /// callback can be called any number of times.
     pub fn new_callback<F>(mc: &Mutation<'gc>, create: F) -> Callback<'gc>
     where
         F: for<'seq> Fn(Context<'gc>, Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>
@@ -115,10 +110,8 @@ impl<'gc> AsyncSequence<'gc> {
         Self::new_callback_with(mc, (), move |_, ctx, locals, seq| create(ctx, locals, seq))
     }
 
-    /// Create a new callback which invokes the given async sequence in a single step.
-    ///
-    /// In addition to the create function needing to implement `Fn` rather than `FnOnce`, the `R`
-    /// root type will also be passed to the create function by *reference* rather than by value.
+    /// Create a new callback which invokes the given async sequence in a single step, with an
+    /// associated GC root object.
     pub fn new_callback_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> Callback<'gc>
     where
         R: Collect + 'gc,
@@ -132,10 +125,9 @@ impl<'gc> AsyncSequence<'gc> {
     {
         let state = Gc::new(mc, (root, StaticCollect(create)));
         Callback::from_fn_with(mc, state, |state, ctx, _, _| {
-            Ok(CallbackReturn::Sequence(Self::new_sequence_with(
+            Ok(CallbackReturn::Sequence(Self::new_sequence(
                 &ctx,
-                *state,
-                |state, ctx, locals, seq| {
+                |locals, seq| {
                     let (root, create) = state.as_ref();
                     (create.0)(&root, ctx, locals, seq)
                 },
@@ -160,28 +152,42 @@ impl<'gc> AsyncSequence<'gc> {
             error,
             next_op: &mut next_op,
         };
-        Ok(match self.fut.poll(&mut shared) {
+
+        let res = with_shared(&mut shared, || {
+            self.fut
+                .as_mut()
+                .poll(&mut task::Context::from_waker(&noop_waker()))
+        });
+
+        match res {
             Poll::Ready(res) => {
                 assert!(
                     next_op.is_none(),
                     "`SequenceState` async method not `await`ed"
                 );
-                match res? {
-                    SeqReturn::Return => SequencePoll::Return,
-                    SeqReturn::TailCall { function } => SequencePoll::TailCall(function),
-                    SeqReturn::TailYield { to_thread } => SequencePoll::TailYield(to_thread),
-                    SeqReturn::TailResume { thread } => SequencePoll::TailResume(thread),
+                match res {
+                    Ok(SequenceReturn::Return) => Ok(SequencePoll::Return),
+                    Ok(SequenceReturn::Call(function)) => {
+                        Ok(SequencePoll::TailCall(function.fetch(self.locals)))
+                    }
+                    Ok(SequenceReturn::Yield(to_thread)) => Ok(SequencePoll::TailYield(
+                        to_thread.map(|t| t.fetch(self.locals)),
+                    )),
+                    Ok(SequenceReturn::Resume(thread)) => {
+                        Ok(SequencePoll::TailResume(thread.fetch(self.locals)))
+                    }
+                    Err(err) => Err(err.fetch(self.locals)),
                 }
             }
-            Poll::Pending => {
+            Poll::Pending => Ok(
                 match next_op.expect("`await` of a future other than `SequenceState` methods") {
                     SeqOp::Pending => SequencePoll::Pending,
                     SeqOp::Call { function, bottom } => SequencePoll::Call { function, bottom },
                     SeqOp::Yield { to_thread, bottom } => SequencePoll::Yield { to_thread, bottom },
                     SeqOp::Resume { thread, bottom } => SequencePoll::Resume { thread, bottom },
-                }
-            }
-        })
+                },
+            ),
+        }
     }
 }
 
@@ -429,6 +435,7 @@ impl<'seq> SequenceState<'seq> {
 /// (for the purposes of garbage collection) considered *owned* by the parent `AsyncSequence`.
 /// Because of this, they correctly mimic what we could do if async blocks themselves could be
 /// traced, and so can't lead to uncollectable cycles with their parent.
+#[derive(Copy, Clone)]
 pub struct Locals<'seq, 'gc> {
     locals: DynamicRootSet<'gc>,
     _invariant: Invariant<'seq>,
@@ -462,105 +469,6 @@ enum SeqOp<'gc> {
         thread: Thread<'gc>,
         bottom: usize,
     },
-}
-
-enum SeqReturn<'gc> {
-    Return,
-    TailCall { function: Function<'gc> },
-    TailYield { to_thread: Option<Thread<'gc>> },
-    TailResume { thread: Thread<'gc> },
-}
-
-enum SeqFut<'gc> {
-    Create {
-        root: Box<dyn Collect + 'gc>,
-        create: Box<
-            dyn for<'seq> FnOnce(
-                Box<dyn Collect + 'gc>,
-                Context<'gc>,
-                Locals<'seq, 'gc>,
-                SequenceState<'seq>,
-            ) -> SeqFuture<'seq>,
-        >,
-    },
-    Run(Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>),
-    Empty,
-}
-
-unsafe impl<'gc> Collect for SeqFut<'gc> {
-    fn trace(&self, cc: &Collection) {
-        if let Self::Create { root, .. } = self {
-            root.trace(cc);
-        }
-    }
-}
-
-impl<'gc> SeqFut<'gc> {
-    fn new<R, F>(root: R, create: F) -> Self
-    where
-        R: Collect + 'gc,
-        F: for<'seq> FnOnce(
-                R,
-                Context<'gc>,
-                Locals<'seq, 'gc>,
-                SequenceState<'seq>,
-            ) -> SeqFuture<'seq>
-            + 'static,
-    {
-        Self::Create {
-            root: Box::new(root),
-            create: Box::new(move |root, ctx, locals, seq| {
-                // SAFETY: The pointer is created by `SeqFut::poll` from the `root` field, which is
-                // always a type-erased `R`.
-                let root = unsafe { Box::from_raw(Box::into_raw(root) as *mut R) };
-                create(*root, ctx, locals, seq)
-            }),
-        }
-    }
-}
-
-impl<'gc> SeqFut<'gc> {
-    fn poll(&mut self, shared: &mut Shared<'gc, '_>) -> Poll<Result<SeqReturn<'gc>, Error<'gc>>> {
-        let ctx = shared.ctx;
-        let locals = shared.locals;
-        with_shared(shared, || {
-            match mem::replace(self, SeqFut::Empty) {
-                SeqFut::Create { root, create } => {
-                    *self = Self::Run(Box::into_pin(create(
-                        root,
-                        ctx,
-                        Locals {
-                            locals,
-                            _invariant: PhantomData,
-                        },
-                        SequenceState {
-                            _invariant: PhantomData,
-                        },
-                    )));
-                }
-                other => *self = other,
-            }
-
-            let SeqFut::Run(f) = self else { unreachable!() };
-            f.as_mut()
-                .poll(&mut task::Context::from_waker(&noop_waker()))
-                .map(|r| match r {
-                    Ok(seq_ret) => Ok(match seq_ret {
-                        SequenceReturn::Return => SeqReturn::Return,
-                        SequenceReturn::Call(function) => SeqReturn::TailCall {
-                            function: function.fetch(locals),
-                        },
-                        SequenceReturn::Yield(to_thread) => SeqReturn::TailYield {
-                            to_thread: to_thread.map(|t| t.fetch(locals)),
-                        },
-                        SequenceReturn::Resume(thread) => SeqReturn::TailResume {
-                            thread: thread.fetch(locals),
-                        },
-                    }),
-                    Err(err) => Err(err.fetch(locals)),
-                })
-        })
-    }
 }
 
 // Invariant type that is also !Send and !Sync
