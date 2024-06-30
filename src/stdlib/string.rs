@@ -1,4 +1,4 @@
-use crate::{Callback, CallbackReturn, Context, String, Table};
+use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
@@ -98,6 +98,45 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             Ok(CallbackReturn::Return)
         }),
     );
+
+    string
+        .set(
+            ctx,
+            "char",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                // TODO: fuel usage
+                let bytes = stack
+                    .drain(..)
+                    .map(|v| try_to_byte(v))
+                    .collect::<Result<Vec<u8>, _>>()
+                    .map_err(|e| e.into_value(ctx))?;
+                stack.replace(ctx, ctx.intern(&bytes));
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    fn try_to_byte<'gc>(v: Value<'gc>) -> Result<u8, &'static str> {
+        match v.to_integer() {
+            Some(n @ 0..=255) => Ok(n as u8),
+            Some(_) => Err("value out of range"),
+            None => Err("expected integer"),
+        }
+    }
+
+    string
+        .set(
+            ctx,
+            "rep",
+            Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                // TODO: fuel usage
+                let (string, count) = stack.consume::<(String, i64)>(ctx)?;
+                let repeated = string.repeat(count as usize);
+                stack.replace(ctx, ctx.intern(&repeated));
+                Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
 
     ctx.set_global("string", string);
 }
