@@ -43,14 +43,15 @@ impl<'gc> Value<'gc> {
 
     /// Returns a proxy object which can display any `Value`.
     ///
-    /// Nil is printed as "nil", booleans, integers, and numbers are always printed as directly as
-    /// they would be from Rust.
+    /// [`Value::Nil`] is printed as "nil", booleans, integers, and numbers are always printed as
+    /// directly as they would be from Rust.
     ///
-    /// [`String`] is printed using its [`Display`](fmt::Display) impl, which displays strings in a
-    /// lossy fashion if they are not UTF-8 internally.
+    /// [`Value::String`] is printed using the [`String`] [`Display`](fmt::Display) impl, which
+    /// displays strings in a lossy fashion if they are not UTF-8 internally.
     ///
-    /// [`Table`]s, [`Function`]s, [`Thread`]s, and [`UserData`] are all printed as
-    /// `"<typename {:p}>"`, where 'typename' is the value returned by [`Value::type_name`].
+    /// [`Value::Table`]s, [`Value::Function`]s, [`Value::Thread`]s, and [`Value::UserData`]
+    /// are all printed as `"<typename {:p}>"`, where 'typename' is the value returned by
+    /// [`Value::type_name`].
     pub fn display(self) -> impl fmt::Display + 'gc {
         struct ValueDisplay<'gc>(Value<'gc>);
 
@@ -110,7 +111,10 @@ impl<'gc> Value<'gc> {
         self.to_constant().and_then(|c| c.to_integer())
     }
 
-    /// Interprets Numbers, Integers, and Strings as a String, if possible.
+    /// Interprets Numbers, Integers, and Strings as a String, otherwise returns None.
+    ///
+    /// If the value is a [`Value::String`], the string is returned directly. Otherwise, the
+    /// returned string will always be the same as what [`Value::display`] would display.
     pub fn into_string(self, ctx: crate::Context<'gc>) -> Option<String<'gc>> {
         match self {
             Value::Integer(i) => Some(ctx.intern(i.to_string().as_bytes())),
@@ -121,7 +125,7 @@ impl<'gc> Value<'gc> {
     }
 
     /// Indicates whether the value can be implicitly converted to a [`String`]; if so,
-    /// [`Value::into_string`] will return `Some` with the `String` value.
+    /// [`Value::into_string`] will always return `Some`.
     pub fn is_implicit_string(self) -> bool {
         match self {
             Value::Integer(_) => true,
