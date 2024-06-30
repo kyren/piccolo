@@ -1,18 +1,18 @@
 use piccolo::{
-    async_sequence::SequenceFuture, meta_ops, AsyncSequence, Callback, CallbackReturn, Closure,
-    Executor, Lua, SequenceReturn, StaticError, Table, Variadic,
+    async_sequence, meta_ops, Callback, CallbackReturn, Closure, Executor, Lua, SequenceReturn,
+    StaticError, Table, Variadic,
 };
 
 #[test]
-fn async_sequence() -> Result<(), StaticError> {
+fn async_sequence_works() -> Result<(), StaticError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
         let callback = Callback::from_fn(&ctx, |ctx, _, _| {
-            Ok(CallbackReturn::Sequence(AsyncSequence::new_box(
+            Ok(CallbackReturn::Sequence(async_sequence(
                 &ctx,
-                |_, mut seq| {
-                    SequenceFuture::new(&ctx, async move {
+                |_locals, mut seq, builder| {
+                    builder.build(async move {
                         let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
                             let table: Table = stack.consume(ctx)?;
                             let length = table.length();

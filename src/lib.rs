@@ -26,7 +26,7 @@ pub mod userdata;
 pub mod value;
 
 pub use self::{
-    async_sequence::{AsyncSequence, SequenceReturn},
+    async_sequence::{async_sequence, SequenceReturn},
     callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
     closure::{Closure, CompilerError, FunctionPrototype},
     constant::Constant,

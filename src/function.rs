@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
@@ -45,15 +47,16 @@ impl<'gc> Function<'gc> {
             I: AsRef<[Function<'gc>]> + Collect,
         {
             fn poll(
-                &mut self,
+                self: Pin<&mut Self>,
                 _: Context<'gc>,
                 _: Execution<'gc, '_>,
                 _: Stack<'gc, '_>,
             ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                let fns = (*self.0).as_ref();
-                let function = fns[self.1];
-                self.1 += 1;
-                if self.1 == fns.len() {
+                let this = self.get_mut();
+                let fns = (*this.0).as_ref();
+                let function = fns[this.1];
+                this.1 += 1;
+                if this.1 == fns.len() {
                     Ok(SequencePoll::TailCall(function))
                 } else {
                     Ok(SequencePoll::Call {

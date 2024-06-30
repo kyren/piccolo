@@ -1,7 +1,7 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    ops,
+    pin::Pin,
 };
 
 use allocator_api2::boxed;
@@ -291,7 +291,7 @@ pub trait Sequence<'gc>: Collect {
     ///
     /// The [`SequencePoll`] return value tells the running `Executor` what action to take next.
     fn poll(
-        &mut self,
+        self: Pin<&mut Self>,
         ctx: Context<'gc>,
         exec: Execution<'gc, '_>,
         stack: Stack<'gc, '_>,
@@ -303,7 +303,7 @@ pub trait Sequence<'gc>: Collect {
     /// By default, this method will simply fail with the provided error, bubbling it up to the
     /// caller.
     fn error(
-        &mut self,
+        self: Pin<&mut Self>,
         _ctx: Context<'gc>,
         _exec: Execution<'gc, '_>,
         error: Error<'gc>,
@@ -317,39 +317,54 @@ pub trait Sequence<'gc>: Collect {
 ///
 /// We use a `Box` rather than `Gc` because a `Sequence` is mutable and not shared -- it is
 /// generally owned only by the `Thread` in which it is running.
-#[derive(Collect)]
-#[collect(no_drop)]
-pub struct BoxSequence<'gc>(boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'gc>>);
+pub struct BoxSequence<'gc>(Pin<boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'static>>>);
+
+unsafe impl<'gc> Collect for BoxSequence<'gc> {
+    fn trace(&self, cc: &gc_arena::Collection) {
+        // SAFETY: We have to manually implement `Collect` for `BoxSequence<'gc>` because `gc-arena`
+        // does not provide `Collect` impls for `Pin<T>`.
+        self.0.as_ref().get_ref().trace(cc);
+    }
+}
 
 impl<'gc> fmt::Debug for BoxSequence<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("Sequence")
-            .field(&(self.0.as_ref() as *const _))
+            .field(&(self.0.as_ref().get_ref() as *const _))
             .finish()
-    }
-}
-
-impl<'gc> ops::Deref for BoxSequence<'gc> {
-    type Target = dyn Sequence<'gc> + 'gc;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl<'gc> ops::DerefMut for BoxSequence<'gc> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.0
     }
 }
 
 impl<'gc> BoxSequence<'gc> {
     pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
-        let b = boxed::Box::new_in(sequence, MetricsAlloc::new(mc));
+        let b = boxed::Box::new_in(sequence, MetricsAlloc::new_static(mc));
         // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
         // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
         let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
         let b = unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) };
-        Self(b)
+        Self(boxed::Box::into_pin(b))
+    }
+
+    pub fn from_box(b: boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'static>>) -> Self {
+        Self(boxed::Box::into_pin(b))
+    }
+
+    pub fn poll(
+        self: &mut Self,
+        ctx: Context<'gc>,
+        exec: Execution<'gc, '_>,
+        stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        self.0.as_mut().poll(ctx, exec, stack)
+    }
+
+    pub fn error(
+        self: &mut Self,
+        ctx: Context<'gc>,
+        exec: Execution<'gc, '_>,
+        error: Error<'gc>,
+        stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        self.0.as_mut().error(ctx, exec, error, stack)
     }
 }

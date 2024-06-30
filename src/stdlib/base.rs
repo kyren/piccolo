@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 
 use crate::{
@@ -287,7 +289,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 impl<'gc> Sequence<'gc> for INext {
                     fn poll(
-                        &mut self,
+                        self: Pin<&mut Self>,
                         _ctx: Context<'gc>,
                         _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
@@ -343,7 +345,7 @@ pub struct PCall;
 
 impl<'gc> Sequence<'gc> for PCall {
     fn poll(
-        &mut self,
+        self: Pin<&mut Self>,
         ctx: Context<'gc>,
         _exec: Execution<'gc, '_>,
         mut stack: Stack<'gc, '_>,
@@ -353,7 +355,7 @@ impl<'gc> Sequence<'gc> for PCall {
     }
 
     fn error(
-        &mut self,
+        self: Pin<&mut Self>,
         ctx: Context<'gc>,
         _exec: Execution<'gc, '_>,
         error: Error<'gc>,

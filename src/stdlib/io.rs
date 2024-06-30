@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    pin::Pin,
+};
 
 use gc_arena::Collect;
 
@@ -20,7 +23,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             impl<'gc> Sequence<'gc> for PrintSeq {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,

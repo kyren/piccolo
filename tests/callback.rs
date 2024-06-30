@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 use piccolo::{
     BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
@@ -77,7 +79,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     _ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -153,7 +155,7 @@ fn yield_sequence() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -237,7 +239,7 @@ fn resume_with_err() {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -253,7 +255,7 @@ fn resume_with_err() {
                 }
 
                 fn error(
-                    &mut self,
+                    self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     error: Error<'gc>,

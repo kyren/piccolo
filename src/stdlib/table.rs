@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 
 use crate::meta_ops::{self, MetaResult};
@@ -81,7 +83,7 @@ enum Pack<'gc> {
 
 impl<'gc> Sequence<'gc> for Pack<'gc> {
     fn poll(
-        &mut self,
+        mut self: Pin<&mut Self>,
         ctx: Context<'gc>,
         mut exec: Execution<'gc, '_>,
         mut stack: Stack<'gc, '_>,
@@ -196,7 +198,7 @@ enum Unpack<'gc> {
 
 impl<'gc> Sequence<'gc> for Unpack<'gc> {
     fn poll(
-        &mut self,
+        mut self: Pin<&mut Self>,
         ctx: Context<'gc>,
         mut exec: Execution<'gc, '_>,
         mut stack: Stack<'gc, '_>,

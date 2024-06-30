@@ -18,6 +18,62 @@ use crate::{
     StashedThread, StashedUserData, StashedValue, Thread,
 };
 
+/// Create a `Sequence` impl from a Rust future that can suspend, call Lua functions, yield to Lua,
+/// and resume threads as async method calls via a held [`AsyncSequence`] object.
+///
+/// Can be used to implement `Sequence` in a way MUCH easier than manual state machines.
+///
+/// Currently uses `async` to do what in the future could be more directly accomplished with
+/// coroutines (see the unstable [`std::ops::Coroutine`] trait). The [`std::task::Context`]
+/// available within the created future is **meaningless** and has a NOOP waker; we are only using
+/// `async` as a stable way to express what would be better expressed as a simple coroutine.
+///
+/// It is possible to integrate proper async APIs with `piccolo`, and to even have a method to
+/// "wake" Lua coroutines with a *real* [`std::task::Waker`], but simply calling an external async
+/// function from the created future here is *not* the way to do it. It will not do what you want,
+/// and probably will result in panics.
+///
+/// The provided `create` function is given three parameters: a [`Locals`] handle to create
+/// [`Local`]s that will be owned by the future, an `AsyncSequence` object to move into the
+/// future, and a [`Builder`] object. The callback is called immediately and is not required
+/// to be `'static`, it exists only to make the `'seq` lifetime generative and is required for
+/// correctness. The function should stash any local variables needed by the future from the outer
+/// context, then move *only* those locals and the provided `AsyncSequence` object into an `async`
+/// block, and create a `BoxSequence` from this by calling [`Builder::build`]. You should *not*
+/// try to move anything branded with a `'gc` lifetime into the future, because this will cause
+/// a compiler error: there is no way for Rust futures created from async blocks to implement the
+/// `Collect` trait so we cannot allow it to directly store `'gc` branded values.
+///
+/// # Panics
+///
+/// All Rust yields (`.await`) within the created future must occur from calling an async method on
+/// `AsyncSequence`. Otherwise, the outer `AsyncSequence` poll methods will panic.
+///
+/// Methods on `AsyncSequence` must *only* be called from the async block provided to
+/// [`Builder::build`]. `AsyncSequence` is passed to the provided function only so that it can be
+/// *moved into* the future and called there. Calling methods on `AsyncSequence` from the provided
+/// function directly will result in a panic.
+pub fn async_sequence<'gc, R>(
+    mc: &Mutation<'gc>,
+    f: impl for<'seq> FnOnce(Locals<'seq, 'gc>, AsyncSequence<'seq>, Builder<'seq, 'gc>) -> R,
+) -> R {
+    let locals = DynamicRootSet::new(mc);
+    f(
+        Locals {
+            locals,
+            _invariant: PhantomData,
+        },
+        AsyncSequence {
+            _invariant: PhantomData,
+        },
+        Builder {
+            alloc: MetricsAlloc::new_static(mc),
+            locals,
+            _invariant: PhantomData,
+        },
+    )
+}
+
 /// Return type for futures that are driving an async sequence.
 ///
 /// This performs equivalent actions to [`CallbackReturn`](crate::CallbackReturn) and the tail
@@ -34,183 +90,40 @@ pub enum SequenceReturn<'seq> {
     Resume(LocalThread<'seq>),
 }
 
-pub struct SequenceFuture<'seq>(
-    boxed::Box<
-        dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
-        MetricsAlloc<'static>,
-    >,
-);
-
-impl<'seq> SequenceFuture<'seq> {
-    pub fn new<'gc>(
-        mc: &Mutation<'gc>,
-        fut: impl Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
-    ) -> Self {
-        let b = boxed::Box::new_in(fut, MetricsAlloc::new_static(mc));
-        // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
-        // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
-        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
-        let b = unsafe {
-            boxed::Box::from_raw_in(
-                ptr as *mut (dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>>
-                     + 'seq),
-                alloc,
-            )
-        };
-        Self(b)
-    }
-}
-
-/// An implementation of `Sequence` that drives an inner `async` block.
-#[derive(Collect)]
-#[collect(no_drop)]
-pub struct AsyncSequence<'gc> {
+/// Provided by [`async_sequence`] as a means to build the final [`BoxSequence`].
+pub struct Builder<'seq, 'gc> {
+    alloc: MetricsAlloc<'static>,
     locals: DynamicRootSet<'gc>,
-    #[collect(require_static)]
-    fut: Pin<
-        boxed::Box<
-            dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>,
-            MetricsAlloc<'static>,
-        >,
-    >,
+    _invariant: Invariant<'seq>,
 }
 
-impl<'gc> AsyncSequence<'gc> {
-    /// Create a `Sequence` impl from a Rust future that can suspend, call Lua functions, yield to
-    /// Lua, and resume threads as async method calls on a held [`SequenceState`].
+impl<'seq, 'gc> Builder<'seq, 'gc> {
+    /// Build a [`BoxSequence`] out of the provided future.
     ///
-    /// Can be used to implement `Sequence` in a way MUCH easier than manual state machines.
+    /// Usually, you will want to move the [`AsyncSequence`] provided by [`async_sequence`] any
+    /// created [`Local`]s into the future provided here.
     ///
-    /// Currently uses `async` to do what in the future could be more directly accomplished with
-    /// coroutines (see the unstable [`std::ops::Coroutine`] trait). The [`std::task::Context`]
-    /// available within the created future is **meaningless** and has a NOOP waker; we are
-    /// only using `async` as a stable way to express what would be better expressed as a simple
-    /// coroutine.
-    ///
-    /// It is possible to integrate proper async APIs with `piccolo`, and to even have a method to
-    /// "wake" Lua coroutines with a *real* [`std::task::Waker`], but simply calling an external
-    /// async function from the created future here is *not* the way to do it. It will not do what
-    /// you want, and probably will result in panics.
-    ///
-    /// The provided `create` function is given two parameters: a [`Locals`] handle to create
-    /// [`Local`]s that will be owned by the future, and a [`SequenceState`] to move into the
-    /// future. The callback is called immediately and is not required to be `'static`, it exists
-    /// only to make the `'seq` lifetime generative and is required for correctness. The function
-    /// should stash any local variables needed by the future from the outer context, then move
-    /// *only* those locals and the provided `SequenceState` object into the returned future.
-    ///
-    /// # Panics
-    ///
-    /// All Rust yields (`.await`) within the created future must occur from calling an async method
-    /// on `SequenceState`. Otherwise, the outer `AsyncSequence` poll methods will panic.
-    ///
-    /// Methods on `SequenceState` must *only* be called from the returned `SeqFuture`.
-    /// `SequenceState` is passed to the provided function only so that it can be *moved into*
-    /// the future and called there. Calling methods on `SequenceState` from the provided function
-    /// directly will result in a panic.
-    pub fn new(
-        mc: &Mutation<'gc>,
-        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SequenceFuture<'seq>,
-    ) -> Self {
-        let locals = DynamicRootSet::new(mc);
-        let fut = create(
-            Locals {
-                locals,
-                _invariant: PhantomData,
-            },
-            SequenceState {
-                _invariant: PhantomData,
-            },
-        );
-
-        Self {
-            locals,
-            fut: boxed::Box::into_pin(fut.0),
-        }
-    }
-
-    /// A convenience function equivalent to `BoxSequence::new(mc, AsyncSequence::new(mc, create))`.
-    pub fn new_box(
-        mc: &Mutation<'gc>,
-        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SequenceFuture<'seq>,
+    /// The odd and circumlocutious way that the final `BoxSequence` is constructed is due to
+    /// current limitations of Rust and avoiding the need to unnecessarily box the provided future.
+    /// This may be improved in the future.
+    pub fn build(
+        self,
+        fut: impl Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
     ) -> BoxSequence<'gc> {
-        BoxSequence::new(mc, AsyncSequence::new(mc, create))
-    }
-
-    fn poll_fut(
-        &mut self,
-        ctx: Context<'gc>,
-        exec: Execution<'gc, '_>,
-        mut stack: Stack<'gc, '_>,
-        error: Option<Error<'gc>>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        let mut next_op = None;
-
-        let mut shared = Shared {
-            locals: self.locals,
-            ctx,
-            exec,
-            stack: stack.reborrow(),
-            error,
-            next_op: &mut next_op,
-        };
-
-        let res = with_shared(&mut shared, || {
-            self.fut
-                .as_mut()
-                .poll(&mut task::Context::from_waker(&noop_waker()))
-        });
-
-        match res {
-            Poll::Ready(res) => {
-                assert!(
-                    next_op.is_none(),
-                    "`SequenceState` async method not `await`ed"
-                );
-                match res {
-                    Ok(SequenceReturn::Return) => Ok(SequencePoll::Return),
-                    Ok(SequenceReturn::Call(function)) => {
-                        Ok(SequencePoll::TailCall(function.fetch(self.locals)))
-                    }
-                    Ok(SequenceReturn::Yield(to_thread)) => Ok(SequencePoll::TailYield(
-                        to_thread.map(|t| t.fetch(self.locals)),
-                    )),
-                    Ok(SequenceReturn::Resume(thread)) => {
-                        Ok(SequencePoll::TailResume(thread.fetch(self.locals)))
-                    }
-                    Err(err) => Err(err.fetch(self.locals)),
-                }
-            }
-            Poll::Pending => Ok(
-                match next_op.expect("`await` of a future other than `SequenceState` methods") {
-                    SeqOp::Pending => SequencePoll::Pending,
-                    SeqOp::Call { function, bottom } => SequencePoll::Call { function, bottom },
-                    SeqOp::Yield { to_thread, bottom } => SequencePoll::Yield { to_thread, bottom },
-                    SeqOp::Resume { thread, bottom } => SequencePoll::Resume { thread, bottom },
-                },
-            ),
-        }
-    }
-}
-
-impl<'gc> Sequence<'gc> for AsyncSequence<'gc> {
-    fn poll(
-        &mut self,
-        ctx: Context<'gc>,
-        exec: Execution<'gc, '_>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.poll_fut(ctx, exec, stack, None)
-    }
-
-    fn error(
-        &mut self,
-        ctx: Context<'gc>,
-        exec: Execution<'gc, '_>,
-        error: Error<'gc>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        self.poll_fut(ctx, exec, stack, Some(error))
+        let sequence = boxed::Box::new_in(
+            SequenceImpl {
+                locals: self.locals,
+                fut,
+            },
+            self.alloc,
+        );
+        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(sequence);
+        // SAFETY: This sequence impl normally has a 'seq lifetime on it, and we are casting it
+        // away. The 'seq lifetime does not actually represent a real lifetime of any value, it
+        // is purely used as a branding lifetime (the lifetime is actually *always* 'static, but
+        // we can't prove that here, and it is not even required for soundness, only to prevent
+        // uncollectable cycles).
+        BoxSequence::from_box(unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) })
     }
 }
 
@@ -247,7 +160,7 @@ impl<'seq, 'gc> Locals<'seq, 'gc> {
 /// body of the async block driving the [`AsyncSequence`].
 ///
 /// Locals cannot escape their parent future, but they *can* be safely stored outside of
-/// [`SequenceState::enter`] *and* across await points. If *only* `Local` variables are used to
+/// [`AsyncSequence::enter`] *and* across await points. If *only* `Local` variables are used to
 /// store all garbage collected values within the future, then resulting `AsyncSequence` will always
 /// be properly garbage collected, *even if* there are reference cycles between the held locals and
 /// the sequence itself.
@@ -316,17 +229,17 @@ impl<'seq, E: Into<anyhow::Error>> From<E> for LocalError<'seq> {
 
 /// The held state for a `Sequence` being driven by a Rust async block.
 ///
-/// `SequenceState` and [`Local`] are both branded by a generative `'seq` lifetime to ensure that
+/// `AsyncSequence` and [`Local`] are both branded by a generative `'seq` lifetime to ensure that
 /// neither can escape their enclosing async block.
 ///
-/// Many methods on `SequenceState` are async; `.await`ing them causes the outer [`AsyncSequence`]
+/// Many methods on `AsyncSequence` are async; `.await`ing them causes the outer [`AsyncSequence`]
 /// to return a non-tail [`SequencePoll`] value, triggering the appropriate action. If this action
 /// results in an error, the async method will return the [`Error`] provided to [`Sequence::error`].
-pub struct SequenceState<'seq> {
+pub struct AsyncSequence<'seq> {
     _invariant: Invariant<'seq>,
 }
 
-impl<'seq> SequenceState<'seq> {
+impl<'seq> AsyncSequence<'seq> {
     /// Enter the garbage collector context within an async sequence.
     ///
     /// Unfortunately, today's Rust does not provide any way for generator (async block) state
@@ -357,7 +270,7 @@ impl<'seq> SequenceState<'seq> {
         })
     }
 
-    /// A version of [`SequenceState::enter`] which supports failure, and automatically turns any
+    /// A version of [`AsyncSequence::enter`] which supports failure, and automatically turns any
     /// returned error into a [`LocalError`].
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, LocalError<'seq>>
     where
@@ -392,7 +305,7 @@ impl<'seq> SequenceState<'seq> {
     /// is being driven).
     pub async fn pending(&mut self) {
         visit_shared(move |shared| {
-            shared.set_next_op(SeqOp::Pending);
+            shared.set_next_op(SequenceOp::Pending);
         });
         wait_once().await;
         visit_shared(move |shared| {
@@ -410,7 +323,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next_op(SeqOp::Call {
+            shared.set_next_op(SequenceOp::Call {
                 function: func.fetch(shared.locals),
                 bottom,
             });
@@ -433,7 +346,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next_op(SeqOp::Yield {
+            shared.set_next_op(SequenceOp::Yield {
                 to_thread: to_thread.map(|t| t.fetch(shared.locals)),
                 bottom,
             });
@@ -456,7 +369,7 @@ impl<'seq> SequenceState<'seq> {
         bottom: usize,
     ) -> Result<(), LocalError<'seq>> {
         visit_shared(move |shared| {
-            shared.set_next_op(SeqOp::Resume {
+            shared.set_next_op(SequenceOp::Resume {
                 thread: thread.fetch(shared.locals),
                 bottom,
             });
@@ -472,7 +385,113 @@ impl<'seq> SequenceState<'seq> {
     }
 }
 
-enum SeqOp<'gc> {
+struct SequenceImpl<'gc, F> {
+    locals: DynamicRootSet<'gc>,
+    fut: F,
+}
+
+unsafe impl<'gc, F> Collect for SequenceImpl<'gc, F> {
+    fn trace(&self, cc: &gc_arena::Collection) {
+        // SAFETY: We ensure that `F` cannot hold `'gc` values elsewhere.
+        self.locals.trace(cc);
+    }
+}
+
+impl<'gc, 'seq, F> SequenceImpl<'gc, F>
+where
+    F: Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>>,
+{
+    fn poll_fut(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+        error: Option<Error<'gc>>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        let locals = self.as_ref().get_ref().locals;
+
+        // SAFETY: pinning is structural for field `fut`. We do not move it, provide any access
+        // to it at all, and our drop impl is trivial.
+        let fut = unsafe { self.map_unchecked_mut(|this| &mut this.fut) };
+
+        let mut next_op = None;
+
+        let mut shared = Shared {
+            locals,
+            ctx,
+            exec,
+            stack: stack.reborrow(),
+            error,
+            next_op: &mut next_op,
+        };
+
+        let res = with_shared(&mut shared, || {
+            fut.poll(&mut task::Context::from_waker(&noop_waker()))
+        });
+
+        match res {
+            Poll::Ready(res) => {
+                assert!(
+                    next_op.is_none(),
+                    "`AsyncSequence` async method not `await`ed"
+                );
+                match res {
+                    Ok(SequenceReturn::Return) => Ok(SequencePoll::Return),
+                    Ok(SequenceReturn::Call(function)) => {
+                        Ok(SequencePoll::TailCall(function.fetch(locals)))
+                    }
+                    Ok(SequenceReturn::Yield(to_thread)) => {
+                        Ok(SequencePoll::TailYield(to_thread.map(|t| t.fetch(locals))))
+                    }
+                    Ok(SequenceReturn::Resume(thread)) => {
+                        Ok(SequencePoll::TailResume(thread.fetch(locals)))
+                    }
+                    Err(err) => Err(err.fetch(locals)),
+                }
+            }
+            Poll::Pending => Ok(
+                match next_op.expect("`await` of a future other than `AsyncSequence` methods") {
+                    SequenceOp::Pending => SequencePoll::Pending,
+                    SequenceOp::Call { function, bottom } => {
+                        SequencePoll::Call { function, bottom }
+                    }
+                    SequenceOp::Yield { to_thread, bottom } => {
+                        SequencePoll::Yield { to_thread, bottom }
+                    }
+                    SequenceOp::Resume { thread, bottom } => {
+                        SequencePoll::Resume { thread, bottom }
+                    }
+                },
+            ),
+        }
+    }
+}
+
+impl<'gc, 'seq, F> Sequence<'gc> for SequenceImpl<'gc, F>
+where
+    F: Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
+{
+    fn poll(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        exec: Execution<'gc, '_>,
+        stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        self.poll_fut(ctx, exec, stack, None)
+    }
+
+    fn error(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        exec: Execution<'gc, '_>,
+        error: Error<'gc>,
+        stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        self.poll_fut(ctx, exec, stack, Some(error))
+    }
+}
+
+enum SequenceOp<'gc> {
     Pending,
     Call {
         function: Function<'gc>,
@@ -497,14 +516,14 @@ struct Shared<'gc, 'a> {
     exec: Execution<'gc, 'a>,
     stack: Stack<'gc, 'a>,
     error: Option<Error<'gc>>,
-    next_op: &'a mut Option<SeqOp<'gc>>,
+    next_op: &'a mut Option<SequenceOp<'gc>>,
 }
 
 impl<'gc, 'a> Shared<'gc, 'a> {
-    fn set_next_op(&mut self, op: SeqOp<'gc>) {
+    fn set_next_op(&mut self, op: SequenceOp<'gc>) {
         assert!(
             self.next_op.is_none(),
-            "`SequenceState` async method not `await`ed"
+            "`AsyncSequence` async method not `await`ed"
         );
         *self.next_op = Some(op);
     }
