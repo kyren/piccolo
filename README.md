@@ -41,8 +41,11 @@ with even low level details of `piccolo` without using `unsafe`.
 The current primary sources of unsafety:
   * The particularly weird requirements of Lua tables require using hashbrown's
     low level RawTable API.
-  * Userdata requires a very delicate unsafe lifetime dance to deal with
-    downcasting non-'static userdata with a safe interface.
+  * Userdata requires unsafety to allow for downcasting non-'static userdata
+    with a safe interface.
+  * The implementation of async `Sequence`s require unsafety to "tunnel" the
+    normal `Sequence` method parameters into the future (this is completely
+    hidden from the user behind a safe interface).
   * Unsafe code is required to avoid fat pointers in several Lua types, to keep
     `Value` as small as possible and allow potential future smaller `Value`
     representations.
@@ -138,22 +141,22 @@ machine is not currently possible. HOWEVER, `piccolo` is currently still able to
 provide a safe way to implement `Sequence` using async blocks by using a clever
 trick: a shadow stack.
 
-`AsyncSequence` implements `Sequence` and holds a Rust future that it polls,
-and this rust future tells the `AsyncSequence` what actions to take on its
-behalf. Since the Rust future cannot (safely) hold GC pointers (since it cannot
-possibly implement `Collect` in todays Rust), we instead allow it to hold proxy
-values called `Local`s. These `Local` values point to a shadow stack held inside
-`AsyncSequence` which allows them to be traced and collected properly! Normal
-`gc-arena` machinery helps us prevent `Gc` pointers from being stored directly
-inside the Rust future, but in addition, similar machinery prevents `Local`
-values from being improperly stored *outside* of the Rust future. By combining
-these two techniques, we end up with a way to have a Rust future that can store
-GC values safely, both in the sense of being sound and not leading to dangling
-`Gc` pointers, but also in a way that cannot possibly lead to things like
-uncollectable cycles. It is slightly more inconvenient than if Rust async blocks
-could implement `Collect` directly (it requires entering and exiting the GC
-context manually and converting values to / from `Local`), but it is MUCH easier
-than manually implementing a custom `Sequence` state machine!
+The `async_sequence` function can create a `Sequence` impl from an `async`
+block, and the generated `Future` tells the outer sequence what actions to take
+on its behalf. Since the Rust future cannot (safely) hold GC pointers (since
+it cannot possibly implement `Collect` in today's Rust), we instead allow it to
+hold proxy values called `Local`s. These `Local` values point to a shadow stack
+held inside the outer sequence which allows them to be traced and collected
+properly! Normal `gc-arena` machinery helps us prevent `Gc` pointers from being
+stored directly inside the Rust future, but in addition, similar machinery
+prevents `Local` values from being improperly stored *outside* of the Rust
+future. By combining these two techniques, we end up with a way to have a Rust
+future that can store GC values safely, both in the sense of being sound and not
+leading to dangling `Gc` pointers, but also in a way that cannot possibly lead
+to things like uncollectable cycles. It is slightly more inconvenient than if
+Rust async blocks could implement `Collect` directly (it requires entering and
+exiting the GC context manually and converting values to / from `Local`), but it
+is MUCH easier than manually implementing a custom `Sequence` state machine!
 
 Using this, it is easy to write very complex Rust callbacks that can themselves
 call into Lua or resume threads or yield values back to Lua (or simply return
