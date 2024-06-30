@@ -1,0 +1,1 @@
+-- Included to prevent git from deleting the scripts-wishlist directory
