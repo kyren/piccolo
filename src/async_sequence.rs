@@ -8,13 +8,13 @@ use std::{
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, StaticCollect};
+use gc_arena::{Collect, DynamicRootSet, Mutation};
 
 use crate::{
     stash::{Fetchable, Stashable},
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, Function, RuntimeError,
-    Sequence, SequencePoll, Stack, StashedCallback, StashedClosure, StashedError, StashedFunction,
-    StashedString, StashedTable, StashedThread, StashedUserData, StashedValue, Thread,
+    BoxSequence, Context, Error, Execution, Function, RuntimeError, Sequence, SequencePoll, Stack,
+    StashedCallback, StashedClosure, StashedError, StashedFunction, StashedString, StashedTable,
+    StashedThread, StashedUserData, StashedValue, Thread,
 };
 
 /// Return type for futures that are driving an async sequence.
@@ -77,10 +77,10 @@ impl<'gc> AsyncSequence<'gc> {
     /// `SequenceState` is passed to the provided function only so that it can be *moved into*
     /// the future and called there. Calling methods on `SequenceState` from the provided function
     /// directly will result in a panic.
-    pub fn new_sequence(
+    pub fn new(
         mc: &Mutation<'gc>,
         create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
-    ) -> BoxSequence<'gc> {
+    ) -> Self {
         let locals = DynamicRootSet::new(mc);
         let fut = create(
             Locals {
@@ -92,47 +92,17 @@ impl<'gc> AsyncSequence<'gc> {
             },
         );
 
-        BoxSequence::new(
-            mc,
-            Self {
-                locals,
-                fut: Box::into_pin(fut),
-            },
-        )
+        Self {
+            locals,
+            fut: Box::into_pin(fut),
+        }
     }
 
-    /// Create a new callback which invokes the given async sequence in a single step.
-    pub fn new_callback<F>(mc: &Mutation<'gc>, create: F) -> Callback<'gc>
-    where
-        F: for<'seq> Fn(Context<'gc>, Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>
-            + 'static,
-    {
-        Self::new_callback_with(mc, (), move |_, ctx, locals, seq| create(ctx, locals, seq))
-    }
-
-    /// Create a new callback which invokes the given async sequence in a single step, with an
-    /// associated GC root object.
-    pub fn new_callback_with<R, F>(mc: &Mutation<'gc>, root: R, create: F) -> Callback<'gc>
-    where
-        R: Collect + 'gc,
-        F: for<'seq> Fn(
-                &R,
-                Context<'gc>,
-                Locals<'seq, 'gc>,
-                SequenceState<'seq>,
-            ) -> SeqFuture<'seq>
-            + 'static,
-    {
-        let state = Gc::new(mc, (root, StaticCollect(create)));
-        Callback::from_fn_with(mc, state, |state, ctx, _, _| {
-            Ok(CallbackReturn::Sequence(Self::new_sequence(
-                &ctx,
-                |locals, seq| {
-                    let (root, create) = state.as_ref();
-                    (create.0)(&root, ctx, locals, seq)
-                },
-            )))
-        })
+    pub fn new_box(
+        mc: &Mutation<'gc>,
+        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
+    ) -> BoxSequence<'gc> {
+        BoxSequence::new(mc, AsyncSequence::new(mc, create))
     }
 
     fn poll_fut(
