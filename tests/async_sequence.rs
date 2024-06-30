@@ -1,6 +1,6 @@
 use piccolo::{
-    meta_ops, AsyncSequence, Callback, CallbackReturn, Closure, Executor, Lua, SequenceReturn,
-    StaticError, Table, Variadic,
+    async_sequence::SequenceFuture, meta_ops, AsyncSequence, Callback, CallbackReturn, Closure,
+    Executor, Lua, SequenceReturn, StaticError, Table, Variadic,
 };
 
 #[test]
@@ -12,7 +12,7 @@ fn async_sequence() -> Result<(), StaticError> {
             Ok(CallbackReturn::Sequence(AsyncSequence::new_box(
                 &ctx,
                 |_, mut seq| {
-                    Box::new(async move {
+                    SequenceFuture::new(&ctx, async move {
                         let (table, length) = seq.try_enter(|ctx, locals, _, mut stack| {
                             let table: Table = stack.consume(ctx)?;
                             let length = table.length();

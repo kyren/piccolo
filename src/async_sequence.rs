@@ -8,7 +8,8 @@ use std::{
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use gc_arena::{Collect, DynamicRootSet, Mutation};
+use allocator_api2::boxed;
+use gc_arena::{allocator_api::MetricsAlloc, Collect, DynamicRootSet, Mutation};
 
 use crate::{
     stash::{Fetchable, Stashable},
@@ -33,8 +34,32 @@ pub enum SequenceReturn<'seq> {
     Resume(LocalThread<'seq>),
 }
 
-pub type SeqFuture<'seq> =
-    Box<dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq>;
+pub struct SequenceFuture<'seq>(
+    boxed::Box<
+        dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
+        MetricsAlloc<'static>,
+    >,
+);
+
+impl<'seq> SequenceFuture<'seq> {
+    pub fn new<'gc>(
+        mc: &Mutation<'gc>,
+        fut: impl Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>> + 'seq,
+    ) -> Self {
+        let b = boxed::Box::new_in(fut, MetricsAlloc::new_static(mc));
+        // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
+        // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
+        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
+        let b = unsafe {
+            boxed::Box::from_raw_in(
+                ptr as *mut (dyn Future<Output = Result<SequenceReturn<'seq>, LocalError<'seq>>>
+                     + 'seq),
+                alloc,
+            )
+        };
+        Self(b)
+    }
+}
 
 /// An implementation of `Sequence` that drives an inner `async` block.
 #[derive(Collect)]
@@ -42,7 +67,12 @@ pub type SeqFuture<'seq> =
 pub struct AsyncSequence<'gc> {
     locals: DynamicRootSet<'gc>,
     #[collect(require_static)]
-    fut: Pin<Box<dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>>>,
+    fut: Pin<
+        boxed::Box<
+            dyn Future<Output = Result<SequenceReturn<'static>, LocalError<'static>>>,
+            MetricsAlloc<'static>,
+        >,
+    >,
 }
 
 impl<'gc> AsyncSequence<'gc> {
@@ -80,7 +110,7 @@ impl<'gc> AsyncSequence<'gc> {
     /// directly will result in a panic.
     pub fn new(
         mc: &Mutation<'gc>,
-        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
+        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SequenceFuture<'seq>,
     ) -> Self {
         let locals = DynamicRootSet::new(mc);
         let fut = create(
@@ -95,14 +125,14 @@ impl<'gc> AsyncSequence<'gc> {
 
         Self {
             locals,
-            fut: Box::into_pin(fut),
+            fut: boxed::Box::into_pin(fut.0),
         }
     }
 
     /// A convenience function equivalent to `BoxSequence::new(mc, AsyncSequence::new(mc, create))`.
     pub fn new_box(
         mc: &Mutation<'gc>,
-        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SeqFuture<'seq>,
+        create: impl for<'seq> FnOnce(Locals<'seq, 'gc>, SequenceState<'seq>) -> SequenceFuture<'seq>,
     ) -> BoxSequence<'gc> {
         BoxSequence::new(mc, AsyncSequence::new(mc, create))
     }

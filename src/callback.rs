@@ -346,9 +346,9 @@ impl<'gc> ops::DerefMut for BoxSequence<'gc> {
 impl<'gc> BoxSequence<'gc> {
     pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
         let b = boxed::Box::new_in(sequence, MetricsAlloc::new(mc));
-        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
         // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
         // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
+        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);
         let b = unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) };
         Self(b)
     }
