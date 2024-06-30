@@ -1,5 +1,7 @@
 use crate::{Callback, CallbackReturn, Context, String, Table};
 
+mod format;
+
 pub fn load_string<'gc>(ctx: Context<'gc>) {
     let string = Table::new(&ctx);
 
@@ -106,6 +108,17 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
                 );
                 stack.replace(ctx, uppered);
                 Ok(CallbackReturn::Return)
+            }),
+        )
+        .unwrap();
+
+    string
+        .set(
+            ctx,
+            "format",
+            Callback::from_fn(&ctx, |ctx, _, stack| {
+                let seq = format::string_format(ctx, stack)?;
+                Ok(CallbackReturn::Sequence(crate::BoxSequence::new(&ctx, seq)))
             }),
         )
         .unwrap();
