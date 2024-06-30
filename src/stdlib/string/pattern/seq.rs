@@ -56,6 +56,117 @@ fn convert_captures(captures: Vec<PartialCapture>) -> Vec<Capture> {
         .collect()
 }
 
+pub async fn str_find_async<'seq>(
+    seq: &mut crate::async_sequence::AsyncSequence<'seq>,
+    pat: &crate::async_sequence::LocalString<'seq>,
+    str: &crate::async_sequence::LocalString<'seq>,
+    start: usize,
+    plain: bool,
+) -> Result<Option<Match>, MatchError> {
+    enum Prepass {
+        Found(Option<Match>),
+        Main(bool, usize),
+    }
+
+    let res = seq.enter(|_, locals, _, _| {
+        let str = locals.fetch(&str);
+        let pat = locals.fetch(&pat);
+        let str = str.as_bytes();
+        let pat = pat.as_bytes();
+        if start > str.len() {
+            Prepass::Found(None)
+        } else if plain || pat.is_empty() || !crate::stdlib::string::pattern::has_specials(pat) {
+            // If the pattern is plain, fall back to a simple string search
+            let found = crate::stdlib::string::pattern::plain_find(pat, &str[start..]);
+            Prepass::Found(found.map(|idx| Match {
+                start: start + idx,
+                end: start + idx + pat.len(),
+                captures: Vec::new(),
+            }))
+        } else {
+            // a '^' a the start of a pattern means that it is anchored:
+            // - for `match` and `find`, any match must start at the start of the string,
+            //   or the `start` parameter if provided.
+            // - for `gmatch`, anchored patterns return no results, regardless of `start`
+            // - for `gsub`, anchored patterns only replace the match that starts at the
+            //   start of the string.
+            let anchored = matches!(pat.first(), Some(b'^'));
+            Prepass::Main(anchored, str.len())
+        }
+    });
+    match res {
+        Prepass::Found(res) => Ok(res),
+        Prepass::Main(anchored, len) => {
+            str_find_impl_async(seq, pat, str, start, anchored, len).await
+        }
+    }
+}
+
+pub async fn str_find_impl_async<'seq>(
+    seq: &mut crate::async_sequence::AsyncSequence<'seq>,
+    pat: &crate::async_sequence::LocalString<'seq>,
+    str: &crate::async_sequence::LocalString<'seq>,
+    start: usize,
+    anchored: bool,
+    len: usize,
+) -> Result<Option<Match>, MatchError> {
+    let mut captures = Vec::new();
+    let mut stack = Vec::with_capacity(4);
+
+    for base in start..=len {
+        // Try matching the pattern against the substring starting at
+        // index `base`.
+
+        // Initialize the stack at the start of the pattern and string
+        stack.push(StackFrame::Run {
+            pat_idx: anchored as usize,
+            str_idx: base,
+        });
+
+        let result = loop {
+            let result;
+            (captures, result) = seq.enter(|_, locals, _, _| {
+                let str = locals.fetch(&str);
+                let pat = locals.fetch(&pat);
+                let str = str.as_bytes();
+                let pat = pat.as_bytes();
+                let mut state = MatchState { pat, str, captures };
+                let result = do_match(&mut state, stack);
+                (state.captures, result)
+            });
+            match result? {
+                MatchPoll::Poll(s) => {
+                    stack = s;
+                    seq.pending().await;
+                }
+                MatchPoll::Done(r, s) => {
+                    stack = s;
+                    break r;
+                }
+            }
+        };
+
+        if let Some(MatchEnd(end)) = result {
+            if !captures.iter().all(|cs| cs.closed) {
+                return Err(MatchError::UnclosedCapture);
+            }
+
+            let captures = convert_captures(captures);
+            return Ok(Some(Match {
+                start: base,
+                end,
+                captures,
+            }));
+        } else {
+            assert!(captures.is_empty());
+        }
+        if anchored {
+            break;
+        }
+    }
+    Ok(None)
+}
+
 pub fn str_find_impl(
     pat: &[u8],
     str: &[u8],
@@ -73,8 +184,22 @@ pub fn str_find_impl(
     for base in start..=str.len() {
         // Try matching the pattern against the substring starting at
         // index `base`.
-        let result;
-        (result, stack) = do_match(&mut state, base, stack)?;
+
+        // Initialize the stack at the start of the pattern and string
+        stack.push(StackFrame::Run {
+            pat_idx: 0,
+            str_idx: base,
+        });
+
+        let result = loop {
+            match do_match(&mut state, stack)? {
+                MatchPoll::Poll(s) => stack = s,
+                MatchPoll::Done(r, s) => {
+                    stack = s;
+                    break r;
+                }
+            }
+        };
 
         if let Some(MatchEnd(end)) = result {
             if !state.captures.iter().all(|cs| cs.closed) {
@@ -135,24 +260,31 @@ enum StackFrame {
     },
 }
 
+const LOOPS_PER_YIELD: usize = 512;
+
+enum MatchPoll {
+    Poll(Vec<StackFrame>),
+    Done(Option<MatchEnd>, Vec<StackFrame>),
+}
+
 /// Evaluate a single match, starting at `start`.
 ///
 /// The `stack` argument must be empty; if pattern does not have errors,
 /// it is returned to the caller for reuse, and will be empty.
-fn do_match(
-    state: &mut MatchState,
-    start: usize,
-    mut stack: Vec<StackFrame>,
-) -> Result<(Option<MatchEnd>, Vec<StackFrame>), MatchError> {
-    // Initialize the stack at the start of the pattern and string
-    stack.push(StackFrame::Run {
-        pat_idx: 0,
-        str_idx: start,
-    });
+#[inline]
+fn do_match(state: &mut MatchState, mut stack: Vec<StackFrame>) -> Result<MatchPoll, MatchError> {
+    assert!(stack.len() > 0);
+
+    let mut poll = 0;
 
     // A `continue` of this loop is equivalent to a return in the
     // recursive implementation.
-    while let Some(frame) = stack.pop() {
+    // No breaks in this loop; only exit is return.
+    let _: Infallible = loop {
+        let Some(frame) = stack.pop() else {
+            assert!(stack.is_empty());
+            return Ok(MatchPoll::Done(None, stack));
+        };
         let (mut pat_idx, mut str_idx) = match frame {
             StackFrame::FinalizeCapture => {
                 state.captures.pop();
@@ -175,10 +307,11 @@ fn do_match(
                     // the slice, but `StackFrame`s cannot borrow from the pattern,
                     // as the pattern is only available during matching.
 
-                    // if pat_start > pat_idx - 1 || pat_idx - 1 > state.pat.len() {
-                    //     // Unreachable
-                    //     continue;
-                    // }
+                    // TODO: this improves perf for async, but makes perf worse on plain seq
+                    if unlikely(pat_start > pat_idx - 1 || pat_idx - 1 > state.pat.len()) {
+                        // Unreachable
+                        continue;
+                    }
 
                     let slice = &state.pat[pat_start..pat_idx - 1];
                     if match_class(state.str[str_idx], class, slice) {
@@ -223,7 +356,7 @@ fn do_match(
             let Some(&b) = state.pat.get(pat_idx) else {
                 assert!(str_idx <= state.str.len());
                 stack.clear();
-                return Ok((Some(MatchEnd(str_idx)), stack));
+                return Ok(MatchPoll::Done(Some(MatchEnd(str_idx)), stack));
             };
 
             // TODO: evaluate getting this optimization without unsafe
@@ -273,7 +406,7 @@ fn do_match(
                     // If at the end of the string, return match; otherwise, backtrack
                     if str_idx == state.str.len() {
                         stack.clear();
-                        return Ok((Some(MatchEnd(str_idx)), stack));
+                        return Ok(MatchPoll::Done(Some(MatchEnd(str_idx)), stack));
                     } else {
                         break 'main_loop;
                     }
@@ -440,9 +573,25 @@ fn do_match(
                 }
             };
         }
+
+        poll += 1;
+        // TODO: tons of branch prediction misses here
+        if unlikely(poll > LOOPS_PER_YIELD && !stack.is_empty()) {
+            return Ok(MatchPoll::Poll(stack));
+        }
+    };
+}
+
+#[inline]
+#[cold]
+fn cold() {}
+
+#[inline]
+fn unlikely(b: bool) -> bool {
+    if b {
+        cold()
     }
-    assert!(stack.is_empty());
-    Ok((None, stack))
+    b
 }
 
 /// Returns the offset of the second slice into the first.

@@ -158,10 +158,12 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
 
     ctx.set_global("string", string);
 
-    if matches!(std::env::var("STACK").as_deref(), Ok("1" | "true")) {
-        load_pattern::<pattern::StackBackend>(ctx)
-    } else {
-        load_pattern::<pattern::SeqBackend>(ctx)
+    let mode = std::env::var("PAT_BACKEND");
+    let mode = mode.as_deref().unwrap_or("async");
+    match mode {
+        "stack" => load_pattern::<pattern::StackBackend>(ctx),
+        "seq" => load_pattern::<pattern::SeqBackend>(ctx),
+        "async" | _ => load_pattern_async(ctx),
     }
 }
 
@@ -208,5 +210,33 @@ pub fn load_pattern<'gc, F: pattern::FindBackend>(ctx: Context<'gc>) {
 
     string
         .set(ctx, "gsub", pattern::lua::lua_gsub_impl::<F>(ctx))
+        .unwrap();
+}
+
+pub fn load_pattern_async<'gc>(ctx: Context<'gc>) {
+    let table = <Option<Table>>::from_value(ctx, ctx.get_global("string")).unwrap();
+    let string = match table {
+        Some(t) => t,
+        None => {
+            let string = Table::new(&ctx);
+            ctx.set_global("string", string).unwrap();
+            string
+        }
+    };
+
+    string
+        .set(ctx, "find", pattern::lua::lua_find_async(ctx))
+        .unwrap();
+
+    string
+        .set(ctx, "match", pattern::lua::lua_match_async(ctx))
+        .unwrap();
+
+    string
+        .set(ctx, "gmatch", pattern::lua::lua_gmatch_async(ctx))
+        .unwrap();
+
+    string
+        .set(ctx, "gsub", pattern::lua::lua_gsub_impl_async(ctx))
         .unwrap();
 }

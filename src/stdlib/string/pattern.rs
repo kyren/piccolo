@@ -55,9 +55,9 @@ macro_rules! unsafe_assert_unchecked {
        // };
 }
 
+pub mod lua;
 pub mod seq;
 pub mod stack;
-pub mod lua;
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -201,13 +201,8 @@ pub fn expand_substitution<'a>(
     let mut output: Option<Vec<u8>> = None;
     let mut i = 0;
     while let Some(j) = memchr::memchr(b'%', &replace[i..]).map(|j| i + j) {
-        let mut o = match output {
-            None => replace[0..j].to_owned(),
-            Some(mut o) => {
-                o.extend_from_slice(&replace[i..j]);
-                o
-            }
-        };
+        let mut o = output.get_or_insert_with(|| Vec::with_capacity(replace.len()));
+        o.extend_from_slice(&replace[i..j]);
         match replace.get(j + 1) {
             Some(b'%') => {
                 o.push(b'%');
@@ -234,7 +229,6 @@ pub fn expand_substitution<'a>(
             }
             Some(_) | None => return Err(SubstituteError::InvalidEscape),
         }
-        output = Some(o);
     }
     Ok(match output {
         None => Cow::Borrowed(replace),
