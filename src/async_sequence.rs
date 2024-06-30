@@ -408,11 +408,9 @@ where
         mut stack: Stack<'gc, '_>,
         error: Option<Error<'gc>>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        let locals = self.as_ref().get_ref().locals;
-
-        // SAFETY: pinning is structural for field `fut`. We do not move it, provide any access
-        // to it at all, and our drop impl is trivial.
-        let fut = unsafe { self.map_unchecked_mut(|this| &mut this.fut) };
+        // SAFETY: We do not move out of the returned reference.
+        let Self { locals, fut } = unsafe { self.get_unchecked_mut() };
+        let locals = *locals;
 
         let mut next_op = None;
 
@@ -426,7 +424,9 @@ where
         };
 
         let res = with_shared(&mut shared, || {
-            fut.poll(&mut task::Context::from_waker(&noop_waker()))
+            // SAFETY: pinning is structural for field `fut`. We do not move it, provide any access
+            // to it at all, and our drop impl is trivial.
+            unsafe { Pin::new_unchecked(fut).poll(&mut task::Context::from_waker(&noop_waker())) }
         });
 
         match res {
