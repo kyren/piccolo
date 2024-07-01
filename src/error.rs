@@ -3,7 +3,10 @@ use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc}
 use gc_arena::{Collect, Rootable};
 use thiserror::Error;
 
-use crate::{Callback, CallbackReturn, Context, MetaMethod, Singleton, Table, UserData, Value};
+use crate::{
+    Callback, CallbackReturn, Context, FromValue, IntoValue, MetaMethod, Singleton, Table,
+    UserData, Value,
+};
 
 #[derive(Debug, Clone, Copy, Error)]
 #[error("type error, expected {expected}, found {found}")]
@@ -177,6 +180,18 @@ impl<'gc> Error<'gc> {
 
     pub fn into_static(self) -> StaticError {
         self.into()
+    }
+}
+
+impl<'gc> IntoValue<'gc> for Error<'gc> {
+    fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
+        self.to_value(ctx)
+    }
+}
+
+impl<'gc> FromValue<'gc> for Error<'gc> {
+    fn from_value(_: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        Ok(Error::from_value(value))
     }
 }
 

@@ -361,7 +361,7 @@ impl<'gc> Sequence<'gc> for PCall {
         error: Error<'gc>,
         mut stack: Stack<'gc, '_>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        stack.replace(ctx, (false, error.to_value(ctx)));
+        stack.replace(ctx, (false, error));
         Ok(SequencePoll::Return)
     }
 }

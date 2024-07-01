@@ -57,3 +57,33 @@ fn test_conversions() {
         assert_eq!((a, b, c), (2, false, "goodbye".to_owned()));
     });
 }
+
+#[test]
+fn test_result_conversion() {
+    let mut lua = Lua::core();
+    lua.enter(|ctx| {
+        let a = Ok::<i32, i32>(4).into_multi_value(ctx).collect::<Vec<_>>();
+        assert!(matches!(
+            a.as_slice(),
+            [Value::Boolean(true), Value::Integer(4)]
+        ));
+        let b = Err::<i32, i32>(7).into_multi_value(ctx).collect::<Vec<_>>();
+        assert!(matches!(
+            b.as_slice(),
+            [Value::Boolean(false), Value::Integer(7)]
+        ));
+        let c = Ok::<_, i32>((1, 2, 3, 4))
+            .into_multi_value(ctx)
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            c.as_slice(),
+            [
+                Value::Boolean(true),
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3),
+                Value::Integer(4)
+            ]
+        ));
+    });
+}
