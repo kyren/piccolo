@@ -262,3 +262,113 @@ do
     assert(table.remove(t, 1) == "1")
     assert(cmp_array_recurse(t, { "2", "4" }))
 end
+
+do
+    local t = {}
+    setmetatable(t, {
+        __len = function(t) return 3 end
+    })
+
+    table.insert(t, 15)
+    assert(t[1] == nil and t[2] == nil and t[3] == nil
+        and t[4] == 15 and t[5] == nil)
+
+    table.insert(t, 16)
+    assert(t[1] == nil and t[2] == nil and t[3] == nil
+        and t[4] == 16 and t[5] == nil)
+
+    assert(table.remove(t) == nil)
+    assert(t[1] == nil and t[2] == nil and t[3] == nil
+        and t[4] == 16 and t[5] == nil)
+
+    t[1] = 3
+    t[2] = 4
+    t[3] = 5
+
+    assert(table.remove(t, 2) == 4)
+    assert(t[1] == 3 and t[2] == 5 and t[3] == nil
+        and t[4] == 16 and t[5] == nil)
+end
+
+do
+    local log = {}
+    local logger_mt = {
+        __len = function(t)
+            table.insert(log, { "len" })
+            return #rawget(t, "_inner")
+        end,
+        __index = function(t, k)
+            table.insert(log, { "index", k })
+            return rawget(t, "_inner")[k]
+        end,
+        __newindex = function(t, k, v)
+            table.insert(log, { "newindex", k, v })
+            rawget(t, "_inner")[k] = v
+        end,
+    }
+
+    local function init_log(init)
+        local t = {}
+        t._inner = init
+        setmetatable(t, logger_mt)
+        return t
+    end
+
+    local t = init_log { 4, 5, 6, 7, 8 }
+    table.remove(t, 2)
+
+    -- It isn't critical that we match PRLua's metacall ordering here,
+    -- but it's useful for checking correctness.
+    assert(cmp_array_recurse(
+        log,
+        {
+            { "len" },
+            { "index", 2 },
+            { "index", 3 },
+            { "newindex", 2, 6 },
+            { "index", 4 },
+            { "newindex", 3, 7 },
+            { "index", 5 },
+            { "newindex", 4, 8 },
+            { "newindex", 5 }
+        }
+    ))
+
+    -- Turns out lua's closures capture by place, rather than by copying.
+    -- Neat!
+    log = {}
+    local t = init_log { 4, 5, 6, 7, 8 }
+    table.insert(t, 2)
+
+    assert(cmp_array_recurse(
+        log,
+        {
+            { "len" },
+            { "newindex", 6, 2 }
+        }
+    ))
+
+    log = {}
+    -- Don't allow `nil` as an index
+    assert(not pcall(function() table.insert(t, nil, 3) end))
+    -- Don't check log here; PRLua checks the length, we don't.
+
+    log = {}
+    table.insert(t, 3, nil)
+
+    assert(cmp_array_recurse(
+        log,
+        {
+            { "len" },
+            { "index", 6 },
+            { "newindex", 7, 2 },
+            { "index", 5 },
+            { "newindex", 6, 8 },
+            { "index", 4 },
+            { "newindex", 5, 7 },
+            { "index", 3 },
+            { "newindex", 4, 6 },
+            { "newindex", 3, nil }
+        }
+    ))
+end
