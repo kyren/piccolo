@@ -129,9 +129,8 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
 
     const FUEL_PER_SHIFTED_ITEM: i32 = 1;
 
-    // Compat note with PRLua:
-    // When the table is empty, table.remove(t, #t) will return nil
-    // (even if the table has a 0 element).
+    // Minor difference from PRLua: When the table is empty, table.remove(t, #t),
+    // will return nil, even if the table has an element at index 0.
     table.set_field(
         ctx,
         "remove",
