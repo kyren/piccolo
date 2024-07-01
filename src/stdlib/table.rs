@@ -5,6 +5,7 @@ use gc_arena::Collect;
 use crate::async_sequence::{
     AsyncSequence, LocalError, LocalFunction, LocalTable, LocalValue, Locals,
 };
+use crate::fuel::count_fuel;
 use crate::meta_ops::{self, MetaResult};
 use crate::table::RawArrayOpResult;
 use crate::{
@@ -126,13 +127,15 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         Ok(())
     }
 
+    const FUEL_PER_SHIFTED_ITEM: i32 = 1;
+
     // Compat note with PRLua:
     // When the table is empty, table.remove(t, #t) will return nil
     // (even if the table has a 0 element).
     table.set_field(
         ctx,
         "remove",
-        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        Callback::from_fn(&ctx, |ctx, mut exec, mut stack| {
             let (table, index): (Table, Option<i64>) = stack.consume(ctx)?;
             let length;
 
@@ -149,7 +152,13 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                 // Try the fast path
                 let mut inner = table.into_inner().borrow_mut(&ctx);
                 match inner.raw_table.array_remove_shift(index) {
-                    (RawArrayOpResult::Success(val), _) => {
+                    (RawArrayOpResult::Success(val), len) => {
+                        // Consume fuel after the operation to avoid computing length twice
+                        let shifted_items =
+                            len.saturating_sub(index.unwrap_or(len as i64).try_into().unwrap_or(0));
+                        exec.fuel()
+                            .consume(count_fuel(FUEL_PER_SHIFTED_ITEM, shifted_items));
+
                         stack.push_back(val);
                         return Ok(CallbackReturn::Return);
                     }
@@ -208,6 +217,10 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                             });
                             // table[i] = table[i + 1]
                             index_set_helper(&mut seq, &table, i, value, 1).await?;
+
+                            seq.enter(|_, _, mut exec, _| {
+                                exec.fuel().consume(FUEL_PER_SHIFTED_ITEM as i32);
+                            });
                         }
 
                         let nil = seq.enter(|ctx, locals, _, _| locals.stash(&ctx, Value::Nil));
@@ -232,7 +245,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     table.set_field(
         ctx,
         "insert",
-        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        Callback::from_fn(&ctx, |ctx, mut exec, mut stack| {
             let table: Table;
             let index: Option<i64>;
             let value: Value;
@@ -263,7 +276,18 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                     .raw_table
                     .array_insert_shift(index, value)
                 {
-                    (RawArrayOpResult::Success(_), _) => {
+                    (RawArrayOpResult::Success(_), len) => {
+                        // Consume fuel after the operation to avoid computing length twice
+                        let shifted_items = len.saturating_sub(
+                            index
+                                .unwrap_or(len.saturating_add(1) as i64)
+                                .saturating_sub(1)
+                                .try_into()
+                                .unwrap_or(0),
+                        );
+                        exec.fuel()
+                            .consume(count_fuel(FUEL_PER_SHIFTED_ITEM, shifted_items));
+
                         return Ok(CallbackReturn::Return);
                     }
                     (RawArrayOpResult::Possible, len) => {
@@ -314,6 +338,10 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                             });
                             // table[i] = table[i - 1]
                             index_set_helper(&mut seq, &table, i, value, 0).await?;
+
+                            seq.enter(|_, _, mut exec, _| {
+                                exec.fuel().consume(FUEL_PER_SHIFTED_ITEM as i32);
+                            });
                         }
 
                         // table[index] = value

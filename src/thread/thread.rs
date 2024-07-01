@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
+    fuel::count_fuel,
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
@@ -1008,12 +1009,6 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
         self.open_upvalues.truncate(start);
     }
-}
-
-fn count_fuel(per_item: i32, len: usize) -> i32 {
-    i32::try_from(len)
-        .unwrap_or(i32::MAX)
-        .saturating_mul(per_item)
 }
 
 fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {
