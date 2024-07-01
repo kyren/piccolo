@@ -11,56 +11,52 @@ use crate::{
 pub fn load_table<'gc>(ctx: Context<'gc>) {
     let table = Table::new(&ctx);
 
-    table
-        .set(
-            ctx,
-            "pack",
-            Callback::from_fn(&ctx, |ctx, _, stack| {
-                Ok(CallbackReturn::Sequence(BoxSequence::new(
-                    &ctx,
-                    Pack::SetLength {
-                        table: Table::new(&ctx).into(),
-                        length: stack.len(),
-                    },
-                )))
-            }),
-        )
-        .unwrap();
+    table.set_field(
+        ctx,
+        "pack",
+        Callback::from_fn(&ctx, |ctx, _, stack| {
+            Ok(CallbackReturn::Sequence(BoxSequence::new(
+                &ctx,
+                Pack::SetLength {
+                    table: Table::new(&ctx).into(),
+                    length: stack.len(),
+                },
+            )))
+        }),
+    );
 
-    table
-        .set(
-            ctx,
-            "unpack",
-            Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
-                    stack.consume(ctx)?;
+    table.set_field(
+        ctx,
+        "unpack",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
+                stack.consume(ctx)?;
 
-                let start = start_arg.unwrap_or(1);
-                let seq = if let Some(end) = end_arg {
-                    if start > end {
-                        return Ok(CallbackReturn::Return);
-                    }
+            let start = start_arg.unwrap_or(1);
+            let seq = if let Some(end) = end_arg {
+                if start > end {
+                    return Ok(CallbackReturn::Return);
+                }
 
-                    let length = try_compute_length(start, end)
-                        .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                    Unpack::MainLoop {
-                        start,
-                        table,
-                        length,
-                        index: 0,
-                        batch_end: 0,
-                        callback_return: false,
-                    }
-                } else {
-                    Unpack::FindLength { start, table }
-                };
+                let length = try_compute_length(start, end)
+                    .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+                Unpack::MainLoop {
+                    start,
+                    table,
+                    length,
+                    index: 0,
+                    batch_end: 0,
+                    callback_return: false,
+                }
+            } else {
+                Unpack::FindLength { start, table }
+            };
 
-                Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
-            }),
-        )
-        .unwrap();
+            Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+        }),
+    );
 
-    ctx.set_global("table", table).unwrap();
+    ctx.set_global("table", table);
 }
 
 const PACK_ELEMS_PER_FUEL: usize = 8;

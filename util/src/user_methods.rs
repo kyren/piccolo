@@ -60,7 +60,7 @@ where
             Ok(CallbackReturn::Return)
         });
 
-        !self.table.set(ctx, name, callback).unwrap().is_nil()
+        !self.table.set_field(ctx, name, callback).is_nil()
     }
 
     pub fn add_write<F, A, R>(self, name: &'static str, ctx: Context<'gc>, method: F) -> bool
@@ -84,7 +84,7 @@ where
             Ok(CallbackReturn::Return)
         });
 
-        !self.table.set(ctx, name, callback).unwrap().is_nil()
+        !self.table.set_field(ctx, name, callback).is_nil()
     }
 }
 
@@ -144,7 +144,7 @@ impl<'gc, U: 'static> StaticUserMethods<'gc, U> {
             Ok(CallbackReturn::Return)
         });
 
-        !self.table.set(ctx, name, callback).unwrap().is_nil()
+        !self.table.set_field(ctx, name, callback).is_nil()
     }
 
     pub fn metatable(self, ctx: Context<'gc>) -> Table<'gc> {

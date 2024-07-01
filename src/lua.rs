@@ -7,7 +7,6 @@ use crate::{
     stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    table::InvalidTableKey,
     Error, FromMultiValue, Fuel, IntoValue, Registry, Singleton, StashedExecutor, StaticError,
     String, Table, Value,
 };
@@ -28,16 +27,14 @@ use crate::{
 /// To access the contained [`Mutation`] context, there is a `Deref` impl on `Context` that derefs
 /// to `Mutation` that can be used like so:
 ///
-/// ```rust
+/// ```
 /// # use gc_arena::Gc;
 /// # use piccolo::Lua;
-/// # fn main() {
 /// # let mut lua = Lua::empty();
 /// lua.enter(|ctx| {
 ///     // Create a new `Gc<'gc, i32>` pointer using the `&Mutation` held inside `ctx`
 ///     let p = Gc::new(&ctx, 13);
 /// });
-/// # }
 /// ```
 #[derive(Copy, Clone)]
 pub struct Context<'gc> {
@@ -70,18 +67,12 @@ impl<'gc> Context<'gc> {
         self.state.finalizers
     }
 
-    /// Calls `ctx.globals().set(ctx, key, value)`.
-    pub fn set_global<K: IntoValue<'gc>, V: IntoValue<'gc>>(
-        self,
-        key: K,
-        value: V,
-    ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.state.globals.set(self, key, value)
+    pub fn get_global(self, key: &'static str) -> Value<'gc> {
+        self.state.globals.get(self, key)
     }
 
-    /// Calls `ctx.globals().get(ctx, key)`.
-    pub fn get_global<K: IntoValue<'gc>>(self, key: K) -> Value<'gc> {
-        self.state.globals.get(self, key)
+    pub fn set_global<V: IntoValue<'gc>>(self, key: &'static str, value: V) -> Value<'gc> {
+        self.state.globals.set_field(self, key, value)
     }
 
     /// Calls `ctx.registry().singleton::<S>(ctx)`.

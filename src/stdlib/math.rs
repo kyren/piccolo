@@ -36,7 +36,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     let math = Table::new(&ctx);
     let seeded_rng: Rc<RefCell<SmallRng>> = Rc::new(RefCell::new(SmallRng::from_entropy()));
 
-    math.set(
+    math.set_field(
         ctx,
         "abs",
         callback("abs", &ctx, |_, v: Value| {
@@ -46,24 +46,21 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 v.to_number()?.abs().into()
             })
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "acos",
         callback("acos", &ctx, |_, v: f64| Some(v.acos())),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "asin",
         callback("asin", &ctx, |_, v: f64| Some(v.asin())),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "atan",
         callback("atan", &ctx, |_, (a, b): (f64, Option<f64>)| {
@@ -73,63 +70,55 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 a.atan()
             })
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "ceil",
         callback("ceil", &ctx, |_, v: f64| Some(to_int(v.ceil().into()))),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "cos", callback("cos", &ctx, |_, v: f64| Some(v.cos())))
-        .unwrap();
+    math.set_field(ctx, "cos", callback("cos", &ctx, |_, v: f64| Some(v.cos())));
 
-    math.set(
+    math.set_field(
         ctx,
         "deg",
         callback("deg", &ctx, |_, v: f64| Some(v.to_degrees())),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "exp",
         callback("exp", &ctx, |_, v: f64| Some(f64::consts::E.powf(v))),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "floor",
         callback("floor", &ctx, |_, v: f64| Some(to_int(v.floor().into()))),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "fmod",
         callback("fmod", &ctx, |_, (f, g): (f64, f64)| {
             let result = (f % g).abs();
             Some(if f < 0.0 { -result } else { result })
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "huge", Value::Number(f64::INFINITY)).unwrap();
+    math.set_field(ctx, "huge", Value::Number(f64::INFINITY));
 
-    math.set(
+    math.set_field(
         ctx,
         "log",
         callback("log", &ctx, |_, (v, base): (f64, Option<f64>)| match base {
             None => Some(v.ln()),
             Some(base) => Some(v.log(base)),
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "max",
         callback("max", &ctx, |_, v: Variadic<Vec<Value>>| {
@@ -146,13 +135,11 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                     })
             }
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "maxinteger", Value::Integer(i64::MAX))
-        .unwrap();
+    math.set_field(ctx, "maxinteger", Value::Integer(i64::MAX));
 
-    math.set(
+    math.set_field(
         ctx,
         "min",
         callback("min", &ctx, |_, v: Variadic<Vec<Value>>| {
@@ -169,30 +156,26 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                     })
             }
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "mininteger", Value::Integer(i64::MIN))
-        .unwrap();
+    math.set_field(ctx, "mininteger", Value::Integer(i64::MIN));
 
-    math.set(
+    math.set_field(
         ctx,
         "modf",
         callback("modf", &ctx, |_, f: f64| Some((f as i64, f % 1.0))),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "pi", Value::Number(f64::consts::PI)).unwrap();
+    math.set_field(ctx, "pi", Value::Number(f64::consts::PI));
 
-    math.set(
+    math.set_field(
         ctx,
         "rad",
         callback("rad", &ctx, |_, v: f64| Some(v.to_radians())),
-    )
-    .unwrap();
+    );
 
     let random_rng = seeded_rng.clone();
-    math.set(
+    math.set_field(
         ctx,
         "random",
         callback(
@@ -210,11 +193,10 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 }
             },
         ),
-    )
-    .unwrap();
+    );
 
     let randomseed_rng = seeded_rng.clone();
-    math.set(
+    math.set_field(
         ctx,
         "randomseed",
         callback(
@@ -249,23 +231,19 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 }
             },
         ),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "sin", callback("sin", &ctx, |_, v: f64| Some(v.sin())))
-        .unwrap();
+    math.set_field(ctx, "sin", callback("sin", &ctx, |_, v: f64| Some(v.sin())));
 
-    math.set(
+    math.set_field(
         ctx,
         "sqrt",
         callback("sqrt", &ctx, |_, v: f64| Some(v.sqrt())),
-    )
-    .unwrap();
+    );
 
-    math.set(ctx, "tan", callback("tan", &ctx, |_, v: f64| Some(v.tan())))
-        .unwrap();
+    math.set_field(ctx, "tan", callback("tan", &ctx, |_, v: f64| Some(v.tan())));
 
-    math.set(
+    math.set_field(
         ctx,
         "tointeger",
         callback("tointeger", &ctx, |_, v: Value| {
@@ -275,10 +253,9 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 Value::Nil
             })
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "type",
         callback("type", &ctx, |ctx, v: Value| {
@@ -288,17 +265,15 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                 _ => Value::Nil,
             })
         }),
-    )
-    .unwrap();
+    );
 
-    math.set(
+    math.set_field(
         ctx,
         "ult",
         callback("ult", &ctx, |_, (a, b): (i64, i64)| {
             Some(Value::Boolean((a as u64) < (b as u64)))
         }),
-    )
-    .unwrap();
+    );
 
-    ctx.set_global("math", math).unwrap();
+    ctx.set_global("math", math);
 }

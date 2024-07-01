@@ -32,7 +32,7 @@ fn async_sequence_works() -> Result<(), StaticError> {
             });
             Ok(CallbackReturn::Sequence(seq))
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 

@@ -9,7 +9,7 @@ fn test_interrupt() -> Result<(), StaticError> {
             exec.fuel().interrupt();
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 

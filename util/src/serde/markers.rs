@@ -9,15 +9,14 @@ impl<'gc> Singleton<'gc> for UnitSingleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self {
         let ud = UserData::new_static(&ctx, ());
         let mt = Table::new(&ctx);
-        mt.set(
+        mt.set_field(
             ctx,
             "__tostring",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 stack.replace(ctx, "unit");
                 Ok(CallbackReturn::Return)
             }),
-        )
-        .unwrap();
+        );
         ud.set_metatable(&ctx, Option::Some(mt));
         UnitSingleton(ud)
     }
@@ -41,15 +40,14 @@ impl<'gc> Singleton<'gc> for NoneSingleton<'gc> {
     fn create(ctx: Context<'gc>) -> Self {
         let ud = UserData::new_static(&ctx, None);
         let mt = Table::new(&ctx);
-        mt.set(
+        mt.set_field(
             ctx,
             "__tostring",
             Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 stack.replace(ctx, "none");
                 Ok(CallbackReturn::Return)
             }),
-        )
-        .unwrap();
+        );
         ud.set_metatable(&ctx, Option::Some(mt));
         NoneSingleton(ud)
     }
@@ -64,6 +62,6 @@ pub fn is_none<'gc>(ud: UserData<'gc>) -> bool {
 }
 
 pub fn set_globals<'gc>(ctx: Context<'gc>) {
-    ctx.set_global("unit", unit(ctx)).unwrap();
-    ctx.set_global("none", none(ctx)).unwrap();
+    ctx.set_global("unit", unit(ctx));
+    ctx.set_global("none", none(ctx));
 }

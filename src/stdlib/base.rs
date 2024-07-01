@@ -66,8 +66,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "tostring",
@@ -91,14 +90,12 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "error",
         Callback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "assert",
@@ -111,8 +108,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Err(stack.get(1).into())
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "pcall",
@@ -124,8 +120,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 then: Some(BoxSequence::new(&ctx, PCall)),
             })
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "type",
@@ -137,8 +132,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Ok(CallbackReturn::Return)
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "select",
@@ -166,8 +160,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
             Err("Bad argument to 'select'".into_value(ctx).into())
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "rawget",
@@ -176,8 +169,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, table.get(ctx, key));
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "rawlen",
@@ -186,8 +178,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, table.length());
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "rawset",
@@ -197,8 +188,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, table);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "getmetatable",
@@ -212,8 +202,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     .into())
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "setmetatable",
@@ -223,8 +212,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, t);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     fn next<'gc>(
         ctx: Context<'gc>,
@@ -244,7 +232,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         Ok(CallbackReturn::Return)
     });
 
-    ctx.set_global("next", next).unwrap();
+    ctx.set_global("next", next);
 
     ctx.set_global(
         "pairs",
@@ -269,8 +257,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, (*next, table));
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     let inext = Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
@@ -316,8 +303,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.into_front(ctx, *inext);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "collectgarbage",
@@ -333,10 +319,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             }
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
-    ctx.set_global("_VERSION", "piccolo").unwrap();
+    ctx.set_global("_VERSION", "piccolo");
 }
 
 #[derive(Collect)]

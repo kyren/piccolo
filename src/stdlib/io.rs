@@ -68,6 +68,5 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 PrintSeq { first: true },
             )))
         }),
-    )
-    .unwrap();
+    );
 }

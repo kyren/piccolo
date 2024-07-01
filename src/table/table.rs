@@ -89,6 +89,19 @@ impl<'gc> Table<'gc> {
         self.set_value(&ctx, key.into_value(ctx), value.into_value(ctx))
     }
 
+    /// A convenience method over [`Table::set`] for setting a string field of a table.
+    ///
+    /// It behaves exactly the same as [`Table::set`], except since this only accepts string keys,
+    /// we know it cannot possibly error.
+    pub fn set_field<V: IntoValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        key: &'static str,
+        value: V,
+    ) -> Value<'gc> {
+        self.set(ctx, key, value).unwrap()
+    }
+
     pub fn get_value(self, key: Value<'gc>) -> Value<'gc> {
         self.0.borrow().raw_table.get(key)
     }
