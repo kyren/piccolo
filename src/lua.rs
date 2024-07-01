@@ -46,6 +46,14 @@ pub struct Context<'gc> {
 }
 
 impl<'gc> Context<'gc> {
+    /// Get a reference to [`Mutation`] (the `gc-arena` mutation handle) out of the `Context`
+    /// object.
+    ///
+    /// This can also be done automatically with `Deref` coercion.
+    pub fn mutation(self) -> &'gc Mutation<'gc> {
+        self.mutation
+    }
+
     pub fn globals(self) -> Table<'gc> {
         self.state.globals
     }
