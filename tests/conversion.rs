@@ -25,9 +25,9 @@ fn test_conversions() {
         )
         .unwrap();
 
-        assert!(matches!(vals.get(ctx, 1), Value::Integer(1)));
-        assert!(matches!(vals.get(ctx, 2), Value::Boolean(true)));
-        assert!(matches!(vals.get(ctx, 3), Value::String(s) if s == b"hello"));
+        assert!(matches!(vals.get_value(ctx, 1), Value::Integer(1)));
+        assert!(matches!(vals.get_value(ctx, 2), Value::Boolean(true)));
+        assert!(matches!(vals.get_value(ctx, 3), Value::String(s) if s == b"hello"));
 
         let array = <[Value; 3]>::from_value(ctx, vals.into()).unwrap();
         assert!(matches!(

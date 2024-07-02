@@ -178,7 +178,7 @@ impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Vec<T> {
         if let Value::Table(table) = value {
             (1..=table.length())
                 .into_iter()
-                .map(|i| T::from_value(ctx, table.get(ctx, i)))
+                .map(|i| table.get(ctx, i))
                 .collect()
         } else {
             Err(TypeError {
@@ -194,10 +194,7 @@ impl<'gc, T: FromValue<'gc>, const N: usize> FromValue<'gc> for [T; N] {
         if let Value::Table(table) = value {
             let mut res: [Option<T>; N] = array::from_fn(|_| None);
             for i in 0..N {
-                res[i] = Some(T::from_value(
-                    ctx,
-                    table.get(ctx, i64::try_from(i).unwrap() + 1),
-                )?);
+                res[i] = Some(table.get(ctx, i64::try_from(i).unwrap() + 1)?);
             }
             Ok(res.map(|r| r.unwrap()))
         } else {

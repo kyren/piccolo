@@ -20,7 +20,7 @@ fn async_sequence_works() -> Result<(), StaticError> {
                     for i in 1..=length {
                         let function = seq.try_enter(|ctx, locals, _, _| {
                             let table = locals.fetch(&table);
-                            let func = meta_ops::call(ctx, table.get(ctx, i))?;
+                            let func = meta_ops::call(ctx, table.get_value(ctx, i))?;
                             Ok(locals.stash(&ctx, func))
                         })?;
 

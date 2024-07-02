@@ -166,7 +166,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "rawget",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (table, key): (Table, Value) = stack.consume(ctx)?;
-            stack.replace(ctx, table.get(ctx, key));
+            stack.replace(ctx, table.get_value(ctx, key));
             Ok(CallbackReturn::Return)
         }),
     );
@@ -243,7 +243,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Value::UserData(u) => u.metatable(),
                 _ => None,
             } {
-                let pairs = mt.get(ctx, MetaMethod::Pairs);
+                let pairs = mt.get_value(ctx, MetaMethod::Pairs);
                 if !pairs.is_nil() {
                     let function = meta_ops::call(ctx, pairs)?;
                     stack.replace(ctx, (table, Value::Nil));

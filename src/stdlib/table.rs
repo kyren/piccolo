@@ -151,9 +151,9 @@ fn table_remove_impl<'gc>(
     let metatable = table.metatable();
     let use_fallback = metatable
         .map(|mt| {
-            !mt.get(ctx, MetaMethod::Len).is_nil()
-                || !mt.get(ctx, MetaMethod::Index).is_nil()
-                || !mt.get(ctx, MetaMethod::NewIndex).is_nil()
+            !mt.get_value(ctx, MetaMethod::Len).is_nil()
+                || !mt.get_value(ctx, MetaMethod::Index).is_nil()
+                || !mt.get_value(ctx, MetaMethod::NewIndex).is_nil()
         })
         .unwrap_or(false);
 
@@ -279,9 +279,9 @@ fn table_insert_impl<'gc>(
     let metatable = table.metatable();
     let use_fallback = metatable
         .map(|mt| {
-            !mt.get(ctx, MetaMethod::Len).is_nil()
-                || !mt.get(ctx, MetaMethod::Index).is_nil()
-                || !mt.get(ctx, MetaMethod::NewIndex).is_nil()
+            !mt.get_value(ctx, MetaMethod::Len).is_nil()
+                || !mt.get_value(ctx, MetaMethod::Index).is_nil()
+                || !mt.get_value(ctx, MetaMethod::NewIndex).is_nil()
         })
         .unwrap_or(false);
 

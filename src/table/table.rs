@@ -5,7 +5,7 @@ use std::{
 
 use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 
-use crate::{Context, IntoValue, Value};
+use crate::{Context, FromValue, IntoValue, TypeError, Value};
 
 use super::raw::{InvalidTableKey, NextValue, RawTable};
 
@@ -76,8 +76,12 @@ impl<'gc> Table<'gc> {
         self.0
     }
 
-    pub fn get<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
-        self.get_value(key.into_value(ctx))
+    pub fn get<K: IntoValue<'gc>, V: FromValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        key: K,
+    ) -> Result<V, TypeError> {
+        V::from_value(ctx, self.get_value(ctx, key))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
@@ -86,7 +90,11 @@ impl<'gc> Table<'gc> {
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.set_value(&ctx, key.into_value(ctx), value.into_value(ctx))
+        self.set_raw(&ctx, key.into_value(ctx), value.into_value(ctx))
+    }
+
+    pub fn get_value<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
+        self.get_raw(key.into_value(ctx))
     }
 
     /// A convenience method over [`Table::set`] for setting a string field of a table.
@@ -102,11 +110,13 @@ impl<'gc> Table<'gc> {
         self.set(ctx, key, value).unwrap()
     }
 
-    pub fn get_value(self, key: Value<'gc>) -> Value<'gc> {
+    /// Get a value from this table without any automatic type conversion.
+    pub fn get_raw(self, key: Value<'gc>) -> Value<'gc> {
         self.0.borrow().raw_table.get(key)
     }
 
-    pub fn set_value(
+    /// Set a value in this table without any automatic type conversion.
+    pub fn set_raw(
         self,
         mc: &Mutation<'gc>,
         key: Value<'gc>,

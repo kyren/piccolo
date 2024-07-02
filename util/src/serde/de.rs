@@ -380,7 +380,7 @@ impl<'gc> de::SeqAccess<'gc> for Seq<'gc> {
     where
         T: de::DeserializeSeed<'gc>,
     {
-        let v = self.table.get_value(Value::Integer(self.ind));
+        let v = self.table.get_raw(Value::Integer(self.ind));
         if v.is_nil() {
             Ok(None)
         } else {
@@ -416,7 +416,7 @@ impl<'gc> de::SeqAccess<'gc> for Tuple<'gc> {
         if self.ind > self.len {
             Ok(None)
         } else {
-            let v = self.table.get_value(Value::Integer(self.ind));
+            let v = self.table.get_raw(Value::Integer(self.ind));
             let res = Some(seed.deserialize(Deserializer::from_value(v))?);
             self.ind += 1;
             Ok(res)

@@ -174,7 +174,7 @@ fn get_metamethod<'gc>(
     method: MetaMethod,
 ) -> Option<Value<'gc>> {
     get_metatable(val)
-        .map(|mt| mt.get(ctx, method))
+        .map(|mt| mt.get_value(ctx, method))
         .filter(|v| !v.is_nil())
 }
 
@@ -185,13 +185,13 @@ pub fn index<'gc>(
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     let idx = match table {
         Value::Table(table) => {
-            let v = table.get(ctx, key);
+            let v = table.get_value(ctx, key);
             if !v.is_nil() {
                 return Ok(MetaResult::Value(v));
             }
 
             let idx = if let Some(mt) = table.metatable() {
-                mt.get(ctx, MetaMethod::Index)
+                mt.get_value(ctx, MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -204,7 +204,7 @@ pub fn index<'gc>(
         }
         Value::UserData(u) if u.metatable().is_some() => {
             let idx = if let Some(mt) = u.metatable() {
-                mt.get(ctx, MetaMethod::Index)
+                mt.get_value(ctx, MetaMethod::Index)
             } else {
                 Value::Nil
             };
@@ -286,15 +286,15 @@ pub fn new_index<'gc>(
 ) -> Result<Option<MetaCall<'gc, 3>>, MetaOperatorError> {
     let idx = match table {
         Value::Table(table) => {
-            let v = table.get(ctx, key);
+            let v = table.get_value(ctx, key);
             if !v.is_nil() {
                 // If the value is present in the table, then we do not invoke the metamethod.
-                table.set_value(&ctx, key, value)?;
+                table.set_raw(&ctx, key, value)?;
                 return Ok(None);
             }
 
             let idx = if let Some(mt) = table.metatable() {
-                mt.get(ctx, MetaMethod::NewIndex)
+                mt.get_value(ctx, MetaMethod::NewIndex)
             } else {
                 Value::Nil
             };
@@ -302,7 +302,7 @@ pub fn new_index<'gc>(
             if idx.is_nil() {
                 // If we do not have a __newindex metamethod, then just set the table value
                 // directly.
-                table.set_value(&ctx, key, value)?;
+                table.set_raw(&ctx, key, value)?;
                 return Ok(None);
             }
 
@@ -310,7 +310,7 @@ pub fn new_index<'gc>(
         }
         Value::UserData(u) if u.metatable().is_some() => {
             let idx = if let Some(mt) = u.metatable() {
-                mt.get(ctx, MetaMethod::NewIndex)
+                mt.get_value(ctx, MetaMethod::NewIndex)
             } else {
                 Value::Nil
             };
@@ -363,7 +363,7 @@ pub fn call<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<Function<'gc>, Meta
     }
     .ok_or(MetaCallError(v.type_name()))?;
 
-    match metatable.get(ctx, MetaMethod::Call) {
+    match metatable.get_value(ctx, MetaMethod::Call) {
         f @ (Value::Function(_) | Value::Table(_) | Value::UserData(_)) => Ok(
             // NOTE: Potential for infinite or arbitrarily long chains here, see note in __index.
             //
@@ -387,7 +387,7 @@ pub fn len<'gc>(ctx: Context<'gc>, v: Value<'gc>) -> Result<MetaResult<'gc, 1>, 
         Value::UserData(u) => u.metatable(),
         _ => None,
     } {
-        let len = metatable.get(ctx, MetaMethod::Len);
+        let len = metatable.get_value(ctx, MetaMethod::Len);
         if !len.is_nil() {
             return Ok(MetaResult::Call(MetaCall {
                 function: call(ctx, len)
@@ -413,7 +413,7 @@ pub fn tostring<'gc>(
         Value::UserData(u) => u.metatable(),
         _ => None,
     } {
-        let tostring = metatable.get(ctx, MetaMethod::ToString);
+        let tostring = metatable.get_value(ctx, MetaMethod::ToString);
         if !tostring.is_nil() {
             return Ok(MetaResult::Call(MetaCall {
                 function: call(ctx, tostring)

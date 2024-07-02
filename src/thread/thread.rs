@@ -665,7 +665,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             if let Some(inc) = start.checked_add(1) {
                 start = inc;
                 table
-                    .set_value(mc, inc.into(), self.state.stack[table_ind + 2 + i])
+                    .set_raw(mc, inc.into(), self.state.stack[table_ind + 2 + i])
                     .unwrap();
             } else {
                 break;
