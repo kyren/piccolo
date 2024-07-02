@@ -80,3 +80,9 @@ impl Fuel {
         self.fuel > 0 && !self.interrupted
     }
 }
+
+pub(crate) fn count_fuel(per_item: i32, len: usize) -> i32 {
+    i32::try_from(len)
+        .unwrap_or(i32::MAX)
+        .saturating_mul(per_item)
+}

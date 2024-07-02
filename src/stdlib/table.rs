@@ -1,11 +1,17 @@
 use std::pin::Pin;
 
+use anyhow::Context as _;
 use gc_arena::Collect;
 
+use crate::async_sequence::{
+    AsyncSequence, LocalError, LocalFunction, LocalTable, LocalValue, Locals,
+};
+use crate::fuel::count_fuel;
 use crate::meta_ops::{self, MetaResult};
+use crate::table::RawArrayOpResult;
 use crate::{
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, Sequence,
-    SequencePoll, Stack, Table, Value,
+    async_sequence, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue,
+    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -56,7 +62,321 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         }),
     );
 
+    table.set_field(ctx, "remove", Callback::from_fn(&ctx, table_remove_impl));
+
+    table.set_field(ctx, "insert", Callback::from_fn(&ctx, table_insert_impl));
+
     ctx.set_global("table", table);
+}
+
+fn prep_metaop_call<'seq, 'gc, const N: usize>(
+    ctx: Context<'gc>,
+    mut stack: Stack<'gc, '_>,
+    locals: Locals<'seq, 'gc>,
+    res: MetaResult<'gc, N>,
+) -> Option<LocalFunction<'seq>> {
+    match res {
+        MetaResult::Value(v) => {
+            stack.push_back(v);
+            None
+        }
+        MetaResult::Call(call) => {
+            stack.extend(call.args);
+            Some(locals.stash(&ctx, call.function))
+        }
+    }
+}
+
+async fn index_helper<'seq>(
+    seq: &mut AsyncSequence<'seq>,
+    table: &LocalTable<'seq>,
+    key: i64,
+    bottom: usize,
+) -> Result<(), LocalError<'seq>> {
+    let call = seq.try_enter(|ctx, locals, _, stack| {
+        let table = locals.fetch(table);
+        let call = meta_ops::index(ctx, Value::Table(table), Value::Integer(key))?;
+        Ok(prep_metaop_call(ctx, stack, locals, call))
+    })?;
+    if let Some(call) = call {
+        seq.call(&call, bottom).await?;
+        seq.enter(|_, _, _, mut stack| {
+            stack.resize(bottom + 1); // Truncate stack
+        });
+    }
+    Ok(())
+}
+
+async fn index_set_helper<'seq>(
+    seq: &mut AsyncSequence<'seq>,
+    table: &LocalTable<'seq>,
+    key: i64,
+    value: LocalValue<'seq>,
+    bottom: usize,
+) -> Result<(), LocalError<'seq>> {
+    let call = seq.try_enter(|ctx, locals, _, mut stack| {
+        let table = locals.fetch(table);
+        let value = locals.fetch(&value);
+        let call = meta_ops::new_index(ctx, Value::Table(table), Value::Integer(key), value)?;
+        match call {
+            None => Ok(None),
+            Some(call) => {
+                stack.extend(call.args);
+                Ok(Some(locals.stash(&ctx, call.function)))
+            }
+        }
+    })?;
+    if let Some(call) = call {
+        seq.call(&call, bottom).await?;
+        seq.enter(|_, _, _, mut stack| {
+            stack.resize(bottom); // Truncate stack
+        });
+    }
+    Ok(())
+}
+
+const FUEL_PER_SHIFTED_ITEM: i32 = 1;
+
+// Minor difference from PRLua: When the table is empty, table.remove(t, #t),
+// will return nil, even if the table has an element at index 0.
+fn table_remove_impl<'gc>(
+    ctx: Context<'gc>,
+    mut exec: Execution<'gc, '_>,
+    mut stack: Stack<'gc, '_>,
+) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+    let (table, index): (Table, Option<i64>) = stack.consume(ctx)?;
+    let length;
+
+    let metatable = table.metatable();
+    let use_fallback = metatable
+        .map(|mt| {
+            !mt.get(ctx, MetaMethod::Len).is_nil()
+                || !mt.get(ctx, MetaMethod::Index).is_nil()
+                || !mt.get(ctx, MetaMethod::NewIndex).is_nil()
+        })
+        .unwrap_or(false);
+
+    if !use_fallback {
+        // Try the fast path
+        let mut inner = table.into_inner().borrow_mut(&ctx);
+        match inner.raw_table.array_remove_shift(index) {
+            (RawArrayOpResult::Success(val), len) => {
+                // Consume fuel after the operation to avoid computing length twice
+                let shifted_items =
+                    len.saturating_sub(index.unwrap_or(len as i64).try_into().unwrap_or(0));
+                exec.fuel()
+                    .consume(count_fuel(FUEL_PER_SHIFTED_ITEM, shifted_items));
+
+                stack.push_back(val);
+                return Ok(CallbackReturn::Return);
+            }
+            (RawArrayOpResult::Possible, len) => {
+                length = Some(len);
+            }
+            (RawArrayOpResult::Failed, _) => {
+                return Err("Invalid index passed to table.remove"
+                    .into_value(ctx)
+                    .into());
+            }
+        }
+    } else {
+        length = None;
+    }
+
+    // Fast path failed, fall back to direct indexing
+    let s = async_sequence(&ctx, |locals, builder| {
+        let table = locals.stash(&ctx, table);
+        builder.build(|mut seq| async move {
+            let length = if let Some(len) = length {
+                len as i64
+            } else {
+                let call = seq.try_enter(|ctx, locals, _, stack| {
+                    let table = locals.fetch(&table);
+                    let call = meta_ops::len(ctx, Value::Table(table))
+                        .context("error while calling __len")?;
+                    Ok(prep_metaop_call(ctx, stack, locals, call))
+                })?;
+                if let Some(call) = call {
+                    seq.call(&call, 0).await?;
+                }
+                let len = seq.try_enter(|ctx, _, _, mut stack| {
+                    Ok(stack
+                        .consume::<i64>(ctx)
+                        .context("__len returned invalid length")?)
+                })?;
+                len
+            };
+
+            let index = index.unwrap_or(length);
+
+            if index == 0 && length == 0 || index == length + 1 {
+                seq.enter(|_, _, _, mut stack| {
+                    stack.push_back(Value::Nil);
+                });
+                Ok(SequenceReturn::Return)
+            } else if index >= 1 && index <= length {
+                // Get the value of the element to remove; we'll keep it on the stack.
+                index_helper(&mut seq, &table, index, 0).await?;
+
+                // Could make this more efficient by inlining the stack manipulation;
+                // only pushing the table once.
+                for i in index..length {
+                    // Push table[i + 1] onto stack
+                    index_helper(&mut seq, &table, i + 1, 1).await?;
+                    let value = seq.enter(|ctx, locals, _, mut stack| {
+                        locals.stash(&ctx, stack.pop_back().unwrap_or_default())
+                    });
+                    // table[i] = table[i + 1]
+                    index_set_helper(&mut seq, &table, i, value, 1).await?;
+
+                    seq.enter(|_, _, mut exec, _| {
+                        exec.fuel().consume(FUEL_PER_SHIFTED_ITEM as i32);
+                    });
+                }
+
+                let nil = seq.enter(|ctx, locals, _, _| locals.stash(&ctx, Value::Nil));
+                // table[length] = nil
+                index_set_helper(&mut seq, &table, length, nil, 1).await?;
+
+                // The last value is still on the stack
+                Ok(SequenceReturn::Return)
+            } else {
+                seq.try_enter(|ctx, _, _, _| {
+                    Err("Invalid index passed to table.remove"
+                        .into_value(ctx)
+                        .into())
+                })
+            }
+        })
+    });
+    Ok(CallbackReturn::Sequence(s))
+}
+
+fn table_insert_impl<'gc>(
+    ctx: Context<'gc>,
+    mut exec: Execution<'gc, '_>,
+    mut stack: Stack<'gc, '_>,
+) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+    let table: Table;
+    let index: Option<i64>;
+    let value: Value;
+    match stack.len() {
+        0..=1 => return Err("Missing arguments to insert".into_value(ctx).into()),
+        2 => {
+            (table, value) = stack.consume(ctx)?;
+            index = None;
+        }
+        _ => {
+            let i: i64;
+            // Index must not be nil
+            (table, i, value) = stack.consume(ctx)?;
+            index = Some(i);
+        }
+    }
+    let length;
+
+    let metatable = table.metatable();
+    let use_fallback = metatable
+        .map(|mt| {
+            !mt.get(ctx, MetaMethod::Len).is_nil()
+                || !mt.get(ctx, MetaMethod::Index).is_nil()
+                || !mt.get(ctx, MetaMethod::NewIndex).is_nil()
+        })
+        .unwrap_or(false);
+
+    if !use_fallback {
+        // Try the fast path
+        match table
+            .into_inner()
+            .borrow_mut(&ctx)
+            .raw_table
+            .array_insert_shift(index, value)
+        {
+            (RawArrayOpResult::Success(_), len) => {
+                // Consume fuel after the operation to avoid computing length twice
+                let shifted_items = len.saturating_sub(
+                    index
+                        .unwrap_or(len.saturating_add(1) as i64)
+                        .saturating_sub(1)
+                        .try_into()
+                        .unwrap_or(0),
+                );
+                exec.fuel()
+                    .consume(count_fuel(FUEL_PER_SHIFTED_ITEM, shifted_items));
+
+                return Ok(CallbackReturn::Return);
+            }
+            (RawArrayOpResult::Possible, len) => {
+                length = Some(len);
+            }
+            (RawArrayOpResult::Failed, _) => {
+                return Err("Invalid index passed to table.insert"
+                    .into_value(ctx)
+                    .into());
+            }
+        }
+    } else {
+        length = None;
+    }
+
+    // Fast path failed, fall back to direct indexing
+    let s = async_sequence(&ctx, |locals, builder| {
+        let table = locals.stash(&ctx, table);
+        let value = locals.stash(&ctx, value);
+        builder.build(|mut seq| async move {
+            let length = if let Some(len) = length {
+                len as i64
+            } else {
+                let call = seq.try_enter(|ctx, locals, _, stack| {
+                    let table = locals.fetch(&table);
+                    let call = meta_ops::len(ctx, Value::Table(table))
+                        .context("error while calling __len")?;
+                    Ok(prep_metaop_call(ctx, stack, locals, call))
+                })?;
+                if let Some(call) = call {
+                    seq.call(&call, 0).await?;
+                }
+                let len = seq.try_enter(|ctx, _, _, mut stack| {
+                    Ok(stack
+                        .consume::<i64>(ctx)
+                        .context("__len returned invalid length")?)
+                })?;
+                len
+            };
+
+            let index = index.unwrap_or(length + 1);
+
+            if index >= 1 && index <= length + 1 {
+                // Could make this more efficient by inlining the stack manipulation;
+                // only pushing the table once.
+                for i in (index + 1..=length + 1).rev() {
+                    // Push table[i - 1] onto the stack
+                    index_helper(&mut seq, &table, i - 1, 0).await?;
+                    let value = seq.enter(|ctx, locals, _, mut stack| {
+                        locals.stash(&ctx, stack.pop_back().unwrap_or_default())
+                    });
+                    // table[i] = table[i - 1]
+                    index_set_helper(&mut seq, &table, i, value, 0).await?;
+
+                    seq.enter(|_, _, mut exec, _| {
+                        exec.fuel().consume(FUEL_PER_SHIFTED_ITEM as i32);
+                    });
+                }
+
+                // table[index] = value
+                index_set_helper(&mut seq, &table, index, value, 0).await?;
+
+                Ok(SequenceReturn::Return)
+            } else {
+                seq.try_enter(|ctx, _, _, _| {
+                    Err("Invalid index passed to table.insert"
+                        .into_value(ctx)
+                        .into())
+                })
+            }
+        })
+    });
+    Ok(CallbackReturn::Sequence(s))
 }
 
 const PACK_ELEMS_PER_FUEL: usize = 8;
