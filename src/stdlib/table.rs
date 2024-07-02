@@ -1,3 +1,4 @@
+use std::mem;
 use std::pin::Pin;
 
 use anyhow::Context as _;
@@ -8,7 +9,7 @@ use crate::async_sequence::{
 };
 use crate::fuel::count_fuel;
 use crate::meta_ops::{self, MetaResult};
-use crate::table::RawArrayOpResult;
+use crate::table::RawTable;
 use crate::{
     async_sequence, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue,
     MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, Table, Value,
@@ -159,7 +160,7 @@ fn table_remove_impl<'gc>(
     if !use_fallback {
         // Try the fast path
         let mut inner = table.into_inner().borrow_mut(&ctx);
-        match inner.raw_table.array_remove_shift(index) {
+        match array_remove_shift(&mut inner.raw_table, index) {
             (RawArrayOpResult::Success(val), len) => {
                 // Consume fuel after the operation to avoid computing length twice
                 let shifted_items =
@@ -286,12 +287,11 @@ fn table_insert_impl<'gc>(
 
     if !use_fallback {
         // Try the fast path
-        match table
-            .into_inner()
-            .borrow_mut(&ctx)
-            .raw_table
-            .array_insert_shift(index, value)
-        {
+        match array_insert_shift(
+            &mut table.into_inner().borrow_mut(&ctx).raw_table,
+            index,
+            value,
+        ) {
             (RawArrayOpResult::Success(_), len) => {
                 // Consume fuel after the operation to avoid computing length twice
                 let shifted_items = len.saturating_sub(
@@ -619,4 +619,116 @@ impl<'gc> Sequence<'gc> for Unpack<'gc> {
         // Return values are already in-place on the stack
         Ok(SequencePoll::Return)
     }
+}
+
+#[derive(PartialEq, Debug)]
+enum RawArrayOpResult<T> {
+    Success(T),
+    Possible,
+    Failed,
+}
+
+// Try to efficiently remove a key from the array part of the table.  (`key` is one-indexed; if it
+// is None, the length of the array is used instead.)
+//
+// If successful, returns the removed value; otherwise, indicates whether the operation is possible
+// to implement with a fallback, or is impossible due to an out-of-range index.
+//
+// Additionally, always returns the computed length of the array from before the operation.
+fn array_remove_shift<'gc>(
+    table: &mut RawTable<'gc>,
+    key: Option<i64>,
+) -> (RawArrayOpResult<Value<'gc>>, usize) {
+    fn inner<'gc>(
+        table: &mut RawTable<'gc>,
+        length: usize,
+        key: Option<i64>,
+    ) -> RawArrayOpResult<Value<'gc>> {
+        let index;
+        if let Some(k) = key {
+            if k == 0 && length == 0 || k == length as i64 + 1 {
+                return RawArrayOpResult::Success(Value::Nil);
+            } else if k >= 1 && k <= length as i64 {
+                index = (k - 1) as usize;
+            } else {
+                return RawArrayOpResult::Failed;
+            }
+        } else {
+            if length == 0 {
+                return RawArrayOpResult::Success(Value::Nil);
+            } else {
+                index = length - 1;
+            }
+        }
+
+        let array = table.array_mut();
+        if length > array.len() {
+            return RawArrayOpResult::Possible;
+        }
+
+        let value = mem::replace(&mut array[index], Value::Nil);
+        if length - index > 1 {
+            array[index..length].rotate_left(1);
+        }
+        RawArrayOpResult::Success(value)
+    }
+
+    let length = table.length() as usize;
+    (inner(table, length, key), length)
+}
+
+// Try to efficiently insert a key and value into the array part of the table.  (`key` is
+// one-indexed; if it is `None`, the length of the array is used instead.)
+//
+// The returned [`RawArrayOpResult`] indicates whether the operation was successful, or if it
+// failed, whether the operation is possible to implement with a fallback, or is impossible due to
+// an out-of-range index.
+//
+// Additionally, always returns the computed length of the array from before the operation.
+fn array_insert_shift<'gc>(
+    table: &mut RawTable<'gc>,
+    key: Option<i64>,
+    value: Value<'gc>,
+) -> (RawArrayOpResult<()>, usize) {
+    fn inner<'gc>(
+        table: &mut RawTable<'gc>,
+        length: usize,
+        key: Option<i64>,
+        value: Value<'gc>,
+    ) -> RawArrayOpResult<()> {
+        let index;
+        if let Some(k) = key {
+            if k >= 1 && k <= length as i64 + 1 {
+                index = (k - 1) as usize;
+            } else {
+                return RawArrayOpResult::Failed;
+            }
+        } else {
+            index = length;
+        }
+
+        let array_len = table.array().len();
+        if length > array_len {
+            return RawArrayOpResult::Possible;
+        }
+
+        assert!(index <= length);
+
+        if length == array_len {
+            // If the array is full, grow it.
+            table.grow_array(1);
+        }
+
+        let array = table.array_mut();
+        // We know here that length < array.len(), so we shift each
+        // element to the right by one.
+        // array[length] == nil, which gets rotated back to array[index];
+        // we replace it with the value to insert.
+        array[index..=length].rotate_right(1);
+        array[index] = value;
+        RawArrayOpResult::Success(())
+    }
+
+    let length = table.length() as usize;
+    (inner(table, length, key, value), length)
 }
