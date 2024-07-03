@@ -2,6 +2,7 @@ use std::{mem, pin::Pin};
 
 use anyhow::Context as _;
 use gc_arena::Collect;
+use thiserror::Error;
 
 use crate::{
     async_callback::{AsyncSequence, Locals},
@@ -9,9 +10,9 @@ use crate::{
     fuel::count_fuel,
     meta_ops::{self, MetaResult},
     table::RawTable,
-    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, IntoValue,
-    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
-    StashedTable, StashedValue, Table, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, FromValue, Function,
+    IntoValue, MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError,
+    StashedFunction, StashedTable, StashedValue, String, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -31,34 +32,50 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         }),
     );
 
+    let unpack: Function<'gc> = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
+            stack.consume(ctx)?;
+
+        let start = start_arg.unwrap_or(1);
+        let seq = if let Some(end) = end_arg {
+            if start > end {
+                return Ok(CallbackReturn::Return);
+            }
+
+            let length = try_compute_length(start, end)
+                .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+            Unpack::MainLoop {
+                start,
+                table,
+                length,
+                index: 0,
+                batch_end: 0,
+                callback_return: false,
+            }
+        } else {
+            Unpack::FindLength { start, table }
+        };
+
+        Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+    })
+    .into();
+
+    table.set_field(ctx, "unpack", unpack.clone());
+
     table.set_field(
         ctx,
-        "unpack",
-        Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
-                stack.consume(ctx)?;
-
-            let start = start_arg.unwrap_or(1);
-            let seq = if let Some(end) = end_arg {
-                if start > end {
-                    return Ok(CallbackReturn::Return);
-                }
-
-                let length = try_compute_length(start, end)
-                    .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                Unpack::MainLoop {
-                    start,
-                    table,
-                    length,
-                    index: 0,
-                    batch_end: 0,
-                    callback_return: false,
-                }
-            } else {
-                Unpack::FindLength { start, table }
+        "concat",
+        Callback::from_fn_with(&ctx, unpack, move |unpack, ctx, _, mut stack| {
+            let sep = match stack.remove(1) {
+                Some(v) => <Option<String>>::from_value(ctx, v)?,
+                None => None,
             };
 
-            Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+            // Defer to table.unpack for indexing implementation.
+            Ok(CallbackReturn::Call {
+                function: *unpack,
+                then: Some(BoxSequence::new(&ctx, ConcatImpl { sep })),
+            })
         }),
     );
 
@@ -734,4 +751,73 @@ fn array_insert_shift<'gc>(
 
     let length = table.length() as usize;
     (inner(table, length, key, value), length)
+}
+
+#[derive(Debug, Copy, Clone, Error)]
+pub enum TableConcatError {
+    #[error("invalid value {0} in table.concat")]
+    BadType(&'static str),
+    #[error("resulting string too long in table.concat")]
+    Overflow,
+}
+
+#[derive(gc_arena::Collect)]
+#[collect(no_drop)]
+struct ConcatImpl<'gc> {
+    sep: Option<String<'gc>>,
+}
+
+impl<'gc> Sequence<'gc> for ConcatImpl<'gc> {
+    fn poll(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        // A simple implementation of concat that does not respect
+        // __tostring or __concat metamethods. (Which matches PRLua)
+
+        // Convert arguments to strings in-place on the stack, and
+        // count the total length.
+        let count = stack.len();
+        let mut len = 0usize;
+        for v in stack[..].iter_mut() {
+            let string = v
+                .into_string(ctx)
+                .ok_or_else(|| TableConcatError::BadType(v.type_name()))?;
+
+            *v = Value::String(string);
+
+            len = len
+                .checked_add(string.len() as usize)
+                .ok_or(TableConcatError::Overflow)?;
+        }
+
+        let sep_len = self.sep.map(|s| s.len() as usize).unwrap_or(0);
+        let total_len = count
+            .saturating_sub(1)
+            .checked_mul(sep_len)
+            .ok_or(TableConcatError::Overflow)?
+            .checked_add(len)
+            .ok_or(TableConcatError::Overflow)?;
+
+        // Should this be allocated in-place in the GC heap?
+        let mut bytes = Vec::with_capacity(total_len);
+
+        let mut iter = stack.drain(..);
+        if let Some(Value::String(first)) = iter.next() {
+            bytes.extend(first.as_bytes());
+
+            let sep = self.sep.map(|s| s.as_bytes()).unwrap_or(&[]);
+            while let Some(Value::String(str)) = iter.next() {
+                bytes.extend(sep);
+                bytes.extend(str.as_bytes());
+            }
+        }
+        drop(iter);
+
+        let val = ctx.intern(&bytes);
+        stack.replace(ctx, val);
+        Ok(SequencePoll::Return)
+    }
 }

@@ -73,6 +73,15 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
+    pub fn remove(&mut self, i: usize) -> Option<Value<'gc>> {
+        let index = self.bottom + i;
+        if index < self.values.len() {
+            Some(self.values.remove(index))
+        } else {
+            None
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.values.len() - self.bottom
     }
