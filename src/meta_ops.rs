@@ -6,8 +6,6 @@ use crate::{
 };
 
 // TODO: Remaining metamethods to implement:
-// - Lt
-// - Le
 // - Concat
 
 /// An enum of every possible Lua metamethod.
@@ -103,8 +101,8 @@ impl MetaMethod {
             MetaMethod::Shl => "left shift",
             MetaMethod::Shr => "right shift",
             MetaMethod::Concat => "concatenate",
-            MetaMethod::Lt => "compare less than", // ???
-            MetaMethod::Le => "compare less than or equal", // ???
+            MetaMethod::Lt => "compare",
+            MetaMethod::Le => "compare",
         }
     }
 }
@@ -719,5 +717,25 @@ pub fn shift_right<'gc>(
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     meta_metaop(ctx, lhs, rhs, MetaMethod::Shr, |a, b| {
         Some(a.to_constant()?.shift_right(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn less_than<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Lt, |a, b| {
+        Some(a.to_constant()?.less_than(&b.to_constant()?)?.into())
+    })
+}
+
+pub fn less_equal<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Le, |a, b| {
+        Some(a.to_constant()?.less_equal(&b.to_constant()?)?.into())
     })
 }

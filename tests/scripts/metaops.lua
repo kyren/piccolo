@@ -165,3 +165,59 @@ do
 
 end
 
+do
+    local log = {}
+    local cursed_mt = {}
+    cursed_mt["__eq"] = function(a, b)
+        table.insert(log, { "eq", a, b })
+        return true
+    end
+    cursed_mt["__lt"] = function(a, b)
+        table.insert(log, { "lt", a, b })
+        return true
+    end
+    cursed_mt["__le"] = function(a, b)
+        table.insert(log, { "le", a, b })
+        return true
+    end
+    local function curse(val)
+        return setmetatable(val, cursed_mt)
+    end
+
+    local a = curse {"a"}
+    local b = curse {"b"}
+    local c = curse {"c"}
+
+    assert(a < b)
+    assert(b < a)
+    assert(a <= b)
+    assert(b <= a)
+    assert(a > b)
+    assert(b > a)
+    assert(a >= b)
+    assert(b >= a)
+
+    assert(cmp_array_recurse(log, {
+        { "lt", { "a" }, { "b" } },
+        { "lt", { "b" }, { "a" } },
+        { "le", { "a" }, { "b" } },
+        { "le", { "b" }, { "a" } },
+        { "lt", { "b" }, { "a" } },
+        { "lt", { "a" }, { "b" } },
+        { "le", { "b" }, { "a" } },
+        { "le", { "a" }, { "b" } }
+    }))
+    log = {}
+
+    assert(cmp_array_recurse(math.min(a, b, c), c))
+    assert(cmp_array_recurse(log, { { "lt", { "b" }, { "a" } }, { "lt", { "c" }, { "b" } } }))
+    log = {}
+
+    assert(cmp_array_recurse(math.max(a, b, c), c))
+    assert(cmp_array_recurse(log, { { "lt", { "a" }, { "b" } }, { "lt", { "b" }, { "c" } } }))
+    log = {}
+
+    assert(cmp_array_recurse(math.min(a), a))
+    assert(cmp_array_recurse(log, { }))
+    log = {}
+end

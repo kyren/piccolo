@@ -13,7 +13,6 @@ pub mod io;
 pub mod lua;
 pub mod meta_ops;
 pub mod opcode;
-pub mod raw_ops;
 pub mod registry;
 pub mod stack;
 pub mod stash;
