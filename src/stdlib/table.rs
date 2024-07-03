@@ -1,4 +1,6 @@
-use std::{mem, pin::Pin};
+use std::io::Write;
+use std::mem;
+use std::pin::Pin;
 
 use anyhow::Context as _;
 use gc_arena::Collect;
@@ -12,7 +14,7 @@ use crate::{
     table::RawTable,
     BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, FromValue, Function,
     IntoValue, MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError,
-    StashedFunction, StashedTable, StashedValue, String, Table, Value,
+    StashedFunction, StashedTable, StashedValue, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -65,19 +67,20 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     table.set_field(
         ctx,
         "concat",
-        Callback::from_fn_with(&ctx, unpack, move |unpack, ctx, _, mut stack| {
+        Callback::from_fn_with(&ctx, unpack, move |unpack, ctx, _exec, mut stack| {
             let sep = match stack.remove(1) {
-                Some(v) => <Option<String>>::from_value(ctx, v)?,
+                Some(v) => <Option<Value>>::from_value(ctx, v)?,
                 None => None,
             };
 
             // Defer to table.unpack for indexing implementation.
             Ok(CallbackReturn::Call {
                 function: *unpack,
-                then: Some(BoxSequence::new(&ctx, ConcatImpl { sep })),
+                then: Some(concat_impl(ctx, sep)),
             })
         }),
     );
+    // table.set_field(ctx, "concat", Callback::from_fn(&ctx, concat_impl));
 
     table.set_field(ctx, "remove", Callback::from_fn(&ctx, table_remove_impl));
 
@@ -759,69 +762,127 @@ fn array_insert_shift<'gc>(
 
 #[derive(Debug, Copy, Clone, Error)]
 pub enum TableConcatError {
-    #[error("invalid value {0} in table.concat")]
-    BadType(&'static str),
     #[error("resulting string too long in table.concat")]
     Overflow,
 }
 
-#[derive(gc_arena::Collect)]
-#[collect(no_drop)]
-struct ConcatImpl<'gc> {
-    sep: Option<String<'gc>>,
-}
+fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'gc> {
+    async_sequence(&ctx, |locals, mut seq| {
+        let sep = sep.map(|s| locals.stash(&ctx, s));
+        async move {
+            let args = seq.try_enter(|ctx, locals, _, mut stack| {
+                let sep_str = match sep
+                    .as_ref()
+                    .map(|s| locals.fetch(s))
+                    .map(|s| s.into_string(ctx))
+                {
+                    Some(Some(s)) => Some(s),
+                    Some(None) => return Ok(stack.len()),
+                    None => None,
+                };
 
-impl<'gc> Sequence<'gc> for ConcatImpl<'gc> {
-    fn poll(
-        self: Pin<&mut Self>,
-        ctx: Context<'gc>,
-        _exec: Execution<'gc, '_>,
-        mut stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        // A simple implementation of concat that does not respect
-        // __tostring or __concat metamethods. (Which matches PRLua)
+                let mut len = 0;
+                // Since we have to make two passes, might as well estimate the length
+                for value in &stack[..] {
+                    match value {
+                        Value::Integer(i) => len += i.ilog10() as usize + i.is_negative() as usize,
+                        Value::Number(_n) => len += 10,
+                        Value::String(s) => len += s.as_bytes().len(),
+                        _ => return Ok(stack.len()),
+                    }
+                }
 
-        // Convert arguments to strings in-place on the stack, and
-        // count the total length.
-        let count = stack.len();
-        let mut len = 0usize;
-        for v in stack[..].iter_mut() {
-            let string = v
-                .into_string(ctx)
-                .ok_or_else(|| TableConcatError::BadType(v.type_name()))?;
+                let sep_len = sep_str.map(|s| s.len() as usize).unwrap_or(0);
+                let total_len = stack
+                    .len()
+                    .saturating_sub(1)
+                    .checked_mul(sep_len)
+                    .ok_or(TableConcatError::Overflow)?
+                    .checked_add(len)
+                    .ok_or(TableConcatError::Overflow)?;
 
-            *v = Value::String(string);
+                // Should this be allocated in-place in the GC heap?
+                let mut bytes = Vec::with_capacity(total_len);
 
-            len = len
-                .checked_add(string.len() as usize)
-                .ok_or(TableConcatError::Overflow)?;
-        }
+                let mut iter = stack.drain(..);
+                if let Some(val) = iter.next() {
+                    match val {
+                        Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                        Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                        Value::String(s) => bytes.extend(s.as_bytes()),
+                        _ => unreachable!(),
+                    }
 
-        let sep_len = self.sep.map(|s| s.len() as usize).unwrap_or(0);
-        let total_len = count
-            .saturating_sub(1)
-            .checked_mul(sep_len)
-            .ok_or(TableConcatError::Overflow)?
-            .checked_add(len)
-            .ok_or(TableConcatError::Overflow)?;
+                    let sep = sep_str.map(|s| s.as_bytes()).unwrap_or(&[]);
+                    while let Some(val) = iter.next() {
+                        bytes.extend(sep);
+                        match val {
+                            Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                            Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                            Value::String(s) => bytes.extend(s.as_bytes()),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                drop(iter);
 
-        // Should this be allocated in-place in the GC heap?
-        let mut bytes = Vec::with_capacity(total_len);
+                let val = ctx.intern(&bytes);
+                stack.replace(ctx, val);
+                Ok(1)
+            })?;
 
-        let mut iter = stack.drain(..);
-        if let Some(Value::String(first)) = iter.next() {
-            bytes.extend(first.as_bytes());
+            for i in (1..args).into_iter().rev() {
+                if let Some(sep) = &sep {
+                    let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let bottom = i;
+                        let lhs = locals.fetch(sep);
+                        let r = match meta_ops::concat_single(ctx, lhs, stack[i])? {
+                            MetaResult::Value(v) => {
+                                stack.resize(bottom);
+                                stack.push_back(v);
+                                (None, bottom)
+                            }
+                            MetaResult::Call(meta_ops::MetaCall { function, args }) => {
+                                stack.resize(bottom);
+                                stack.extend(args);
+                                (Some(locals.stash(&ctx, function)), bottom)
+                            }
+                        };
+                        Ok(r)
+                    })?;
+                    if let Some(func) = call {
+                        seq.call(&func, bottom).await?;
+                    }
+                    seq.enter(|_, _, _, mut stack| {
+                        stack.resize(bottom + 1);
+                    });
+                }
 
-            let sep = self.sep.map(|s| s.as_bytes()).unwrap_or(&[]);
-            while let Some(Value::String(str)) = iter.next() {
-                bytes.extend(sep);
-                bytes.extend(str.as_bytes());
+                let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let bottom = i - 1;
+                    Ok(
+                        match meta_ops::concat_single(ctx, stack[i - 1], stack[i])? {
+                            MetaResult::Value(v) => {
+                                stack.resize(bottom);
+                                stack.push_back(v);
+                                (None, bottom)
+                            }
+                            MetaResult::Call(meta_ops::MetaCall { function, args }) => {
+                                stack.resize(bottom);
+                                stack.extend(args);
+                                (Some(locals.stash(&ctx, function)), bottom)
+                            }
+                        },
+                    )
+                })?;
+                if let Some(func) = call {
+                    seq.call(&func, bottom).await?;
+                }
+                seq.enter(|_, _, _, mut stack| {
+                    stack.resize(bottom + 1);
+                });
             }
+            Ok(SequenceReturn::Return)
         }
-        drop(iter);
-
-        let val = ctx.intern(&bytes);
-        stack.replace(ctx, val);
-        Ok(SequencePoll::Return)
-    }
+    })
 }

@@ -1,5 +1,19 @@
 
 do
+    local i = 0
+    local t = setmetatable({}, {
+        __concat = function(a, b) i = i + 1 return i .. "(" .. tostring(a) .. tostring(b) .. ")" end,
+        __tostring = function(this) i = i + 1 return i end
+    })
+
+    assert(t..t..t..t == "6(74(51(23)))")
+end
+
+do
+    assert("a".."b".."c" == "abc")
+end
+
+do
     local t = { "a", "b", "c" }
     assert(table.concat(t) == "abc")
     assert(table.concat(t, ",") == "a,b,c")
@@ -18,8 +32,8 @@ do
 end
 
 do
-    assert(not pcall(function() table.concat({ true }) end))
-    assert(not pcall(function() table.concat({ {} }) end))
+    assert(not pcall(function() table.concat({ "a", true }) end))
+    assert(not pcall(function() table.concat({ "b", {} }) end))
 
     local t = setmetatable({ "a" }, { __len = function() return 2 end })
     assert(not pcall(function() table.concat(t) end))

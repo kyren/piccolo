@@ -1,7 +1,6 @@
 use std::{
     alloc, fmt,
     hash::{BuildHasherDefault, Hash, Hasher},
-    io::Write,
     ops, slice,
     str::{self, Utf8Error},
 };
@@ -12,12 +11,8 @@ use gc_arena::{
     Collection, Gc, GcWeak, Mutation, StaticCollect,
 };
 use hashbrown::{hash_map, raw::RawTable, HashMap};
-use thiserror::Error;
 
-use crate::{
-    compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy},
-    Context, Value,
-};
+use crate::compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy};
 
 /// The Lua string type.
 ///
@@ -175,41 +170,7 @@ impl<'gc> fmt::Debug for String<'gc> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Error)]
-#[error("cannot concat {bad_type}")]
-pub struct BadConcatType {
-    bad_type: &'static str,
-}
-
 impl<'gc> String<'gc> {
-    pub fn concat(ctx: Context<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, BadConcatType> {
-        let mut bytes = Vec::new();
-        for value in values {
-            match value {
-                Value::Nil => write!(&mut bytes, "nil").unwrap(),
-                Value::Boolean(b) => write!(&mut bytes, "{}", b).unwrap(),
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                Value::String(s) => bytes.extend(s.as_bytes()),
-                Value::Table(_) => return Err(BadConcatType { bad_type: "table" }),
-                Value::Function(_) => {
-                    return Err(BadConcatType {
-                        bad_type: "function",
-                    });
-                }
-                Value::Thread(_) => {
-                    return Err(BadConcatType { bad_type: "thread" });
-                }
-                Value::UserData(_) => {
-                    return Err(BadConcatType {
-                        bad_type: "userdata",
-                    });
-                }
-            }
-        }
-        Ok(ctx.intern(&bytes))
-    }
-
     pub fn len(self) -> i64 {
         self.as_bytes().len().try_into().unwrap()
     }
