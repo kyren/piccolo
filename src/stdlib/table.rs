@@ -84,8 +84,12 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     table.set_field(ctx, "insert", Callback::from_fn(&ctx, table_insert_impl));
 
     let data = include_str!("table/sort.lua");
-    let sort = Closure::load(ctx, Some("table/sort.lua"), data.as_bytes()).unwrap();
-    table.set_field(ctx, "sort", sort);
+    let func = Closure::load(ctx, Some("table/sort.lua"), data.as_bytes()).unwrap();
+    table.set_field(ctx, "sort", func);
+
+    let data = include_str!("table/move.lua");
+    let func = Closure::load(ctx, Some("table/move.lua"), data.as_bytes()).unwrap();
+    table.set_field(ctx, "move", func);
 
     ctx.set_global("table", table);
 }
