@@ -103,6 +103,8 @@ impl<'gc> RawTable<'gc> {
         key: Value<'gc>,
         value: Value<'gc>,
     ) -> Result<Value<'gc>, InvalidTableKey> {
+        // If the key is an array candidate and less than the current length of the array, it will
+        // go there.
         let index_key = to_array_index(key);
         if let Some(index) = index_key {
             if index < self.array.len() {
@@ -113,6 +115,7 @@ impl<'gc> RawTable<'gc> {
         let table_key = CanonicalKey::new(key)?;
         let hash = self.hash_builder.hash_one(table_key);
 
+        // If the value is nil then we are removing from the map part, which cannot fail.
         if value.is_nil() {
             return Ok(
                 if let hash_map::RawEntryMut::Occupied(mut occupied) = self
@@ -131,6 +134,8 @@ impl<'gc> RawTable<'gc> {
             );
         }
 
+        // If there is an existing entry in the map part, replace it, otherwise try to fit a new
+        // entry.
         let raw_map = self.map.raw_table_mut();
         if let Some(bucket) = raw_map.find(hash, |(k, _)| k.eq(table_key)) {
             let (k, v) = unsafe { bucket.as_mut() };
@@ -249,12 +254,12 @@ impl<'gc> RawTable<'gc> {
             // If the array part ends in a Nil, there must be a border inside it
             binary_search(0, array_len, |i| self.array[i as usize - 1].is_nil())
         } else if self.map.is_empty() {
-            // If there is no border in the array but the map part is empty, then the array length
-            // is a border
+            // If the array part does not end in a nil but the map part is empty, then the array
+            // length is a border.
             array_len
         } else {
-            // Otherwise, we must check the map part for a border. We need to find some nil value in
-            // the map part as the max for a binary search.
+            // Otherwise, we check the map part for a border. We need to find some nil value in the
+            // map part as the max for a binary search.
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
             while self
@@ -264,7 +269,7 @@ impl<'gc> RawTable<'gc> {
                     self.hash_builder.hash_one(CanonicalKey::Integer(max)),
                     |k| k.eq(CanonicalKey::Integer(max)),
                 )
-                .is_some()
+                .is_some_and(|(_, v)| !v.is_nil())
             {
                 if max == i64::MAX {
                     // If we can't find a nil entry by doubling, then the table is pathological. We
