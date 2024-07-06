@@ -4,8 +4,8 @@ use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
-    raw_ops, Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue, IntoValue, Table,
-    Value, Variadic,
+    async_sequence, meta_ops, Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue,
+    IntoValue, SequenceReturn, Table, Value,
 };
 
 pub fn load_math<'gc>(ctx: Context<'gc>) {
@@ -121,42 +121,102 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     math.set_field(
         ctx,
         "max",
-        callback("max", &ctx, |_, v: Variadic<Vec<Value>>| {
-            if v.is_empty() {
-                None
-            } else {
-                v.into_iter()
-                    .try_fold(Value::Number(-f64::INFINITY), |max, entry| {
-                        Some(if raw_ops::less_than(max, entry)? {
-                            entry
-                        } else {
-                            max
-                        })
-                    })
+        Callback::from_fn(&ctx, |ctx, _, stack| {
+            if stack.is_empty() {
+                return Err("value expected".into_value(ctx).into());
             }
+            let s = async_sequence(&ctx, |locals, builder| {
+                let mut max = locals.stash(&ctx, stack.get(0));
+                let args = stack.len();
+                builder.build(|mut seq| async move {
+                    for i in 1..args {
+                        let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                            let bottom = args;
+                            match meta_ops::less_than(ctx, locals.fetch(&max), stack[i])? {
+                                meta_ops::MetaResult::Value(v) => {
+                                    stack.resize(bottom);
+                                    stack.push_back(v);
+                                    Ok((None, bottom))
+                                }
+                                meta_ops::MetaResult::Call(meta_ops::MetaCall {
+                                    function,
+                                    args,
+                                }) => {
+                                    stack.resize(bottom);
+                                    stack.extend(args);
+                                    Ok((Some(locals.stash(&ctx, function)), bottom))
+                                }
+                            }
+                        })?;
+                        if let Some(func) = call {
+                            seq.call(&func, bottom).await?;
+                        }
+                        seq.enter(|ctx, locals, _, stack| {
+                            if stack.get(bottom).to_bool() {
+                                max = locals.stash(&ctx, stack.get(i))
+                            }
+                        });
+                    }
+                    seq.enter(|ctx, locals, _, mut stack| {
+                        stack.replace(ctx, locals.fetch(&max));
+                    });
+                    Ok(SequenceReturn::Return)
+                })
+            });
+            Ok(CallbackReturn::Sequence(s))
         }),
     );
-
-    math.set_field(ctx, "maxinteger", Value::Integer(i64::MAX));
 
     math.set_field(
         ctx,
         "min",
-        callback("min", &ctx, |_, v: Variadic<Vec<Value>>| {
-            if v.is_empty() {
-                None
-            } else {
-                v.into_iter()
-                    .try_fold(Value::Number(f64::INFINITY), |max, entry| {
-                        Some(if raw_ops::less_than(entry, max)? {
-                            entry
-                        } else {
-                            max
-                        })
-                    })
+        Callback::from_fn(&ctx, |ctx, _, stack| {
+            if stack.is_empty() {
+                return Err("value expected".into_value(ctx).into());
             }
+            let s = async_sequence(&ctx, |locals, builder| {
+                let mut min = locals.stash(&ctx, stack.get(0));
+                let args = stack.len();
+                builder.build(|mut seq| async move {
+                    for i in 1..args {
+                        let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                            let bottom = args;
+                            match meta_ops::less_than(ctx, stack.get(i), locals.fetch(&min))? {
+                                meta_ops::MetaResult::Value(v) => {
+                                    stack.resize(bottom);
+                                    stack.push_back(v);
+                                    Ok((None, bottom))
+                                }
+                                meta_ops::MetaResult::Call(meta_ops::MetaCall {
+                                    function,
+                                    args,
+                                }) => {
+                                    stack.resize(bottom);
+                                    stack.extend(args);
+                                    Ok((Some(locals.stash(&ctx, function)), bottom))
+                                }
+                            }
+                        })?;
+                        if let Some(func) = call {
+                            seq.call(&func, bottom).await?;
+                        }
+                        seq.enter(|ctx, locals, _, stack| {
+                            if stack.get(bottom).to_bool() {
+                                min = locals.stash(&ctx, stack.get(i))
+                            }
+                        });
+                    }
+                    seq.enter(|ctx, locals, _, mut stack| {
+                        stack.replace(ctx, locals.fetch(&min));
+                    });
+                    Ok(SequenceReturn::Return)
+                })
+            });
+            Ok(CallbackReturn::Sequence(s))
         }),
     );
+
+    math.set_field(ctx, "maxinteger", Value::Integer(i64::MAX));
 
     math.set_field(ctx, "mininteger", Value::Integer(i64::MIN));
 

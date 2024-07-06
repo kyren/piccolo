@@ -2,13 +2,12 @@ use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{
-    meta_ops::{self, MetaOperatorError, MetaResult},
+    meta_ops::{self, MetaResult},
     opcode::{Operation, RCIndex},
-    raw_ops,
     table::RawTable,
     thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
-    Closure, Constant, Context, Function, MetaMethod, String, Table, Value,
+    Closure, Constant, Context, Function, String, Table, Value,
 };
 
 use super::{thread::LuaFrame, VMError};
@@ -427,11 +426,21 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_than(left, right).ok_or_else(|| {
-                    MetaOperatorError::Binary(MetaMethod::Lt, left.type_name(), right.type_name())
-                })?) == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_than(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
@@ -442,11 +451,21 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_equal(left, right).ok_or_else(|| {
-                    MetaOperatorError::Binary(MetaMethod::Le, left.type_name(), right.type_name())
-                })?) == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_equal(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
