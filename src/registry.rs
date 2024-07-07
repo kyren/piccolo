@@ -9,7 +9,7 @@ use hashbrown::{hash_map, HashMap};
 
 use crate::{
     any::Any,
-    stash::{Fetchable, Stashable},
+    stash::{Fetchable, Stashable, StashedRootSet},
     Context,
 };
 
@@ -49,10 +49,6 @@ impl<'gc> Registry<'gc> {
         }
     }
 
-    pub fn roots(&self) -> DynamicRootSet<'gc> {
-        self.roots
-    }
-
     /// Create an instance of a type that exists at most once per [`Lua`](crate::Lua) instance.
     ///
     /// If the type has already been created, returns the already created instance, otherwise calls
@@ -75,35 +71,44 @@ impl<'gc> Registry<'gc> {
         }
     }
 
-    /// "Stash" a value with a `'gc` branding lifetime, creating a `'static` handle to it.
+    /// Returns the inner [`DynamicRootSet`] held inside the global registry.
     ///
-    /// This is a wrapper around an internal `gc_arena::DynamicRootSet` that makes it a little
-    /// simpler to work with common piccolo types without having to manually specify `Rootable`
-    /// projections.
+    /// This can be used to create `'static` roots without having to deal with the [`Stashable`]
+    /// trait.
+    pub fn roots(&self) -> DynamicRootSet<'gc> {
+        self.roots
+    }
+
+    /// "Stash" a value with a `'gc` branding lifetime in the registry, creating a `'static` handle
+    /// to it.
     ///
-    /// It can be implemented for external types by implementing the `Stashable` trait.
+    /// This works for any type that implements the [`Stashable`] trait, which all common `piccolo`
+    /// types do.
     ///
-    /// Values stashed in the global registry are not designed to be held within the Lua state!
-    /// They are 'static handles, not garbage collected values, and thus they are not *traced*
-    /// like garbage collected values to enable cycle collection. Any value stashed in the global
-    /// registry will only be freed when the stashed handle is *dropped*.
+    /// Values stashed in the global registry always produce handles that are branded with
+    /// `'static`, which makes them completely unrestricted. They are `'static` Rust types, which
+    /// means that the borrow checker will not stop you from storing them *anywhere*, including
+    /// within the Lua state itself. Do not do this!
     ///
-    /// This means that if there is a cycle through a stashed handle (e.g. the stashed handle points
-    /// to a Lua value which in turn points directly or indirectly to whatever Lua value owns the
-    /// handle), it cannot ever be freed.
+    /// Registry stashed values are not meant to be held within the Lua state. Stashed handles are
+    /// not traced like normal GC types and do not have full cycle collection, so any stashed value
+    /// will only be freed when the returned handle is *dropped*. This means that if there is a
+    /// cycle through a stashed handle (e.g. the stashed handle points to a Lua value which in turn
+    /// points directly or indirectly to whatever Lua value owns the handle), the handle will never
+    /// be dropped so the value (and anything it transitively points to) can never be freed.
     ///
     /// Values stashed in the registry are designed to be held *completely outside* of the Lua
     /// state by outer Rust code. If storing a value inside the Lua state, always use a proper
     /// garbage collected type, which in addition to allowing full cycle collection will also be
-    /// significantly cheaper.
-    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed {
-        s.stash(mc, self.roots)
+    /// much cheaper.
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed<'static> {
+        s.stash(mc, StashedRootSet::new(self.roots))
     }
 
     /// "Fetch" the real value for a handle that has been returned from `Registry::stash`.
     ///
     /// It can be implemented for external types by implementing the `Fetchable` trait.
-    pub fn fetch<F: Fetchable<'gc>>(&self, f: &F) -> F::Fetched {
-        f.fetch(self.roots)
+    pub fn fetch<F: Fetchable<'static>>(&self, f: &F) -> F::Fetched<'gc> {
+        f.fetch(StashedRootSet::new(self.roots))
     }
 }

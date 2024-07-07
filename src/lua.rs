@@ -92,12 +92,12 @@ impl<'gc> Context<'gc> {
     }
 
     /// Calls `ctx.registry().stash(ctx, s)`.
-    pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed {
+    pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed<'static> {
         self.state.registry.stash(&self, s)
     }
 
     /// Calls `ctx.registry().fetch(f)`.
-    pub fn fetch<F: Fetchable<'gc>>(self, f: &F) -> F::Fetched {
+    pub fn fetch<F: Fetchable<'static>>(self, f: &F) -> F::Fetched<'gc> {
         self.state.registry.fetch(f)
     }
 
@@ -259,7 +259,7 @@ impl Lua {
     ///
     /// This will periodically exit the arena in order to collect garbage concurrently with running
     /// Lua code.
-    pub fn finish(&mut self, executor: &StashedExecutor) {
+    pub fn finish(&mut self, executor: &StashedExecutor<'static>) {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
@@ -277,7 +277,7 @@ impl Lua {
     /// `Executor::take_result` yourself.
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
-        executor: &StashedExecutor,
+        executor: &StashedExecutor<'static>,
     ) -> Result<R, StaticError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)

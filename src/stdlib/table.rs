@@ -4,15 +4,14 @@ use std::pin::Pin;
 use anyhow::Context as _;
 use gc_arena::Collect;
 
-use crate::async_sequence::{
-    AsyncSequence, LocalError, LocalFunction, LocalTable, LocalValue, Locals,
-};
+use crate::async_callback::{AsyncSequence, Locals};
 use crate::fuel::count_fuel;
 use crate::meta_ops::{self, MetaResult};
 use crate::table::RawTable;
 use crate::{
     async_sequence, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue,
-    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, Table, Value,
+    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
+    StashedTable, StashedValue, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -75,7 +74,7 @@ fn prep_metaop_call<'seq, 'gc, const N: usize>(
     mut stack: Stack<'gc, '_>,
     locals: Locals<'seq, 'gc>,
     res: MetaResult<'gc, N>,
-) -> Option<LocalFunction<'seq>> {
+) -> Option<StashedFunction<'seq>> {
     match res {
         MetaResult::Value(v) => {
             stack.push_back(v);
@@ -90,10 +89,10 @@ fn prep_metaop_call<'seq, 'gc, const N: usize>(
 
 async fn index_helper<'seq>(
     seq: &mut AsyncSequence<'seq>,
-    table: &LocalTable<'seq>,
+    table: &StashedTable<'seq>,
     key: i64,
     bottom: usize,
-) -> Result<(), LocalError<'seq>> {
+) -> Result<(), StashedError<'seq>> {
     let call = seq.try_enter(|ctx, locals, _, stack| {
         let table = locals.fetch(table);
         let call = meta_ops::index(ctx, Value::Table(table), Value::Integer(key))?;
@@ -110,11 +109,11 @@ async fn index_helper<'seq>(
 
 async fn index_set_helper<'seq>(
     seq: &mut AsyncSequence<'seq>,
-    table: &LocalTable<'seq>,
+    table: &StashedTable<'seq>,
     key: i64,
-    value: LocalValue<'seq>,
+    value: StashedValue<'seq>,
     bottom: usize,
-) -> Result<(), LocalError<'seq>> {
+) -> Result<(), StashedError<'seq>> {
     let call = seq.try_enter(|ctx, locals, _, mut stack| {
         let table = locals.fetch(table);
         let value = locals.fetch(&value);

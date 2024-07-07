@@ -10,7 +10,11 @@ use piccolo::{
     StashedExecutor, StaticError,
 };
 
-fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
+fn run_code(
+    lua: &mut Lua,
+    executor: &StashedExecutor<'static>,
+    code: &str,
+) -> Result<(), StaticError> {
     lua.try_enter(|ctx| {
         let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
