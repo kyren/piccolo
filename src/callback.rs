@@ -337,7 +337,7 @@ impl<'gc> fmt::Debug for BoxSequence<'gc> {
 
 impl<'gc> BoxSequence<'gc> {
     pub fn new(mc: &Mutation<'gc>, sequence: impl Sequence<'gc> + 'gc) -> Self {
-        let b = boxed::Box::new_in(sequence, MetricsAlloc::new_static(mc));
+        let b = boxed::Box::new_in(sequence, MetricsAlloc::from_metrics(mc.metrics().clone()));
         // TODO: Required unsafety due to do lack of `CoerceUnsized` on allocator_api2 `Box` type,
         // replace with safe cast when one of allocator_api or CoerceUnsized is stabilized.
         let (ptr, alloc) = boxed::Box::into_raw_with_allocator(b);

@@ -5,6 +5,7 @@ use std::{
     mem,
     pin::Pin,
     ptr,
+    rc::Rc,
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
@@ -46,7 +47,7 @@ pub fn async_sequence<'gc, R>(
     f(
         StashedRootSet::new(locals),
         Builder {
-            alloc: MetricsAlloc::new_static(mc),
+            alloc: MetricsAlloc::from_metrics(mc.metrics().clone()),
             locals,
             _invariant: PhantomData,
         },
@@ -114,11 +115,32 @@ impl<'seq, 'gc> Builder<'seq, 'gc> {
     where
         F: Future<Output = Result<SequenceReturn<'seq>, StashedError<'seq>>> + 'seq,
     {
+        // NOTE: Unfortunately, we can't get away with a simple raw pointer to `SharedSlot` in the
+        // `AsyncSequence` object here. The reason for this is that the lifetime of `AsyncSequence`
+        // is not ACTUALLY bound to the returned `BoxSequence`; since the `Builder` itself
+        // exists within a `'seq` callback, if the provided closure is pathological, the provided
+        // `AsyncSequence` parameter can escape this closure and outlive the returned `BoxSequence`.
+        //
+        // Rust may change in the future to allow for a workable extra lifetime on `AsyncSequence`
+        // to prevent this, or simply a way to avoid this builder pattern entirely without
+        // double boxing the returned sequence. Any of these should allow soundly giving the
+        // `AsyncSequence` object a bare pointer to the internals of its `BoxSequence` parent.
+        //
+        // NOTE: We are not bothering to mark the `Rc` allocation here in the GC metrics. Since
+        // `DynamicRootSet` and `SequenceImpl` are always non-zero size, creating an async sequence
+        // always marks some external allocation anyway, so this is just a small inaccuracy rather
+        // than a potential way for a script to allocate an arbitrary amount of un-marked memory.
+        //
+        // This will be much easier to handle properly when `allocator_api` is stable.
+        let shared = Rc::new(SharedSlot::new());
+
         let fut = f(AsyncSequence {
+            shared: shared.clone(),
             _invariant: PhantomData,
         });
         let sequence = boxed::Box::new_in(
             SequenceImpl {
+                shared,
                 locals: self.locals,
                 fut,
             },
@@ -162,6 +184,7 @@ impl<'seq, 'gc> Builder<'seq, 'gc> {
 /// In summary: Do NOT store handles to values stashed in the registry within async sequences,
 /// instead *only* store handles to values stashed using the provided [`StashedRootSet`] object!
 pub struct AsyncSequence<'seq> {
+    shared: Rc<SharedSlot>,
     _invariant: Invariant<'seq>,
 }
 
@@ -183,7 +206,7 @@ impl<'seq> AsyncSequence<'seq> {
         ) -> R,
         R: 'seq,
     {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             f(
                 shared.ctx,
                 StashedRootSet::new(shared.locals),
@@ -205,7 +228,7 @@ impl<'seq> AsyncSequence<'seq> {
         ) -> Result<R, Error<'gc>>,
         R: 'seq,
     {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             f(
                 shared.ctx,
                 StashedRootSet::new(shared.locals),
@@ -224,11 +247,11 @@ impl<'seq> AsyncSequence<'seq> {
     /// This usually also allows garbage collection to take place, (depending on how the `Executor`
     /// is being driven).
     pub async fn pending(&mut self) {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Pending);
         });
         wait_once().await;
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             assert!(
                 shared.error.is_none(),
                 "SequencePoll::Pending cannot be followed by an error"
@@ -242,14 +265,14 @@ impl<'seq> AsyncSequence<'seq> {
         func: &StashedFunction<'seq>,
         bottom: usize,
     ) -> Result<(), StashedError<'seq>> {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Call {
                 function: func.fetch(StashedRootSet::new(shared.locals)),
                 bottom,
             });
         });
         wait_once().await;
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
                 Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
             } else {
@@ -265,14 +288,14 @@ impl<'seq> AsyncSequence<'seq> {
         to_thread: Option<&StashedThread<'seq>>,
         bottom: usize,
     ) -> Result<(), StashedError<'seq>> {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Yield {
                 to_thread: to_thread.map(|t| t.fetch(StashedRootSet::new(shared.locals))),
                 bottom,
             });
         });
         wait_once().await;
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
                 Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
             } else {
@@ -288,14 +311,14 @@ impl<'seq> AsyncSequence<'seq> {
         thread: &StashedThread<'seq>,
         bottom: usize,
     ) -> Result<(), StashedError<'seq>> {
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Resume {
                 thread: thread.fetch(StashedRootSet::new(shared.locals)),
                 bottom,
             });
         });
         wait_once().await;
-        visit_shared(move |shared| {
+        self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
                 Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
             } else {
@@ -306,6 +329,7 @@ impl<'seq> AsyncSequence<'seq> {
 }
 
 struct SequenceImpl<'gc, F> {
+    shared: Rc<SharedSlot>,
     locals: DynamicRootSet<'gc>,
     fut: F,
 }
@@ -329,25 +353,32 @@ where
         error: Option<Error<'gc>>,
     ) -> Result<SequencePoll<'gc>, Error<'gc>> {
         // SAFETY: We do not move out of the returned reference.
-        let Self { locals, fut } = unsafe { self.get_unchecked_mut() };
+        let Self {
+            shared,
+            locals,
+            fut,
+        } = unsafe { self.get_unchecked_mut() };
         let locals = *locals;
 
         let mut next_op = None;
 
-        let mut shared = Shared {
-            locals,
-            ctx,
-            exec,
-            stack: stack.reborrow(),
-            error,
-            next_op: &mut next_op,
-        };
-
-        let res = with_shared(&mut shared, || {
-            // SAFETY: pinning is structural for field `fut`. We do not move it, provide any access
-            // to it at all, and our drop impl is trivial.
-            unsafe { Pin::new_unchecked(fut).poll(&mut task::Context::from_waker(&noop_waker())) }
-        });
+        let res = shared.with(
+            &mut Shared {
+                locals,
+                ctx,
+                exec,
+                stack: stack.reborrow(),
+                error,
+                next_op: &mut next_op,
+            },
+            || {
+                // SAFETY: pinning is structural for field `fut`. We do not move it, provide any access
+                // to it at all, and our drop impl is trivial.
+                unsafe {
+                    Pin::new_unchecked(fut).poll(&mut task::Context::from_waker(&noop_waker()))
+                }
+            },
+        );
 
         match res {
             Poll::Ready(res) => {
@@ -449,47 +480,52 @@ impl<'gc, 'a> Shared<'gc, 'a> {
     }
 }
 
-thread_local! {
-    static SHARED: Cell<*mut Shared<'static, 'static>> = const { Cell::new(ptr::null_mut()) };
-}
+struct SharedSlot(Cell<*mut Shared<'static, 'static>>);
 
-fn with_shared<'gc, 'a, R>(shared: &mut Shared<'gc, 'a>, f: impl FnOnce() -> R) -> R {
-    // SAFETY: We are erasing the lifetimes of the `Shared` thread local.
-    //
-    // We know this is sound because the only way we *access* the `Shared` local is through
-    // `visit_shared`, which takes a callback which must work for *any* lifetimes 'gc and 'a. In
-    // addition, We know the real lifetimes of `Shared` are valid for the body of this function,
-    // and this function is the only thing that sets the thread local and it is unset before the
-    // function exits using drop guards.
-    unsafe {
-        SHARED.set(mem::transmute::<
-            *mut Shared<'_, '_>,
-            *mut Shared<'static, 'static>,
-        >(shared));
+impl SharedSlot {
+    fn new() -> Self {
+        Self(Cell::new(ptr::null_mut()))
     }
 
-    struct Guard;
-
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            SHARED.set(ptr::null_mut());
+    fn with<'gc, 'a, R>(&self, shared: &mut Shared<'gc, 'a>, f: impl FnOnce() -> R) -> R {
+        // SAFETY: We are erasing the lifetimes of the `Shared` pointer.
+        //
+        // We know this is sound because the only way we *access* the `Shared` pointer is through
+        // `SharedSlot::visit`, which takes a callback which must work for *any* lifetimes 'gc and
+        // 'a. In addition, We know the real lifetimes of `Shared` are valid for the body of this
+        // function, and this function is the only thing that sets the inner pointer and it is unset
+        // before the function exits using drop guards.
+        unsafe {
+            self.0.set(mem::transmute::<
+                *mut Shared<'_, '_>,
+                *mut Shared<'static, 'static>,
+            >(shared));
         }
+
+        struct Guard<'a>(&'a SharedSlot);
+
+        impl<'a> Drop for Guard<'a> {
+            fn drop(&mut self) {
+                self.0 .0.set(ptr::null_mut());
+            }
+        }
+
+        let _guard = Guard(self);
+
+        f()
     }
 
-    let _guard = Guard;
-
-    f()
-}
-
-fn visit_shared<R>(f: impl for<'gc, 'a> FnOnce(&'a mut Shared<'gc, 'a>) -> R) -> R {
-    // SAFETY: This function must work for any lifetimes 'gc and 'a, so this is sound as long as the
-    // call occurs within the callback given to `with_shared` (and this is guarded by setting the
-    // SHARED ptr to null outside of `with_shared`). See the safety note in `with_shared`.
-    unsafe {
-        let shared =
-            mem::transmute::<*mut Shared<'static, 'static>, *mut Shared<'_, '_>>(SHARED.get());
-        assert!(!shared.is_null(), "AsyncSequence SHARED value unset");
-        f(&mut *shared)
+    fn visit<R>(&self, f: impl for<'gc, 'a> FnOnce(&'a mut Shared<'gc, 'a>) -> R) -> R {
+        // SAFETY: This function must work for any lifetimes 'gc and 'a, so this is sound as
+        // long as the call occurs within the callback given to `SharedSlot::with` (and this is
+        // guarded by setting the ptr to null outside of `SharedSlot::with`). See the safety note
+        // in `SharedSlot::with`.
+        unsafe {
+            let shared =
+                mem::transmute::<*mut Shared<'static, 'static>, *mut Shared<'_, '_>>(self.0.get());
+            assert!(!shared.is_null(), "AsyncSequence SHARED value unset");
+            f(&mut *shared)
+        }
     }
 }
 
