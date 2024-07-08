@@ -79,8 +79,8 @@ impl<'gc> Registry<'gc> {
         self.roots
     }
 
-    /// "Stash" a value with a `'gc` branding lifetime in the registry, creating a `'static` handle
-    /// to it.
+    /// "Stash" a value with a `'gc` branding lifetime in the global registry, creating a `'static`
+    /// handle to it.
     ///
     /// Values stashed in the global registry always produce handles that are branded with
     /// `'static`, which makes them completely unrestricted. They are `'static` Rust types, which

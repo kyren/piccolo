@@ -244,7 +244,7 @@ impl<'gc> FromValue<'gc> for Error<'gc> {
     }
 }
 
-/// An [`Error`] that is not bound to the GC context.
+/// An [`enum@Error`] that is not bound to the GC context.
 #[derive(Debug, Clone)]
 pub enum ExternError {
     Lua(ExternLuaError),

@@ -110,7 +110,7 @@ impl<'ctx, 'gc> StashedRootSet<'ctx, 'gc> {
         s.stash(mc, StashedRootSet::new(self.roots))
     }
 
-    /// "Fetch" the real value for a handle that has been returned from [`StashRootSet::stash`].
+    /// "Fetch" the real value for a handle that has been returned from [`StashedRootSet::stash`].
     ///
     /// It can be implemented for external types by implementing the [`Fetchable`] trait.
     pub fn fetch<F: Fetchable<'ctx>>(&self, f: &F) -> F::Fetched<'gc> {
