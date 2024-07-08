@@ -35,7 +35,10 @@ pub use self::{
     function::Function,
     lua::{Context, Lua},
     meta_ops::MetaMethod,
-    registry::{Registry, Singleton},
+    registry::{
+        Registry, Singleton, StaticCallback, StaticClosure, StaticError, StaticExecutor,
+        StaticFunction, StaticString, StaticTable, StaticThread, StaticUserData, StaticValue,
+    },
     stack::Stack,
     stash::{
         StashedCallback, StashedClosure, StashedError, StashedExecutor, StashedFunction,

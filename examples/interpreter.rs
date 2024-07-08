@@ -7,14 +7,10 @@ use rustyline::DefaultEditor;
 use piccolo::{
     compiler::{ParseError, ParseErrorKind},
     io, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua,
-    StashedExecutor,
+    StaticExecutor,
 };
 
-fn run_code(
-    lua: &mut Lua,
-    executor: &StashedExecutor<'static>,
-    code: &str,
-) -> Result<(), ExternError> {
+fn run_code(lua: &mut Lua, executor: &StaticExecutor, code: &str) -> Result<(), ExternError> {
     lua.try_enter(|ctx| {
         let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,

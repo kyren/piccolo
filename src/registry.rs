@@ -10,7 +10,8 @@ use hashbrown::{hash_map, HashMap};
 use crate::{
     any::Any,
     stash::{Fetchable, Stashable, StashedRootSet},
-    Context,
+    Context, StashedCallback, StashedClosure, StashedError, StashedExecutor, StashedFunction,
+    StashedString, StashedTable, StashedThread, StashedUserData, StashedValue,
 };
 
 /// A type which can have a single registered value per [`Lua`](crate::Lua) instance.
@@ -109,3 +110,14 @@ impl<'gc> Registry<'gc> {
         f.fetch(StashedRootSet::new(self.roots))
     }
 }
+
+pub type StaticString = StashedString<'static>;
+pub type StaticTable = StashedTable<'static>;
+pub type StaticClosure = StashedClosure<'static>;
+pub type StaticCallback = StashedCallback<'static>;
+pub type StaticFunction = StashedFunction<'static>;
+pub type StaticThread = StashedThread<'static>;
+pub type StaticUserData = StashedUserData<'static>;
+pub type StaticValue = StashedValue<'static>;
+pub type StaticError = StashedError<'static>;
+pub type StaticExecutor = StashedExecutor<'static>;
