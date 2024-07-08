@@ -179,6 +179,16 @@ impl<'gc, E: Into<anyhow::Error>> From<E> for Error<'gc> {
 }
 
 impl<'gc> Error<'gc> {
+    /// Turn a Lua [`Value`] into an `Error`.
+    ///
+    /// If the provided value is a [`UserData`] object which holds a [`RuntimeError`], then this
+    /// conversion will clone the held `RuntimeError` and properly return an [`Error::Runtime`]
+    /// variant. This is how Rust errors are properly transported through Lua: a `RuntimeError`
+    /// which is turned into a `Value` with [`Error::to_value`] will always turn back into a
+    /// `RuntimeError` error with [`Error::from_value`].
+    ///
+    /// If the given value is *any other* kind of Lua value, then this will return a [`LuaError`]
+    /// instead.
     pub fn from_value(value: Value<'gc>) -> Self {
         if let Value::UserData(ud) = value {
             if let Ok(err) = ud.downcast_static::<RuntimeError>() {
@@ -189,6 +199,13 @@ impl<'gc> Error<'gc> {
         Error::Lua(value.into())
     }
 
+    /// Convert an `Error` into a Lua value.
+    ///
+    /// For Lua errors, this simply returns the original Lua [`Value`] directly.
+    ///
+    /// For Rust errors, this will return a [`UserData`] value which holds a [`RuntimeError`]. The
+    /// `UserData` object will also have a `__tostring` metamethod which prints the error properly
+    /// when printed from Lua.
     pub fn to_value(&self, ctx: Context<'gc>) -> Value<'gc> {
         match self {
             Error::Lua(err) => err.0,
@@ -223,11 +240,11 @@ impl<'gc> Error<'gc> {
         }
     }
 
-    pub fn to_static(&self) -> ExternError {
-        self.clone().into_static()
+    pub fn to_extern(&self) -> ExternError {
+        self.clone().into_extern()
     }
 
-    pub fn into_static(self) -> ExternError {
+    pub fn into_extern(self) -> ExternError {
         self.into()
     }
 }

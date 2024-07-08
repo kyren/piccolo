@@ -246,13 +246,13 @@ impl Lua {
         r
     }
 
-    /// A version of `Lua::enter` that expects failure and also automatically converts `Error` types
-    /// into `StaticError`, allowing the error type to escape the arena.
+    /// A version of `Lua::enter` that expects failure and automatically converts [`Error`] into
+    /// [`ExternError`], allowing the error type to escape the arena.
     pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, ExternError>
     where
         F: for<'gc> FnOnce(Context<'gc>) -> Result<R, Error<'gc>>,
     {
-        self.enter(move |ctx| f(ctx).map_err(Error::into_static))
+        self.enter(move |ctx| f(ctx).map_err(Error::into_extern))
     }
 
     /// Run the given executor to completion.
