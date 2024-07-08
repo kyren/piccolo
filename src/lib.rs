@@ -30,7 +30,7 @@ pub use self::{
     closure::{Closure, CompilerError, FunctionPrototype},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
-    error::{Error, RuntimeError, StaticError, TypeError},
+    error::{Error, ExternError, RuntimeError, TypeError},
     fuel::Fuel,
     function::Function,
     lua::{Context, Lua},

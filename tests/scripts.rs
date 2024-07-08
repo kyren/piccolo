@@ -5,9 +5,9 @@ use std::{
     io::{stdout, Read, Write},
 };
 
-use piccolo::{io, Closure, Executor, Lua, StaticError};
+use piccolo::{io, Closure, Executor, ExternError, Lua};
 
-fn run_lua_code(name: &str, code: impl Read) -> Result<(), StaticError> {
+fn run_lua_code(name: &str, code: impl Read) -> Result<(), ExternError> {
     let mut lua = Lua::full();
 
     let exec = lua.try_enter(|ctx| {

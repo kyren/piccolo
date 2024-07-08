@@ -27,11 +27,11 @@ pub enum VMError {
     ExpectedVariableStack(bool),
     #[error("Bad types for SetList op, expected table, integer, found {0}, {1}")]
     BadSetList(&'static str, &'static str),
-    #[error(transparent)]
+    #[error("bad call")]
     BadCall(#[from] MetaCallError),
-    #[error(transparent)]
+    #[error("operator error")]
     OperatorError(#[from] MetaOperatorError),
-    #[error(transparent)]
+    #[error("bad concat type")]
     BadConcatType(#[from] BadConcatType),
     #[error("_ENV upvalue is only allowed on top-level closure")]
     BadEnvUpValue,

@@ -82,9 +82,6 @@ impl<'gc> Registry<'gc> {
     /// "Stash" a value with a `'gc` branding lifetime in the registry, creating a `'static` handle
     /// to it.
     ///
-    /// This works for any type that implements the [`Stashable`] trait, which all common `piccolo`
-    /// types do.
-    ///
     /// Values stashed in the global registry always produce handles that are branded with
     /// `'static`, which makes them completely unrestricted. They are `'static` Rust types, which
     /// means that the borrow checker will not stop you from storing them *anywhere*, including

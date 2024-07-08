@@ -6,15 +6,15 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, Callback, CallbackReturn, Closure, CompilerError, Executor, Function, Lua,
-    StashedExecutor, StaticError,
+    io, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua,
+    StashedExecutor,
 };
 
 fn run_code(
     lua: &mut Lua,
     executor: &StashedExecutor<'static>,
     code: &str,
-) -> Result<(), StaticError> {
+) -> Result<(), ExternError> {
     lua.try_enter(|ctx| {
         let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
@@ -64,14 +64,14 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             }
 
             match run_code(lua, &executor, &line) {
-                Err(StaticError::Runtime(err))
+                Err(err)
                     if !read_empty
                         && matches!(
-                            err.downcast::<CompilerError>(),
-                            Some(CompilerError::Parsing(ParseError {
+                            err.root_cause().downcast_ref::<ParseError>(),
+                            Some(ParseError {
                                 kind: ParseErrorKind::EndOfStream { .. },
                                 ..
-                            }))
+                            })
                         ) =>
                 {
                     prompt = ">> ";

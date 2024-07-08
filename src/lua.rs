@@ -7,8 +7,8 @@ use crate::{
     stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, FromValue, Fuel, IntoValue, Registry, Singleton, StashedExecutor,
-    StaticError, String, Table, TypeError, Value,
+    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, Singleton,
+    StashedExecutor, String, Table, TypeError, Value,
 };
 
 /// A value representing the main "execution context" of a Lua state.
@@ -248,7 +248,7 @@ impl Lua {
 
     /// A version of `Lua::enter` that expects failure and also automatically converts `Error` types
     /// into `StaticError`, allowing the error type to escape the arena.
-    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, StaticError>
+    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, ExternError>
     where
         F: for<'gc> FnOnce(Context<'gc>) -> Result<R, Error<'gc>>,
     {
@@ -278,7 +278,7 @@ impl Lua {
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
         executor: &StashedExecutor<'static>,
-    ) -> Result<R, StaticError> {
+    ) -> Result<R, ExternError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
     }

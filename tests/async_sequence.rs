@@ -1,10 +1,10 @@
 use piccolo::{
-    async_sequence, meta_ops, Callback, CallbackReturn, Closure, Executor, Lua, SequenceReturn,
-    StaticError, Table, Variadic,
+    async_sequence, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Lua,
+    SequenceReturn, Table, Variadic,
 };
 
 #[test]
-fn async_sequence_works() -> Result<(), StaticError> {
+fn async_sequence_works() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {

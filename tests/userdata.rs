@@ -1,12 +1,12 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{Callback, CallbackReturn, Closure, Executor, Lua, StaticError, UserData, Value};
+use piccolo::{Callback, CallbackReturn, Closure, Executor, ExternError, Lua, UserData, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
 struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
-fn userdata() -> Result<(), StaticError> {
+fn userdata() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {

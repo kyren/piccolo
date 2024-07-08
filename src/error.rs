@@ -1,11 +1,11 @@
 use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc};
 
-use gc_arena::{Collect, Rootable};
+use gc_arena::{Collect, Gc, Rootable};
 use thiserror::Error;
 
 use crate::{
-    Callback, CallbackReturn, Context, FromValue, IntoValue, MetaMethod, Singleton, Table,
-    UserData, Value,
+    Callback, CallbackReturn, Context, FromValue, Function, IntoValue, MetaMethod, Singleton,
+    Table, UserData, Value,
 };
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -15,6 +15,9 @@ pub struct TypeError {
     pub found: &'static str,
 }
 
+/// An error raised directly from Lua which contains a Lua value.
+///
+/// Any [`Value`] can be raised as an error and it will be contained here.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct LuaError<'gc>(pub Value<'gc>);
@@ -32,21 +35,63 @@ impl<'gc> From<Value<'gc>> for LuaError<'gc> {
 }
 
 impl<'gc> LuaError<'gc> {
-    pub fn to_static(self) -> StaticLuaError {
+    pub fn to_extern(self) -> ExternLuaError {
         self.into()
     }
 }
 
+/// A [`LuaError`] that is not bound to the GC context.
+///
+/// All primitive values (nil, booleans, integers, numbers) are represented here exactly. Strings
+/// are converted *lossily* into normal Rust strings. Tables, functions, threads, and userdata are
+/// stored in their *raw pointer* form.
 #[derive(Debug, Clone, Error)]
-#[error("{0}")]
-pub struct StaticLuaError(StdString);
+pub enum ExternLuaError {
+    #[error("nil")]
+    Nil,
+    #[error("{0}")]
+    Boolean(bool),
+    #[error("{0}")]
+    Integer(i64),
+    #[error("{0}")]
+    Number(f64),
+    #[error("{0}")]
+    String(StdString),
+    #[error("<table {0:p}>")]
+    Table(*const ()),
+    #[error("<function {0:p}>")]
+    Function(*const ()),
+    #[error("<thread {0:p}>")]
+    Thread(*const ()),
+    #[error("<userdata {0:p}>")]
+    UserData(*const ()),
+}
 
-impl<'gc> From<LuaError<'gc>> for StaticLuaError {
+impl<'gc> From<LuaError<'gc>> for ExternLuaError {
     fn from(error: LuaError<'gc>) -> Self {
-        Self(error.to_string())
+        match error.0 {
+            Value::Nil => ExternLuaError::Nil,
+            Value::Boolean(b) => ExternLuaError::Boolean(b),
+            Value::Integer(i) => ExternLuaError::Integer(i),
+            Value::Number(n) => ExternLuaError::Number(n),
+            Value::String(s) => ExternLuaError::String(s.to_string()),
+            Value::Table(t) => ExternLuaError::Table(Gc::as_ptr(t.into_inner()) as *const ()),
+            Value::Function(Function::Callback(c)) => {
+                ExternLuaError::Function(Gc::as_ptr(c.into_inner()) as *const ())
+            }
+            Value::Function(Function::Closure(c)) => {
+                ExternLuaError::Function(Gc::as_ptr(c.into_inner()) as *const ())
+            }
+            Value::Thread(t) => ExternLuaError::Thread(Gc::as_ptr(t.into_inner()) as *const ()),
+            Value::UserData(u) => ExternLuaError::UserData(Gc::as_ptr(u.into_inner()) as *const ()),
+        }
     }
 }
 
+/// A shareable, dynamically typed wrapper around a normal Rust error.
+///
+/// Rust errors can be caught and re-raised through Lua which allows for unrestricted sharing, so
+/// this type contains its error inside an `Arc` pointer to allow for this.
 #[derive(Debug, Clone, Collect)]
 #[collect(require_static)]
 pub struct RuntimeError(pub Arc<anyhow::Error>);
@@ -89,6 +134,10 @@ impl AsRef<dyn StdError + 'static> for RuntimeError {
     }
 }
 
+/// An error that can be raised from Lua code.
+///
+/// This can be either a [`LuaError`] containing a Lua [`Value`], or a [`RuntimeError`] containing a
+/// Rust error.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub enum Error<'gc> {
@@ -174,11 +223,11 @@ impl<'gc> Error<'gc> {
         }
     }
 
-    pub fn to_static(&self) -> StaticError {
+    pub fn to_static(&self) -> ExternError {
         self.clone().into_static()
     }
 
-    pub fn into_static(self) -> StaticError {
+    pub fn into_static(self) -> ExternError {
         self.into()
     }
 }
@@ -195,46 +244,56 @@ impl<'gc> FromValue<'gc> for Error<'gc> {
     }
 }
 
+/// An [`Error`] that is not bound to the GC context.
 #[derive(Debug, Clone)]
-pub enum StaticError {
-    Lua(StaticLuaError),
+pub enum ExternError {
+    Lua(ExternLuaError),
     Runtime(RuntimeError),
 }
 
-impl fmt::Display for StaticError {
+impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StaticError::Lua(err) => write!(f, "lua error: {err}"),
-            StaticError::Runtime(err) => write!(f, "runtime error: {err}"),
+            ExternError::Lua(err) => write!(f, "lua error: {err}"),
+            ExternError::Runtime(err) => write!(f, "runtime error: {err}"),
         }
     }
 }
 
-impl StdError for StaticError {
+impl StdError for ExternError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            StaticError::Lua(err) => Some(err),
-            StaticError::Runtime(err) => Some(err.as_ref()),
+            ExternError::Lua(err) => Some(err),
+            ExternError::Runtime(err) => Some(err.as_ref()),
         }
     }
 }
 
-impl From<StaticLuaError> for StaticError {
-    fn from(error: StaticLuaError) -> Self {
+impl ExternError {
+    pub fn root_cause(&self) -> &(dyn StdError + 'static) {
+        match self {
+            ExternError::Lua(err) => err,
+            ExternError::Runtime(err) => err.root_cause(),
+        }
+    }
+}
+
+impl From<ExternLuaError> for ExternError {
+    fn from(error: ExternLuaError) -> Self {
         Self::Lua(error)
     }
 }
 
-impl From<RuntimeError> for StaticError {
+impl From<RuntimeError> for ExternError {
     fn from(error: RuntimeError) -> Self {
         Self::Runtime(error)
     }
 }
 
-impl<'gc> From<Error<'gc>> for StaticError {
+impl<'gc> From<Error<'gc>> for ExternError {
     fn from(err: Error<'gc>) -> Self {
         match err {
-            Error::Lua(err) => err.to_static().into(),
+            Error::Lua(err) => err.to_extern().into(),
             Error::Runtime(e) => e.into(),
         }
     }

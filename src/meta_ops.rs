@@ -150,7 +150,7 @@ pub enum MetaOperatorError {
     Unary(MetaMethod, &'static str),
     #[error("could not {} values of type {} and {}", .0.verb(), .1, .2)]
     Binary(MetaMethod, &'static str, &'static str),
-    #[error(transparent)]
+    #[error("invalid table key")]
     IndexKeyError(#[from] InvalidTableKey),
 }
 

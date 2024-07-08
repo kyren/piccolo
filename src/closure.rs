@@ -17,9 +17,9 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum CompilerError {
-    #[error(transparent)]
+    #[error("parse error")]
     Parsing(#[from] compiler::ParseError),
-    #[error(transparent)]
+    #[error("compile error")]
     Compilation(#[from] compiler::CompileError),
 }
 

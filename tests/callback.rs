@@ -2,12 +2,12 @@ use std::pin::Pin;
 
 use gc_arena::Collect;
 use piccolo::{
-    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
-    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor,
+    ExternError, Function, IntoValue, Lua, Sequence, SequencePoll, Stack, String, Thread, Value,
 };
 
 #[test]
-fn callback() -> Result<(), StaticError> {
+fn callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -39,7 +39,7 @@ fn callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn tail_call_trivial_callback() -> Result<(), StaticError> {
+fn tail_call_trivial_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -68,7 +68,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn loopy_callback() -> Result<(), StaticError> {
+fn loopy_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -144,7 +144,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn yield_sequence() -> Result<(), StaticError> {
+fn yield_sequence() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
