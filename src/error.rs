@@ -74,7 +74,7 @@ impl<'gc> From<LuaError<'gc>> for ExternLuaError {
             Value::Boolean(b) => ExternLuaError::Boolean(b),
             Value::Integer(i) => ExternLuaError::Integer(i),
             Value::Number(n) => ExternLuaError::Number(n),
-            Value::String(s) => ExternLuaError::String(s.to_string()),
+            Value::String(s) => ExternLuaError::String(s.display_lossy().to_string()),
             Value::Table(t) => ExternLuaError::Table(Gc::as_ptr(t.into_inner()) as *const ()),
             Value::Function(Function::Callback(c)) => {
                 ExternLuaError::Function(Gc::as_ptr(c.into_inner()) as *const ())

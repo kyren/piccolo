@@ -14,7 +14,10 @@ use gc_arena::{
 use hashbrown::{hash_map, raw::RawTable, HashMap};
 use thiserror::Error;
 
-use crate::{compiler::string_utils::display_utf8_lossy, Context, Value};
+use crate::{
+    compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy},
+    Context, Value,
+};
 
 /// The Lua string type.
 ///
@@ -168,13 +171,7 @@ fn str_hash(s: &[u8]) -> u64 {
 
 impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "String({})", self.display_lossy())
-    }
-}
-
-impl<'gc> fmt::Display for String<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.display_lossy())
+        write!(fmt, "String({:?})", self.debug_lossy())
     }
 }
 
@@ -224,6 +221,11 @@ impl<'gc> String<'gc> {
     /// Display a potentially non-utf8 `String` in a lossy way.
     pub fn display_lossy(self) -> impl fmt::Display + 'gc {
         display_utf8_lossy(self.as_bytes())
+    }
+
+    /// Debug a potentially non-utf8 `String` in a lossy way.
+    pub fn debug_lossy(self) -> impl fmt::Debug + 'gc {
+        debug_utf8_lossy(self.as_bytes())
     }
 }
 

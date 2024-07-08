@@ -12,7 +12,7 @@ use piccolo::{
 
 fn run_code(lua: &mut Lua, executor: &StaticExecutor, code: &str) -> Result<(), ExternError> {
     lua.try_enter(|ctx| {
-        let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
+        let closure = match Closure::load(ctx, None, ("return ".to_owned() + code).as_bytes()) {
             Ok(closure) => closure,
             Err(_) => Closure::load(ctx, None, code.as_bytes())?,
         };

@@ -46,8 +46,8 @@ impl<'gc> Value<'gc> {
     /// [`Value::Nil`] is printed as "nil", booleans, integers, and numbers are always printed as
     /// directly as they would be from Rust.
     ///
-    /// [`Value::String`] is printed using the [`String`] [`Display`](fmt::Display) impl, which
-    /// displays strings in a lossy fashion if they are not UTF-8 internally.
+    /// [`Value::String`] is printed using the [`String::display_lossy`] method, which displays
+    /// strings in a lossy fashion if they are not UTF-8 internally.
     ///
     /// [`Value::Table`]s, [`Value::Function`]s, [`Value::Thread`]s, and [`Value::UserData`]
     /// are all printed as `"<typename {:p}>"`, where 'typename' is the value returned by
@@ -62,7 +62,7 @@ impl<'gc> Value<'gc> {
                     Value::Boolean(b) => write!(fmt, "{}", b),
                     Value::Integer(i) => write!(fmt, "{}", i),
                     Value::Number(f) => write!(fmt, "{}", f),
-                    Value::String(s) => write!(fmt, "{}", s),
+                    Value::String(s) => write!(fmt, "{}", s.display_lossy()),
                     Value::Table(t) => write!(fmt, "<table {:p}>", Gc::as_ptr(t.into_inner())),
                     Value::Function(Function::Closure(c)) => {
                         write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
