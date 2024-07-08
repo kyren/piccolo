@@ -1,17 +1,18 @@
-use std::mem;
-use std::pin::Pin;
+use std::{mem, pin::Pin};
 
 use anyhow::Context as _;
 use gc_arena::Collect;
 
-use crate::async_callback::{AsyncSequence, Locals};
-use crate::fuel::count_fuel;
-use crate::meta_ops::{self, MetaResult};
-use crate::table::RawTable;
 use crate::{
-    async_sequence, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue,
-    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
-    StashedTable, StashedValue, Table, Value,
+    async_callback::AsyncSequence,
+    async_sequence,
+    fuel::count_fuel,
+    meta_ops::{self, MetaResult},
+    stash::StashedRootSet,
+    table::RawTable,
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
+    Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction, StashedTable,
+    StashedValue, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -72,7 +73,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
 fn prep_metaop_call<'seq, 'gc, const N: usize>(
     ctx: Context<'gc>,
     mut stack: Stack<'gc, '_>,
-    locals: Locals<'seq, 'gc>,
+    locals: StashedRootSet<'seq, 'gc>,
     res: MetaResult<'gc, N>,
 ) -> Option<StashedFunction<'seq>> {
     match res {

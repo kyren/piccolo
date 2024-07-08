@@ -69,7 +69,7 @@ impl<'ctx, 'gc> StashedRootSet<'ctx, 'gc> {
     }
 
     /// Store a root inside this root set.
-    pub fn stash<R: for<'a> Rootable<'a>>(
+    pub fn stash_root<R: for<'a> Rootable<'a>>(
         &self,
         mc: &Mutation<'gc>,
         root: Gc<'gc, Root<'gc, R>>,
@@ -81,7 +81,7 @@ impl<'ctx, 'gc> StashedRootSet<'ctx, 'gc> {
     }
 
     /// Fetch a root from this root set.
-    pub fn fetch<R: for<'r> Rootable<'r>>(
+    pub fn fetch_root<R: for<'r> Rootable<'r>>(
         &self,
         root: &StashedRoot<'ctx, R>,
     ) -> Gc<'gc, Root<'gc, R>> {
@@ -89,7 +89,7 @@ impl<'ctx, 'gc> StashedRootSet<'ctx, 'gc> {
     }
 
     /// Fetch a root, returning an error if this root does not belong to this root set.
-    pub fn try_fetch<R: for<'r> Rootable<'r>>(
+    pub fn try_fetch_root<R: for<'r> Rootable<'r>>(
         &self,
         root: &StashedRoot<'ctx, R>,
     ) -> Result<Gc<'gc, Root<'gc, R>>, MismatchedRootSet> {
@@ -97,8 +97,24 @@ impl<'ctx, 'gc> StashedRootSet<'ctx, 'gc> {
     }
 
     /// Returns true if the given root belings to this root set.
-    pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &StashedRoot<'ctx, R>) -> bool {
+    pub fn contains_root<R: for<'r> Rootable<'r>>(&self, root: &StashedRoot<'ctx, R>) -> bool {
         self.roots.contains(&root.inner)
+    }
+
+    /// "Stash" a value with a `'gc` branding lifetime in this `StashRootSet`, creating a `'ctx`
+    /// handle to it.
+    ///
+    /// This works for any type that implements the [`Stashable`] trait, which all common `piccolo`
+    /// types do.
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed<'ctx> {
+        s.stash(mc, StashedRootSet::new(self.roots))
+    }
+
+    /// "Fetch" the real value for a handle that has been returned from [`StashRootSet::stash`].
+    ///
+    /// It can be implemented for external types by implementing the [`Fetchable`] trait.
+    pub fn fetch<F: Fetchable<'ctx>>(&self, f: &F) -> F::Fetched<'gc> {
+        f.fetch(StashedRootSet::new(self.roots))
     }
 }
 
@@ -145,7 +161,7 @@ impl<'gc> Stashable<'gc> for String<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedString(roots.stash::<Rootable![StringInner]>(mc, self.into_inner()))
+        StashedString(roots.stash_root::<Rootable![StringInner]>(mc, self.into_inner()))
     }
 }
 
@@ -153,7 +169,7 @@ impl<'ctx> Fetchable<'ctx> for StashedString<'ctx> {
     type Fetched<'gc> = String<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        String::from_inner(roots.fetch(&self.0))
+        String::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -176,7 +192,7 @@ impl<'gc> Stashable<'gc> for Table<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedTable(roots.stash::<Rootable![TableInner<'_>]>(mc, self.into_inner()))
+        StashedTable(roots.stash_root::<Rootable![TableInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -184,7 +200,7 @@ impl<'ctx> Fetchable<'ctx> for StashedTable<'ctx> {
     type Fetched<'gc> = Table<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        Table::from_inner(roots.fetch(&self.0))
+        Table::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -207,7 +223,7 @@ impl<'gc> Stashable<'gc> for Closure<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedClosure(roots.stash::<Rootable![ClosureInner<'_>]>(mc, self.into_inner()))
+        StashedClosure(roots.stash_root::<Rootable![ClosureInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -215,7 +231,7 @@ impl<'ctx> Fetchable<'ctx> for StashedClosure<'ctx> {
     type Fetched<'gc> = Closure<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        Closure::from_inner(roots.fetch(&self.0))
+        Closure::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -238,7 +254,7 @@ impl<'gc> Stashable<'gc> for Callback<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedCallback(roots.stash::<Rootable![CallbackInner<'_>]>(mc, self.into_inner()))
+        StashedCallback(roots.stash_root::<Rootable![CallbackInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -246,7 +262,7 @@ impl<'ctx> Fetchable<'ctx> for StashedCallback<'ctx> {
     type Fetched<'gc> = Callback<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        Callback::from_inner(roots.fetch(&self.0))
+        Callback::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -269,7 +285,7 @@ impl<'gc> Stashable<'gc> for Thread<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedThread(roots.stash::<Rootable![ThreadInner<'_>]>(mc, self.into_inner()))
+        StashedThread(roots.stash_root::<Rootable![ThreadInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -277,7 +293,7 @@ impl<'ctx> Fetchable<'ctx> for StashedThread<'ctx> {
     type Fetched<'gc> = Thread<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        Thread::from_inner(roots.fetch(&self.0))
+        Thread::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -300,7 +316,7 @@ impl<'gc> Stashable<'gc> for UserData<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedUserData(roots.stash::<Rootable![UserDataInner<'_>]>(mc, self.into_inner()))
+        StashedUserData(roots.stash_root::<Rootable![UserDataInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -308,7 +324,7 @@ impl<'ctx> Fetchable<'ctx> for StashedUserData<'ctx> {
     type Fetched<'gc> = UserData<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        UserData::from_inner(roots.fetch(&self.0))
+        UserData::from_inner(roots.fetch_root(&self.0))
     }
 }
 
@@ -331,7 +347,7 @@ impl<'gc> Stashable<'gc> for Executor<'gc> {
         mc: &Mutation<'gc>,
         roots: StashedRootSet<'ctx, 'gc>,
     ) -> Self::Stashed<'ctx> {
-        StashedExecutor(roots.stash::<Rootable![ExecutorInner<'_>]>(mc, self.into_inner()))
+        StashedExecutor(roots.stash_root::<Rootable![ExecutorInner<'_>]>(mc, self.into_inner()))
     }
 }
 
@@ -339,7 +355,7 @@ impl<'ctx> Fetchable<'ctx> for StashedExecutor<'ctx> {
     type Fetched<'gc> = Executor<'gc>;
 
     fn fetch<'gc>(&self, roots: StashedRootSet<'ctx, 'gc>) -> Self::Fetched<'gc> {
-        Executor::from_inner(roots.fetch(&self.0))
+        Executor::from_inner(roots.fetch_root(&self.0))
     }
 }
 
