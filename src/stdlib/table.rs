@@ -4,11 +4,10 @@ use anyhow::Context as _;
 use gc_arena::Collect;
 
 use crate::{
-    async_callback::AsyncSequence,
+    async_callback::{AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
     meta_ops::{self, MetaResult},
-    stash::StashedRootSet,
     table::RawTable,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
     Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction, StashedTable,
@@ -70,12 +69,12 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     ctx.set_global("table", table);
 }
 
-fn prep_metaop_call<'seq, 'gc, const N: usize>(
+fn prep_metaop_call<'gc, const N: usize>(
     ctx: Context<'gc>,
     mut stack: Stack<'gc, '_>,
-    locals: StashedRootSet<'seq, 'gc>,
+    locals: Locals<'gc, '_>,
     res: MetaResult<'gc, N>,
-) -> Option<StashedFunction<'seq>> {
+) -> Option<StashedFunction> {
     match res {
         MetaResult::Value(v) => {
             stack.push_back(v);
@@ -88,12 +87,12 @@ fn prep_metaop_call<'seq, 'gc, const N: usize>(
     }
 }
 
-async fn index_helper<'seq>(
-    seq: &mut AsyncSequence<'seq>,
-    table: &StashedTable<'seq>,
+async fn index_helper(
+    seq: &mut AsyncSequence,
+    table: &StashedTable,
     key: i64,
     bottom: usize,
-) -> Result<(), StashedError<'seq>> {
+) -> Result<(), StashedError> {
     let call = seq.try_enter(|ctx, locals, _, stack| {
         let table = locals.fetch(table);
         let call = meta_ops::index(ctx, Value::Table(table), Value::Integer(key))?;
@@ -108,13 +107,13 @@ async fn index_helper<'seq>(
     Ok(())
 }
 
-async fn index_set_helper<'seq>(
-    seq: &mut AsyncSequence<'seq>,
-    table: &StashedTable<'seq>,
+async fn index_set_helper(
+    seq: &mut AsyncSequence,
+    table: &StashedTable,
     key: i64,
-    value: StashedValue<'seq>,
+    value: StashedValue,
     bottom: usize,
-) -> Result<(), StashedError<'seq>> {
+) -> Result<(), StashedError> {
     let call = seq.try_enter(|ctx, locals, _, mut stack| {
         let table = locals.fetch(table);
         let value = locals.fetch(&value);
@@ -185,9 +184,9 @@ fn table_remove_impl<'gc>(
     }
 
     // Fast path failed, fall back to direct indexing
-    let s = async_sequence(&ctx, |locals, builder| {
+    let s = async_sequence(&ctx, |locals, mut seq| {
         let table = locals.stash(&ctx, table);
-        builder.build(|mut seq| async move {
+        async move {
             let length = if let Some(len) = length {
                 len as i64
             } else {
@@ -248,7 +247,7 @@ fn table_remove_impl<'gc>(
                         .into())
                 })
             }
-        })
+        }
     });
     Ok(CallbackReturn::Sequence(s))
 }
@@ -320,10 +319,10 @@ fn table_insert_impl<'gc>(
     }
 
     // Fast path failed, fall back to direct indexing
-    let s = async_sequence(&ctx, |locals, builder| {
+    let s = async_sequence(&ctx, |locals, mut seq| {
         let table = locals.stash(&ctx, table);
         let value = locals.stash(&ctx, value);
-        builder.build(|mut seq| async move {
+        async move {
             let length = if let Some(len) = length {
                 len as i64
             } else {
@@ -374,7 +373,7 @@ fn table_insert_impl<'gc>(
                         .into())
                 })
             }
-        })
+        }
     });
     Ok(CallbackReturn::Sequence(s))
 }

@@ -9,11 +9,10 @@ use std::{
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use allocator_api2::boxed;
-use gc_arena::{allocator_api::MetricsAlloc, Collect, DynamicRootSet, Mutation};
+use gc_arena::{Collect, DynamicRootSet, Mutation};
 
 use crate::{
-    stash::{Fetchable, Stashable, StashedRootSet},
+    stash::{Fetchable, Stashable},
     BoxSequence, Context, Error, Execution, Function, Sequence, SequencePoll, Stack, StashedError,
     StashedFunction, StashedThread, Thread,
 };
@@ -33,25 +32,70 @@ use crate::{
 /// function from the created future here is *not* the way to do it. It will not do what you want,
 /// and probably will result in panics.
 ///
-/// The provided `create` function is given two parameters: a [`StashedRootSet`] to stash values
-/// that will be owned by the future, and a [`Builder`] object to actually create the resulting
-/// [`BoxSequence`]. The callback is called immediately and is not required to be `'static`, it
-/// exists only to create the generative `'seq` lifetime and is required for correctness. The
-/// function should stash any local variables needed by the future from the outer context, then move
-/// those locals into the future provided to [`Builder::build`].
-pub fn async_sequence<'gc, R>(
+/// The provided `create` function is given two parameters: a [`Locals`] object to stash values
+/// that will be owned by the future, and an [`AsyncSequence`] object which the future shuld use to
+/// control the `Sequence` from the inside. The callback is called immediately and is not required
+/// to be `'static`, it exists only to construct the controlling future.
+///
+/// The provided `create` function should only stash local variables and move the `AsyncSequence`
+/// object into the returned future, nothing more. The `AsyncSequence` handle is `'static` for
+/// simplicity, but it should not be moved out of the returned future or have methods called on it
+/// outside of the returned future, this will result in panics!
+///
+/// The returned future can capture `'static` variables from the outer scope as well as stashed
+/// local variables, but it *cannot* capture anything branded with a `'gc` lifetime, as this will
+/// result in compiler errors. There is no way in today's Rust for futures created from `async`
+/// blocks to implement the `Collect` trait, so we must accept futures that do *not* implement
+/// `Collect` and *can't* hold `'gc` branded values. This is the reason why we provide a `Locals`:
+/// to instead allow the future to hold onto these GC values indirectly.
+///
+/// # Panics
+///
+/// All Rust yields (`.await`) within the returned future must occur from calling an async method
+/// on the `AsyncSequence` handle. If some other future is `.await`ed, this will cause the outer
+/// `Sequence` poll methods to panic.
+///
+/// Methods on `AsyncSequence` must *only* be called from the returned future. Calling methods on
+/// `AsyncSequence` directly from the provided create function or from storing the `AsyncSequence`
+/// somewhere else wil result in a panic.
+pub fn async_sequence<'gc, F>(
     mc: &Mutation<'gc>,
-    f: impl for<'seq> FnOnce(StashedRootSet<'seq, 'gc>, Builder<'seq, 'gc>) -> R,
-) -> R {
-    let locals = DynamicRootSet::new(mc);
-    f(
-        StashedRootSet::new(locals),
-        Builder {
-            alloc: MetricsAlloc::from_metrics(mc.metrics().clone()),
-            locals,
-            _invariant: PhantomData,
+    create: impl FnOnce(Locals<'gc, '_>, AsyncSequence) -> F,
+) -> BoxSequence<'gc>
+where
+    F: Future<Output = Result<SequenceReturn, StashedError>> + 'static,
+{
+    // NOTE: Unfortunately, we can't get away with a simple raw pointer to `SharedSlot` in the
+    // `AsyncSequence` object here. The reason for this is that the lifetime of `AsyncSequence` is
+    // not ACTUALLY bound to the returned `BoxSequence`; there is no way in today's Rust to properly
+    // make `AsyncSequence` non-'static and bind this non-'static lifetime to the returned future
+    // without requiring that the returned future be boxed, which results in double boxing in the
+    // outer `BoxSequence`.
+    //
+    // Rust may change in the future to allow for a workable lifetime on `AsyncSequence` to prevent
+    // this. This should allow soundly giving the `AsyncSequence` object a bare pointer to the
+    // internals of its `BoxSequence` parent.
+    //
+    // NOTE: We are not bothering to mark the `Rc` allocation here in the GC metrics. Since
+    // `DynamicRootSet` and `SequenceImpl` are always non-zero size, creating an async sequence
+    // always marks some external allocation anyway, so this is just a small inaccuracy rather
+    // than a potential way for Lua to allocate an arbitrary amount of un-marked memory.
+    //
+    // This will be much easier to handle properly when `allocator_api` is stable.
+    let shared = Rc::new(SharedSlot::new());
+
+    let roots = DynamicRootSet::new(mc);
+
+    let fut = create(
+        Locals {
+            roots,
+            _marker: PhantomData,
         },
-    )
+        AsyncSequence {
+            shared: shared.clone(),
+        },
+    );
+    BoxSequence::new(mc, SequenceImpl { shared, roots, fut })
 }
 
 /// Return type for futures that are driving an async sequence.
@@ -59,136 +103,27 @@ pub fn async_sequence<'gc, R>(
 /// This performs equivalent actions to [`CallbackReturn`](crate::CallbackReturn) and the tail
 /// variants of [`SequencePoll`], so check those for more information on precisely what these
 /// actions mean.
-pub enum SequenceReturn<'seq> {
+pub enum SequenceReturn {
     /// Sequence finished, all of the values in the stack will be returned to the caller.
     Return,
     /// Call the given function with the values in the stack as arguments.
-    Call(StashedFunction<'seq>),
+    Call(StashedFunction),
     /// Yield the values in the stack.
-    Yield(Option<StashedThread<'seq>>),
+    Yield(Option<StashedThread>),
     /// Resume the given thread with the values in the stack as arguments.
-    Resume(StashedThread<'seq>),
-}
-
-/// Provided by [`async_sequence`] as a means to build the final [`BoxSequence`].
-pub struct Builder<'seq, 'gc> {
-    alloc: MetricsAlloc<'static>,
-    locals: DynamicRootSet<'gc>,
-    _invariant: Invariant<'seq>,
-}
-
-impl<'seq, 'gc> Builder<'seq, 'gc> {
-    /// Build a [`BoxSequence`] out of a [`Future`].
-    ///
-    /// The provided function is given an [`AsyncSequence`] handle, which the future should use to
-    /// control the `Sequence` from the inside.
-    ///
-    /// We accept a function here rather than accepting an `impl Future` directly only because we
-    /// need a way to provide an `AsyncSequence` handle that is moved into an `async` block. There
-    /// is no reason for the given function to do *anything* other than accept a `seq` parameter and
-    /// *immediately* move it into the returned `async` block. It is NOT legal to call methods on
-    /// `AsyncSequence` outside of this future, calling methods on this handle directly in the given
-    /// callback will panic!
-    ///
-    /// The returned async block can also capture stashed variables created from the provided
-    /// [`StashedRootSet`] object, and things from outer scopes IF they are `'static`. You should
-    /// *not* try to move anything branded with a `'gc` lifetime into the future, because this will
-    /// result in compiler errors. There is no way in today's Rust for futures created from `async`
-    /// blocks to implement the `Collect` trait, so we must accept futures that do *not* implement
-    /// `Collect` and *can't* hold `'gc` branded values. This is the reason why we provide a method
-    /// to stash values in the first place, to allow the future to hold onto these GC values, if
-    /// only indirectly.
-    ///
-    /// The odd and circumlocutious way that the final `BoxSequence` is constructed is due to
-    /// current limitations of Rust and avoiding the need to unnecessarily box the provided
-    /// `impl Future`. This may be able to be improved in the future.
-    ///
-    /// # Panics
-    ///
-    /// All Rust yields (`.await`) within the created future must occur from calling an async method
-    /// on the `AsyncSequence` handle. If some other future is `.await`ed, this will cause the outer
-    /// `Sequence` poll methods to panic.
-    ///
-    /// Methods on `AsyncSequence` must *only* be called from the returned `async` block. Calling
-    /// methods on `AsyncSequence` from the provided function directly will result in a panic.
-    pub fn build<F>(self, f: impl FnOnce(AsyncSequence<'seq>) -> F) -> BoxSequence<'gc>
-    where
-        F: Future<Output = Result<SequenceReturn<'seq>, StashedError<'seq>>> + 'seq,
-    {
-        // NOTE: Unfortunately, we can't get away with a simple raw pointer to `SharedSlot` in the
-        // `AsyncSequence` object here. The reason for this is that the lifetime of `AsyncSequence`
-        // is not ACTUALLY bound to the returned `BoxSequence`; since the `Builder` itself
-        // exists within a `'seq` callback, if the provided closure is pathological, the provided
-        // `AsyncSequence` parameter can escape this closure and outlive the returned `BoxSequence`.
-        //
-        // Rust may change in the future to allow for a workable extra lifetime on `AsyncSequence`
-        // to prevent this, or simply a way to avoid this builder pattern entirely without
-        // double boxing the returned sequence. Any of these should allow soundly giving the
-        // `AsyncSequence` object a bare pointer to the internals of its `BoxSequence` parent.
-        //
-        // NOTE: We are not bothering to mark the `Rc` allocation here in the GC metrics. Since
-        // `DynamicRootSet` and `SequenceImpl` are always non-zero size, creating an async sequence
-        // always marks some external allocation anyway, so this is just a small inaccuracy rather
-        // than a potential way for a script to allocate an arbitrary amount of un-marked memory.
-        //
-        // This will be much easier to handle properly when `allocator_api` is stable.
-        let shared = Rc::new(SharedSlot::new());
-
-        let fut = f(AsyncSequence {
-            shared: shared.clone(),
-            _invariant: PhantomData,
-        });
-        let sequence = boxed::Box::new_in(
-            SequenceImpl {
-                shared,
-                locals: self.locals,
-                fut,
-            },
-            self.alloc,
-        );
-        let (ptr, alloc) = boxed::Box::into_raw_with_allocator(sequence);
-        // SAFETY: This sequence impl normally has a 'seq lifetime on it, and we are casting it
-        // away. The 'seq lifetime does not actually represent a real lifetime of any value, it
-        // is purely used as a branding lifetime (the lifetime is actually *always* 'static, but
-        // we can't prove that here, and it is not even required for soundness, only to prevent
-        // uncollectable cycles).
-        BoxSequence::from_box(unsafe { boxed::Box::from_raw_in(ptr as *mut dyn Sequence, alloc) })
-    }
+    Resume(StashedThread),
 }
 
 /// The held state for a `Sequence` being driven by a Rust async block.
 ///
-/// Many methods on `AsyncSequence` are async; `.await`ing them causes the outer [`AsyncSequence`]
+/// Most methods on `AsyncSequence` are async; `.await`ing them causes the outer [`AsyncSequence`]
 /// to return a non-tail [`SequencePoll`] value, triggering the appropriate action. If this action
 /// results in an error, the async method will return the [`Error`] provided to [`Sequence::error`].
-///
-/// GC values stashed with the provided [`StashedRootSet`] return handles that are branded by
-/// `'seq`, which ensures that they cannot be stored inside the GC context, nor can they escape the
-/// body of the async block driving the [`AsyncSequence`].
-///
-/// These handles cannot escape their parent future, but they *can* be safely stored outside of
-/// [`AsyncSequence::enter`] *and* across await points. Since they cannot be stored inside the GC
-/// context *nor* escape their parent future, they are impossible to misuse; they perfectly mimic
-/// what we could do if we could actually have the future itself implement `Collect`. If *only*
-/// these local handles are used to store all GC values within the future, then the resulting
-/// `AsyncSequence` will always be properly garbage collected, *even if* there are reference cycles
-/// between the held locals and the sequence itself.
-///
-/// The same cannot be said for values stashed in the registry! An `AsyncSequence` has its own
-/// [`StashedRootSet`] which allows ownership of stashed values to be tied to that *particular*
-/// `AsyncSequence`. If GC values are instead stashed in the global registry, then those values will
-/// live as long as *the global registry itself*, which is as long as the `Lua` instance itself is
-/// alive. If such a handle is stored inside an async sequence and indirectly points back to the
-/// sequence holding it, this will result in an uncollectable cycle.
-///
-/// In summary: Do NOT store handles to values stashed in the registry within async sequences,
-/// instead *only* store handles to values stashed using the provided [`StashedRootSet`] object!
-pub struct AsyncSequence<'seq> {
+pub struct AsyncSequence {
     shared: Rc<SharedSlot>,
-    _invariant: Invariant<'seq>,
 }
 
-impl<'seq> AsyncSequence<'seq> {
+impl AsyncSequence {
     /// Enter the garbage collector context within an async sequence.
     ///
     /// Unfortunately, today's Rust does not provide any way for generator (async block) state
@@ -198,44 +133,43 @@ impl<'seq> AsyncSequence<'seq> {
     /// interface we use from the outside of the `Lua` context (like `Lua::enter`).
     pub fn enter<F, R>(&mut self, f: F) -> R
     where
-        F: for<'gc> FnOnce(
-            Context<'gc>,
-            StashedRootSet<'seq, 'gc>,
-            Execution<'gc, '_>,
-            Stack<'gc, '_>,
-        ) -> R,
-        R: 'seq,
+        F: for<'gc> FnOnce(Context<'gc>, Locals<'gc, '_>, Execution<'gc, '_>, Stack<'gc, '_>) -> R,
     {
         self.shared.visit(move |shared| {
             f(
                 shared.ctx,
-                StashedRootSet::new(shared.locals),
+                Locals {
+                    roots: shared.roots,
+                    _marker: PhantomData,
+                },
                 shared.exec.reborrow(),
                 shared.stack.reborrow(),
             )
         })
     }
 
-    /// A version of [`AsyncSequence::enter`] which supports failure, and automatically turns any
-    /// returned error into a [`StashedError`].
-    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, StashedError<'seq>>
+    /// A version of [`AsyncSequence::enter`] which supports failure, and automatically stashes the
+    /// returned error in this sequence's [`Locals`] instance.
+    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, StashedError>
     where
         F: for<'gc> FnOnce(
             Context<'gc>,
-            StashedRootSet<'seq, 'gc>,
+            Locals<'gc, '_>,
             Execution<'gc, '_>,
             Stack<'gc, '_>,
         ) -> Result<R, Error<'gc>>,
-        R: 'seq,
     {
         self.shared.visit(move |shared| {
             f(
                 shared.ctx,
-                StashedRootSet::new(shared.locals),
+                Locals {
+                    roots: shared.roots,
+                    _marker: PhantomData,
+                },
                 shared.exec.reborrow(),
                 shared.stack.reborrow(),
             )
-            .map_err(|e| e.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
+            .map_err(|e| e.stash(&shared.ctx, shared.roots))
         })
     }
 
@@ -262,19 +196,19 @@ impl<'seq> AsyncSequence<'seq> {
     /// Call the given Lua function with arguments / returns starting at `bottom` in the Stack.
     pub async fn call(
         &mut self,
-        func: &StashedFunction<'seq>,
+        func: &StashedFunction,
         bottom: usize,
-    ) -> Result<(), StashedError<'seq>> {
+    ) -> Result<(), StashedError> {
         self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Call {
-                function: func.fetch(StashedRootSet::new(shared.locals)),
+                function: func.fetch(shared.roots),
                 bottom,
             });
         });
         wait_once().await;
         self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
-                Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
+                Err(err.stash(&shared.ctx, shared.roots))
             } else {
                 Ok(())
             }
@@ -285,19 +219,19 @@ impl<'seq> AsyncSequence<'seq> {
     /// this `Sequence` is resumed, resume arguments will be placed at `bottom` in the stack.
     pub async fn _yield(
         &mut self,
-        to_thread: Option<&StashedThread<'seq>>,
+        to_thread: Option<&StashedThread>,
         bottom: usize,
-    ) -> Result<(), StashedError<'seq>> {
+    ) -> Result<(), StashedError> {
         self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Yield {
-                to_thread: to_thread.map(|t| t.fetch(StashedRootSet::new(shared.locals))),
+                to_thread: to_thread.map(|t| t.fetch(shared.roots)),
                 bottom,
             });
         });
         wait_once().await;
         self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
-                Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
+                Err(err.stash(&shared.ctx, shared.roots))
             } else {
                 Ok(())
             }
@@ -308,19 +242,19 @@ impl<'seq> AsyncSequence<'seq> {
     /// return values will be placed at `bottom` in the stack.
     pub async fn resume(
         &mut self,
-        thread: &StashedThread<'seq>,
+        thread: &StashedThread,
         bottom: usize,
-    ) -> Result<(), StashedError<'seq>> {
+    ) -> Result<(), StashedError> {
         self.shared.visit(move |shared| {
             shared.set_next_op(SequenceOp::Resume {
-                thread: thread.fetch(StashedRootSet::new(shared.locals)),
+                thread: thread.fetch(shared.roots),
                 bottom,
             });
         });
         wait_once().await;
         self.shared.visit(move |shared| {
             if let Some(err) = shared.error.take() {
-                Err(err.stash(&shared.ctx, StashedRootSet::new(shared.locals)))
+                Err(err.stash(&shared.ctx, shared.roots))
             } else {
                 Ok(())
             }
@@ -328,22 +262,69 @@ impl<'seq> AsyncSequence<'seq> {
     }
 }
 
-struct SequenceImpl<'gc, F> {
-    shared: Rc<SharedSlot>,
-    locals: DynamicRootSet<'gc>,
-    fut: F,
+/// A collection of stashed values that are local to a specific [`AsyncSequence`].
+///
+/// The returned handles can *only* be retrieved using the `Locals` handle provided by methods on
+/// the *same* `AsyncSequence` that was used to stash them, they cannot be mixed with handles from
+/// the global registry or handles from other async sequences, even though they share the same
+/// stashed types.
+///
+/// Like "stashed values" in the registry, the handles returned by `Locals` are *not* branded with
+/// `'gc`, which means the Rust borrow checker will not prevent you from storing them *anywhere*. Do
+/// not do this! They are intended to be stored only in their parent future, so that the future can
+/// safely store GC values outside of [`AsyncSequence::enter`] and across await points.
+///
+/// GC values stashed with `Locals` are treated by the garbage collector as being owned by the
+/// outer `Sequence` impl. If *only* values stashed with the provided `Locals` object are used to
+/// store all garbage collected values within the future, and the returned handles never escape
+/// this future, then this perfectly mimics what we could do if we could implement `Collect` on the
+/// future itself. If this rule is followed, the async sequence will *always* be properly garbage
+/// collected, *even if* there are reference cycles between the held locals and the sequence itself.
+///
+/// The same cannot be said for registry stashed values! An async sequence has its own
+/// [`gc_arena::DynamicRootSet`] which is what allows ownership of stashed values to be tied to
+/// that *particular* async sequence. If GC values are instead stashed in the global registry, for
+/// example with [`Context::stash`], then those values will live as long as *the global registry
+/// itself*, which is as long as the whole `Lua` instance is alive. If such a stashed value is held
+/// inside a future and indirectly points back to the outer sequence holding it, this will result in
+/// an uncollectable cycle.
+///
+/// In summary: Do NOT store registry stashed values within the future driving async sequences,
+/// instead only use `Locals` to stash values owned by the future and keep them inside the parent
+/// future *only*.
+#[derive(Copy, Clone)]
+pub struct Locals<'gc, 'a> {
+    roots: DynamicRootSet<'gc>,
+    _marker: PhantomData<&'a ()>,
 }
 
-unsafe impl<'gc, F> Collect for SequenceImpl<'gc, F> {
-    fn trace(&self, cc: &gc_arena::Collection) {
-        // SAFETY: We ensure that `F` cannot hold `'gc` values elsewhere.
-        self.locals.trace(cc);
+impl<'gc, 'a> Locals<'gc, 'a> {
+    /// "Stash" a garbage collected value and return a `'static` handle that can be stored in the
+    /// parent sequence async block.
+    pub fn stash<S: Stashable<'gc>>(&self, mc: &Mutation<'gc>, s: S) -> S::Stashed {
+        s.stash(mc, self.roots)
+    }
+
+    /// "Fetch" the real garbage collected value for a handle that has been returned from
+    /// [`Locals::stash`].
+    pub fn fetch<F: Fetchable>(&self, local: &F) -> F::Fetched<'gc> {
+        local.fetch(self.roots)
     }
 }
 
-impl<'gc, 'seq, F> SequenceImpl<'gc, F>
+#[derive(Collect)]
+#[collect(no_drop)]
+struct SequenceImpl<'gc, F> {
+    #[collect(require_static)]
+    shared: Rc<SharedSlot>,
+    roots: DynamicRootSet<'gc>,
+    #[collect(require_static)]
+    fut: F,
+}
+
+impl<'gc, F> SequenceImpl<'gc, F>
 where
-    F: Future<Output = Result<SequenceReturn<'seq>, StashedError<'seq>>>,
+    F: Future<Output = Result<SequenceReturn, StashedError>>,
 {
     fn poll_fut(
         self: Pin<&mut Self>,
@@ -355,7 +336,7 @@ where
         // SAFETY: We do not move out of the returned reference.
         let Self {
             shared,
-            locals,
+            roots: locals,
             fut,
         } = unsafe { self.get_unchecked_mut() };
         let locals = *locals;
@@ -364,7 +345,7 @@ where
 
         let res = shared.with(
             &mut Shared {
-                locals,
+                roots: locals,
                 ctx,
                 exec,
                 stack: stack.reborrow(),
@@ -388,16 +369,16 @@ where
                 );
                 match res {
                     Ok(SequenceReturn::Return) => Ok(SequencePoll::Return),
-                    Ok(SequenceReturn::Call(function)) => Ok(SequencePoll::TailCall(
-                        function.fetch(StashedRootSet::new(locals)),
-                    )),
-                    Ok(SequenceReturn::Yield(to_thread)) => Ok(SequencePoll::TailYield(
-                        to_thread.map(|t| t.fetch(StashedRootSet::new(locals))),
-                    )),
-                    Ok(SequenceReturn::Resume(thread)) => Ok(SequencePoll::TailResume(
-                        thread.fetch(StashedRootSet::new(locals)),
-                    )),
-                    Err(err) => Err(err.fetch(StashedRootSet::new(locals))),
+                    Ok(SequenceReturn::Call(function)) => {
+                        Ok(SequencePoll::TailCall(function.fetch(locals)))
+                    }
+                    Ok(SequenceReturn::Yield(to_thread)) => {
+                        Ok(SequencePoll::TailYield(to_thread.map(|t| t.fetch(locals))))
+                    }
+                    Ok(SequenceReturn::Resume(thread)) => {
+                        Ok(SequencePoll::TailResume(thread.fetch(locals)))
+                    }
+                    Err(err) => Err(err.fetch(locals)),
                 }
             }
             Poll::Pending => Ok(
@@ -418,9 +399,9 @@ where
     }
 }
 
-impl<'gc, 'seq, F> Sequence<'gc> for SequenceImpl<'gc, F>
+impl<'gc, F> Sequence<'gc> for SequenceImpl<'gc, F>
 where
-    F: Future<Output = Result<SequenceReturn<'seq>, StashedError<'seq>>> + 'seq,
+    F: Future<Output = Result<SequenceReturn, StashedError>> + 'static,
 {
     fn poll(
         self: Pin<&mut Self>,
@@ -458,11 +439,8 @@ enum SequenceOp<'gc> {
     },
 }
 
-// Invariant type that is also !Send and !Sync
-type Invariant<'a> = PhantomData<*const Cell<&'a ()>>;
-
 struct Shared<'gc, 'a> {
-    locals: DynamicRootSet<'gc>,
+    roots: DynamicRootSet<'gc>,
     ctx: Context<'gc>,
     exec: Execution<'gc, 'a>,
     stack: Stack<'gc, 'a>,

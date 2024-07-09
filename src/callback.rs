@@ -345,10 +345,6 @@ impl<'gc> BoxSequence<'gc> {
         Self(boxed::Box::into_pin(b))
     }
 
-    pub fn from_box(b: boxed::Box<dyn Sequence<'gc> + 'gc, MetricsAlloc<'static>>) -> Self {
-        Self(boxed::Box::into_pin(b))
-    }
-
     pub fn poll(
         self: &mut Self,
         ctx: Context<'gc>,

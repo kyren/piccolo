@@ -125,10 +125,10 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
             if stack.is_empty() {
                 return Err("value expected".into_value(ctx).into());
             }
-            let s = async_sequence(&ctx, |locals, builder| {
+            let s = async_sequence(&ctx, |locals, mut seq| {
                 let mut max = locals.stash(&ctx, stack.get(0));
                 let args = stack.len();
-                builder.build(|mut seq| async move {
+                async move {
                     for i in 1..args {
                         let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
                             let bottom = args;
@@ -161,7 +161,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                         stack.replace(ctx, locals.fetch(&max));
                     });
                     Ok(SequenceReturn::Return)
-                })
+                }
             });
             Ok(CallbackReturn::Sequence(s))
         }),
@@ -174,10 +174,10 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
             if stack.is_empty() {
                 return Err("value expected".into_value(ctx).into());
             }
-            let s = async_sequence(&ctx, |locals, builder| {
+            let s = async_sequence(&ctx, |locals, mut seq| {
                 let mut min = locals.stash(&ctx, stack.get(0));
                 let args = stack.len();
-                builder.build(|mut seq| async move {
+                async move {
                     for i in 1..args {
                         let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
                             let bottom = args;
@@ -210,7 +210,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                         stack.replace(ctx, locals.fetch(&min));
                     });
                     Ok(SequenceReturn::Return)
-                })
+                }
             });
             Ok(CallbackReturn::Sequence(s))
         }),

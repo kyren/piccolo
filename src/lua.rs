@@ -8,7 +8,7 @@ use crate::{
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
     Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, Singleton,
-    StaticExecutor, String, Table, TypeError, Value,
+    StashedExecutor, String, Table, TypeError, Value,
 };
 
 /// A value representing the main "execution context" of a Lua state.
@@ -92,12 +92,12 @@ impl<'gc> Context<'gc> {
     }
 
     /// Calls `ctx.registry().stash(ctx, s)`.
-    pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed<'static> {
+    pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed {
         self.state.registry.stash(&self, s)
     }
 
     /// Calls `ctx.registry().fetch(f)`.
-    pub fn fetch<F: Fetchable<'static>>(self, f: &F) -> F::Fetched<'gc> {
+    pub fn fetch<F: Fetchable>(self, f: &F) -> F::Fetched<'gc> {
         self.state.registry.fetch(f)
     }
 
@@ -259,7 +259,7 @@ impl Lua {
     ///
     /// This will periodically exit the arena in order to collect garbage concurrently with running
     /// Lua code.
-    pub fn finish(&mut self, executor: &StaticExecutor) {
+    pub fn finish(&mut self, executor: &StashedExecutor) {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
@@ -277,7 +277,7 @@ impl Lua {
     /// `Executor::take_result` yourself.
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
-        executor: &StaticExecutor,
+        executor: &StashedExecutor,
     ) -> Result<R, ExternError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
