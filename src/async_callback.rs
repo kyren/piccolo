@@ -57,7 +57,7 @@ use crate::{
 ///
 /// Methods on `AsyncSequence` must *only* be called from the returned future. Calling methods on
 /// `AsyncSequence` directly from the provided create function or from storing the `AsyncSequence`
-/// somewhere else wil result in a panic.
+/// somewhere else will result in a panic.
 pub fn async_sequence<'gc, F>(
     mc: &Mutation<'gc>,
     create: impl FnOnce(Locals<'gc, '_>, AsyncSequence) -> F,
@@ -295,6 +295,13 @@ impl AsyncSequence {
 #[derive(Copy, Clone)]
 pub struct Locals<'gc, 'a> {
     roots: DynamicRootSet<'gc>,
+    // We add a bogus `'a` lifetime here to prevent `Locals` from being moved anywhere outside of
+    // the body of `AsyncSequence` methods.
+    //
+    // This makes any local handles *useless* unless you also have the matching `AsyncSequence`
+    // object, which panics when used outside of the future that should own it.
+    //
+    // This makes everything much harder to misuse.
     _marker: PhantomData<&'a ()>,
 }
 
