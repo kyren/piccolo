@@ -88,6 +88,11 @@ impl<'gc> From<LuaError<'gc>> for ExternLuaError {
     }
 }
 
+// SAFETY: The pointers in `ExternLuaError` are not actually dereferenced at all, they are purely
+// informational.
+unsafe impl Send for ExternLuaError {}
+unsafe impl Sync for ExternLuaError {}
+
 /// A shareable, dynamically typed wrapper around a normal Rust error.
 ///
 /// Rust errors can be caught and re-raised through Lua which allows for unrestricted sharing, so
