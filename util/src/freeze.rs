@@ -206,8 +206,8 @@ impl<'h, 'f, F: for<'a> Freeze<'a>> ScopeGuard for FreezeGuard<'h, 'f, F> {
             // a `Fozen::with[_mut]` call. We can no longer guarantee our invariants and are forced
             // to abort.
             //
-            // This is effectively impossible to trigger safely *unless* you are calling
-            // `Scope::set` / `Scope::unset` manually.
+            // This is impossible to trigger safely without calling the private `set` / `unset`
+            // methods manually.
             eprintln!("freeze lock held during `FreezeGuard::unset`, aborting!");
             std::process::abort()
         }
