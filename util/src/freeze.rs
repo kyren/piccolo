@@ -13,7 +13,7 @@ pub enum AccessError {
 /// Safely erase a lifetime from a value and temporarily store it in a shared handle.
 ///
 /// Works by providing only limited access to the held value within an enclosing call to
-/// `FrozenScope::scope`. All cloned handles will refer to the same underlying value with its
+/// `FreezeGuard::scope`. All cloned handles will refer to the same underlying value with its
 /// lifetime erased.
 ///
 /// Useful for passing non-'static values into things that do not understand the Rust lifetime
@@ -77,7 +77,7 @@ impl<F: for<'a> Freeze<'a>> Frozen<F> {
         FreezeGuard::new(&f, value).scope(move || cb(p))
     }
 
-    /// Returns true if this value is currently set by an enclosing `FrozenScope::scope`.
+    /// Returns true if this value is currently set by an enclosing `FreezeGuard::scope`.
     pub fn is_valid(&self) -> bool {
         if let Ok(b) = self.inner.try_borrow() {
             b.is_some()
@@ -182,7 +182,7 @@ impl<'h, 'f, F: for<'a> Freeze<'a>> ScopeGuard for FreezeGuard<'h, 'f, F> {
     unsafe fn set(&mut self) {
         assert!(
             !self.handle.is_valid(),
-            "handle already used in another `FrozenScope::scope` call"
+            "handle already used in another `FreezeGuard::scope` call"
         );
         *self.handle.inner.borrow_mut() = Some(mem::transmute::<
             <F as Freeze<'f>>::Frozen,
@@ -219,8 +219,11 @@ pub trait FrozenScopeGuard: ScopeGuard {}
 
 impl<T: ScopeGuard> FrozenScopeGuard for T {}
 
-/// Struct that enables setting the contents of multiple `Frozen<F>` handles for the body of a
-/// single callback.
+/// Struct that enables setting the contents of *multiple* `Frozen` handles for the body of a single
+/// callback.
+///
+/// This is a simpler way to set multiple `Frozen` handles than dealing with multiple `FreezeGuard`s
+/// and nested multiple calls to `FreezeGuard::scope`, but it behaves identically otherwise.
 pub struct FrozenScope<D = ()>(D);
 
 impl Default for FrozenScope<()> {
