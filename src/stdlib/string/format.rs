@@ -429,7 +429,10 @@ fn write_float<'gc, W: Write>(
         let exp = str[idx + 1..]
             .parse::<i16>()
             .map_err(|_| FormatError::BadFloat)?;
-        let exp_len = str[idx + 1..].len();
+
+        // Note: Rust does not include a leading '+' in the exponent notation, but Lua does,
+        // so we must calculate the length manually.
+        let exp_len = 1 + integer_length(exp.unsigned_abs() as u64);
 
         // Implementation of %g, following the description of the algorithm
         // in Python's documentation:
@@ -465,7 +468,7 @@ fn write_float<'gc, W: Write>(
             }
             let e = if args.upper { 'E' } else { 'e' };
 
-            let exp_len = 1 + exp_len.max(2);
+            let exp_len = exp_len.max(3);
             let len = mantissa.len() + 1 + exp_len;
             let zero_width = if args.zero_pad { width } else { 0 };
 

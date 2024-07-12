@@ -213,6 +213,9 @@ do -- string width, truncating
 
     assert_eq(string.format("%#013.0a", 4.0), "0x0000001.p+2")
     assert_eq(string.format("%#013.0a", math.pi), "0x0000002.p+1")
+
+    assert_eq(string.format("%+#15.8g", 0x1.0p+64), " +1.8446744e+19")
+    assert_eq(string.format("%+#15.8g", 0x1.0p-64), " +5.4210109e-20")
 end
 
 do
