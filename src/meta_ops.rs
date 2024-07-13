@@ -154,6 +154,8 @@ pub enum MetaOperatorError {
     Binary(MetaMethod, &'static str, &'static str),
     #[error("invalid table key")]
     IndexKeyError(#[from] InvalidTableKey),
+    #[error("concatenation result is too long")]
+    ConcatOverflow,
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -752,23 +754,37 @@ pub enum ConcatMetaResult<'gc> {
     Call(Function<'gc>),
 }
 
+/// Returns an estimate of the length of the concatenation of a list of values,
+/// or returns [`None`] if any value is not implicitly coercible to a string.
+pub fn estimate_concatenated_len<'gc>(
+    values: &[Value<'gc>],
+) -> Result<Option<usize>, MetaOperatorError> {
+    let mut len = 0usize;
+    for value in values {
+        let value_len = match value {
+            Value::Integer(i) => i.ilog10() as usize + i.is_negative() as usize,
+            Value::Number(_n) => 10,
+            Value::String(s) => s.as_bytes().len(),
+            _ => return Ok(None),
+        };
+        len = len
+            .checked_add(value_len)
+            .ok_or(MetaOperatorError::ConcatOverflow)?;
+    }
+    Ok(Some(len))
+}
+
 pub fn concat_many<'gc>(
     ctx: Context<'gc>,
     values: &[Value<'gc>],
 ) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
-    // Since we have to make two passes, might as well estimate the length
-    let mut len = 0;
-    for value in values {
-        match value {
-            Value::Integer(i) => len += i.ilog10() as usize + i.is_negative() as usize,
-            Value::Number(_n) => len += 10,
-            Value::String(s) => len += s.as_bytes().len(),
-            _ => {
-                let func = Callback::from_fn(&ctx, concat_impl).into();
-                return Ok(ConcatMetaResult::Call(func));
-            }
-        }
-    }
+    // Since we have to make two passes to check for complex types,
+    // estimate the length in the first pass.
+    let Some(len) = estimate_concatenated_len(values)? else {
+        // Fall back to a sequence-based implemenation to handle metamethods
+        let func = Callback::from_fn(&ctx, concat_impl).into();
+        return Ok(ConcatMetaResult::Call(func));
+    };
 
     let mut bytes = Vec::with_capacity(len);
     for value in values {
@@ -793,9 +809,8 @@ fn concat_impl<'gc>(
             let call = seq.try_enter(|ctx, locals, _, mut stack| {
                 let bottom = i - 1;
                 let call = concat(ctx, stack[i - 1], stack[i])?;
-                Ok(prepare_async_metaop(
-                    ctx, &mut stack, locals, bottom, call, 1,
-                ))
+                let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                Ok(p)
             })?;
             call.execute(&mut seq).await?;
         }

@@ -4,13 +4,12 @@ use std::pin::Pin;
 
 use anyhow::Context as _;
 use gc_arena::Collect;
-use thiserror::Error;
 
 use crate::{
     async_callback::{prepare_async_metaop, AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
-    meta_ops::{self, MetaResult},
+    meta_ops::{self, estimate_concatenated_len, MetaOperatorError, MetaResult},
     table::RawTable,
     BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, FromValue, Function,
     IntoValue, MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError,
@@ -759,12 +758,6 @@ fn array_insert_shift<'gc>(
     (inner(table, length, key, value), length)
 }
 
-#[derive(Debug, Copy, Clone, Error)]
-pub enum TableConcatError {
-    #[error("resulting string too long in table.concat")]
-    Overflow,
-}
-
 fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'gc> {
     async_sequence(&ctx, |locals, mut seq| {
         let sep = sep.map(|s| locals.stash(&ctx, s));
@@ -780,25 +773,21 @@ fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'
                     None => None,
                 };
 
-                let mut len = 0;
-                // Since we have to make two passes, might as well estimate the length
-                for value in &stack[..] {
-                    match value {
-                        Value::Integer(i) => len += i.ilog10() as usize + i.is_negative() as usize,
-                        Value::Number(_n) => len += 10,
-                        Value::String(s) => len += s.as_bytes().len(),
-                        _ => return Ok(stack.len()),
-                    }
-                }
+                // Since we have to make two passes to check for complex types,
+                // estimate the length in the first pass.
+                let Some(len) = estimate_concatenated_len(&stack[..])? else {
+                    // Fall back to the sequence-based implemenation to handle metamethods
+                    return Ok(stack.len());
+                };
 
                 let sep_len = sep_str.map(|s| s.len() as usize).unwrap_or(0);
                 let total_len = stack
                     .len()
                     .saturating_sub(1)
                     .checked_mul(sep_len)
-                    .ok_or(TableConcatError::Overflow)?
+                    .ok_or(MetaOperatorError::ConcatOverflow)?
                     .checked_add(len)
-                    .ok_or(TableConcatError::Overflow)?;
+                    .ok_or(MetaOperatorError::ConcatOverflow)?;
 
                 // Should this be allocated in-place in the GC heap?
                 let mut bytes = Vec::with_capacity(total_len);
@@ -835,9 +824,8 @@ fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'
                     let call = seq.try_enter(|ctx, locals, _, mut stack| {
                         let bottom = i;
                         let call = meta_ops::concat(ctx, locals.fetch(sep), stack[i])?;
-                        Ok(prepare_async_metaop(
-                            ctx, &mut stack, locals, bottom, call, 1,
-                        ))
+                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                        Ok(p)
                     })?;
                     call.execute(&mut seq).await?;
                 }
@@ -845,9 +833,8 @@ fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'
                 let call = seq.try_enter(|ctx, locals, _, mut stack| {
                     let bottom = i - 1;
                     let call = meta_ops::concat(ctx, stack[i - 1], stack[i])?;
-                    Ok(prepare_async_metaop(
-                        ctx, &mut stack, locals, bottom, call, 1,
-                    ))
+                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                    Ok(p)
                 })?;
                 call.execute(&mut seq).await?;
             }
