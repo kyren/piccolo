@@ -358,15 +358,16 @@ pub(super) fn run_vm<'gc>(
                 source,
                 count,
             } => {
-                let values =
-                    &registers.stack_frame[source.0 as usize..source.0 as usize + count as usize];
-                match meta_ops::concat(ctx, values)? {
+                let base = source.0 as usize;
+                let values = &registers.stack_frame[base..base + count as usize];
+                match meta_ops::concat_many(ctx, values)? {
                     ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
-                    ConcatMetaResult::Call(call) => {
-                        lua_frame.call_meta_function(
+                    ConcatMetaResult::Call(func) => {
+                        lua_frame.call_meta_function_in_place(
                             ctx,
-                            call.function,
-                            &call.args,
+                            func,
+                            base,
+                            count,
                             MetaReturn::Register(dest),
                         )?;
                         break;

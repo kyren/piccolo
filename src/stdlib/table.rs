@@ -7,7 +7,7 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
-    async_callback::{AsyncSequence, Locals},
+    async_callback::{prepare_async_metaop, AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
     meta_ops::{self, MetaResult},
@@ -80,7 +80,6 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             })
         }),
     );
-    // table.set_field(ctx, "concat", Callback::from_fn(&ctx, concat_impl));
 
     table.set_field(ctx, "remove", Callback::from_fn(&ctx, table_remove_impl));
 
@@ -833,54 +832,24 @@ fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'
 
             for i in (1..args).into_iter().rev() {
                 if let Some(sep) = &sep {
-                    let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
                         let bottom = i;
-                        let lhs = locals.fetch(sep);
-                        let r = match meta_ops::concat_single(ctx, lhs, stack[i])? {
-                            MetaResult::Value(v) => {
-                                stack.resize(bottom);
-                                stack.push_back(v);
-                                (None, bottom)
-                            }
-                            MetaResult::Call(meta_ops::MetaCall { function, args }) => {
-                                stack.resize(bottom);
-                                stack.extend(args);
-                                (Some(locals.stash(&ctx, function)), bottom)
-                            }
-                        };
-                        Ok(r)
+                        let call = meta_ops::concat(ctx, locals.fetch(sep), stack[i])?;
+                        Ok(prepare_async_metaop(
+                            ctx, &mut stack, locals, bottom, call, 1,
+                        ))
                     })?;
-                    if let Some(func) = call {
-                        seq.call(&func, bottom).await?;
-                    }
-                    seq.enter(|_, _, _, mut stack| {
-                        stack.resize(bottom + 1);
-                    });
+                    call.execute(&mut seq).await?;
                 }
 
-                let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
                     let bottom = i - 1;
-                    Ok(
-                        match meta_ops::concat_single(ctx, stack[i - 1], stack[i])? {
-                            MetaResult::Value(v) => {
-                                stack.resize(bottom);
-                                stack.push_back(v);
-                                (None, bottom)
-                            }
-                            MetaResult::Call(meta_ops::MetaCall { function, args }) => {
-                                stack.resize(bottom);
-                                stack.extend(args);
-                                (Some(locals.stash(&ctx, function)), bottom)
-                            }
-                        },
-                    )
+                    let call = meta_ops::concat(ctx, stack[i - 1], stack[i])?;
+                    Ok(prepare_async_metaop(
+                        ctx, &mut stack, locals, bottom, call, 1,
+                    ))
                 })?;
-                if let Some(func) = call {
-                    seq.call(&func, bottom).await?;
-                }
-                seq.enter(|_, _, _, mut stack| {
-                    stack.resize(bottom + 1);
-                });
+                call.execute(&mut seq).await?;
             }
             Ok(SequenceReturn::Return)
         }

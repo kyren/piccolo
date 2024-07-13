@@ -3,6 +3,7 @@ use std::io::Write;
 use gc_arena::Collect;
 use thiserror::Error;
 
+use crate::async_callback::prepare_async_metaop;
 use crate::{async_sequence, Execution, SequenceReturn, Stack};
 use crate::{
     table::InvalidTableKey, Callback, CallbackReturn, Context, Error, Function, IntoValue, Table,
@@ -741,23 +742,17 @@ pub fn less_equal<'gc>(
     })
 }
 
-#[derive(Debug, Clone, Collect)]
-#[collect(no_drop)]
-pub struct ConcatMetaCall<'gc> {
-    pub function: Function<'gc>,
-    // Needs to be owned to work around borrowing issues in
-    // LuaFrame::call_meta_function
-    pub args: Vec<Value<'gc>>,
-}
-
+/// The result of a concat metaoperation, either a completed [`Value`]
+/// or a [`Function`] that must be called with the values to
+/// concatenate.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub enum ConcatMetaResult<'gc> {
     Value(Value<'gc>),
-    Call(ConcatMetaCall<'gc>),
+    Call(Function<'gc>),
 }
 
-pub fn concat<'gc>(
+pub fn concat_many<'gc>(
     ctx: Context<'gc>,
     values: &[Value<'gc>],
 ) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
@@ -769,10 +764,8 @@ pub fn concat<'gc>(
             Value::Number(_n) => len += 10,
             Value::String(s) => len += s.as_bytes().len(),
             _ => {
-                return Ok(ConcatMetaResult::Call(ConcatMetaCall {
-                    function: Callback::from_fn(&ctx, concat_impl).into(),
-                    args: values.to_owned(),
-                }))
+                let func = Callback::from_fn(&ctx, concat_impl).into();
+                return Ok(ConcatMetaResult::Call(func));
             }
         }
     }
@@ -797,34 +790,21 @@ fn concat_impl<'gc>(
     let args = stack.len();
     let s = async_sequence(&ctx, |_, mut seq| async move {
         for i in (1..args).into_iter().rev() {
-            let (call, bottom) = seq.try_enter(|ctx, locals, _, mut stack| {
+            let call = seq.try_enter(|ctx, locals, _, mut stack| {
                 let bottom = i - 1;
-                Ok(match concat_single(ctx, stack[i - 1], stack[i])? {
-                    MetaResult::Value(v) => {
-                        stack.resize(bottom);
-                        stack.push_back(v);
-                        (None, bottom)
-                    }
-                    MetaResult::Call(MetaCall { function, args }) => {
-                        stack.resize(bottom);
-                        stack.extend(args);
-                        (Some(locals.stash(&ctx, function)), bottom)
-                    }
-                })
+                let call = concat(ctx, stack[i - 1], stack[i])?;
+                Ok(prepare_async_metaop(
+                    ctx, &mut stack, locals, bottom, call, 1,
+                ))
             })?;
-            if let Some(func) = call {
-                seq.call(&func, bottom).await?;
-            }
-            seq.enter(|_, _, _, mut stack| {
-                stack.resize(bottom + 1);
-            });
+            call.execute(&mut seq).await?;
         }
         Ok(SequenceReturn::Return)
     });
     Ok(CallbackReturn::Sequence(s))
 }
 
-pub fn concat_single<'gc>(
+pub fn concat<'gc>(
     ctx: Context<'gc>,
     lhs: Value<'gc>,
     rhs: Value<'gc>,
