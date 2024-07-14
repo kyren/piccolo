@@ -4,10 +4,9 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::async_callback::prepare_async_metaop;
-use crate::{async_sequence, Execution, SequenceReturn, Stack};
+use crate::{async_sequence, SequenceReturn};
 use crate::{
-    table::InvalidTableKey, Callback, CallbackReturn, Context, Error, Function, IntoValue, Table,
-    Value,
+    table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
 };
 
 /// An enum of every possible Lua metamethod.
