@@ -754,9 +754,32 @@ pub enum ConcatMetaResult<'gc> {
     Call(Function<'gc>),
 }
 
+pub fn concat<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Concat, |ctx, a, b| {
+        if a.is_implicit_string() && b.is_implicit_string() {
+            let mut bytes = Vec::new();
+            for value in [a, b] {
+                match value {
+                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                    Value::String(s) => bytes.extend(s.as_bytes()),
+                    _ => return None,
+                }
+            }
+            Some(Value::String(ctx.intern(&bytes)))
+        } else {
+            None
+        }
+    })
+}
+
 /// Returns an estimate of the length of the concatenation of a list of values,
 /// or returns [`None`] if any value is not implicitly coercible to a string.
-pub fn estimate_concatenated_len<'gc>(
+fn estimate_concatenated_len<'gc>(
     values: &[Value<'gc>],
 ) -> Result<Option<usize>, MetaOperatorError> {
     let mut len = 0usize;
@@ -782,7 +805,7 @@ pub fn concat_many<'gc>(
     // estimate the length in the first pass.
     let Some(len) = estimate_concatenated_len(values)? else {
         // Fall back to a sequence-based implemenation to handle metamethods
-        let func = Callback::from_fn(&ctx, concat_impl).into();
+        let func = Callback::from_fn(&ctx, concat_many_impl).into();
         return Ok(ConcatMetaResult::Call(func));
     };
 
@@ -798,7 +821,7 @@ pub fn concat_many<'gc>(
     Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))))
 }
 
-fn concat_impl<'gc>(
+fn concat_many_impl<'gc>(
     ctx: Context<'gc>,
     _exec: Execution<'gc, '_>,
     stack: Stack<'gc, '_>,
@@ -819,25 +842,96 @@ fn concat_impl<'gc>(
     Ok(CallbackReturn::Sequence(s))
 }
 
-pub fn concat<'gc>(
+pub fn concat_separated<'gc>(
     ctx: Context<'gc>,
-    lhs: Value<'gc>,
-    rhs: Value<'gc>,
-) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Concat, |ctx, a, b| {
-        if a.is_implicit_string() && b.is_implicit_string() {
-            let mut bytes = Vec::new();
-            for value in [a, b] {
-                match value {
+    values: &[Value<'gc>],
+    separator: Value<'gc>,
+) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
+    if separator.is_nil() {
+        return concat_many(ctx, values);
+    }
+
+    // A scope for the fast path; this never loops, it either moves
+    // to the fallback path with break, or returns the result.
+    loop {
+        let sep_str = match separator.into_string(ctx) {
+            Some(s) => s,
+            None => break,
+        };
+
+        // Since we have to make two passes to check for complex types,
+        // estimate the length in the first pass.
+        let Some(len) = estimate_concatenated_len(values)? else {
+            break;
+        };
+
+        let sep_count = values.len().saturating_sub(1);
+        let total_len = sep_count
+            .checked_mul(sep_str.len() as usize)
+            .and_then(|l| l.checked_add(len))
+            .ok_or(MetaOperatorError::ConcatOverflow)?;
+
+        // Should this be allocated in-place in the GC heap?
+        let mut bytes = Vec::with_capacity(total_len);
+
+        let mut iter = values.iter();
+        if let Some(val) = iter.next() {
+            match val {
+                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::String(s) => bytes.extend(s.as_bytes()),
+                _ => unreachable!(),
+            }
+
+            while let Some(val) = iter.next() {
+                bytes.extend(&*sep_str);
+                match val {
                     Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
                     Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
                     Value::String(s) => bytes.extend(s.as_bytes()),
-                    _ => return None,
+                    _ => unreachable!(),
                 }
             }
-            Some(Value::String(ctx.intern(&bytes)))
-        } else {
-            None
         }
-    })
+        drop(iter);
+
+        return Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))));
+    }
+
+    // Fall back to a sequence-based implemenation to handle metamethods
+    let func = Callback::from_fn_with(&ctx, separator, move |sep, ctx, _, stack| {
+        Ok(concat_separated_impl(ctx, *sep, stack.len()))
+    });
+    return Ok(ConcatMetaResult::Call(func.into()));
+}
+
+fn concat_separated_impl<'gc>(
+    ctx: Context<'gc>,
+    sep: Value<'gc>,
+    args: usize,
+) -> CallbackReturn<'gc> {
+    let b = async_sequence(&ctx, |locals, mut seq| {
+        let sep = locals.stash(&ctx, sep);
+        async move {
+            for i in (1..args).into_iter().rev() {
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let bottom = i;
+                    let call = concat(ctx, locals.fetch(&sep), stack[i])?;
+                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                    Ok(p)
+                })?;
+                call.execute(&mut seq).await?;
+
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let bottom = i - 1;
+                    let call = concat(ctx, stack[i - 1], stack[i])?;
+                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                    Ok(p)
+                })?;
+                call.execute(&mut seq).await?;
+            }
+            Ok(SequenceReturn::Return)
+        }
+    });
+    CallbackReturn::Sequence(b)
 }

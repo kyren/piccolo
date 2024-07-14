@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::mem;
 use std::pin::Pin;
 
@@ -6,14 +5,14 @@ use anyhow::Context as _;
 use gc_arena::Collect;
 
 use crate::{
-    async_callback::{prepare_async_metaop, AsyncSequence, Locals},
+    async_callback::{AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
-    meta_ops::{self, estimate_concatenated_len, MetaOperatorError, MetaResult},
+    meta_ops::{self, concat_separated, ConcatMetaResult, MetaResult},
     table::RawTable,
-    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, FromValue, Function,
-    IntoValue, MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError,
-    StashedFunction, StashedTable, StashedValue, Table, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Function, IntoValue,
+    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
+    StashedTable, StashedValue, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -67,15 +66,41 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         ctx,
         "concat",
         Callback::from_fn_with(&ctx, unpack, move |unpack, ctx, _exec, mut stack| {
-            let sep = match stack.remove(1) {
-                Some(v) => <Option<Value>>::from_value(ctx, v)?,
-                None => None,
-            };
+            let sep = stack.remove(1).unwrap_or_default();
+
+            let then_impl = Callback::from_fn_with(&ctx, sep, |sep, ctx, _, mut stack| {
+                let values = &stack[..];
+                match concat_separated(ctx, values, *sep)? {
+                    ConcatMetaResult::Value(v) => {
+                        stack.replace(ctx, v);
+                        Ok(CallbackReturn::Return)
+                    }
+                    ConcatMetaResult::Call(func) => Ok(CallbackReturn::Call {
+                        function: func,
+                        then: None,
+                    }),
+                }
+            });
+
+            #[derive(Collect)]
+            #[collect(no_drop)]
+            struct CallSequence<'gc>(Function<'gc>);
+
+            impl<'gc> Sequence<'gc> for CallSequence<'gc> {
+                fn poll(
+                    self: Pin<&mut Self>,
+                    _ctx: Context<'gc>,
+                    _exec: Execution<'gc, '_>,
+                    _stack: Stack<'gc, '_>,
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                    Ok(SequencePoll::TailCall(self.0))
+                }
+            }
 
             // Defer to table.unpack for indexing implementation.
             Ok(CallbackReturn::Call {
                 function: *unpack,
-                then: Some(concat_impl(ctx, sep)),
+                then: Some(BoxSequence::new(&ctx, CallSequence(then_impl.into()))),
             })
         }),
     );
@@ -756,89 +781,4 @@ fn array_insert_shift<'gc>(
 
     let length = table.length() as usize;
     (inner(table, length, key, value), length)
-}
-
-fn concat_impl<'gc>(ctx: Context<'gc>, sep: Option<Value<'gc>>) -> BoxSequence<'gc> {
-    async_sequence(&ctx, |locals, mut seq| {
-        let sep = sep.map(|s| locals.stash(&ctx, s));
-        async move {
-            let args = seq.try_enter(|ctx, locals, _, mut stack| {
-                let sep_str = match sep
-                    .as_ref()
-                    .map(|s| locals.fetch(s))
-                    .map(|s| s.into_string(ctx))
-                {
-                    Some(Some(s)) => Some(s),
-                    Some(None) => return Ok(stack.len()),
-                    None => None,
-                };
-
-                // Since we have to make two passes to check for complex types,
-                // estimate the length in the first pass.
-                let Some(len) = estimate_concatenated_len(&stack[..])? else {
-                    // Fall back to the sequence-based implemenation to handle metamethods
-                    return Ok(stack.len());
-                };
-
-                let sep_len = sep_str.map(|s| s.len() as usize).unwrap_or(0);
-                let total_len = stack
-                    .len()
-                    .saturating_sub(1)
-                    .checked_mul(sep_len)
-                    .ok_or(MetaOperatorError::ConcatOverflow)?
-                    .checked_add(len)
-                    .ok_or(MetaOperatorError::ConcatOverflow)?;
-
-                // Should this be allocated in-place in the GC heap?
-                let mut bytes = Vec::with_capacity(total_len);
-
-                let mut iter = stack.drain(..);
-                if let Some(val) = iter.next() {
-                    match val {
-                        Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                        Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                        Value::String(s) => bytes.extend(s.as_bytes()),
-                        _ => unreachable!(),
-                    }
-
-                    let sep = sep_str.map(|s| s.as_bytes()).unwrap_or(&[]);
-                    while let Some(val) = iter.next() {
-                        bytes.extend(sep);
-                        match val {
-                            Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                            Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                            Value::String(s) => bytes.extend(s.as_bytes()),
-                            _ => unreachable!(),
-                        }
-                    }
-                }
-                drop(iter);
-
-                let val = ctx.intern(&bytes);
-                stack.replace(ctx, val);
-                Ok(1)
-            })?;
-
-            for i in (1..args).into_iter().rev() {
-                if let Some(sep) = &sep {
-                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
-                        let bottom = i;
-                        let call = meta_ops::concat(ctx, locals.fetch(sep), stack[i])?;
-                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
-                        Ok(p)
-                    })?;
-                    call.execute(&mut seq).await?;
-                }
-
-                let call = seq.try_enter(|ctx, locals, _, mut stack| {
-                    let bottom = i - 1;
-                    let call = meta_ops::concat(ctx, stack[i - 1], stack[i])?;
-                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
-                    Ok(p)
-                })?;
-                call.execute(&mut seq).await?;
-            }
-            Ok(SequenceReturn::Return)
-        }
-    })
 }
