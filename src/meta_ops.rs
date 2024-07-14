@@ -801,45 +801,45 @@ pub fn concat_many<'gc>(
     ctx: Context<'gc>,
     values: &[Value<'gc>],
 ) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
-    // Since we have to make two passes to check for complex types,
-    // estimate the length in the first pass.
-    let Some(len) = estimate_concatenated_len(values)? else {
-        // Fall back to a sequence-based implemenation to handle metamethods
-        let func = Callback::from_fn(&ctx, concat_many_impl).into();
-        return Ok(ConcatMetaResult::Call(func));
-    };
+    // Fast path scope; never loops, returns if successful, otherwise
+    // breaks to fall back to the slow impl.
+    loop {
+        // Since we have to make two passes to check for complex types,
+        // estimate the length in the first pass.
+        let Some(len) = estimate_concatenated_len(values)? else {
+            break;
+        };
 
-    let mut bytes = Vec::with_capacity(len);
-    for value in values {
-        match value {
-            Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-            Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-            Value::String(s) => bytes.extend(s.as_bytes()),
-            _ => unreachable!(),
+        let mut bytes = Vec::with_capacity(len);
+        for value in values {
+            match value {
+                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::String(s) => bytes.extend(s.as_bytes()),
+                _ => unreachable!(),
+            }
         }
+        return Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))));
     }
-    Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))))
-}
 
-fn concat_many_impl<'gc>(
-    ctx: Context<'gc>,
-    _exec: Execution<'gc, '_>,
-    stack: Stack<'gc, '_>,
-) -> Result<CallbackReturn<'gc>, Error<'gc>> {
-    let args = stack.len();
-    let s = async_sequence(&ctx, |_, mut seq| async move {
-        for i in (1..args).into_iter().rev() {
-            let call = seq.try_enter(|ctx, locals, _, mut stack| {
-                let bottom = i - 1;
-                let call = concat(ctx, stack[i - 1], stack[i])?;
-                let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
-                Ok(p)
-            })?;
-            call.execute(&mut seq).await?;
-        }
-        Ok(SequenceReturn::Return)
+    // Fall back to a sequence-based implemenation to handle metamethods
+    let func = Callback::from_fn(&ctx, |ctx, _, stack| {
+        let args = stack.len();
+        let s = async_sequence(&ctx, |_, mut seq| async move {
+            for i in (1..args).into_iter().rev() {
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let bottom = i - 1;
+                    let call = concat(ctx, stack[i - 1], stack[i])?;
+                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                    Ok(p)
+                })?;
+                call.execute(&mut seq).await?;
+            }
+            Ok(SequenceReturn::Return)
+        });
+        Ok(CallbackReturn::Sequence(s))
     });
-    Ok(CallbackReturn::Sequence(s))
+    Ok(ConcatMetaResult::Call(func.into()))
 }
 
 pub fn concat_separated<'gc>(
@@ -851,8 +851,8 @@ pub fn concat_separated<'gc>(
         return concat_many(ctx, values);
     }
 
-    // A scope for the fast path; this never loops, it either moves
-    // to the fallback path with break, or returns the result.
+    // Fast path scope; never loops, returns if successful, otherwise
+    // breaks to fall back to the slow impl.
     loop {
         let sep_str = match separator.into_string(ctx) {
             Some(s) => s,
@@ -899,39 +899,32 @@ pub fn concat_separated<'gc>(
     }
 
     // Fall back to a sequence-based implemenation to handle metamethods
-    let func = Callback::from_fn_with(&ctx, separator, move |sep, ctx, _, stack| {
-        Ok(concat_separated_impl(ctx, *sep, stack.len()))
-    });
-    return Ok(ConcatMetaResult::Call(func.into()));
-}
+    let func = Callback::from_fn_with(&ctx, separator, move |&sep, ctx, _, stack| {
+        let args = stack.len();
+        let b = async_sequence(&ctx, |locals, mut seq| {
+            let sep = locals.stash(&ctx, sep);
+            async move {
+                for i in (1..args).into_iter().rev() {
+                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let bottom = i;
+                        let call = concat(ctx, locals.fetch(&sep), stack[i])?;
+                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                        Ok(p)
+                    })?;
+                    call.execute(&mut seq).await?;
 
-fn concat_separated_impl<'gc>(
-    ctx: Context<'gc>,
-    sep: Value<'gc>,
-    args: usize,
-) -> CallbackReturn<'gc> {
-    let b = async_sequence(&ctx, |locals, mut seq| {
-        let sep = locals.stash(&ctx, sep);
-        async move {
-            for i in (1..args).into_iter().rev() {
-                let call = seq.try_enter(|ctx, locals, _, mut stack| {
-                    let bottom = i;
-                    let call = concat(ctx, locals.fetch(&sep), stack[i])?;
-                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
-                    Ok(p)
-                })?;
-                call.execute(&mut seq).await?;
-
-                let call = seq.try_enter(|ctx, locals, _, mut stack| {
-                    let bottom = i - 1;
-                    let call = concat(ctx, stack[i - 1], stack[i])?;
-                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
-                    Ok(p)
-                })?;
-                call.execute(&mut seq).await?;
+                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let bottom = i - 1;
+                        let call = concat(ctx, stack[i - 1], stack[i])?;
+                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                        Ok(p)
+                    })?;
+                    call.execute(&mut seq).await?;
+                }
+                Ok(SequenceReturn::Return)
             }
-            Ok(SequenceReturn::Return)
-        }
+        });
+        Ok(CallbackReturn::Sequence(b))
     });
-    CallbackReturn::Sequence(b)
+    Ok(ConcatMetaResult::Call(func.into()))
 }
