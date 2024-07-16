@@ -142,21 +142,21 @@ provide a safe way to implement `Sequence` using async blocks by using a clever
 trick: a shadow stack.
 
 The `async_sequence` function can create a `Sequence` impl from an `async`
-block, and the generated `Future` tells the outer sequence what actions to take
-on its behalf. Since the Rust future cannot (safely) hold GC pointers (since
-it cannot possibly implement `Collect` in today's Rust), we instead allow it to
-hold proxy values called `Local`s. These `Local` values point to a shadow stack
-held inside the outer sequence which allows them to be traced and collected
-properly! Normal `gc-arena` machinery helps us prevent `Gc` pointers from being
-stored directly inside the Rust future, but in addition, similar machinery
-prevents `Local` values from being improperly stored *outside* of the Rust
-future. By combining these two techniques, we end up with a way to have a Rust
-future that can store GC values safely, both in the sense of being sound and not
-leading to dangling `Gc` pointers, but also in a way that cannot possibly lead
-to things like uncollectable cycles. It is slightly more inconvenient than if
-Rust async blocks could implement `Collect` directly (it requires entering and
-exiting the GC context manually and converting values to / from `Local`), but it
-is MUCH easier than manually implementing a custom `Sequence` state machine!
+block, and the generated `Future` tells the outer sequence what actions to
+take on its behalf. Since the Rust future cannot (safely) hold GC pointers
+(since it cannot possibly implement `Collect` in today's Rust), we instead
+allow it to hold proxy "stashed" values, and these "stashed" values point to
+a "shadow stack" held inside the outer sequence which allows them to be traced
+and collected properly! We provide a `Locals` object inside async sequences
+and this is the future's "shadow stack"; it can be used to stash / fetch any
+GC value and any values stashed using this object are treated as owned by the
+outer `Sequence`. In this way, we end up with a Rust future that can store GC
+values safely, both in the sense of being sound and not leading to dangling
+`Gc` pointers, but also in a way that cannot possibly lead to things like
+uncollectable cycles. It is slightly more inconvenient than if Rust async blocks
+could implement `Collect` directly (it requires entering and exiting the GC
+context manually and stashing / unstashing GC values), but it is MUCH easier
+than manually implementing a custom `Sequence` state machine!
 
 Using this, it is easy to write very complex Rust callbacks that can themselves
 call into Lua or resume threads or yield values back to Lua (or simply return
