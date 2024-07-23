@@ -2,7 +2,7 @@ use std::{any::TypeId, hash::BuildHasherDefault};
 
 use ahash::AHasher;
 use gc_arena::{
-    allocator_api::MetricsAlloc, lock::RefLock, Collect, DynamicRootSet, Gc, Mutation, Root,
+    allocator_api::MetricsAlloc, arena::Root, lock::RefLock, Collect, DynamicRootSet, Gc, Mutation,
     Rootable,
 };
 use hashbrown::{hash_map, HashMap};

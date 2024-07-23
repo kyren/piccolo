@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gc_arena::{barrier, Collect, Mutation, Root, Rootable};
+use gc_arena::{arena::Root, barrier, Collect, Mutation, Rootable};
 use piccolo::{
     Callback, CallbackReturn, Context, Error, Execution, FromMultiValue, IntoMultiValue, IntoValue,
     MetaMethod, Table, UserData, Value,

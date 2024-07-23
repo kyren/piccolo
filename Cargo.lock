@@ -172,7 +172,7 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=2c3a598b9729a9ac64c76deed1421cc1b92bc69c#2c3a598b9729a9ac64c76deed1421cc1b92bc69c"
+source = "git+https://github.com/kyren/gc-arena?rev=5a7534b883b703f23cfb8c3cfdf033460aa77ea9#5a7534b883b703f23cfb8c3cfdf033460aa77ea9"
 dependencies = [
  "allocator-api2",
  "gc-arena-derive",
@@ -183,7 +183,7 @@ dependencies = [
 [[package]]
 name = "gc-arena-derive"
 version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=2c3a598b9729a9ac64c76deed1421cc1b92bc69c#2c3a598b9729a9ac64c76deed1421cc1b92bc69c"
+source = "git+https://github.com/kyren/gc-arena?rev=5a7534b883b703f23cfb8c3cfdf033460aa77ea9#5a7534b883b703f23cfb8c3cfdf033460aa77ea9"
 dependencies = [
  "proc-macro2",
  "quote",

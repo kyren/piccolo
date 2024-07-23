@@ -1,6 +1,10 @@
 use std::ops;
 
-use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Root, Rootable};
+use gc_arena::{
+    arena::{CollectionPhase, Root},
+    metrics::Metrics,
+    Arena, Collect, Mutation, Rootable,
+};
 
 use crate::{
     finalizers::Finalizers,
@@ -192,7 +196,7 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        if self.arena.collection_phase() != CollectionPhase::Collecting {
+        if self.arena.collection_phase() != CollectionPhase::Sweeping {
             self.arena.mark_all().unwrap().finalize(|fc, root| {
                 root.finalizers.prepare(fc);
             });
@@ -228,7 +232,7 @@ impl Lua {
 
         let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
         if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            if self.arena.collection_phase() == CollectionPhase::Collecting {
+            if self.arena.collection_phase() == CollectionPhase::Sweeping {
                 self.arena.collect_debt();
             } else {
                 if let Some(marked) = self.arena.mark_debt() {
@@ -238,8 +242,8 @@ impl Lua {
                     self.arena.mark_all().unwrap().finalize(|fc, root| {
                         root.finalizers.finalize(fc);
                     });
-                    // Immediately transition to `CollectionPhase::Collecting`.
-                    self.arena.mark_all().unwrap().start_collecting();
+                    // Immediately transition to `CollectionPhase::Sweeping`.
+                    self.arena.mark_all().unwrap().start_sweeping();
                 }
             }
         }

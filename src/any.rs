@@ -5,8 +5,9 @@ use std::{
 };
 
 use gc_arena::{
+    arena::Root,
     barrier::{self, Write},
-    Collect, Gc, Mutation, Root, Rootable,
+    Collect, Gc, Mutation, Rootable,
 };
 
 /// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
@@ -186,13 +187,13 @@ impl<'gc, M> Any<'gc, M> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::rootless_arena;
+    use gc_arena::arena::rootless_mutate;
 
     use super::*;
 
     #[test]
     fn test_any_value() {
-        rootless_arena(|mc| {
+        rootless_mutate(|mc| {
             #[derive(Collect)]
             #[collect(no_drop)]
             struct A<'gc>(Gc<'gc, i32>);
