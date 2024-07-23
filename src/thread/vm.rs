@@ -2,7 +2,7 @@ use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{
-    meta_ops::{self, MetaResult},
+    meta_ops::{self, ConcatMetaResult, MetaResult},
     opcode::{Operation, RCIndex},
     table::RawTable,
     thread::thread::MetaReturn,
@@ -358,10 +358,21 @@ pub(super) fn run_vm<'gc>(
                 source,
                 count,
             } => {
-                registers.stack_frame[dest.0 as usize] = Value::String(String::concat(
-                    ctx,
-                    &registers.stack_frame[source.0 as usize..source.0 as usize + count as usize],
-                )?);
+                let base = source.0 as usize;
+                let values = &registers.stack_frame[base..base + count as usize];
+                match meta_ops::concat_many(ctx, values)? {
+                    ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    ConcatMetaResult::Call(func) => {
+                        lua_frame.call_meta_function_in_place(
+                            ctx,
+                            func,
+                            base,
+                            count,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::GetUpValue { source, dest } => {

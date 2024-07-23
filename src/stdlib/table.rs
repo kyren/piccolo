@@ -1,4 +1,5 @@
-use std::{mem, pin::Pin};
+use std::mem;
+use std::pin::Pin;
 
 use anyhow::Context as _;
 use gc_arena::Collect;
@@ -7,11 +8,11 @@ use crate::{
     async_callback::{AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
-    meta_ops::{self, MetaResult},
+    meta_ops::{self, concat_separated, ConcatMetaResult, MetaResult},
     table::RawTable,
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
-    Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction, StashedTable,
-    StashedValue, Table, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Function, IntoValue,
+    MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
+    StashedTable, StashedValue, Table, Value,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -31,40 +32,90 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         }),
     );
 
+    let unpack: Function<'gc> = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
+            stack.consume(ctx)?;
+
+        let start = start_arg.unwrap_or(1);
+        let seq = if let Some(end) = end_arg {
+            if start > end {
+                return Ok(CallbackReturn::Return);
+            }
+
+            let length = try_compute_length(start, end)
+                .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+            Unpack::MainLoop {
+                start,
+                table,
+                length,
+                index: 0,
+                batch_end: 0,
+                callback_return: false,
+            }
+        } else {
+            Unpack::FindLength { start, table }
+        };
+
+        Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+    })
+    .into();
+
+    table.set_field(ctx, "unpack", unpack.clone());
+
     table.set_field(
         ctx,
-        "unpack",
-        Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let (table, start_arg, end_arg): (Value<'gc>, Option<i64>, Option<i64>) =
-                stack.consume(ctx)?;
+        "concat",
+        Callback::from_fn_with(&ctx, unpack, move |unpack, ctx, _exec, mut stack| {
+            let sep = stack.remove(1).unwrap_or_default();
 
-            let start = start_arg.unwrap_or(1);
-            let seq = if let Some(end) = end_arg {
-                if start > end {
-                    return Ok(CallbackReturn::Return);
+            let then_impl = Callback::from_fn_with(&ctx, sep, |sep, ctx, _, mut stack| {
+                let values = &stack[..];
+                match concat_separated(ctx, values, *sep)? {
+                    ConcatMetaResult::Value(v) => {
+                        stack.replace(ctx, v);
+                        Ok(CallbackReturn::Return)
+                    }
+                    ConcatMetaResult::Call(func) => Ok(CallbackReturn::Call {
+                        function: func,
+                        then: None,
+                    }),
                 }
+            });
 
-                let length = try_compute_length(start, end)
-                    .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
-                Unpack::MainLoop {
-                    start,
-                    table,
-                    length,
-                    index: 0,
-                    batch_end: 0,
-                    callback_return: false,
+            #[derive(Collect)]
+            #[collect(no_drop)]
+            struct CallSequence<'gc>(Function<'gc>);
+
+            impl<'gc> Sequence<'gc> for CallSequence<'gc> {
+                fn poll(
+                    self: Pin<&mut Self>,
+                    _ctx: Context<'gc>,
+                    _exec: Execution<'gc, '_>,
+                    _stack: Stack<'gc, '_>,
+                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                    Ok(SequencePoll::TailCall(self.0))
                 }
-            } else {
-                Unpack::FindLength { start, table }
-            };
+            }
 
-            Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+            // Defer to table.unpack for indexing implementation.
+            Ok(CallbackReturn::Call {
+                function: *unpack,
+                then: Some(BoxSequence::new(&ctx, CallSequence(then_impl.into()))),
+            })
         }),
     );
 
     table.set_field(ctx, "remove", Callback::from_fn(&ctx, table_remove_impl));
 
     table.set_field(ctx, "insert", Callback::from_fn(&ctx, table_insert_impl));
+
+    let data = include_str!("table/sort.lua");
+    let func = Closure::load(ctx, Some("table/sort.lua"), data.as_bytes()).unwrap();
+    table.set_field(ctx, "sort", func);
+
+    let data = include_str!("table/move.lua");
+    let func = Closure::load(ctx, Some("table/move.lua"), data.as_bytes()).unwrap();
+    table.set_field(ctx, "move", func);
 
     ctx.set_global("table", table);
 }

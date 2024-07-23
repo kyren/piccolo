@@ -134,12 +134,12 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 | Status | Function                     | Differences | Notes |
 | ------ | ---------------------------- | ----------- | ----- |
-| ⚫️️   | `concat(list[, sep, i, j])`  |             |       |
-| ⚫️️   | `insert(list, [pos,] value)` |             |       |
-| ⚫️️   | `move(a1, f, e, t[, a2])`    |             |       |
+| 🔵     | `concat(list[, sep, i, j])`  |             | Supports the `__concat` metamethod |
+| 🔵     | `insert(list, [pos,] value)` |             |       |
+| 🔵     | `move(a1, f, e, t[, a2])`    |             | Currently implemented with a Lua polyfill |
 | 🔵     | `pack(args...)`              |             |       |
-| ⚫️️   | `remove(list[, pos])`        |             |       |
-| ⚫️️   | `sort(list[, comp])`         |             |       |
+| 🔵     | `remove(list[, pos])`        |             |       |
+| 🔵     | `sort(list[, comp])`         |             | Currently implemented with a Lua polyfill using a simple merge sort, rather than PUC-Rio Lua's quicksort impl |
 | 🔵     | `unpack(list[, i, j])`       |             |       |
 
 ## Math

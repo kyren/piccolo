@@ -4,10 +4,7 @@ mod vm;
 
 use thiserror::Error;
 
-use crate::{
-    meta_ops::{MetaCallError, MetaOperatorError},
-    string::BadConcatType,
-};
+use crate::meta_ops::{MetaCallError, MetaOperatorError};
 
 pub use self::{
     executor::{
@@ -31,8 +28,6 @@ pub enum VMError {
     BadCall(#[from] MetaCallError),
     #[error("operator error")]
     OperatorError(#[from] MetaOperatorError),
-    #[error("bad concat type")]
-    BadConcatType(#[from] BadConcatType),
     #[error("_ENV upvalue is only allowed on top-level closure")]
     BadEnvUpValue,
     #[error("Invalid types in for loop; expected numbers, found {0}, {1}, and {2}")]

@@ -1,12 +1,13 @@
+use std::io::Write;
+
 use gc_arena::Collect;
 use thiserror::Error;
 
+use crate::async_callback::prepare_async_metaop;
+use crate::{async_sequence, SequenceReturn};
 use crate::{
     table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
 };
-
-// TODO: Remaining metamethods to implement:
-// - Concat
 
 /// An enum of every possible Lua metamethod.
 ///
@@ -152,6 +153,8 @@ pub enum MetaOperatorError {
     Binary(MetaMethod, &'static str, &'static str),
     #[error("invalid table key")]
     IndexKeyError(#[from] InvalidTableKey),
+    #[error("concatenation result is too long")]
+    ConcatOverflow,
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -503,7 +506,7 @@ fn meta_metaop<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
     method: MetaMethod,
-    const_op: impl Fn(Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
+    const_op: impl Fn(Context<'gc>, Value<'gc>, Value<'gc>) -> Option<Value<'gc>>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     Ok(match (lhs, rhs) {
         (Value::Table(_) | Value::UserData(_), Value::Table(_) | Value::UserData(_)) => {
@@ -553,7 +556,7 @@ fn meta_metaop<'gc>(
                 ));
             }
         }
-        (a, b) => const_op(a, b)
+        (a, b) => const_op(ctx, a, b)
             .ok_or_else(|| MetaOperatorError::Binary(method, lhs.type_name(), rhs.type_name()))?
             .into(),
     })
@@ -587,7 +590,7 @@ pub fn add<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Add, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Add, |_, a, b| {
         Some(a.to_constant()?.add(&b.to_constant()?)?.into())
     })
 }
@@ -597,7 +600,7 @@ pub fn subtract<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Sub, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Sub, |_, a, b| {
         Some(a.to_constant()?.subtract(&b.to_constant()?)?.into())
     })
 }
@@ -607,7 +610,7 @@ pub fn multiply<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Mul, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Mul, |_, a, b| {
         Some(a.to_constant()?.multiply(&b.to_constant()?)?.into())
     })
 }
@@ -617,7 +620,7 @@ pub fn float_divide<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Div, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Div, |_, a, b| {
         Some(a.to_constant()?.float_divide(&b.to_constant()?)?.into())
     })
 }
@@ -627,7 +630,7 @@ pub fn floor_divide<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::IDiv, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::IDiv, |_, a, b| {
         Some(a.to_constant()?.floor_divide(&b.to_constant()?)?.into())
     })
 }
@@ -637,7 +640,7 @@ pub fn modulo<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Mod, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Mod, |_, a, b| {
         Some(a.to_constant()?.modulo(&b.to_constant()?)?.into())
     })
 }
@@ -647,7 +650,7 @@ pub fn exponentiate<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Pow, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Pow, |_, a, b| {
         Some(a.to_constant()?.exponentiate(&b.to_constant()?)?.into())
     })
 }
@@ -675,7 +678,7 @@ pub fn bitwise_and<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::BAnd, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BAnd, |_, a, b| {
         Some(a.to_constant()?.bitwise_and(&b.to_constant()?)?.into())
     })
 }
@@ -685,7 +688,7 @@ pub fn bitwise_or<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::BOr, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BOr, |_, a, b| {
         Some(a.to_constant()?.bitwise_or(&b.to_constant()?)?.into())
     })
 }
@@ -695,7 +698,7 @@ pub fn bitwise_xor<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::BXor, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::BXor, |_, a, b| {
         Some(a.to_constant()?.bitwise_xor(&b.to_constant()?)?.into())
     })
 }
@@ -705,7 +708,7 @@ pub fn shift_left<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Shl, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Shl, |_, a, b| {
         Some(a.to_constant()?.shift_left(&b.to_constant()?)?.into())
     })
 }
@@ -715,7 +718,7 @@ pub fn shift_right<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Shr, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Shr, |_, a, b| {
         Some(a.to_constant()?.shift_right(&b.to_constant()?)?.into())
     })
 }
@@ -725,7 +728,7 @@ pub fn less_than<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Lt, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Lt, |_, a, b| {
         Some(a.to_constant()?.less_than(&b.to_constant()?)?.into())
     })
 }
@@ -735,7 +738,192 @@ pub fn less_equal<'gc>(
     lhs: Value<'gc>,
     rhs: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
-    meta_metaop(ctx, lhs, rhs, MetaMethod::Le, |a, b| {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Le, |_, a, b| {
         Some(a.to_constant()?.less_equal(&b.to_constant()?)?.into())
     })
+}
+
+/// The result of a concat metaoperation, either a completed [`Value`]
+/// or a [`Function`] that must be called with the values to
+/// concatenate.
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub enum ConcatMetaResult<'gc> {
+    Value(Value<'gc>),
+    Call(Function<'gc>),
+}
+
+pub fn concat<'gc>(
+    ctx: Context<'gc>,
+    lhs: Value<'gc>,
+    rhs: Value<'gc>,
+) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
+    meta_metaop(ctx, lhs, rhs, MetaMethod::Concat, |ctx, a, b| {
+        if a.is_implicit_string() && b.is_implicit_string() {
+            let mut bytes = Vec::new();
+            for value in [a, b] {
+                match value {
+                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                    Value::String(s) => bytes.extend(s.as_bytes()),
+                    _ => return None,
+                }
+            }
+            Some(Value::String(ctx.intern(&bytes)))
+        } else {
+            None
+        }
+    })
+}
+
+/// Returns an estimate of the length of the concatenation of a list of values,
+/// or returns [`None`] if any value is not implicitly coercible to a string.
+fn estimate_concatenated_len<'gc>(
+    values: &[Value<'gc>],
+) -> Result<Option<usize>, MetaOperatorError> {
+    let mut len = 0usize;
+    for value in values {
+        let value_len = match value {
+            Value::Integer(i) => i.ilog10() as usize + i.is_negative() as usize,
+            Value::Number(_n) => 10,
+            Value::String(s) => s.as_bytes().len(),
+            _ => return Ok(None),
+        };
+        len = len
+            .checked_add(value_len)
+            .ok_or(MetaOperatorError::ConcatOverflow)?;
+    }
+    Ok(Some(len))
+}
+
+pub fn concat_many<'gc>(
+    ctx: Context<'gc>,
+    values: &[Value<'gc>],
+) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
+    // Fast path scope; never loops, returns if successful, otherwise
+    // breaks to fall back to the slow impl.
+    loop {
+        // Since we have to make two passes to check for complex types,
+        // estimate the length in the first pass.
+        let Some(len) = estimate_concatenated_len(values)? else {
+            break;
+        };
+
+        let mut bytes = Vec::with_capacity(len);
+        for value in values {
+            match value {
+                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::String(s) => bytes.extend(s.as_bytes()),
+                _ => unreachable!(),
+            }
+        }
+        return Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))));
+    }
+
+    // Fall back to a sequence-based implemenation to handle metamethods
+    let func = Callback::from_fn(&ctx, |ctx, _, stack| {
+        let args = stack.len();
+        let s = async_sequence(&ctx, |_, mut seq| async move {
+            for i in (1..args).into_iter().rev() {
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let bottom = i - 1;
+                    let call = concat(ctx, stack[i - 1], stack[i])?;
+                    let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                    Ok(p)
+                })?;
+                call.execute(&mut seq).await?;
+            }
+            Ok(SequenceReturn::Return)
+        });
+        Ok(CallbackReturn::Sequence(s))
+    });
+    Ok(ConcatMetaResult::Call(func.into()))
+}
+
+pub fn concat_separated<'gc>(
+    ctx: Context<'gc>,
+    values: &[Value<'gc>],
+    separator: Value<'gc>,
+) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
+    if separator.is_nil() {
+        return concat_many(ctx, values);
+    }
+
+    // Fast path scope; never loops, returns if successful, otherwise
+    // breaks to fall back to the slow impl.
+    loop {
+        let sep_str = match separator.into_string(ctx) {
+            Some(s) => s,
+            None => break,
+        };
+
+        // Since we have to make two passes to check for complex types,
+        // estimate the length in the first pass.
+        let Some(len) = estimate_concatenated_len(values)? else {
+            break;
+        };
+
+        let sep_count = values.len().saturating_sub(1);
+        let total_len = sep_count
+            .checked_mul(sep_str.len() as usize)
+            .and_then(|l| l.checked_add(len))
+            .ok_or(MetaOperatorError::ConcatOverflow)?;
+
+        // Should this be allocated in-place in the GC heap?
+        let mut bytes = Vec::with_capacity(total_len);
+
+        let mut iter = values.iter();
+        if let Some(val) = iter.next() {
+            match val {
+                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::String(s) => bytes.extend(s.as_bytes()),
+                _ => unreachable!(),
+            }
+
+            while let Some(val) = iter.next() {
+                bytes.extend(&*sep_str);
+                match val {
+                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
+                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                    Value::String(s) => bytes.extend(s.as_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+        }
+        drop(iter);
+
+        return Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))));
+    }
+
+    // Fall back to a sequence-based implemenation to handle metamethods
+    let func = Callback::from_fn_with(&ctx, separator, move |&sep, ctx, _, stack| {
+        let args = stack.len();
+        let b = async_sequence(&ctx, |locals, mut seq| {
+            let sep = locals.stash(&ctx, sep);
+            async move {
+                for i in (1..args).into_iter().rev() {
+                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let bottom = i;
+                        let call = concat(ctx, locals.fetch(&sep), stack[i])?;
+                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                        Ok(p)
+                    })?;
+                    call.execute(&mut seq).await?;
+
+                    let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                        let bottom = i - 1;
+                        let call = concat(ctx, stack[i - 1], stack[i])?;
+                        let p = prepare_async_metaop(ctx, &mut stack, locals, bottom, call, 1);
+                        Ok(p)
+                    })?;
+                    call.execute(&mut seq).await?;
+                }
+                Ok(SequenceReturn::Return)
+            }
+        });
+        Ok(CallbackReturn::Sequence(b))
+    });
+    Ok(ConcatMetaResult::Call(func.into()))
 }
