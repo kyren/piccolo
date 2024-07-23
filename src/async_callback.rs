@@ -12,7 +12,6 @@ use std::{
 use gc_arena::{Collect, DynamicRootSet, Mutation};
 
 use crate::{
-    meta_ops::{MetaCall, MetaResult},
     stash::{Fetchable, Stashable},
     BoxSequence, Context, Error, Execution, Function, Sequence, SequencePoll, Stack, StashedError,
     StashedFunction, StashedThread, Thread,
@@ -317,55 +316,6 @@ impl<'gc, 'a> Locals<'gc, 'a> {
     /// [`Locals::stash`].
     pub fn fetch<F: Fetchable>(&self, local: &F) -> F::Fetched<'gc> {
         local.fetch(self.roots)
-    }
-}
-
-#[must_use]
-pub struct PreparedCall {
-    func: Option<crate::StashedFunction>,
-    bottom: usize,
-    returns: usize,
-}
-
-impl PreparedCall {
-    pub async fn execute(self, seq: &mut AsyncSequence) -> Result<(), crate::StashedError> {
-        if let Some(func) = self.func {
-            seq.call(&func, self.bottom).await?;
-        }
-        seq.enter(|_, _, _, mut stack| {
-            stack.resize(self.bottom + self.returns);
-        });
-        Ok(())
-    }
-}
-
-pub fn prepare_async_metaop<'gc, const N: usize>(
-    ctx: Context<'gc>,
-    stack: &mut Stack<'gc, '_>,
-    locals: Locals<'gc, '_>,
-    bottom: usize,
-    call: MetaResult<'gc, N>,
-    returns: usize,
-) -> PreparedCall {
-    match call {
-        MetaResult::Value(v) => {
-            stack.resize(bottom);
-            stack.push_back(v);
-            PreparedCall {
-                func: None,
-                bottom,
-                returns,
-            }
-        }
-        MetaResult::Call(MetaCall { function, args }) => {
-            stack.resize(bottom);
-            stack.extend(args);
-            PreparedCall {
-                func: Some(locals.stash(&ctx, function)),
-                bottom,
-                returns,
-            }
-        }
     }
 }
 

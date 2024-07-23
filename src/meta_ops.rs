@@ -3,8 +3,8 @@ use std::io::Write;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::async_callback::prepare_async_metaop;
-use crate::{async_sequence, SequenceReturn};
+use crate::async_callback::{AsyncSequence, Locals};
+use crate::{async_sequence, SequenceReturn, Stack};
 use crate::{
     table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
 };
@@ -926,4 +926,53 @@ pub fn concat_separated<'gc>(
         Ok(CallbackReturn::Sequence(b))
     });
     Ok(ConcatMetaResult::Call(func.into()))
+}
+
+#[must_use]
+struct PreparedCall {
+    func: Option<crate::StashedFunction>,
+    bottom: usize,
+    returns: usize,
+}
+
+impl PreparedCall {
+    async fn execute(self, seq: &mut AsyncSequence) -> Result<(), crate::StashedError> {
+        if let Some(func) = self.func {
+            seq.call(&func, self.bottom).await?;
+        }
+        seq.enter(|_, _, _, mut stack| {
+            stack.resize(self.bottom + self.returns);
+        });
+        Ok(())
+    }
+}
+
+fn prepare_async_metaop<'gc, const N: usize>(
+    ctx: Context<'gc>,
+    stack: &mut Stack<'gc, '_>,
+    locals: Locals<'gc, '_>,
+    bottom: usize,
+    call: MetaResult<'gc, N>,
+    returns: usize,
+) -> PreparedCall {
+    match call {
+        MetaResult::Value(v) => {
+            stack.resize(bottom);
+            stack.push_back(v);
+            PreparedCall {
+                func: None,
+                bottom,
+                returns,
+            }
+        }
+        MetaResult::Call(MetaCall { function, args }) => {
+            stack.resize(bottom);
+            stack.extend(args);
+            PreparedCall {
+                func: Some(locals.stash(&ctx, function)),
+                bottom,
+                returns,
+            }
+        }
+    }
 }
