@@ -62,7 +62,15 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             }
             Value::Function(_) => Err(de::Error::custom("cannot deserialize from function")),
             Value::Thread(_) => Err(de::Error::custom("cannot deserialize from thread")),
-            Value::UserData(_) => Err(de::Error::custom("cannot deserialize from userdata")),
+            Value::UserData(ud) => {
+                if is_none(ud) {
+                    self.deserialize_option(visitor)
+                } else if is_unit(ud) {
+                    self.deserialize_unit(visitor)
+                } else {
+                    Err(de::Error::custom("cannot deserialize from userdata"))
+                }
+            }
         }
     }
 
