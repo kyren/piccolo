@@ -84,9 +84,12 @@ impl<'gc> UserData<'gc> {
 
     /// Create a new `UserData` type from a non-GC value.
     ///
+    /// This equivalent to calling [`UserData::new`] with the given value wrapped in the [`Static`]
+    /// wrapper provided by `gc-arena` and the `R` type set to `Static<T>`.
+    ///
     /// This is provided as a convenience as an easier API than dealing with the [`trait@Rootable`]
-    /// trait. In order to downcast values created with this method, you must use the *static*
-    /// variants of `UserData` methods, like [`UserData::downcast_static`].
+    /// trait. In order to downcast values created with this method, you can use the *static*
+    /// variants of `UserData` methods as a further convenience, like [`UserData::downcast_static`].
     pub fn new_static<T: 'static>(mc: &Mutation<'gc>, val: T) -> Self {
         Self::new::<Static<T>>(mc, Static(val))
     }
@@ -112,6 +115,8 @@ impl<'gc> UserData<'gc> {
     }
 
     /// Check if a `UserData` is of type `T` created with [`UserData::new_static`].
+    ///
+    /// This is equivalent to calling `this.is::<Static<T>>()`.
     pub fn is_static<T: 'static>(self) -> bool {
         self.is::<Static<T>>()
     }
@@ -151,11 +156,11 @@ impl<'gc> UserData<'gc> {
     ///
     /// If [`UserData::is_static`] returns true for the provided type `T`, then this will return a
     /// reference to the held type, otherwise it will return `Err(BadUserDataType)`.
+    ///
+    /// This is equivalent to calling `this.downcast::<Static<T>>()` (except this returns a
+    /// reference to the inner [`Static::0`] field instead).
     pub fn downcast_static<T: 'static>(self) -> Result<&'gc T, BadUserDataType> {
-        self.0
-            .downcast::<Static<T>>()
-            .map(|r| &r.0)
-            .ok_or(BadUserDataType)
+        self.downcast::<Static<T>>().map(|r| &r.0)
     }
 
     pub fn metatable(self) -> Option<Table<'gc>> {
