@@ -49,6 +49,10 @@ impl<'gc, 'a> Stack<'gc, 'a> {
             .unwrap_or_default()
     }
 
+    pub fn get_mut(&mut self, i: usize) -> Option<&mut Value<'gc>> {
+        self.values.get_mut(self.bottom + i)
+    }
+
     pub fn push_back(&mut self, value: Value<'gc>) {
         self.values.push(value);
     }
