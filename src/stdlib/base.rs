@@ -250,7 +250,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 impl<'gc> Sequence<'gc> for PairsReturn {
                     fn poll(
-                        &mut self,
+                        self: Pin<&mut Self>,
                         _ctx: Context<'gc>,
                         _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
