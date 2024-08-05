@@ -1,4 +1,4 @@
-use std::{array, iter, ops, string::String as StdString, vec};
+use std::{array, iter, ops, string::String as StdString};
 
 use crate::{
     Callback, Closure, Context, Function, String, Table, Thread, TypeError, UserData, Value,
@@ -178,7 +178,7 @@ impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Vec<T> {
         if let Value::Table(table) = value {
             (1..=table.length())
                 .into_iter()
-                .map(|i| T::from_value(ctx, table.get(ctx, i)))
+                .map(|i| table.get(ctx, i))
                 .collect()
         } else {
             Err(TypeError {
@@ -194,10 +194,7 @@ impl<'gc, T: FromValue<'gc>, const N: usize> FromValue<'gc> for [T; N] {
         if let Value::Table(table) = value {
             let mut res: [Option<T>; N] = array::from_fn(|_| None);
             for i in 0..N {
-                res[i] = Some(T::from_value(
-                    ctx,
-                    table.get(ctx, i64::try_from(i).unwrap() + 1),
-                )?);
+                res[i] = Some(table.get(ctx, i64::try_from(i).unwrap() + 1)?);
             }
             Ok(res.map(|r| r.unwrap()))
         } else {
@@ -345,15 +342,11 @@ impl<'gc> FromValue<'gc> for StdString {
 }
 
 pub trait IntoMultiValue<'gc> {
-    type Iter: Iterator<Item = Value<'gc>>;
-
-    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter;
+    fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>>;
 }
 
 impl<'gc, T: IntoValue<'gc>> IntoMultiValue<'gc> for T {
-    type Iter = iter::Once<Value<'gc>>;
-
-    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
+    fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>> {
         iter::once(self.into_value(ctx))
     }
 }
@@ -374,6 +367,44 @@ impl<'gc, T: FromValue<'gc>> FromMultiValue<'gc> for T {
     }
 }
 
+impl<'gc, T: IntoMultiValue<'gc>, E: IntoValue<'gc>> IntoMultiValue<'gc> for Result<T, E> {
+    fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>> {
+        enum ResultIter<'gc, I> {
+            Ok(I),
+            Err(iter::Once<Value<'gc>>),
+        }
+
+        impl<'gc, I> Iterator for ResultIter<'gc, I>
+        where
+            I: Iterator<Item = Value<'gc>>,
+        {
+            type Item = Value<'gc>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    ResultIter::Ok(i) => i.next(),
+                    ResultIter::Err(i) => i.next(),
+                }
+            }
+        }
+
+        match self {
+            Ok(v) => iter::once(true.into()).chain(ResultIter::Ok(v.into_multi_value(ctx))),
+            Err(e) => {
+                iter::once(false.into()).chain(ResultIter::Err(iter::once(e.into_value(ctx))))
+            }
+        }
+    }
+}
+
+/// A marker newtype that converts to / from *multiple* Lua values.
+///
+/// A `Vec<T>` has [`IntoValue`] / [`FromValue`] implementations that conver to / from a [`Table`],
+/// while a `Variadic<Vec<T>>` has [`IntoMultiValue`] and [`FromMultiValue`] implementations that
+/// convert to / from multiple Lua values at once.
+///
+/// Use this to provide a variable number of arguments to a function, or to collect multiple return
+/// values into a single container.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Variadic<T>(pub T);
 
@@ -418,33 +449,12 @@ impl<I, T: FromIterator<I>> FromIterator<I> for Variadic<T> {
     }
 }
 
-pub struct IterIntoValue<'gc, I> {
-    ctx: Context<'gc>,
-    iter: I,
-}
-
-impl<'gc, I: Iterator> Iterator for IterIntoValue<'gc, I>
-where
-    I::Item: IntoValue<'gc>,
-{
-    type Item = Value<'gc>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.iter.next()?.into_value(self.ctx))
-    }
-}
-
 impl<'gc, T: IntoIterator> IntoMultiValue<'gc> for Variadic<T>
 where
     T::Item: IntoValue<'gc>,
 {
-    type Iter = IterIntoValue<'gc, T::IntoIter>;
-
-    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
-        IterIntoValue {
-            ctx,
-            iter: self.0.into_iter(),
-        }
+    fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>> {
+        self.0.into_iter().map(move |v| v.into_value(ctx))
     }
 }
 
@@ -453,13 +463,8 @@ where
     &'a T: IntoIterator,
     <&'a T as IntoIterator>::Item: IntoValue<'gc>,
 {
-    type Iter = IterIntoValue<'gc, <&'a T as IntoIterator>::IntoIter>;
-
-    fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
-        IterIntoValue {
-            ctx,
-            iter: self.0.into_iter(),
-        }
+    fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>> {
+        self.0.into_iter().map(move |v| v.into_value(ctx))
     }
 }
 
@@ -492,16 +497,16 @@ macro_rules! impl_tuple {
         where
             $($name: IntoMultiValue<'gc>,)*
         {
-            type Iter = vec::IntoIter<Value<'gc>>;
-
             #[allow(unused_variables)]
             #[allow(unused_mut)]
             #[allow(non_snake_case)]
-            fn into_multi_value(self, ctx: Context<'gc>) -> Self::Iter {
+            fn into_multi_value(self, ctx: Context<'gc>) -> impl Iterator<Item = Value<'gc>> {
                 let ($($name,)*) = self;
-                let mut results = Vec::new();
-                $(results.extend($name.into_multi_value(ctx));)*
-                results.into_iter()
+                let i = iter::empty();
+                $(
+                    let i = i.chain($name.into_multi_value(ctx));
+                )*
+                i
             }
         }
 

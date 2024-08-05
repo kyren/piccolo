@@ -9,6 +9,14 @@ use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
+/// The mechanism through which all callbacks receive parameters and return values.
+///
+/// Each [`Thread`](crate::Thread) has its own internal stack of [`Value`]s, and this stack is
+/// shared for all running Lua functions *and* callbacks.
+///
+/// The `Stack` is actually a mutable reference to the *top* of the internal stack inside a
+/// `Thread`. In this way, we avoid needing to constantly allocate space for callback arguments
+/// and returns.
 pub struct Stack<'gc, 'a> {
     values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     bottom: usize,
@@ -18,6 +26,13 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn new(values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>, bottom: usize) -> Self {
         assert!(values.len() >= bottom);
         Self { values, bottom }
+    }
+
+    pub fn reborrow(&mut self) -> Stack<'gc, '_> {
+        Stack {
+            values: self.values,
+            bottom: self.bottom,
+        }
     }
 
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
@@ -53,6 +68,15 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn pop_front(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
             Some(self.values.remove(self.bottom))
+        } else {
+            None
+        }
+    }
+
+    pub fn remove(&mut self, i: usize) -> Option<Value<'gc>> {
+        let index = self.bottom + i;
+        if index < self.values.len() {
+            Some(self.values.remove(index))
         } else {
             None
         }

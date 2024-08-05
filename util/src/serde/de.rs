@@ -46,7 +46,13 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             Value::Boolean(_) => self.deserialize_bool(visitor),
             Value::Integer(_) => self.deserialize_i64(visitor),
             Value::Number(_) => self.deserialize_f64(visitor),
-            Value::String(_) => self.deserialize_bytes(visitor),
+            Value::String(s) => {
+                if let Ok(string) = s.to_str() {
+                    visitor.visit_borrowed_str(string)
+                } else {
+                    self.deserialize_bytes(visitor)
+                }
+            }
             Value::Table(t) => {
                 if is_sequence(t) {
                     self.deserialize_seq(visitor)
@@ -56,7 +62,15 @@ impl<'gc> de::Deserializer<'gc> for Deserializer<'gc> {
             }
             Value::Function(_) => Err(de::Error::custom("cannot deserialize from function")),
             Value::Thread(_) => Err(de::Error::custom("cannot deserialize from thread")),
-            Value::UserData(_) => Err(de::Error::custom("cannot deserialize from userdata")),
+            Value::UserData(ud) => {
+                if is_none(ud) {
+                    self.deserialize_option(visitor)
+                } else if is_unit(ud) {
+                    self.deserialize_unit(visitor)
+                } else {
+                    Err(de::Error::custom("cannot deserialize from userdata"))
+                }
+            }
         }
     }
 
@@ -374,7 +388,7 @@ impl<'gc> de::SeqAccess<'gc> for Seq<'gc> {
     where
         T: de::DeserializeSeed<'gc>,
     {
-        let v = self.table.get_value(Value::Integer(self.ind));
+        let v = self.table.get_raw(Value::Integer(self.ind));
         if v.is_nil() {
             Ok(None)
         } else {
@@ -410,7 +424,7 @@ impl<'gc> de::SeqAccess<'gc> for Tuple<'gc> {
         if self.ind > self.len {
             Ok(None)
         } else {
-            let v = self.table.get_value(Value::Integer(self.ind));
+            let v = self.table.get_raw(Value::Integer(self.ind));
             let res = Some(seed.deserialize(Deserializer::from_value(v))?);
             self.ind += 1;
             Ok(res)

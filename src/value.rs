@@ -1,9 +1,12 @@
-use std::{f64, fmt, i64, io, string::String as StdString};
+use std::{f64, fmt, i64};
 
 use gc_arena::{Collect, Gc};
 
 use crate::{Callback, Closure, Constant, Function, String, Table, Thread, UserData};
 
+/// The single data type for all Lua variables.
+///
+/// Every value that Lua code can manipulate directly is ultimately a some kind of `Value`.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
@@ -38,13 +41,43 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    pub fn write<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
-        match self {
-            Value::String(s) => w.write_all(s.as_bytes()),
-            v => write!(w, "{}", v.display()),
-        }
-    }
+    /// Returns a proxy object which can display any `Value`.
+    ///
+    /// [`Value::Nil`] is printed as "nil", booleans, integers, and numbers are always printed as
+    /// directly as they would be from Rust.
+    ///
+    /// [`Value::String`] is printed using the [`String::display_lossy`] method, which displays
+    /// strings in a lossy fashion if they are not UTF-8 internally.
+    ///
+    /// [`Value::Table`]s, [`Value::Function`]s, [`Value::Thread`]s, and [`Value::UserData`]
+    /// are all printed as `"<typename {:p}>"`, where 'typename' is the value returned by
+    /// [`Value::type_name`].
     pub fn display(self) -> impl fmt::Display + 'gc {
+        struct ValueDisplay<'gc>(Value<'gc>);
+
+        impl<'gc> fmt::Display for ValueDisplay<'gc> {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    Value::Nil => write!(fmt, "nil"),
+                    Value::Boolean(b) => write!(fmt, "{}", b),
+                    Value::Integer(i) => write!(fmt, "{}", i),
+                    Value::Number(f) => write!(fmt, "{}", f),
+                    Value::String(s) => write!(fmt, "{}", s.display_lossy()),
+                    Value::Table(t) => write!(fmt, "<table {:p}>", Gc::as_ptr(t.into_inner())),
+                    Value::Function(Function::Closure(c)) => {
+                        write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+                    }
+                    Value::Function(Function::Callback(c)) => {
+                        write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+                    }
+                    Value::Thread(t) => write!(fmt, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
+                    Value::UserData(u) => {
+                        write!(fmt, "<userdata {:p}>", Gc::as_ptr(u.into_inner()))
+                    }
+                }
+            }
+        }
+
         ValueDisplay(self)
     }
 
@@ -59,10 +92,6 @@ impl<'gc> Value<'gc> {
             Value::Boolean(false) => false,
             _ => true,
         }
-    }
-
-    pub fn not(self) -> Value<'gc> {
-        Value::Boolean(!self.to_bool())
     }
 
     /// Converts value to either a Number or an Integer, if possible.
@@ -82,7 +111,10 @@ impl<'gc> Value<'gc> {
         self.to_constant().and_then(|c| c.to_integer())
     }
 
-    /// Interprets Numbers, Integers, and Strings as a String, if possible.
+    /// Interprets Numbers, Integers, and Strings as a String, otherwise returns None.
+    ///
+    /// If the value is a [`Value::String`], the string is returned directly. Otherwise, the
+    /// returned string will always be the same as what [`Value::display`] would display.
     pub fn into_string(self, ctx: crate::Context<'gc>) -> Option<String<'gc>> {
         match self {
             Value::Integer(i) => Some(ctx.intern(i.to_string().as_bytes())),
@@ -92,12 +124,8 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    /// Indicates whether the value can be implicitly converted to a String;
-    /// if so, [`Value::into_string`] will return `Some` with the same result
-    /// that [`Value::write`] will output.
-    ///
-    /// Note that [`Value::display`] may not result in the same output, when
-    /// handling non-utf8 strings.
+    /// Indicates whether the value can be implicitly converted to a [`String`]; if so,
+    /// [`Value::into_string`] will always return `Some`.
     pub fn is_implicit_string(self) -> bool {
         match self {
             Value::Integer(_) => true,
@@ -115,29 +143,6 @@ impl<'gc> Value<'gc> {
             Value::Number(n) => Some(Constant::Number(n)),
             Value::String(s) => Some(Constant::String(s)),
             _ => None,
-        }
-    }
-}
-
-struct ValueDisplay<'gc>(Value<'gc>);
-
-impl<'gc> fmt::Display for ValueDisplay<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Value::Nil => write!(fmt, "nil"),
-            Value::Boolean(b) => write!(fmt, "{}", b),
-            Value::Integer(i) => write!(fmt, "{}", i),
-            Value::Number(f) => write!(fmt, "{}", f),
-            Value::String(s) => write!(fmt, "{}", StdString::from_utf8_lossy(&s)),
-            Value::Table(t) => write!(fmt, "<table {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::Function(Function::Closure(c)) => {
-                write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
-            }
-            Value::Function(Function::Callback(c)) => {
-                write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
-            }
-            Value::Thread(t) => write!(fmt, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::UserData(u) => write!(fmt, "<userdata {:p}>", Gc::as_ptr(u.into_inner())),
         }
     }
 }

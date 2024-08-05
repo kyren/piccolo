@@ -58,10 +58,21 @@ impl<'gc> fmt::Debug for RawTable<'gc> {
 
 impl<'gc> RawTable<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
+        Self::with_capacity(mc, 0, 0)
+    }
+
+    pub fn with_capacity(mc: &Mutation<'gc>, array_capacity: usize, map_capacity: usize) -> Self {
+        let mut array = vec::Vec::new_in(MetricsAlloc::new(mc));
+        array.resize(array_capacity, Value::Nil);
+
+        let map = HashMap::with_capacity_and_hasher_in(map_capacity, (), MetricsAlloc::new(mc));
+
+        let hash_builder = ahash::random_state::RandomState::new();
+
         Self {
-            array: vec::Vec::new_in(MetricsAlloc::new(mc)),
-            map: HashMap::with_hasher_in((), MetricsAlloc::new(mc)),
-            hash_builder: ahash::random_state::RandomState::new(),
+            array,
+            map,
+            hash_builder,
         }
     }
 
@@ -92,6 +103,8 @@ impl<'gc> RawTable<'gc> {
         key: Value<'gc>,
         value: Value<'gc>,
     ) -> Result<Value<'gc>, InvalidTableKey> {
+        // If the key is an array candidate and less than the current length of the array, it will
+        // go there.
         let index_key = to_array_index(key);
         if let Some(index) = index_key {
             if index < self.array.len() {
@@ -99,52 +112,54 @@ impl<'gc> RawTable<'gc> {
             }
         }
 
-        fn set_reserved_value<'gc>(
-            map: &mut HashMap<Key<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
-            hash: u64,
-            key: CanonicalKey<'gc>,
-            value: Value<'gc>,
-        ) -> Value<'gc> {
-            match map.raw_entry_mut().from_hash(hash, |k| k.eq(key)) {
-                hash_map::RawEntryMut::Occupied(occupied) => {
-                    let (k, v) = occupied.into_key_value();
-                    if k.is_dead_key() {
-                        // Resurrect the key if it is dead.
-                        *k = Key::Live(key);
-                    }
-                    mem::replace(v, value)
-                }
-                hash_map::RawEntryMut::Vacant(vacant) => {
-                    vacant.insert_with_hasher(hash, Key::Live(key), value, |_| {
-                        panic!("map slot must be pre-reserved")
-                    });
-                    Value::Nil
-                }
-            }
-        }
-
         let table_key = CanonicalKey::new(key)?;
         let hash = self.hash_builder.hash_one(table_key);
-        Ok(if value.is_nil() {
-            if let hash_map::RawEntryMut::Occupied(mut occupied) = self
-                .map
-                .raw_entry_mut()
-                .from_hash(hash, |k| k.eq(table_key))
-            {
-                let (k, v) = occupied.get_key_value_mut();
-                if let Some(dead) = k.kill() {
-                    *k = dead;
-                }
-                mem::take(v)
-            } else {
-                Value::Nil
+
+        // If the value is nil then we are removing from the map part, which cannot fail.
+        if value.is_nil() {
+            return Ok(
+                if let hash_map::RawEntryMut::Occupied(mut occupied) = self
+                    .map
+                    .raw_entry_mut()
+                    .from_hash(hash, |k| k.eq(table_key))
+                {
+                    let (k, v) = occupied.get_key_value_mut();
+                    if let Some(dead) = k.kill() {
+                        *k = dead;
+                    }
+                    mem::take(v)
+                } else {
+                    Value::Nil
+                },
+            );
+        }
+
+        // If there is an existing entry in the map part, replace it, otherwise try to fit a new
+        // entry.
+        let raw_map = self.map.raw_table_mut();
+        if let Some(bucket) = raw_map.find(hash, |(k, _)| k.eq(table_key)) {
+            let (k, v) = unsafe { bucket.as_mut() };
+            if k.is_dead_key() {
+                // Resurrect the key if it is dead.
+                *k = Key::Live(table_key);
             }
-        } else if self.map.len() < self.map.capacity() {
-            set_reserved_value(&mut self.map, hash, table_key, value)
-        } else {
-            // If a new element does not fit in either the array or map part of the table, we need
-            // to grow. First, we find the total count of array candidate elements across the array
-            // part, the map part, and the newly inserted key.
+            return Ok(mem::replace(v, value));
+        } else if raw_map
+            .try_insert_no_grow(hash, (Key::Live(table_key), value))
+            .is_ok()
+        {
+            return Ok(Value::Nil);
+        }
+
+        // If a new element does not fit in either the array or map part of the table, we need to
+        // grow.
+
+        if let Some(index_key) = index_key {
+            // We have an array-candidate key, so we'd like to grow the array and place it there,
+            // if possible.
+
+            // First, we find the total count of array candidate elements across the array part, the
+            // map part, and the newly inserted key.
 
             const USIZE_BITS: usize = mem::size_of::<usize>() * 8;
 
@@ -173,10 +188,8 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            if let Some(i) = index_key {
-                array_counts[highest_bit(i)] += 1;
-                array_total += 1;
-            }
+            array_counts[highest_bit(index_key)] += 1;
+            array_total += 1;
 
             // Then, we compute the new optimal size for the array by finding the largest array size
             // such that at least half of the elements in the array would be in use.
@@ -196,55 +209,28 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            let old_array_size = self.array.len();
-            let old_map_size = self.map.len();
-            if optimal_size > old_array_size {
-                // If we're growing the array part, we need to grow the array and take any newly
-                // valid array keys from the map part.
-
-                self.array.reserve(optimal_size - old_array_size);
-                let capacity = self.array.capacity();
-                self.array.resize(capacity, Value::Nil);
-
-                let array = &mut self.array;
-                self.map.retain(|k, v| {
-                    if v.is_nil() {
-                        // If our entry is dead, remove it.
-                        return false;
-                    }
-
-                    let key = k.live_key().expect("all dead keys should have a Nil value");
-
-                    // If our live key is an array index that fits in the array portion,
-                    // move the entry to the array portion.
-                    if let Some(i) = to_array_index(key.to_value()) {
-                        if i < array.len() {
-                            array[i] = *v;
-                            return false;
-                        }
-                    }
-
-                    true
-                });
-            } else {
-                // If we aren't growing the array, we're adding a new element to the map that won't
-                // fit in the advertised capacity. We explicitly double the map size here.
-                self.map.raw_table_mut().reserve(old_map_size, |(key, _)| {
-                    self.hash_builder.hash_one(
-                        key.live_key()
-                            .expect("all keys must be live when table is grown"),
-                    )
-                });
+            // If we can fit our new key in an optimally sized array, resize the array and do that.
+            if optimal_size > index_key {
+                self.grow_array(optimal_size - self.array.len());
+                // If the value is non-nil, it should have been replaced in the map part without
+                // needing to grow growing.
+                debug_assert!(self.array[index_key].is_nil());
+                self.array[index_key] = value;
+                return Ok(Value::Nil);
             }
+        }
 
-            // Now we can insert the new key value pair
-            match index_key {
-                Some(index) if index < self.array.len() => {
-                    return Ok(mem::replace(&mut self.array[index], value));
-                }
-                _ => set_reserved_value(&mut self.map, hash, table_key, value),
-            }
-        })
+        // If we can't grow the array, we need to grow the map and place the key there. We
+        // explicitly double the size of the map.
+        self.reserve_map(self.map.len().max(1));
+
+        // Now we can insert the new key value pair
+        self.map
+            .raw_table_mut()
+            .try_insert_no_grow(hash, (Key::Live(table_key), value))
+            .unwrap();
+
+        Ok(Value::Nil)
     }
 
     pub fn length(&self) -> i64 {
@@ -268,12 +254,12 @@ impl<'gc> RawTable<'gc> {
             // If the array part ends in a Nil, there must be a border inside it
             binary_search(0, array_len, |i| self.array[i as usize - 1].is_nil())
         } else if self.map.is_empty() {
-            // If there is no border in the array but the map part is empty, then the array length
-            // is a border
+            // If the array part does not end in a nil but the map part is empty, then the array
+            // length is a border.
             array_len
         } else {
-            // Otherwise, we must check the map part for a border. We need to find some nil value in
-            // the map part as the max for a binary search.
+            // Otherwise, we check the map part for a border. We need to find some nil value in the
+            // map part as the max for a binary search.
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
             while self
@@ -283,7 +269,7 @@ impl<'gc> RawTable<'gc> {
                     self.hash_builder.hash_one(CanonicalKey::Integer(max)),
                     |k| k.eq(CanonicalKey::Integer(max)),
                 )
-                .is_some()
+                .is_some_and(|(_, v)| !v.is_nil())
             {
                 if max == i64::MAX {
                     // If we can't find a nil entry by doubling, then the table is pathological. We
@@ -386,12 +372,72 @@ impl<'gc> RawTable<'gc> {
         NextValue::NotFound
     }
 
-    pub fn reserve_array(&mut self, additional: usize) {
-        self.array.reserve(additional);
+    /// Return the array part of the table as a slice.
+    ///
+    /// All integer keys that *can* fit into the array part of the table will always be stored in
+    /// the array. This means that if you have an integer key `1 <= key <= array.len()`, then you
+    /// can look up the value for this key with `array[key - 1]`. Such keys that are not present in
+    /// the table will have a value in the array of `Value::Nil`.
+    ///
+    /// The length of the array part of the table and the length of the table itself are
+    /// independent. There may be integral keys *outside* of the array part of the table, even for
+    /// sequences.
+    ///
+    /// If you need to treat the table as purely array-like, and need to ensure that the entire
+    /// sequence fits in the array part of the table, you can grow the array part of the table to be
+    /// equal to its current length. Remember that non-sequence tables can be pathological, and can
+    /// have arbitrarily large borders (numbers returned by `RawTable::length()`).
+    pub fn array(&self) -> &[Value<'gc>] {
+        &self.array
     }
 
+    /// Return the array part of the table as a mutable slice.
+    ///
+    /// All values that *can* be stored in the array part of the table will always be stored
+    /// there, so this comes with no invariants that you must uphold. Writing a value to `i` in the
+    /// table is equivalent to setting the key `i + 1` in the table, and writing `Value::Nil` is
+    /// equivalent to removing the key.
+    pub fn array_mut(&mut self) -> &mut [Value<'gc>] {
+        &mut self.array
+    }
+
+    /// Grow the array part of the table to accommodate for at *least* `additional` more elements.
+    ///
+    /// The array part always has a length equal to its capacity, but may have trailing nil values
+    /// at the end.
+    ///
+    /// The map part of the table is forbidden from having keys that could be in the array part, so
+    /// this may move elements from the map part of the table into the array part.
+    pub fn grow_array(&mut self, additional: usize) {
+        self.array.reserve(additional);
+        self.array.resize(self.array.capacity(), Value::Nil);
+
+        // We need to take any newly valid array keys from the map part.
+        self.map.retain(|k, v| {
+            if v.is_nil() {
+                // If our entry is dead, remove it.
+                return false;
+            }
+
+            let key = k.live_key().expect("all dead keys should have a Nil value");
+
+            // If our live key is an array index that fits in the array portion, move the entry to
+            // the array portion.
+            if let Some(i) = to_array_index(key.to_value()) {
+                if i < self.array.len() {
+                    self.array[i] = *v;
+                    return false;
+                }
+            }
+
+            true
+        });
+    }
+
+    /// Reserve space in the map part of the table for at least `additional` more elements.
     pub fn reserve_map(&mut self, additional: usize) {
         if additional > self.map.capacity() - self.map.len() {
+            // We always filter out all dead keys when growing the map.
             self.map.retain(|_, v| !v.is_nil());
 
             self.map.raw_table_mut().reserve(additional, |(key, _)| {

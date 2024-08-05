@@ -25,9 +25,9 @@ fn test_conversions() {
         )
         .unwrap();
 
-        assert!(matches!(vals.get(ctx, 1), Value::Integer(1)));
-        assert!(matches!(vals.get(ctx, 2), Value::Boolean(true)));
-        assert!(matches!(vals.get(ctx, 3), Value::String(s) if s == b"hello"));
+        assert!(matches!(vals.get_value(ctx, 1), Value::Integer(1)));
+        assert!(matches!(vals.get_value(ctx, 2), Value::Boolean(true)));
+        assert!(matches!(vals.get_value(ctx, 3), Value::String(s) if s == b"hello"));
 
         let array = <[Value; 3]>::from_value(ctx, vals.into()).unwrap();
         assert!(matches!(
@@ -55,5 +55,35 @@ fn test_conversions() {
         )
         .unwrap();
         assert_eq!((a, b, c), (2, false, "goodbye".to_owned()));
+    });
+}
+
+#[test]
+fn test_result_conversion() {
+    let mut lua = Lua::core();
+    lua.enter(|ctx| {
+        let a = Ok::<i32, i32>(4).into_multi_value(ctx).collect::<Vec<_>>();
+        assert!(matches!(
+            a.as_slice(),
+            [Value::Boolean(true), Value::Integer(4)]
+        ));
+        let b = Err::<i32, i32>(7).into_multi_value(ctx).collect::<Vec<_>>();
+        assert!(matches!(
+            b.as_slice(),
+            [Value::Boolean(false), Value::Integer(7)]
+        ));
+        let c = Ok::<_, i32>((1, 2, 3, 4))
+            .into_multi_value(ctx)
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            c.as_slice(),
+            [
+                Value::Boolean(true),
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3),
+                Value::Integer(4)
+            ]
+        ));
     });
 }

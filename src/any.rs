@@ -4,7 +4,11 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
+use gc_arena::{
+    arena::Root,
+    barrier::{self, Write},
+    Collect, Gc, Mutation, Rootable,
+};
 
 /// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
 ///
@@ -20,11 +24,11 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 //
 // Safety here is dependent on three subtle points:
 //
-// 1) The Rootable trait only allows for the projection of a single lifetime. We know this because
-//    `<R as Rootable<'static>>::Root` is 'static, so the only possible non-'static lifetime
-//    that the projection can have is the 'gc lifetime we give it. We don't lose any lifetime
-//    information, the only non-'static lifetime is 'gc and we can restore this lifetime upon
-//    access.
+// 1) The proxy `R: for<'a> Rootable<'a>` type that we accept only allows for the projection of a
+//    single lifetime. We know this because we require that `R` be 'static, so the only possible
+//    non-'static lifetime that the projection can have is the 'gc lifetime we give it. We don't
+//    lose any lifetime information, the only possible non-'static lifetime is 'gc and we can
+//    restore this lifetime when downcasting.
 //
 // 2) The `Gc` type is *invariant* in the 'gc lifetime. If it was instead covariant or contravariant
 //    in 'gc, then we could store a type with a mismatched variance and improperly lengthen or
@@ -32,7 +36,7 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 //    collection system relies on this), `Any` can project to a type with any variance in 'gc and
 //    nothing can go wrong.
 //
-// 3) We use the proxy `Rootable` type as the source of the `TypeId` rather than the projected
+// 3) We use the proxy `R` type as the source of the `TypeId` rather than the projected
 //    `<R as Rootable<'_>>::Root`. If we were to instead use `<R as Rootable<'static>>:Root` for
 //    the `TypeId`, then you could fool this into giving you a type with the wrong projection by
 //    implementing `Rootable` for two separate types that project to the same type differently. For
@@ -40,9 +44,9 @@ use gc_arena::{barrier::Write, Collect, Gc, Mutation, Root, Rootable};
 //    to `Dangerous<'gc, 'static>` and a `BadRootable2` that projects to `Dangerous<'static, 'gc>`.
 //    Since `<BR as Rootable<'static>>::Root` for both of these types would project to
 //    `Dangerous<'static, 'static>` for the purposes of getting a `TypeId`, there would be no way
-//    to distinguish them, and this could be used to transmute any lifetime to or from 'gc. By using
-//    the `TypeId` of the rootable type itself, we know we always return the same projection that we
-//    were given.
+//    to distinguish them, and this could be used to unsoundly transmute 'gc to or from 'static. By
+//    using the `TypeId` of the rootable type itself, we know we always return the same projection
+//    that we were given.
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct Any<'gc, M: 'gc = ()>(Gc<'gc, AnyInner<M>>);
@@ -101,7 +105,8 @@ impl<'gc, M> Any<'gc, M> {
     pub fn new<R>(mc: &Mutation<'gc>, data: Root<'gc, R>) -> Self
     where
         M: Collect + Default,
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
+        Root<'gc, R>: Sized + Collect,
     {
         Self::with_metadata::<R>(mc, M::default(), data)
     }
@@ -109,7 +114,8 @@ impl<'gc, M> Any<'gc, M> {
     pub fn with_metadata<R>(mc: &Mutation<'gc>, metadata: M, data: Root<'gc, R>) -> Self
     where
         M: Collect,
-        R: for<'a> Rootable<'a>,
+        R: for<'a> Rootable<'a> + 'static,
+        Root<'gc, R>: Sized + Collect,
     {
         let val = Gc::new(
             mc,
@@ -140,7 +146,7 @@ impl<'gc, M> Any<'gc, M> {
     }
 
     pub fn write_metadata(self, mc: &Mutation<'gc>) -> &'gc Write<M> {
-        gc_arena::barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
+        barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
     }
 
     pub fn type_id(self) -> TypeId {
@@ -149,14 +155,15 @@ impl<'gc, M> Any<'gc, M> {
 
     pub fn is<R>(self) -> bool
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
     {
         TypeId::of::<R>() == self.0.type_id
     }
 
     pub fn downcast<R>(self) -> Option<&'gc Root<'gc, R>>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
+        Root<'gc, R>: Sized,
     {
         if TypeId::of::<R>() == self.0.type_id {
             let ptr = unsafe { Gc::cast::<Value<M, Root<'gc, R>>>(self.0) };
@@ -168,7 +175,8 @@ impl<'gc, M> Any<'gc, M> {
 
     pub fn downcast_write<R>(self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
     where
-        R: for<'b> Rootable<'b>,
+        R: for<'b> Rootable<'b> + 'static,
+        Root<'gc, R>: Sized,
     {
         let root = self.downcast::<R>()?;
         Gc::write(mc, self.0);
@@ -179,13 +187,13 @@ impl<'gc, M> Any<'gc, M> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::rootless_arena;
+    use gc_arena::arena::rootless_mutate;
 
     use super::*;
 
     #[test]
     fn test_any_value() {
-        rootless_arena(|mc| {
+        rootless_mutate(|mc| {
             #[derive(Collect)]
             #[collect(no_drop)]
             struct A<'gc>(Gc<'gc, i32>);

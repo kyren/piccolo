@@ -1,12 +1,12 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{Callback, CallbackReturn, Closure, Executor, Lua, StaticError, UserData, Value};
+use piccolo::{Callback, CallbackReturn, Closure, Executor, ExternError, Lua, UserData, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
 struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
-fn userdata() -> Result<(), StaticError> {
+fn userdata() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -14,7 +14,7 @@ fn userdata() -> Result<(), StaticError> {
             &ctx,
             MyUserData(Gc::new(&ctx, Lock::new(17))),
         );
-        ctx.set_global("userdata", userdata)?;
+        ctx.set_global("userdata", userdata);
         let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
             match stack[0] {
                 Value::UserData(ud) => {
@@ -27,7 +27,7 @@ fn userdata() -> Result<(), StaticError> {
             stack.clear();
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 

@@ -2,13 +2,12 @@ use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{
-    meta_ops::{self, MetaOperatorError, MetaResult},
+    meta_ops::{self, ConcatMetaResult, MetaResult},
     opcode::{Operation, RCIndex},
-    raw_ops,
     table::RawTable,
     thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
-    Closure, Constant, Context, Function, MetaMethod, String, Table, Value,
+    Closure, Constant, Context, Function, String, Table, Value,
 };
 
 use super::{thread::LuaFrame, VMError};
@@ -79,10 +78,11 @@ pub(super) fn run_vm<'gc>(
                 array_size,
                 map_size,
             } => {
-                let mut raw_table = RawTable::new(&ctx);
-                raw_table.reserve_array(array_size as usize);
-                raw_table.reserve_map(map_size as usize);
-                let table = Table::from_parts(&ctx, raw_table, None);
+                let table = Table::from_parts(
+                    &ctx,
+                    RawTable::with_capacity(&ctx, array_size as usize, map_size as usize),
+                    None,
+                );
                 registers.stack_frame[dest.0 as usize] = Value::Table(table);
             }
 
@@ -358,10 +358,21 @@ pub(super) fn run_vm<'gc>(
                 source,
                 count,
             } => {
-                registers.stack_frame[dest.0 as usize] = Value::String(String::concat(
-                    ctx,
-                    &registers.stack_frame[source.0 as usize..source.0 as usize + count as usize],
-                )?);
+                let base = source.0 as usize;
+                let values = &registers.stack_frame[base..base + count as usize];
+                match meta_ops::concat_many(ctx, values)? {
+                    ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    ConcatMetaResult::Call(func) => {
+                        lua_frame.call_meta_function_in_place(
+                            ctx,
+                            func,
+                            base,
+                            count,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::GetUpValue { source, dest } => {
@@ -426,11 +437,21 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_than(left, right).ok_or_else(|| {
-                    MetaOperatorError::Binary(MetaMethod::Lt, left.type_name(), right.type_name())
-                })?) == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_than(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
@@ -441,17 +462,27 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_equal(left, right).ok_or_else(|| {
-                    MetaOperatorError::Binary(MetaMethod::Le, left.type_name(), right.type_name())
-                })?) == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_equal(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
             Operation::Not { dest, source } => {
                 let source = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] = source.not();
+                registers.stack_frame[dest.0 as usize] = (!source.to_bool()).into();
             }
 
             Operation::Minus { dest, source } => {

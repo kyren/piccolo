@@ -1,11 +1,13 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 use piccolo::{
-    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
-    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor,
+    ExternError, Function, IntoValue, Lua, Sequence, SequencePoll, Stack, String, Thread, Value,
 };
 
 #[test]
-fn callback() -> Result<(), StaticError> {
+fn callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -13,7 +15,7 @@ fn callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -37,7 +39,7 @@ fn callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn tail_call_trivial_callback() -> Result<(), StaticError> {
+fn tail_call_trivial_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -45,7 +47,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -66,7 +68,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn loopy_callback() -> Result<(), StaticError> {
+fn loopy_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -77,7 +79,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     _ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -104,7 +106,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 then: Some(BoxSequence::new(&ctx, Cont(4))),
             })
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -142,7 +144,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn yield_sequence() -> Result<(), StaticError> {
+fn yield_sequence() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -153,7 +155,7 @@ fn yield_sequence() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -194,7 +196,7 @@ fn yield_sequence() -> Result<(), StaticError> {
                 then: Some(BoxSequence::new(&ctx, Cont(0))),
             })
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -237,7 +239,7 @@ fn resume_with_err() {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -253,7 +255,7 @@ fn resume_with_err() {
                 }
 
                 fn error(
-                    &mut self,
+                    self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     error: Error<'gc>,
@@ -280,7 +282,7 @@ fn resume_with_err() {
 
         thread.resume(ctx, "resume").unwrap();
 
-        ctx.stash(Executor::run(&ctx, thread))
+        ctx.stash(Executor::run(&ctx, thread).unwrap())
     });
 
     lua.finish(&executor);

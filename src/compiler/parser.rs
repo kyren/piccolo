@@ -295,7 +295,7 @@ pub enum ParseErrorKind {
     ExpressionNotStatement,
     #[error("recursion limit reached")]
     RecursionLimit,
-    #[error(transparent)]
+    #[error("lexer error")]
     LexError(#[from] LexError),
 }
 

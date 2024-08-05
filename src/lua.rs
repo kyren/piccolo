@@ -1,16 +1,45 @@
 use std::ops;
 
-use gc_arena::{metrics::Metrics, Arena, Collect, CollectionPhase, Mutation, Root, Rootable};
+use gc_arena::{
+    arena::{CollectionPhase, Root},
+    metrics::Metrics,
+    Arena, Collect, Mutation, Rootable,
+};
 
 use crate::{
     finalizers::Finalizers,
-    registry::{Fetchable, Stashable},
+    stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, FromMultiValue, Fuel, IntoValue, InvalidTableKey, Registry, Singleton, StashedExecutor,
-    StaticError, String, Table, Value,
+    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, Singleton,
+    StashedExecutor, String, Table, TypeError, Value,
 };
 
+/// A value representing the main "execution context" of a Lua state.
+///
+/// It provides access to the table of global variables, the registry, the string interner, and
+/// other state that most every piece of running Lua code will need access to.
+///
+/// It is a cheap, copyable reference type that references internal state variables inside a [`Lua`]
+/// instance.
+///
+/// As a convenience, it also contains the [`gc_arena::Mutation`] reference provided by `gc-arena`
+/// when mutating a [`gc_arena::Arena`]. This allows code that uses piccolo to accept a single `ctx:
+/// Context<'gc>` parameter, rather than having to accept both the piccolo `ctx` *and* the usual
+/// `mc: &Mutation<'gc>` parameter.
+///
+/// To access the contained [`Mutation`] context, there is a `Deref` impl on `Context` that derefs
+/// to `Mutation` that can be used like so:
+///
+/// ```
+/// # use gc_arena::Gc;
+/// # use piccolo::Lua;
+/// # let mut lua = Lua::empty();
+/// lua.enter(|ctx| {
+///     // Create a new `Gc<'gc, i32>` pointer using the `&Mutation` held inside `ctx`
+///     let p = Gc::new(&ctx, 13);
+/// });
+/// ```
 #[derive(Copy, Clone)]
 pub struct Context<'gc> {
     mutation: &'gc Mutation<'gc>,
@@ -18,6 +47,14 @@ pub struct Context<'gc> {
 }
 
 impl<'gc> Context<'gc> {
+    /// Get a reference to [`Mutation`] (the `gc-arena` mutation handle) out of the `Context`
+    /// object.
+    ///
+    /// This can also be done automatically with `Deref` coercion.
+    pub fn mutation(self) -> &'gc Mutation<'gc> {
+        self.mutation
+    }
+
     pub fn globals(self) -> Table<'gc> {
         self.state.globals
     }
@@ -34,25 +71,26 @@ impl<'gc> Context<'gc> {
         self.state.finalizers
     }
 
-    /// Calls `ctx.globals().set(ctx, key, value)`.
-    pub fn set_global<K: IntoValue<'gc>, V: IntoValue<'gc>>(
-        self,
-        key: K,
-        value: V,
-    ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.state.globals.set(self, key, value)
+    // Calls `ctx.globals().get(key)`
+    pub fn get_global<V: FromValue<'gc>>(self, key: &'static str) -> Result<V, TypeError> {
+        self.state.globals.get(self, key)
     }
 
-    /// Calls `ctx.globals().get(ctx, key)`.
-    pub fn get_global<K: IntoValue<'gc>>(self, key: K) -> Value<'gc> {
-        self.state.globals.get(self, key)
+    // Calls `ctx.globals().get_value(key)`
+    pub fn get_global_value(self, key: &'static str) -> Value<'gc> {
+        self.state.globals.get_value(self, key)
+    }
+
+    // Calls `ctx.globals().set_field(key, value)`
+    pub fn set_global<V: IntoValue<'gc>>(self, key: &'static str, value: V) -> Value<'gc> {
+        self.state.globals.set_field(self, key, value)
     }
 
     /// Calls `ctx.registry().singleton::<S>(ctx)`.
     pub fn singleton<S>(self) -> &'gc Root<'gc, S>
     where
-        S: for<'a> Rootable<'a>,
-        Root<'gc, S>: Singleton<'gc>,
+        S: for<'a> Rootable<'a> + 'static,
+        Root<'gc, S>: Sized + Singleton<'gc> + Collect,
     {
         self.state.registry.singleton::<S>(self)
     }
@@ -63,7 +101,7 @@ impl<'gc> Context<'gc> {
     }
 
     /// Calls `ctx.registry().fetch(f)`.
-    pub fn fetch<F: Fetchable<'gc>>(self, f: &F) -> F::Fetched {
+    pub fn fetch<F: Fetchable>(self, f: &F) -> F::Fetched<'gc> {
         self.state.registry.fetch(f)
     }
 
@@ -86,6 +124,10 @@ impl<'gc> ops::Deref for Context<'gc> {
     }
 }
 
+/// A Lua execution environment.
+///
+/// This is the top-level `piccolo` type. In order to load and call any Lua code, the first step is
+/// to create a `Lua` instance.
 pub struct Lua {
     arena: Arena<Rootable![State<'_>]>,
 }
@@ -154,7 +196,7 @@ impl Lua {
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
-        if self.arena.collection_phase() != CollectionPhase::Collecting {
+        if self.arena.collection_phase() != CollectionPhase::Sweeping {
             self.arena.mark_all().unwrap().finalize(|fc, root| {
                 root.finalizers.prepare(fc);
             });
@@ -190,7 +232,7 @@ impl Lua {
 
         let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
         if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            if self.arena.collection_phase() == CollectionPhase::Collecting {
+            if self.arena.collection_phase() == CollectionPhase::Sweeping {
                 self.arena.collect_debt();
             } else {
                 if let Some(marked) = self.arena.mark_debt() {
@@ -200,21 +242,21 @@ impl Lua {
                     self.arena.mark_all().unwrap().finalize(|fc, root| {
                         root.finalizers.finalize(fc);
                     });
-                    // Immediately transition to `CollectionPhase::Collecting`.
-                    self.arena.mark_all().unwrap().start_collecting();
+                    // Immediately transition to `CollectionPhase::Sweeping`.
+                    self.arena.mark_all().unwrap().start_sweeping();
                 }
             }
         }
         r
     }
 
-    /// A version of `Lua::enter` that expects failure and also automatically converts `Error` types
-    /// into `StaticError`, allowing the error type to escape the arena.
-    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, StaticError>
+    /// A version of `Lua::enter` that expects failure and automatically converts [`Error`] into
+    /// [`ExternError`], allowing the error type to escape the arena.
+    pub fn try_enter<F, R>(&mut self, f: F) -> Result<R, ExternError>
     where
         F: for<'gc> FnOnce(Context<'gc>) -> Result<R, Error<'gc>>,
     {
-        self.enter(move |ctx| f(ctx).map_err(Error::into_static))
+        self.enter(move |ctx| f(ctx).map_err(Error::into_extern))
     }
 
     /// Run the given executor to completion.
@@ -240,7 +282,7 @@ impl Lua {
     pub fn execute<R: for<'gc> FromMultiValue<'gc>>(
         &mut self,
         executor: &StashedExecutor,
-    ) -> Result<R, StaticError> {
+    ) -> Result<R, ExternError> {
         self.finish(executor);
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
     }

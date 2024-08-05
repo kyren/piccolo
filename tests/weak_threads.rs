@@ -1,7 +1,7 @@
-use piccolo::{Closure, Executor, Lua, StaticError};
+use piccolo::{Closure, Executor, ExternError, Lua};
 
 #[test]
-fn weak_threads_close() -> Result<(), StaticError> {
+fn weak_threads_close() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     let executor = lua.try_enter(|ctx| {
@@ -40,7 +40,7 @@ fn weak_threads_close() -> Result<(), StaticError> {
 }
 
 #[test]
-fn live_upvalues_not_dead() -> Result<(), StaticError> {
+fn live_upvalues_not_dead() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     let executor = lua.try_enter(|ctx| {

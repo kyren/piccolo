@@ -16,13 +16,20 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum PrototypeError {
-    #[error(transparent)]
-    Parser(#[from] compiler::ParseError),
-    #[error(transparent)]
-    Compiler(#[from] compiler::CompileError),
+pub enum CompilerError {
+    #[error("parse error")]
+    Parsing(#[from] compiler::ParseError),
+    #[error("compile error")]
+    Compilation(#[from] compiler::CompileError),
 }
 
+/// A compiled Lua function.
+///
+/// In Lua jargon, a "prototype" is only executable code, it has none of its "upvalues" set and
+/// cannot be called directly.
+///
+/// If a prototype has only an single (optional) `_ENV` upvalue, then it can be turned into an
+/// executable `Closure` by binding it with its environment with [`Closure::new`].
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct FunctionPrototype<'gc> {
@@ -109,7 +116,7 @@ impl<'gc> FunctionPrototype<'gc> {
         ctx: Context<'gc>,
         source_name: &str,
         source: impl Read,
-    ) -> Result<FunctionPrototype<'gc>, PrototypeError> {
+    ) -> Result<FunctionPrototype<'gc>, CompilerError> {
         #[derive(Copy, Clone)]
         struct Interner<'gc>(Context<'gc>);
 
@@ -169,6 +176,14 @@ impl<'gc> UpValue<'gc> {
     }
 }
 
+#[derive(Debug, Copy, Clone, Error)]
+pub enum ClosureError {
+    #[error("cannot use prototype with upvalues other than _ENV to create top-level closure")]
+    HasUpValues,
+    #[error("closure requires _ENV upvalue but no environment was provided")]
+    RequiresEnv,
+}
+
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
@@ -176,6 +191,12 @@ pub struct ClosureInner<'gc> {
     upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
 }
 
+/// A garbage collected pointer to an executable Lua function.
+///
+/// A `Closure` represents a [`FunctionPrototype`] bound to an environment. A closure "closes over"
+/// free variables that it references, and as such, calling a `Closure` may reference (and mutate!)
+/// these closed over variables. In Lua jargon, these references that closures "close over" are
+/// called "upvalues".
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
@@ -192,14 +213,6 @@ impl<'gc> Hash for Closure<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Gc::as_ptr(self.0).hash(state)
     }
-}
-
-#[derive(Debug, Copy, Clone, Error)]
-pub enum ClosureError {
-    #[error("cannot use prototype with upvalues other than _ENV to create top-level closure")]
-    HasUpValues,
-    #[error("closure requires _ENV upvalue but no environment was provided")]
-    RequiresEnv,
 }
 
 impl<'gc> Closure<'gc> {
@@ -249,7 +262,7 @@ impl<'gc> Closure<'gc> {
         ctx: Context<'gc>,
         name: Option<&str>,
         source: impl Read,
-    ) -> Result<Closure<'gc>, PrototypeError> {
+    ) -> Result<Closure<'gc>, CompilerError> {
         Self::load_with_env(ctx, name, source, ctx.globals())
     }
 
@@ -259,7 +272,7 @@ impl<'gc> Closure<'gc> {
         name: Option<&str>,
         source: impl Read,
         env: Table<'gc>,
-    ) -> Result<Closure<'gc>, PrototypeError> {
+    ) -> Result<Closure<'gc>, CompilerError> {
         let proto = FunctionPrototype::compile(ctx, name.unwrap_or("<anonymous>"), source)?;
         Ok(Closure::new(&ctx, proto, Some(env)).unwrap())
     }

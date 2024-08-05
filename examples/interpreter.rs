@@ -6,13 +6,13 @@ use rustyline::DefaultEditor;
 
 use piccolo::{
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, Callback, CallbackReturn, Closure, Executor, Function, Lua, PrototypeError,
-    StashedExecutor, StaticError,
+    io, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua,
+    StashedExecutor,
 };
 
-fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
+fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), ExternError> {
     lua.try_enter(|ctx| {
-        let closure = match Closure::load(ctx, None, ("return ".to_string() + code).as_bytes()) {
+        let closure = match Closure::load(ctx, None, ("return ".to_owned() + code).as_bytes()) {
             Ok(closure) => closure,
             Err(_) => Closure::load(ctx, None, code.as_bytes())?,
         };
@@ -25,7 +25,7 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
                         CallbackReturn::Return
                     } else {
                         CallbackReturn::Call {
-                            function: meta_ops::call(ctx, ctx.get_global("print"))?,
+                            function: meta_ops::call(ctx, ctx.get_global_value("print"))?,
                             then: None,
                         }
                     })
@@ -60,14 +60,14 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             }
 
             match run_code(lua, &executor, &line) {
-                Err(StaticError::Runtime(err))
+                Err(err)
                     if !read_empty
                         && matches!(
-                            err.downcast::<PrototypeError>(),
-                            Some(PrototypeError::Parser(ParseError {
+                            err.root_cause().downcast_ref::<ParseError>(),
+                            Some(ParseError {
                                 kind: ParseErrorKind::EndOfStream { .. },
                                 ..
-                            }))
+                            })
                         ) =>
                 {
                     prompt = ">> ";

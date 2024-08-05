@@ -11,12 +11,16 @@ use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
+    fuel::count_fuel,
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    String, Table, UserData, VMError, Value,
+    String, Table, UserData, Value,
 };
 
+use super::VMError;
+
+/// The current state of a [`Thread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
     /// No frames are on the thread and there are no available results, the thread can be started.
@@ -47,6 +51,10 @@ pub struct BadThreadMode {
 
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
+/// A Lua coroutine.
+///
+/// All running Lua or callback code is run as part of a larger `Thread`. `Thread`s may create other
+/// `Thread`s, suspend them, resume them, and may yield to calling `Thread`s.
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);
@@ -657,7 +665,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             if let Some(inc) = start.checked_add(1) {
                 start = inc;
                 table
-                    .set_value(mc, inc.into(), self.state.stack[table_ind + 2 + i])
+                    .set_raw(mc, inc.into(), self.state.stack[table_ind + 2 + i])
                     .unwrap();
             } else {
                 break;
@@ -721,7 +729,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
     /// Calls the function at the given index with a constant number of arguments without
     /// invalidating the function or its arguments. Returns are placed *after* the function and its
-    /// aruments, and all registers past this are invalidated as normal.
+    /// arguments, and all registers past this are invalidated as normal.
     pub(super) fn call_function_keep(
         self,
         ctx: Context<'gc>,
@@ -772,7 +780,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     /// Nothing at all in the frame is invalidated, other than optionally placing the return value.
     pub(super) fn call_meta_function(
         self,
-        ctx: Context<'gc>,
+        _ctx: Context<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
         meta_ret: MetaReturn,
@@ -797,7 +805,6 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         let top = self.state.stack.len();
         debug_assert_eq!(top, *base + *stack_size);
 
-        let call = meta_ops::call(ctx, func.into())?;
         *expected_return = Some(LuaReturn::Meta(meta_ret));
 
         self.fuel
@@ -805,7 +812,53 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         self.state.stack.extend_from_slice(args);
 
-        self.state.push_call(top, call);
+        self.state.push_call(top, func);
+
+        Ok(())
+    }
+
+    /// Calls an externally defined function with arguments placed on the stack
+    /// starting at `bottom`.  On return, places an optional single result of
+    /// the function call in the register indicated by [`MetaReturn`].
+    pub(super) fn call_meta_function_in_place(
+        self,
+        _ctx: Context<'gc>,
+        func: Function<'gc>,
+        bottom: usize,
+        args: u8,
+        meta_ret: MetaReturn,
+    ) -> Result<(), VMError> {
+        let Some(Frame::Lua {
+            expected_return,
+            is_variable,
+            base,
+            stack_size,
+            ..
+        }) = self.state.frames.last_mut()
+        else {
+            panic!("top frame is not lua frame");
+        };
+
+        if *is_variable {
+            return Err(VMError::ExpectedVariableStack(false));
+        }
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
+        let top = self.state.stack.len();
+        debug_assert_eq!(top, *base + *stack_size);
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
+        *expected_return = Some(LuaReturn::Meta(meta_ret));
+
+        // This does not need to consume fuel for each argument, as
+        // the arguments are used in-place on the stack and are not
+        // shifted.
+
+        self.state.stack.truncate(bottom + args as usize);
+
+        self.state.push_call(bottom, func);
 
         Ok(())
     }
@@ -1001,12 +1054,6 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
         self.open_upvalues.truncate(start);
     }
-}
-
-fn count_fuel(per_item: i32, len: usize) -> i32 {
-    i32::try_from(len)
-        .unwrap_or(i32::MAX)
-        .saturating_mul(per_item)
 }
 
 fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {

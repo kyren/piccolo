@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::Collect;
 
-use crate::compiler::lexer::{read_float, read_integer, trim_whitespace};
+use crate::compiler::string_utils::{read_float, read_integer, trim_whitespace};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -239,16 +239,22 @@ impl<S: AsRef<[u8]>> Constant<S> {
     pub fn less_than(&self, rhs: &Self) -> Option<bool> {
         Some(match (self, rhs) {
             (Self::Integer(a), Self::Integer(b)) => a < b,
+            (Self::Integer(a), Self::Number(b)) => (*a as f64) < *b,
+            (Self::Number(a), Self::Number(b)) => a < b,
+            (Self::Number(a), Self::Integer(b)) => *a < *b as f64,
             (Self::String(a), Self::String(b)) => a.as_ref() < b.as_ref(),
-            (a, b) => a.to_number()? < b.to_number()?,
+            _ => return None,
         })
     }
 
     pub fn less_equal(&self, rhs: &Self) -> Option<bool> {
         Some(match (self, rhs) {
             (Self::Integer(a), Self::Integer(b)) => a <= b,
+            (Self::Integer(a), Self::Number(b)) => (*a as f64) <= *b,
+            (Self::Number(a), Self::Number(b)) => a <= b,
+            (Self::Number(a), Self::Integer(b)) => *a <= *b as f64,
             (Self::String(a), Self::String(b)) => a.as_ref() <= b.as_ref(),
-            (a, b) => a.to_number()? <= b.to_number()?,
+            _ => return None,
         })
     }
 }

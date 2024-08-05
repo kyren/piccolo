@@ -1,30 +1,29 @@
 use std::{
-    alloc,
-    borrow::Cow,
-    fmt,
+    alloc, fmt,
     hash::{BuildHasherDefault, Hash, Hasher},
-    io::Write,
     ops, slice,
     str::{self, Utf8Error},
-    string::String as StdString,
 };
 
 use ahash::AHasher;
 use gc_arena::{
     allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect,
-    Collection, Gc, GcWeak, Mutation, StaticCollect,
+    Collection, Gc, GcWeak, Mutation, Static,
 };
 use hashbrown::{hash_map, raw::RawTable, HashMap};
-use thiserror::Error;
 
-use crate::{Context, Value};
+use crate::compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy};
 
-// Represents `String` as either a pointer to an external / owned slice pointer or a size prefixed
-// inline array.
+/// The Lua string type.
+///
+/// Unlike Rust strings, Lua strings may contain *arbitrary bytes*, and as such are not necessarily
+// UTF-8.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, StringInner>);
 
+// We represent `String` as either a pointer to an external / owned slice pointer or a size prefixed
+// inline array.
 #[derive(Copy, Clone, Collect)]
 #[collect(require_static)]
 pub struct StringInner {
@@ -167,54 +166,11 @@ fn str_hash(s: &[u8]) -> u64 {
 
 impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str("String(")?;
-        fmt.write_str(&self.to_str_lossy())?;
-        fmt.write_str(")")?;
-        Ok(())
+        write!(fmt, "String({:?})", self.debug_lossy())
     }
-}
-
-impl<'gc> fmt::Display for String<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&self.to_str_lossy())
-    }
-}
-
-#[derive(Debug, Copy, Clone, Error)]
-#[error("cannot concat {bad_type}")]
-pub struct BadConcatType {
-    bad_type: &'static str,
 }
 
 impl<'gc> String<'gc> {
-    pub fn concat(ctx: Context<'gc>, values: &[Value<'gc>]) -> Result<String<'gc>, BadConcatType> {
-        let mut bytes = Vec::new();
-        for value in values {
-            match value {
-                Value::Nil => write!(&mut bytes, "nil").unwrap(),
-                Value::Boolean(b) => write!(&mut bytes, "{}", b).unwrap(),
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                Value::String(s) => bytes.extend(s.as_bytes()),
-                Value::Table(_) => return Err(BadConcatType { bad_type: "table" }),
-                Value::Function(_) => {
-                    return Err(BadConcatType {
-                        bad_type: "function",
-                    });
-                }
-                Value::Thread(_) => {
-                    return Err(BadConcatType { bad_type: "thread" });
-                }
-                Value::UserData(_) => {
-                    return Err(BadConcatType {
-                        bad_type: "userdata",
-                    });
-                }
-            }
-        }
-        Ok(ctx.intern(&bytes))
-    }
-
     pub fn len(self) -> i64 {
         self.as_bytes().len().try_into().unwrap()
     }
@@ -223,8 +179,14 @@ impl<'gc> String<'gc> {
         str::from_utf8(self.as_bytes())
     }
 
-    pub fn to_str_lossy(self) -> Cow<'gc, str> {
-        StdString::from_utf8_lossy(self.as_bytes())
+    /// Display a potentially non-utf8 `String` in a lossy way.
+    pub fn display_lossy(self) -> impl fmt::Display + 'gc {
+        display_utf8_lossy(self.as_bytes())
+    }
+
+    /// Debug a potentially non-utf8 `String` in a lossy way.
+    pub fn debug_lossy(self) -> impl fmt::Debug + 'gc {
+        debug_utf8_lossy(self.as_bytes())
     }
 }
 
@@ -333,7 +295,7 @@ struct InternedStaticStrings<'gc>(
         'gc,
         RefLock<
             HashMap<
-                StaticCollect<*const [u8]>,
+                Static<*const [u8]>,
                 String<'gc>,
                 BuildHasherDefault<AHasher>,
                 MetricsAlloc<'gc>,
@@ -354,7 +316,7 @@ impl<'gc> InternedStaticStrings<'gc> {
     }
 
     fn intern(self, mc: &Mutation<'gc>, s: &'static [u8]) -> String<'gc> {
-        let key = StaticCollect(s as *const _);
+        let key = Static(s as *const _);
 
         // SAFETY: If a new string is added, we call the write barrier.
         let mut static_strings = unsafe { self.0.unlock_unchecked() }.borrow_mut();
@@ -403,13 +365,13 @@ impl<'gc> InternedStringSet<'gc> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::rootless_arena;
+    use gc_arena::arena::rootless_mutate;
 
     use super::*;
 
     #[test]
     fn test_string_header() {
-        rootless_arena(|mc| {
+        rootless_mutate(|mc| {
             let test1 = String::from_buffer(mc, Box::from(b"test 1".as_slice()));
             let test2 = String::from_buffer(mc, Box::from(b"test 2".as_slice()));
 

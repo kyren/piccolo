@@ -37,11 +37,11 @@ fn test_table_iter() {
             table.set(ctx, k, Value::Nil).unwrap();
         }
 
-        assert!(table.get(ctx, 1).is_nil());
-        assert!(table.get(ctx, 2).is_nil());
-        assert!(table.get(ctx, 3).is_nil());
-        assert!(table.get(ctx, "1").is_nil());
-        assert!(table.get(ctx, "2").is_nil());
-        assert!(table.get(ctx, "3").is_nil());
+        assert!(table.get_value(ctx, 1).is_nil());
+        assert!(table.get_value(ctx, 2).is_nil());
+        assert!(table.get_value(ctx, 3).is_nil());
+        assert!(table.get_value(ctx, "1").is_nil());
+        assert!(table.get_value(ctx, "2").is_nil());
+        assert!(table.get_value(ctx, "3").is_nil());
     });
 }

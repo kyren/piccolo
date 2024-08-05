@@ -5,12 +5,32 @@ use std::{
 
 use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
 
-use crate::{Context, IntoValue, Value};
+use crate::{Context, FromValue, IntoValue, TypeError, Value};
 
 use super::raw::{InvalidTableKey, NextValue, RawTable};
 
 pub type TableInner<'gc> = RefLock<TableState<'gc>>;
 
+/// The primary Lua data structure.
+///
+/// A `Table` is a combination of an array and a map. It a map of [`Value`]s to other `Value`s, but
+/// as an optimization, when keys are integral and start from 1, it stores them within an internal
+/// array.
+///
+/// Entries with values of [`Value::Nil`] are transparently removed from the table.
+///
+/// When a `Table` has only integral keys starting from 1, and every value is non-nil, then it is
+/// also known as a "sequence" and acts similar to how an array would in other languages.
+///
+/// All Lua tables can have another associated table called a "metatable" which governs how they
+/// act in Lua code. In Lua code, operations on a table can trigger special "metamethods" in the
+/// metatable (if they are present).
+///
+/// On the Rust side, all methods on `Table` are "raw", which in Lua jargon means that they
+/// never trigger metamethods. This MUST be true, because `piccolo` does not (and cannot)
+/// silently trigger running Lua code. In order to trigger metamethods, you must use the
+/// [`meta_ops`](crate::meta_ops) module and manually run any triggered code on an
+/// [`Executor`](crate::Executor).
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Table<'gc>(Gc<'gc, TableInner<'gc>>);
@@ -56,8 +76,12 @@ impl<'gc> Table<'gc> {
         self.0
     }
 
-    pub fn get<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
-        self.get_value(key.into_value(ctx))
+    pub fn get<K: IntoValue<'gc>, V: FromValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        key: K,
+    ) -> Result<V, TypeError> {
+        V::from_value(ctx, self.get_value(ctx, key))
     }
 
     pub fn set<K: IntoValue<'gc>, V: IntoValue<'gc>>(
@@ -66,14 +90,33 @@ impl<'gc> Table<'gc> {
         key: K,
         value: V,
     ) -> Result<Value<'gc>, InvalidTableKey> {
-        self.set_value(&ctx, key.into_value(ctx), value.into_value(ctx))
+        self.set_raw(&ctx, key.into_value(ctx), value.into_value(ctx))
     }
 
-    pub fn get_value(self, key: Value<'gc>) -> Value<'gc> {
+    pub fn get_value<K: IntoValue<'gc>>(self, ctx: Context<'gc>, key: K) -> Value<'gc> {
+        self.get_raw(key.into_value(ctx))
+    }
+
+    /// A convenience method over [`Table::set`] for setting a string field of a table.
+    ///
+    /// It behaves exactly the same as [`Table::set`], except since this only accepts string keys,
+    /// we know it cannot possibly error.
+    pub fn set_field<V: IntoValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        key: &'static str,
+        value: V,
+    ) -> Value<'gc> {
+        self.set(ctx, key, value).unwrap()
+    }
+
+    /// Get a value from this table without any automatic type conversion.
+    pub fn get_raw(self, key: Value<'gc>) -> Value<'gc> {
         self.0.borrow().raw_table.get(key)
     }
 
-    pub fn set_value(
+    /// Set a value in this table without any automatic type conversion.
+    pub fn set_raw(
         self,
         mc: &Mutation<'gc>,
         key: Value<'gc>,
