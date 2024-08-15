@@ -117,27 +117,39 @@ impl<'gc> FunctionPrototype<'gc> {
         source_name: &str,
         source: impl Read,
     ) -> Result<FunctionPrototype<'gc>, CompilerError> {
-        #[derive(Copy, Clone)]
-        struct Interner<'gc>(Context<'gc>);
+        // Make a concrete (non-generic) function here to prevent the Rust compiler
+        // from having to also monomorphize the entire compiler for each crate that
+        // uses this.
+        fn compile_inner<'gc>(
+            ctx: Context<'gc>,
+            source_name: &str,
+            interner: Interner<'gc>,
+            chunk: compiler::parser::Chunk<String<'gc>>,
+        ) -> Result<FunctionPrototype<'gc>, CompilerError> {
+            let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        impl<'gc> compiler::StringInterner for Interner<'gc> {
-            type String = String<'gc>;
-
-            fn intern(&mut self, s: &[u8]) -> Self::String {
-                self.0.intern(s)
-            }
+            Ok(FunctionPrototype::from_compiled(
+                &ctx,
+                ctx.intern(source_name.as_bytes()),
+                &compiled_function,
+            ))
         }
 
         let interner = Interner(ctx);
-
         let chunk = compiler::parse_chunk(source, interner)?;
-        let compiled_function = compiler::compile_chunk(&chunk, interner)?;
 
-        Ok(FunctionPrototype::from_compiled(
-            &ctx,
-            ctx.intern(source_name.as_bytes()),
-            &compiled_function,
-        ))
+        compile_inner(ctx, source_name, interner, chunk)
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Interner<'gc>(Context<'gc>);
+
+impl<'gc> compiler::StringInterner for Interner<'gc> {
+    type String = String<'gc>;
+
+    fn intern(&mut self, s: &[u8]) -> Self::String {
+        self.0.intern(s)
     }
 }
 
