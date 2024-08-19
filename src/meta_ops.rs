@@ -784,7 +784,7 @@ fn estimate_concatenated_len<'gc>(
     let mut len = 0usize;
     for value in values {
         let value_len = match value {
-            Value::Integer(i) => i.ilog10() as usize + i.is_negative() as usize,
+            Value::Integer(i) => i.abs().max(1).ilog10() as usize + i.is_negative() as usize,
             Value::Number(_n) => 10,
             Value::String(s) => s.as_bytes().len(),
             _ => return Ok(None),
