@@ -53,12 +53,6 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 /// control back and forth. All Lua code that is run is done so directly or indirectly by calling
 /// [`Executor::step`].
 ///
-/// If a `Thread` is currently in the network of threads being run by the `Executor`, then the
-/// `Executor` expects that the state of these threads will not be externally changed (by, for
-/// example, calling [`Thread::take_result`] or [`Thread::reset`]). This should not result in
-/// panics, but may result in `Executor::step` erroring in a way that means that no further progress
-/// can be amde.
-///
 /// # Panics
 ///
 /// `Executor` is dangerous to use from within any kind of Lua callback. It it not meant to be used
@@ -144,7 +138,18 @@ impl<'gc> Executor<'gc> {
                     ThreadMode::Result => ExecutorMode::Result,
                     ThreadMode::Normal => ExecutorMode::Normal,
                     ThreadMode::Suspended => ExecutorMode::Suspended,
-                    ThreadMode::Waiting => unreachable!(),
+                    ThreadMode::Waiting => {
+                        // This should never happen from correct `Executor` / `Thread` use. In
+                        // order for the main thread to be in the `Waiting` state with no thread
+                        // being waited on, that thread must have been used by two `Executor`s at
+                        // one time, and the *other* `Executor` must have moved it to the `Waiting`
+                        // state.
+                        //
+                        // We call this `ExecutorMode::Normal` since the main thread is still not in
+                        // some completed state, but calling `Executor::step` will never exit this
+                        // mode (only forever return a `BadThreadMode` error).
+                        ExecutorMode::Normal
+                    }
                     ThreadMode::Running => ExecutorMode::Running,
                 }
             }
@@ -161,10 +166,26 @@ impl<'gc> Executor<'gc> {
     /// Returns `false` if the method has exhausted its fuel, but there is more work to
     /// do, and returns `true` if no more progress can be made. If `true` is returned, then
     /// `Executor::mode()` will no longer be `ExecutorMode::Normal`.
-    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// If a `Thread` being run by this `Executor` in an unexpected state, then this method will
+    /// return a `BadThreadMode` error.
+    ///
+    /// If a `Thread` is currently in the stack of threads being run by an `Executor`, then that
+    /// `Executor` expects to be the sole instance driving those threads to completion and expects
+    /// that the state of these threads will not be externally changed. This rule cannot be violated
+    /// from Lua or by normal `Rust` callbacks, only by purposefully misusing an `Executor` from
+    /// Rust by, for example, setting a single `Thread` as the main thread of two `Executor`s
+    /// at once or by manually calling [`Thread::take_result`] or [`Thread::reset`] on a thread
+    /// currently being run by an `Executor`.
+    ///
+    /// This is considered "outside" of a normal Lua or Rust callback error since it cannot be
+    /// triggered solely by Lua and likely indicates a bug in some Rust code, so this error is
+    /// delivered through a separate channel than normal results and cannot be caught by Lua.
+    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> Result<bool, BadThreadMode> {
         let mut state = self.0.borrow_mut(&ctx);
-
-        loop {
+        Ok(loop {
             let mut top_thread = state.thread_stack.last().copied().unwrap();
             let mut res_thread = None;
             match top_thread.mode() {
@@ -172,14 +193,21 @@ impl<'gc> Executor<'gc> {
                 ThreadMode::Running => {
                     panic!("`Executor` thread already running")
                 }
-                _ => {
-                    if state.thread_stack.len() == 1 {
-                        break true;
-                    } else {
-                        state.thread_stack.pop();
-                        res_thread = Some(top_thread);
-                        top_thread = state.thread_stack.last().copied().unwrap();
-                    }
+                ThreadMode::Stopped | ThreadMode::Suspended | ThreadMode::Result
+                    if state.thread_stack.len() == 1 =>
+                {
+                    break true;
+                }
+                ThreadMode::Result => {
+                    state.thread_stack.pop();
+                    res_thread = Some(top_thread);
+                    top_thread = state.thread_stack.last().copied().unwrap();
+                }
+                mode => {
+                    return Err(BadThreadMode {
+                        found: mode,
+                        expected: None,
+                    })
                 }
             }
 
@@ -187,45 +215,31 @@ impl<'gc> Executor<'gc> {
             let top_state = &mut *top_state;
             if let Some(res_thread) = res_thread {
                 let mode = top_state.mode();
-                if mode == ThreadMode::Waiting {
-                    assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
-                    match res_thread.mode() {
-                        ThreadMode::Result => {
-                            // Take the results from the res_thread and return them to our top
-                            // thread.
-                            let mut res_state = res_thread.into_inner().borrow_mut(&ctx);
-                            match res_state.take_result() {
-                                Ok(vals) => {
-                                    let bottom = top_state.stack.len();
-                                    top_state.stack.extend(vals);
-                                    top_state.return_to(bottom);
-                                }
-                                Err(err) => {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                }
-                            }
-                            drop(res_state);
-                        }
-                        ThreadMode::Normal => unreachable!(),
-                        res_mode => top_state.frames.push(Frame::Error(
-                            BadThreadMode {
-                                found: res_mode,
-                                expected: None,
-                            }
-                            .into(),
-                        )),
-                    }
-                } else {
+                if mode != ThreadMode::Waiting {
                     // Shenanigans have happened and the top thread has had its state externally
                     // changed.
-                    top_state.frames.push(Frame::Error(
-                        BadThreadMode {
-                            found: mode,
-                            expected: None,
-                        }
-                        .into(),
-                    ));
+                    return Err(BadThreadMode {
+                        found: mode,
+                        expected: Some(ThreadMode::Waiting),
+                    });
                 }
+
+                assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
+                assert_eq!(res_thread.mode(), ThreadMode::Result);
+                // Take the results from the res_thread and return them to our top
+                // thread.
+                let mut res_state = res_thread.into_inner().borrow_mut(&ctx);
+                match res_state.take_result() {
+                    Ok(vals) => {
+                        let bottom = top_state.stack.len();
+                        top_state.stack.extend(vals);
+                        top_state.return_to(bottom);
+                    }
+                    Err(err) => {
+                        top_state.frames.push(Frame::Error(err.into()));
+                    }
+                }
+                drop(res_state);
             }
 
             if top_state.mode() == ThreadMode::Normal {
@@ -486,7 +500,7 @@ impl<'gc> Executor<'gc> {
             if !fuel.should_continue() {
                 break false;
             }
-        }
+        })
     }
 
     pub fn take_result<T: FromMultiValue<'gc>>(

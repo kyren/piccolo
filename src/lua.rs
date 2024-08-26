@@ -11,8 +11,9 @@ use crate::{
     stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
-    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, Singleton,
-    StashedExecutor, String, Table, TypeError, Value,
+    thread::BadThreadMode,
+    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
+    Singleton, StashedExecutor, String, Table, TypeError, Value,
 };
 
 /// A value representing the main "execution context" of a Lua state.
@@ -263,16 +264,18 @@ impl Lua {
     ///
     /// This will periodically exit the arena in order to collect garbage concurrently with running
     /// Lua code.
-    pub fn finish(&mut self, executor: &StashedExecutor) {
+    pub fn finish(&mut self, executor: &StashedExecutor) -> Result<(), BadThreadMode> {
         const FUEL_PER_GC: i32 = 4096;
 
         loop {
             let mut fuel = Fuel::with(FUEL_PER_GC);
 
-            if self.enter(|ctx| ctx.fetch(executor).step(ctx, &mut fuel)) {
+            if self.enter(|ctx| ctx.fetch(executor).step(ctx, &mut fuel))? {
                 break;
             }
         }
+
+        Ok(())
     }
 
     /// Run the given executor to completion and then take return values from the returning thread.
@@ -283,7 +286,7 @@ impl Lua {
         &mut self,
         executor: &StashedExecutor,
     ) -> Result<R, ExternError> {
-        self.finish(executor);
+        self.finish(executor).map_err(RuntimeError::new)?;
         self.try_enter(|ctx| ctx.fetch(executor).take_result::<R>(ctx)?)
     }
 }

@@ -1,12 +1,12 @@
 use gc_arena::{lock::Lock, Collect, Gc, Rootable};
-use piccolo::{Callback, CallbackReturn, Closure, Executor, ExternError, Lua, UserData, Value};
+use piccolo::{Callback, CallbackReturn, Closure, Executor, Lua, UserData, Value};
 
 #[derive(Collect)]
 #[collect(no_drop)]
 struct MyUserData<'gc>(Gc<'gc, Lock<i32>>);
 
 #[test]
-fn userdata() -> Result<(), ExternError> {
+fn userdata() -> Result<(), anyhow::Error> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -43,7 +43,7 @@ fn userdata() -> Result<(), ExternError> {
         Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.finish(&executor);
+    lua.finish(&executor)?;
 
     lua.try_enter(|ctx| {
         let (ud, res) = ctx
@@ -58,5 +58,7 @@ fn userdata() -> Result<(), ExternError> {
 
         assert!(ud.downcast::<Rootable![MyUserData2]>().is_err());
         Ok(())
-    })
+    })?;
+
+    Ok(())
 }

@@ -496,6 +496,13 @@ impl<'gc> ThreadState<'gc> {
         self.open_upvalues.truncate(start);
     }
 
+    pub(super) fn reset(&mut self, mc: &Mutation<'gc>) {
+        self.close_upvalues(mc, 0);
+        assert!(self.open_upvalues.is_empty());
+        self.stack.clear();
+        self.frames.clear();
+    }
+
     fn resurrect_live_upvalues(&self, fc: &Finalization<'gc>) {
         for &upval in &self.open_upvalues {
             if !Gc::is_dead(fc, UpValue::into_inner(upval)) {
@@ -519,13 +526,6 @@ impl<'gc> ThreadState<'gc> {
                 }
             }
         }
-    }
-
-    fn reset(&mut self, mc: &Mutation<'gc>) {
-        self.close_upvalues(mc, 0);
-        assert!(self.open_upvalues.is_empty());
-        self.stack.clear();
-        self.frames.clear();
     }
 }
 

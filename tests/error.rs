@@ -22,7 +22,7 @@ fn error_unwind() -> Result<(), ExternError> {
         Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.finish(&executor);
+    lua.finish(&executor).unwrap();
     lua.try_enter(|ctx| {
         match ctx.fetch(&executor).take_result::<()>(ctx)? {
             Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),

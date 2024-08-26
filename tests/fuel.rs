@@ -21,7 +21,7 @@ fn test_interrupt() -> Result<(), ExternError> {
     lua.enter(|ctx| {
         let executor = ctx.fetch(&executor);
         let mut fuel = Fuel::with(i32::MAX);
-        assert!(!executor.step(ctx, &mut fuel));
+        assert!(!executor.step(ctx, &mut fuel).unwrap());
         assert!(fuel.is_interrupted());
         assert!(executor.mode() == ExecutorMode::Normal)
     });

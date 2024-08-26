@@ -109,11 +109,15 @@ impl fmt::Display for RuntimeError {
 
 impl<E: Into<anyhow::Error>> From<E> for RuntimeError {
     fn from(err: E) -> Self {
-        Self(Arc::new(err.into()))
+        Self::new(err)
     }
 }
 
 impl RuntimeError {
+    pub fn new(err: impl Into<anyhow::Error>) -> Self {
+        Self(Arc::new(err.into()))
+    }
+
     pub fn root_cause(&self) -> &(dyn StdError + 'static) {
         self.0.root_cause()
     }
@@ -179,7 +183,7 @@ impl<'gc> From<RuntimeError> for Error<'gc> {
 
 impl<'gc, E: Into<anyhow::Error>> From<E> for Error<'gc> {
     fn from(error: E) -> Self {
-        Self::Runtime(RuntimeError::from(error))
+        Self::Runtime(RuntimeError::new(error))
     }
 }
 

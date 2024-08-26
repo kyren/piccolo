@@ -285,7 +285,7 @@ fn resume_with_err() {
         ctx.stash(Executor::run(&ctx, thread).unwrap())
     });
 
-    lua.finish(&executor);
+    lua.finish(&executor).unwrap();
 
     lua.enter(|ctx| {
         let executor = ctx.fetch(&executor);
@@ -293,7 +293,7 @@ fn resume_with_err() {
         executor.resume(ctx, ()).unwrap();
     });
 
-    lua.finish(&executor);
+    lua.finish(&executor).unwrap();
 
     lua.enter(
         |ctx| match ctx.fetch(&executor).take_result::<()>(ctx).unwrap() {
