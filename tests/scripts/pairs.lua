@@ -68,3 +68,26 @@ do
   local a, b = inext(t, math.maxinteger)
   assert(a == -9223372036854775808 and b == 4)
 end
+
+do
+  local t = {}
+  setmetatable(t, {
+    __pairs = function()
+        return 1, 2, 3, 4
+      end
+  })
+  local a, b, c, d = pairs(t)
+  assert(a == 1)
+  assert(b == 2)
+  assert(c == 3)
+  assert(d == nil)
+  setmetatable(t, {
+    __pairs = function()
+        return 1, 2
+      end
+  })
+  local a, b, c = pairs(t)
+  assert(a == 1)
+  assert(b == 2)
+  assert(c == nil)
+end
