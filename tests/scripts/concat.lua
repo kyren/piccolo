@@ -52,3 +52,12 @@ do
     assert(table.concat(t, "", 1, #t) == "abcdefghijklmnopqrstuvwxyz")
     assert(table.concat(t, "!", 1, #t) == "a!b!c!d!e!f!g!h!i!j!k!l!m!n!o!p!q!r!s!t!u!v!w!x!y!z")
 end
+
+do
+    assert(0 .. 1 .. -1 == "01-1")
+
+    assert(-0.1 .. 0.1 == "-0.10.1")
+
+    -- Formatting of floats differs slightly from PRLua
+    -- assert(0.1 .. 0.0 .. -0.0 .. -0.1 == "0.10.0-0.0-0.1")
+end
