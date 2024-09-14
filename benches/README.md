@@ -8,8 +8,6 @@ This directory contains benchmarks for `piccolo`.
 cargo bench
 ```
 
-Note that it may take a while to compile, because `lto` is set to `fat`.
-
 Benchmarks currently use Criterion with settings tuned for faster runs at the cost of greater run-to-run variability.
 To reduce the noise, you can compile the benchmarks and then run them pinned to a specific core:
 
