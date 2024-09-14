@@ -1,7 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["util"]
-default-members = [".", "util"]
+members = [
+    "util",
+]
+default-members = [
+    ".",
+    "util",
+]
 
 [workspace.package]
 version = "0.3.3"
@@ -14,10 +19,7 @@ repository = "https://github.com/kyren/piccolo"
 ahash = "0.8"
 allocator-api2 = "0.2"
 anyhow = "1.0"
-gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "5a7534b883b703f23cfb8c3cfdf033460aa77ea9", features = [
-    "allocator-api2",
-    "hashbrown",
-] }
+gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "5a7534b883b703f23cfb8c3cfdf033460aa77ea9", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = { version = "0.8", features = ["small_rng"] }
 serde = "1.0"
