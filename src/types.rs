@@ -40,6 +40,14 @@ pub enum UpValueDescriptor {
     Outer(UpValueIndex),
 }
 
+/// Attributes that a locally declared variable can have.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
+#[collect(require_static)]
+pub enum LocalAttribute {
+    Const,
+    Close,
+}
+
 impl Opt254 {
     pub fn try_new(v: Option<u8>) -> Option<Opt254> {
         if let Some(v) = v {
