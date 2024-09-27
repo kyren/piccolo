@@ -9,7 +9,7 @@ use gc_arena::{
 use crate::{
     finalizers::Finalizers,
     stash::{Fetchable, Stashable},
-    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
+    stdlib::{load_base, load_coroutine, load_io, load_load, load_math, load_string, load_table},
     string::InternedStringSet,
     thread::BadThreadMode,
     Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
@@ -173,6 +173,7 @@ impl Lua {
         self.enter(|ctx| {
             load_base(ctx);
             load_coroutine(ctx);
+            load_load(ctx);
             load_math(ctx);
             load_string(ctx);
             load_table(ctx);
