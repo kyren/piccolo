@@ -221,7 +221,7 @@ impl Lua {
     /// must forever live *inside* the arena, and cannot escape it.
     ///
     /// Garbage collection takes place *in-between* calls to `Lua::enter`, no garbage will be
-    /// collected cocurrently with accessing the arena.
+    /// collected concurrently with accessing the arena.
     ///
     /// Automatically triggers garbage collection before returning if the allocation debt is larger
     /// than a small constant.
