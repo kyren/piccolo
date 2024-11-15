@@ -17,7 +17,7 @@ use crate::compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy};
 /// The Lua string type.
 ///
 /// Unlike Rust strings, Lua strings may contain *arbitrary bytes*, and as such are not necessarily
-// UTF-8.
+/// UTF-8.
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, StringInner>);
