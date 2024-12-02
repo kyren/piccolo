@@ -288,6 +288,7 @@ dependencies = [
  "clap",
  "gc-arena",
  "hashbrown",
+ "memchr",
  "rand",
  "rustyline",
  "thiserror",
