@@ -101,8 +101,8 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 | Status | Function                          | Differences | Notes |
 | ------ | --------------------------------- | ----------- | ----- |
-| ⚫️️   | `byte(s[, i, j])`                 |             |       |
-| ⚫️️   | `char(args...)`                   |             |       |
+| 🔵   | `byte(s[, i, j])`                 |             |       |
+| 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
 | ⚫️️   | `find(s, pattern[, init, plain])` |             |       |
 | ⚫️️   | `format(formatstring, args...)`   |             |       |
