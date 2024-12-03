@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
         Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 
-    lua.execute(&executor)?;
+    lua.execute::<()>(&executor)?;
 
     if matches.contains_id("repl") {
         run_repl(&mut lua)?;
