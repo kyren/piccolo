@@ -185,7 +185,7 @@ certain rules are followed w.r.t. provided callbacks).
 
 The VM also now accurately tracks all memory allocated within its inner
 `gc-arena::Arena` using `gc-arena` memory tracking features. This can extend
-to userdata and userdata APIs, and assuming the correct rules are follwed in
+to userdata and userdata APIs, and assuming the correct rules are followed in
 exposed userdata and callbacks, allows for accurate memory reporting and memory
 limits.
 
