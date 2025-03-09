@@ -231,15 +231,15 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
   such a way now that it should be possible to implement `__gc` metamethods with
   resurrection and tables with weak keys / values and ephemeron tables fully,
   but it has not been done yet. Currently, the `__gc` metamethod has no effect.
-* The compiled VM code is in a couple of ways worse than what PUC-Rio Lua will
-  generate. Notably, there is a JMP chaining optimization that is not yet
-  implemented that makes most loops much slower than in PUC-Rio Lua.
+* The compiled VM bytecode is in several ways worse than what PUC-Rio Lua will
+  generate and the VM sorely needs optimization (very little effort has gone
+  here so far).
 * Error messages that don't make you want to cry
 * Stack traces
 * Debugger
 * Aggressive optimization and *real* effort towards matching or beating (or
-  even just being within a respectable distance of) PUC-Rio Lua's performance in
-  all cases.
+  even just being within a respectable distance of) PUC-Rio Lua's performance
+  generally.
 * Probably much more I've forgotten about
 
 ## What will probably never be implemented
