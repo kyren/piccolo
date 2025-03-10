@@ -49,11 +49,16 @@ impl<'gc> fmt::Debug for RawTable<'gc> {
                 self.array
                     .iter()
                     .enumerate()
-                    .map(|(i, v)| (Value::Integer((i + 1).try_into().unwrap()), *v))
+                    .map(|(i, v)| {
+                        (
+                            Value::Integer((i + 1).try_into().unwrap()).debug_shallow(),
+                            v.debug_shallow(),
+                        )
+                    })
                     .chain({
                         self.map.iter().filter_map(|(k, v)| {
                             if let Key::Live(k) = k {
-                                Some((k.to_value(), *v))
+                                Some((k.to_value().debug_shallow(), v.debug_shallow()))
                             } else {
                                 None
                             }

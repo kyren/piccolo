@@ -81,6 +81,43 @@ impl<'gc> Value<'gc> {
         ValueDisplay(self)
     }
 
+    pub fn debug_shallow(self) -> impl fmt::Debug + 'gc {
+        struct ShallowDebug<'gc>(Value<'gc>);
+
+        impl<'gc> fmt::Debug for ShallowDebug<'gc> {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    Value::Table(t) => {
+                        write!(fmt, "Value::Table({:p})", Gc::as_ptr(t.into_inner()))
+                    }
+                    Value::Function(Function::Closure(c)) => {
+                        write!(
+                            fmt,
+                            "Value::Function(Function::Closure({:p}))",
+                            Gc::as_ptr(c.into_inner())
+                        )
+                    }
+                    Value::Function(Function::Callback(c)) => {
+                        write!(
+                            fmt,
+                            "Value::Function(Function::Callback({:p}))",
+                            Gc::as_ptr(c.into_inner())
+                        )
+                    }
+                    Value::Thread(t) => {
+                        write!(fmt, "Value::Thread({:p})", Gc::as_ptr(t.into_inner()))
+                    }
+                    Value::UserData(u) => {
+                        write!(fmt, "Value::UserData({:p})", Gc::as_ptr(u.into_inner()))
+                    }
+                    v => write!(fmt, "{v:?}"),
+                }
+            }
+        }
+
+        ShallowDebug(self)
+    }
+
     pub fn is_nil(self) -> bool {
         matches!(self, Value::Nil)
     }
