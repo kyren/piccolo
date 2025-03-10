@@ -21,6 +21,7 @@ allocator-api2 = "0.2"
 anyhow = "1.0"
 gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "5a7534b883b703f23cfb8c3cfdf033460aa77ea9", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
+memchr = "2.7"
 rand = { version = "0.8", features = ["small_rng"] }
 serde = "1.0"
 thiserror = "1.0"
@@ -43,6 +44,7 @@ allocator-api2.workspace = true
 anyhow.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
+memchr.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 
