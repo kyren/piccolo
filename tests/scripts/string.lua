@@ -96,3 +96,44 @@ do
     assert(string.upper(80) == "80")
     assert(string.upper(3.14) == "3.14")
 end
+
+do
+    assert(is_err(function() return string.byte(nil) end))
+    assert(is_err(function() return string.byte(true) end))
+    assert(is_err(function() return string.byte(false) end))
+    assert(is_err(function() return string.byte({}) end))
+    assert(is_err(function() return string.byte(is_err) end))
+    assert(is_err(function() return string.byte(coroutine.create(test_coroutine_len)) end))
+    assert(string.byte("") == nil)
+    assert(string.byte("abcd") == 97)
+    assert(string.byte("\xef") == 0xef)
+    assert(string.byte("\0") == 0)
+    assert(string.byte(1) == string.byte("1"))
+    assert(string.byte("abcd", 2) == string.byte("b"))
+    assert(string.byte("abcd", -1) == string.byte("d"))
+
+    local b, c, d, e = string.byte("abcd", 2, -1)
+    assert(b == string.byte("b") and
+        c == string.byte("c") and
+        d == string.byte("d") and
+        e == nil)
+    b, c, d = string.byte("abcd", 2, 3)
+    assert(b == string.byte("b") and
+        c == string.byte("c") and
+        d == nil)
+    assert(string.byte("abcd", 2, -5) == nil)
+    assert(string.byte("abcd", 3, 1) == nil)
+end
+
+do
+    assert(is_err(function() return string.char(nil) end))
+    assert(is_err(function() return string.char(true) end))
+    assert(is_err(function() return string.char(false) end))
+    assert(is_err(function() return string.char({}) end))
+    assert(is_err(function() return string.char(is_err) end))
+    assert(is_err(function() return string.char(coroutine.create(test_coroutine_len)) end))
+    assert(string.char() == "")
+    assert(string.char(0, "1", 97, 98, 255) == "\0\x01ab\xff")
+    assert(is_err(function() return string.char(256) end))
+    assert(is_err(function() return string.char(-1) end))
+end
