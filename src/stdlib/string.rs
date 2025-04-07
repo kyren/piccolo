@@ -1,6 +1,6 @@
-use crate::{Callback, CallbackReturn, Context, String, Table};
+use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, Value};
 
-pub fn load_string<'gc>(ctx: Context<'gc>) {
+pub fn load_string(ctx: Context) {
     let string = Table::new(&ctx);
 
     string.set_field(
@@ -97,6 +97,85 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, uppered);
             Ok(CallbackReturn::Return)
         }),
+    );
+
+    string.set_field(
+        ctx,
+        "byte",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            // TODO: process negative `i` and `j`
+
+            let (string, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
+            let bytes = string.as_bytes();
+
+            if string.is_empty() {
+                return Ok(CallbackReturn::Return);
+            }
+
+            let (i, j) = (i.unwrap_or_default() as usize, j.unwrap_or_default() as usize);
+
+            let j = if j > string.len() as usize {
+                string.len() as usize
+            } else {
+                j
+            };
+
+            if i > string.len() as usize {
+                stack.replace(ctx, Value::Nil);
+                return Ok(CallbackReturn::Return);
+            }
+
+            if i == j {
+                stack.replace(ctx, bytes[i]);
+                return Ok(CallbackReturn::Return);
+            }
+
+            if i > j {
+                return Ok(CallbackReturn::Return);
+            }
+
+            stack.replace(ctx, &bytes[i..j]);
+            Ok(CallbackReturn::Return)
+        })
+    );
+
+    string.set_field(
+        ctx,
+        "char",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let iter = stack.into_iter();
+            if iter.is_empty() {
+                return Ok(CallbackReturn::Return);
+            }
+
+            let mut result = std::string::String::with_capacity(iter.len());
+
+            for ch in iter {
+                let number = ch.to_integer().ok_or(Err("invalid value, expected `integer` or `string` or `number`").into_value(ctx).into())?;
+                let code = if number < 0 {
+                    return Err(format!("value (`{}`) cannot be negative", number).into_value(ctx).into())
+                } else if number > i64::from(u32::MAX) {
+                    (number as u64 % 0x110000) as u32
+                } else {
+                    (number as u32) % 0x110000
+                };
+                match std::char::from_u32(code) {
+                    Some(ch) => result.push(ch),
+                    None => return Err(format!("invalid symbol code (`{}`)", code).into_value(ctx).into())
+                }
+            }
+
+            stack.replace(ctx, result);
+            Ok(CallbackReturn::Return)
+        })
+    );
+
+    string.set_field(
+        ctx,
+        "find",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            Ok(CallbackReturn::Return)
+        })
     );
 
     ctx.set_global("string", string);

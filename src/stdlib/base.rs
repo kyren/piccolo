@@ -9,7 +9,7 @@ use crate::{
     Sequence, SequencePoll, Stack, String, Table, TypeError, Value, Variadic,
 };
 
-pub fn load_base<'gc>(ctx: Context<'gc>) {
+pub fn load_base(ctx: Context) {
     ctx.set_global(
         "tonumber",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {

@@ -2,7 +2,7 @@ use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Table, Thr
 
 use super::base::PCall;
 
-pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
+pub fn load_coroutine(ctx: Context) {
     let coroutine = Table::new(&ctx);
 
     coroutine.set_field(
