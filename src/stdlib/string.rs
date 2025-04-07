@@ -107,20 +107,26 @@ pub fn load_string(ctx: Context) {
 
             let (string, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
             let bytes = string.as_bytes();
+            let len = string.len();
 
             if string.is_empty() {
                 return Ok(CallbackReturn::Return);
             }
 
-            let (i, j) = (i.unwrap_or_default() as usize, j.unwrap_or_default() as usize);
-
-            let j = if j > string.len() as usize {
-                string.len() as usize
-            } else {
-                j
+            let i = match i {
+                Some(index) if index < 0 => (len + index + 1).max(1) as usize - 1,
+                Some(index) if index > 0 => (index - 1) as usize,
+                _ => 0
             };
 
-            if i > string.len() as usize {
+            let j = match j {
+                Some(index) if index < 0 => (len + index + 1).max(1) as usize - 1,
+                Some(index) if index > 0 => (index - 1) as usize,
+                None => i,
+                _ => 0,
+            }.min(len as usize - 1);
+
+            if i > len as usize {
                 stack.replace(ctx, Value::Nil);
                 return Ok(CallbackReturn::Return);
             }
@@ -134,7 +140,7 @@ pub fn load_string(ctx: Context) {
                 return Ok(CallbackReturn::Return);
             }
 
-            stack.replace(ctx, &bytes[i..j]);
+            stack.replace(ctx, &bytes[i..=j]);
             Ok(CallbackReturn::Return)
         })
     );
