@@ -103,8 +103,6 @@ pub fn load_string(ctx: Context) {
         ctx,
         "byte",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            // TODO: process negative `i` and `j`
-
             let (string, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
             let bytes = string.as_bytes();
             let len = string.len();
