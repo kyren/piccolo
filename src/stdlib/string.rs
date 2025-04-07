@@ -148,6 +148,7 @@ pub fn load_string(ctx: Context) {
         "char",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let iter = stack.into_iter();
+
             if iter.is_empty() {
                 return Ok(CallbackReturn::Return);
             }
@@ -155,7 +156,10 @@ pub fn load_string(ctx: Context) {
             let mut result = std::string::String::with_capacity(iter.len());
 
             for ch in iter {
-                let number = ch.to_integer().ok_or(Err("invalid value, expected `integer` or `string` or `number`").into_value(ctx).into())?;
+                let number = match ch.to_integer() {
+                    Some(number) => number,
+                    None => return Err("invalid value, expected `integer` or `string` or `number`".into_value(ctx).into())
+                };
                 let code = if number < 0 {
                     return Err(format!("value (`{}`) cannot be negative", number).into_value(ctx).into())
                 } else if number > i64::from(u32::MAX) {
@@ -178,7 +182,56 @@ pub fn load_string(ctx: Context) {
         ctx,
         "find",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            Ok(CallbackReturn::Return)
+            let (s, pattern, init, plain) = stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
+            let len = s.len();
+            let plain = plain.unwrap_or(false);
+            let init = init.unwrap_or(1);
+            let init = if init < 0 {
+                (len + init + 1).max(1)
+            } else {
+                init
+            };
+
+            if 1 > init || init > len {
+                stack.replace(ctx, Value::Nil);
+                return Ok(CallbackReturn::Return);
+            }
+
+            let init = init - 1;
+
+            let pattern = pattern.to_str()?;
+            let s = s.to_str()?;
+            let s = &s[init as usize..];
+            if plain {
+                let index = s.find(pattern);
+                if let Some(index) = index {
+                    let start = init + index as i64 + 1;
+                    let end = start + pattern.len() as i64 - 1;
+                    stack.replace(ctx, [start, end]);
+                    Ok(CallbackReturn::Return)
+                } else {
+                    stack.replace(ctx, Value::Nil);
+                    Ok(CallbackReturn::Return)
+                }
+            } else {
+                let mut pat = lua_patterns::LuaPattern::new(pattern);
+                if pat.matches(s) {
+                    let range = pat.range();
+                    let start = init + range.start as i64 + 1;
+                    let end = init + range.end as i64;
+                    let captures = pat.captures(s).iter().map(ToString::to_string).collect::<Vec<_>>();
+                    stack.push_back(Value::Integer(start));
+                    stack.push_back(Value::Integer(end));
+                    for capture in captures {
+                        // TODO: mismatched groups?? maybe???
+                        stack.push_back(capture.into_value(ctx))
+                    }
+                    Ok(CallbackReturn::Return)
+                } else {
+                    stack.replace(ctx, Value::Nil);
+                    Ok(CallbackReturn::Return)
+                }
+            }
         })
     );
 
