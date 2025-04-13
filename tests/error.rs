@@ -1,5 +1,3 @@
-mod sizes;
-
 use piccolo::{error::LuaError, Callback, Closure, Error, Executor, ExternError, Lua, Value};
 use thiserror::Error;
 

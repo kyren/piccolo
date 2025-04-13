@@ -1,5 +1,3 @@
-mod table;
-
 use std::{
     fs::{read_dir, File},
     io::{stdout, Read, Write},
