@@ -9,7 +9,7 @@ use gc_arena::{
 use crate::{
     finalizers::Finalizers,
     stash::{Fetchable, Stashable},
-    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
+    stdlib::{load_base, load_coroutine, load_io, load_load, load_math, load_string, load_table},
     string::InternedStringSet,
     thread::BadThreadMode,
     Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
@@ -158,6 +158,7 @@ impl Lua {
     pub fn full() -> Self {
         let mut lua = Lua::core();
         lua.load_io();
+        lua.load_load();
         lua
     }
 
@@ -183,6 +184,13 @@ impl Lua {
     pub fn load_io(&mut self) {
         self.enter(|ctx| {
             load_io(ctx);
+        })
+    }
+
+    /// Load the parts of the stdlib that allow loading new code at runtime.
+    pub fn load_load(&mut self) {
+        self.enter(|ctx| {
+            load_load(ctx);
         })
     }
 
