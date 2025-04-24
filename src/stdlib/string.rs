@@ -1,4 +1,5 @@
 use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, Value};
+use lsonar::{find, r#match, gmatch, gsub};
 
 pub fn load_string(ctx: Context) {
     let string = Table::new(&ctx);
@@ -147,11 +148,11 @@ pub fn load_string(ctx: Context) {
         ctx,
         "char",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let iter = stack.into_iter();
-
-            if iter.is_empty() {
+            if stack.is_empty() {
                 return Ok(CallbackReturn::Return);
             }
+
+            let iter = stack.into_iter();
 
             let mut result = std::string::String::with_capacity(iter.len());
 
@@ -183,57 +184,89 @@ pub fn load_string(ctx: Context) {
         "find",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (s, pattern, init, plain) = stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
-            let len = s.len();
             let plain = plain.unwrap_or(false);
-            let init = init.unwrap_or(1);
-            let init = if init < 0 {
-                (len + init + 1).max(1)
-            } else {
-                init
-            };
-
-            if 1 > init || init > len {
-                stack.replace(ctx, Value::Nil);
-                return Ok(CallbackReturn::Return);
-            }
-
-            let init = init - 1;
 
             let pattern = pattern.to_str()?;
             let s = s.to_str()?;
-            let s = &s[init as usize..];
-            if plain {
-                let index = s.find(pattern);
-                if let Some(index) = index {
-                    let start = init + index as i64 + 1;
-                    let end = start + pattern.len() as i64 - 1;
-                    stack.replace(ctx, [start, end]);
-                    Ok(CallbackReturn::Return)
-                } else {
-                    stack.replace(ctx, Value::Nil);
-                    Ok(CallbackReturn::Return)
-                }
-            } else {
-                let mut pat = lua_patterns::LuaPattern::new(pattern);
-                if pat.matches(s) {
-                    let range = pat.range();
-                    let start = init + range.start as i64 + 1;
-                    let end = init + range.end as i64;
-                    let captures = pat.captures(s).iter().map(ToString::to_string).collect::<Vec<_>>();
-                    stack.push_back(Value::Integer(start));
-                    stack.push_back(Value::Integer(end));
-                    for capture in captures {
-                        // TODO: mismatched groups?? maybe???
-                        stack.push_back(capture.into_value(ctx))
-                    }
-                    Ok(CallbackReturn::Return)
-                } else {
-                    stack.replace(ctx, Value::Nil);
-                    Ok(CallbackReturn::Return)
-                }
+            
+            let Some((start, end, captures)) = find(s, pattern, init.map(|i| i as isize), plain).map_err(|err| {
+                let err = err.to_string();
+                err.into_value(ctx)
+            })? else {
+                stack.replace(ctx, Value::Nil);
+                return Ok(CallbackReturn::Return);
+            };
+
+            stack.replace(ctx, [start as i64, end as i64]);
+
+            for capture in captures {
+                stack.into_back(ctx, capture)
             }
+
+            Ok(CallbackReturn::Return)
         })
     );
+    
+    string.set_field(ctx, "match", Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        let (s, pattern, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
+
+        let pattern = pattern.to_str()?;
+        let s = s.to_str()?;
+
+        let Some(captures) = r#match(s, pattern, init.map(|i| i as isize)).map_err(|err| {
+            let err = err.to_string();
+            err.into_value(ctx)
+        })? else {
+            stack.replace(ctx, Value::Nil);
+            return Ok(CallbackReturn::Return);
+        };
+
+        stack.replace(ctx, captures);
+
+        Ok(CallbackReturn::Return)
+    }));
+
+    string.set_field(ctx, "gmatch", Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        let (s, pattern) = stack.consume::<(String, String)>(ctx)?;
+
+        let pattern = pattern.to_str()?;
+        let s = s.to_str()?;
+
+        let it = gmatch(s, pattern).map_err(|err| {
+            let err = err.to_string();
+            err.into_value(ctx)
+        })?;
+
+        let captures = it.collect::<lsonar::Result<Vec<_>>>().map_err(|err| {
+            let err = err.to_string();
+            err.into_value(ctx)
+        })?;
+
+        stack.replace(ctx, captures);
+        
+
+        Ok(CallbackReturn::Return)
+    }));
+
+    string.set_field(ctx, "gsub", Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        let (s, pattern, repl, n) = stack.consume::<(String, String, String, Option<i64>)>(ctx)?;
+
+        let pattern = pattern.to_str()?;
+        let s = s.to_str()?;
+        let repl = repl.to_str()?;
+
+        // TODO: we need to support [`Repl::Function`] and [`Repl::Table`]
+        let (value, n) = gsub(s, pattern, lsonar::Repl::String(repl), n.map(|n| n as usize)).map_err(|err| {
+            let err = err.to_string();
+            err.into_value(ctx)
+        })?;
+
+        stack.clear();
+        stack.into_back(ctx, value);
+        stack.into_back(ctx, n as i64);
+
+        Ok(CallbackReturn::Return)
+    }));
 
     ctx.set_global("string", string);
 }

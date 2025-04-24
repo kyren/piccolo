@@ -246,10 +246,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
-name = "lua-patterns"
-version = "0.4.0"
+name = "lsonar"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3da90ef01f4466adefe593c05d534fe270d04a2b067608cf8b230123e5a281"
+checksum = "4336601f64cb430c9640481fcb364f1207aea4600205f575bcc1f2a9b8e03847"
 
 [[package]]
 name = "memchr"
@@ -294,7 +294,7 @@ dependencies = [
  "clap",
  "gc-arena",
  "hashbrown",
- "lua-patterns",
+ "lsonar",
  "rand",
  "rustyline",
  "thiserror",

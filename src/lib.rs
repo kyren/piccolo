@@ -1,6 +1,3 @@
-// TODO: remove it??
-#![feature(exact_size_is_empty)]
-
 pub mod any;
 pub mod async_callback;
 pub mod callback;

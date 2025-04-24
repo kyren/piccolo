@@ -24,7 +24,7 @@ hashbrown = { version = "0.14.5", features = ["raw"] }
 rand = { version = "0.8.5", features = ["small_rng"] }
 serde = "1.0"
 thiserror = "2.0.12"
-lua-patterns = "0.4.0"
+lsonar = "0.2"
 
 piccolo = { path = ".", version = "0.3.3" }
 
@@ -44,7 +44,7 @@ allocator-api2.workspace = true
 anyhow.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
-lua-patterns.workspace = true
+lsonar.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 
