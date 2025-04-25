@@ -1,4 +1,7 @@
-use std::{io::{self, Cursor, Write}, mem};
+use std::{
+    io::{self, Cursor, Write},
+    mem,
+};
 
 use crate::{Callback, CallbackReturn, Context, Error, IntoValue, String, Table, Value};
 use lsonar::{find, gsub, r#match};
@@ -462,6 +465,17 @@ pub fn load_string(ctx: Context) {
                 }
             }
 
+            fn check_pack_arg(ctx: Context, stack_len: usize, index: usize, op: char) -> Result<(), Error> {
+                if index >= stack_len {
+                    Err(format!(
+                        "missing argument for format '{}'",
+                        op
+                    ).into_value(ctx).into())
+                } else {
+                    Ok(())
+                }
+            }
+
             fn parse_optional_int(
                 chars: &mut std::iter::Peekable<std::str::Chars>,
                 max_val: usize,
@@ -695,7 +709,12 @@ pub fn load_string(ctx: Context) {
                         let n = num_opt.ok_or_else(|| 
                             Into::<Error>::into("missing number for '!' option".into_value(ctx))
                         )?;
-                         // Alignment must be power of 2? Manual is tricky. Assume n is max_alignment directly.
+                        if n < 1 || n > 16 || (n & (n - 1)) != 0 {
+                            return Err(format!(
+                               "alignment option '!' requires a power of 2 between 1 and 16 (got {})",
+                               n
+                           ).into_value(ctx).into());
+                       }
                         state.max_alignment = n;
                     }
                     ' ' => {}
@@ -726,8 +745,9 @@ pub fn load_string(ctx: Context) {
                          }
                     }
                     op @ ('b' | 'B' | 'h' | 'H' | 'l' | 'L' | 'j' | 'J' | 'T' | 'i' | 'I' | 'f' | 'd' | 'n') => {
+                        check_pack_arg(ctx, stack.len(), current_arg_idx, op)?;
                         let arg_val = stack.get(current_arg_idx);
-                         current_arg_idx += 1;
+                        current_arg_idx += 1;
 
                          let data_size = get_format_size(op, num_opt).unwrap();
                          let padding = calculate_padding(current_pos, data_size, state.max_alignment);
@@ -736,89 +756,125 @@ pub fn load_string(ctx: Context) {
                          match op {
                              'b' => {
                                  let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'b' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                  )?;
-                                 write_int(&mut writer, val, 1, &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                 write_int(&mut writer, val, 1, &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'B' => {
                                  let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'B' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                  )?;
-                                  write_uint(&mut writer, val as u64, 1, &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                 if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                 }
+                                  write_uint(&mut writer, val as u64, 1, &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'h' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'h' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_int(&mut writer, val, mem::size_of::<i16>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                write_int(&mut writer, val, mem::size_of::<i16>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'H' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'H' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_uint(&mut writer, val as u64, mem::size_of::<u16>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                }
+                                write_uint(&mut writer, val as u64, mem::size_of::<u16>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'l' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'l' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_int(&mut writer, val, mem::size_of::<i64>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                write_int(&mut writer, val, mem::size_of::<i64>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                               }
                              'L' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'L' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_uint(&mut writer, val as u64, mem::size_of::<u64>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                }
+                                write_uint(&mut writer, val as u64, mem::size_of::<u64>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'j' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'j' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_int(&mut writer, val, mem::size_of::<i64>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                write_int(&mut writer, val, mem::size_of::<i64>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'J' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'J' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_uint(&mut writer, val as u64, mem::size_of::<u64>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                }
+                                write_uint(&mut writer, val as u64, mem::size_of::<u64>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'T' => {
                                 let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'T' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                 )?;
-                                write_uint(&mut writer, val as u64, mem::size_of::<usize>(), &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                }
+                                write_uint(&mut writer, val as u64, mem::size_of::<usize>(), &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                              'i' => {
                                  let size = num_opt.unwrap_or(mem::size_of::<i32>());
                                  let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'i' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                  )?;
-                                 write_int(&mut writer, val, size, &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                 write_int(&mut writer, val, size, &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                               }
                              'I' => {
                                  let size = num_opt.unwrap_or(mem::size_of::<u32>());
                                  let val = arg_val.to_integer().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'I' must be an `integer`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be an `integer`", op).into_value(ctx))
                                  )?;
-                                 write_uint(&mut writer, val as u64, size, &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                                 if val < 0 {
+                                      return Err(Error::from_value(format!(
+                                        "negative value {} provided for unsigned format '{}'",
+                                        val, op
+                                    ).into_value(ctx)));
+                                 }
+                                 write_uint(&mut writer, val as u64, size, &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
                              }
                               'f' => {
                                  let val = arg_val.to_number().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'f' must be a `number`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be a `number`", op).into_value(ctx))
                                  )?;
-                                 write_float(&mut writer, val as f32, &state)?;
+                                 write_float(&mut writer, val as f32, &state).map_err(|e| Error::from_value(e.to_string().into_value(ctx)))?;
                               }
                               'd' => {
                                  let val = arg_val.to_number().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'd' must be a `number`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be a `number`", op).into_value(ctx))
                                  )?;
-                                 write_double(&mut writer, val, &state)?;
+                                 write_double(&mut writer, val, &state).map_err(|e| Error::from_value(e.to_string().into_value(ctx)))?;
                              }
                               'n' => {
                                  let val = arg_val.to_number().ok_or_else(|| 
-                                    Into::<Error>::into("argument for format 'n' must be a `number`".into_value(ctx))
+                                    Error::from_value(format!("argument for format '{}' must be a `number`", op).into_value(ctx))
                                  )?;
-                                 write_double(&mut writer, val, &state)?;
+                                 write_double(&mut writer, val, &state).map_err(|e| Error::from_value(e.to_string().into_value(ctx)))?;
                              }
                              _ => unreachable!(),
                          }
@@ -828,11 +884,12 @@ pub fn load_string(ctx: Context) {
                         let n = num_opt.ok_or_else(|| 
                             Into::<Error>::into("missing number for 'c' option".into_value(ctx))
                         )?;
-                         let arg_val = stack.get(current_arg_idx);
+                        check_pack_arg(ctx, stack.len(), current_arg_idx, 'c')?;
+                        let arg_val = stack.get(current_arg_idx);
                         current_arg_idx += 1;
 
                         let s = arg_val.into_string(ctx).ok_or_else(|| 
-                            Into::<Error>::into("argument for format 'c' must be a `string`".into_value(ctx))
+                            Error::from_value("argument for format 'c' must be a `string`".into_value(ctx))
                         )?;
                         let bytes = s.as_bytes();
 
@@ -844,11 +901,12 @@ pub fn load_string(ctx: Context) {
                         }
                     }
                      'z' => {
+                        check_pack_arg(ctx, stack.len(), current_arg_idx, 'z')?;
                         let arg_val = stack.get(current_arg_idx);
                          current_arg_idx += 1;
 
                          let s = arg_val.into_string(ctx).ok_or_else(|| 
-                            Into::<Error>::into("argument for format 'z' must be a `string`".into_value(ctx))
+                            Error::from_value("argument for format 'z' must be a `string`".into_value(ctx))
                         )?;
                         let bytes = s.as_bytes();
 
@@ -859,30 +917,31 @@ pub fn load_string(ctx: Context) {
                          let len_size = num_opt.unwrap_or(mem::size_of::<usize>());
                          if len_size > 8 {
                              return Err(
-                                 "string length size cannot exceed 8 bytes".into_value(ctx).into()
+                                 Error::from_value("string length size cannot exceed 8 bytes".into_value(ctx))
                              );
                          }
 
+                        check_pack_arg(ctx, stack.len(), current_arg_idx, 's')?;
                         let arg_val = stack.get(current_arg_idx);
                          current_arg_idx += 1;
 
                          let s = arg_val.into_string(ctx).ok_or_else(|| 
-                            Into::<Error>::into("argument for format 's' must be a `string`".into_value(ctx))
-                         )?;
+                            Error::from_value("argument for format 's' must be a `string`".into_value(ctx))
+                        )?;
                          let bytes = s.as_bytes();
                          let str_len = bytes.len() as u64;
 
                          let padding = calculate_padding(current_pos, len_size, state.max_alignment);
                          write_padding(&mut writer, padding)?;
-                         write_uint(&mut writer, str_len, len_size, &state).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                         write_uint(&mut writer, str_len, len_size, &state).map_err(|err| Error::from_value(err.into_value(ctx)))?;
 
                          writer.write_all(bytes)?
                     }
                     invalid => {
-                        return Err(format!(
+                        return Err(Error::from_value(format!(
                             "invalid conversion option '{}' in format string",
                             invalid
-                        ).into_value(ctx).into());
+                        ).into_value(ctx)));
                     }
                 }
             }
@@ -897,7 +956,7 @@ pub fn load_string(ctx: Context) {
     string.set_field(
         ctx,
         "unpack",
-        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+        Callback::from_fn(&ctx, |ctx, _, mut _stack| {
             // TODO: Implement string.unpack
             Err("string.unpack not yet implemented".into_value(ctx).into())
         }),
