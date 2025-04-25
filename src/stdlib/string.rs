@@ -1,5 +1,8 @@
-use crate::{Callback, CallbackReturn, Context, IntoValue, String, Table, Value};
-use lsonar::{find, r#match, gmatch, gsub};
+use crate::{
+    Callback, CallbackReturn, Context, IntoValue,
+    String, Table, Value,
+};
+use lsonar::{find, gsub, r#match};
 
 pub fn load_string(ctx: Context) {
     let string = Table::new(&ctx);
@@ -115,7 +118,7 @@ pub fn load_string(ctx: Context) {
             let i = match i {
                 Some(index) if index < 0 => (len + index + 1).max(1) as usize - 1,
                 Some(index) if index > 0 => (index - 1) as usize,
-                _ => 0
+                _ => 0,
             };
 
             let j = match j {
@@ -123,7 +126,8 @@ pub fn load_string(ctx: Context) {
                 Some(index) if index > 0 => (index - 1) as usize,
                 None => i,
                 _ => 0,
-            }.min(len as usize - 1);
+            }
+            .min(len as usize - 1);
 
             if i > len as usize {
                 stack.replace(ctx, Value::Nil);
@@ -141,7 +145,7 @@ pub fn load_string(ctx: Context) {
 
             stack.replace(ctx, &bytes[i..=j]);
             Ok(CallbackReturn::Return)
-        })
+        }),
     );
 
     string.set_field(
@@ -159,10 +163,16 @@ pub fn load_string(ctx: Context) {
             for ch in iter {
                 let number = match ch.to_integer() {
                     Some(number) => number,
-                    None => return Err("invalid value, expected `integer` or `string` or `number`".into_value(ctx).into())
+                    None => {
+                        return Err("invalid value, expected `integer` or `string` or `number`"
+                            .into_value(ctx)
+                            .into())
+                    }
                 };
                 let code = if number < 0 {
-                    return Err(format!("value (`{}`) cannot be negative", number).into_value(ctx).into())
+                    return Err(format!("value (`{}`) cannot be negative", number)
+                        .into_value(ctx)
+                        .into());
                 } else if number > i64::from(u32::MAX) {
                     (number as u64 % 0x110000) as u32
                 } else {
@@ -170,29 +180,36 @@ pub fn load_string(ctx: Context) {
                 };
                 match std::char::from_u32(code) {
                     Some(ch) => result.push(ch),
-                    None => return Err(format!("invalid symbol code (`{}`)", code).into_value(ctx).into())
+                    None => {
+                        return Err(format!("invalid symbol code (`{}`)", code)
+                            .into_value(ctx)
+                            .into())
+                    }
                 }
             }
 
             stack.replace(ctx, result);
             Ok(CallbackReturn::Return)
-        })
+        }),
     );
 
     string.set_field(
         ctx,
         "find",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let (s, pattern, init, plain) = stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
+            let (s, pattern, init, plain) =
+                stack.consume::<(String, String, Option<i64>, Option<bool>)>(ctx)?;
             let plain = plain.unwrap_or(false);
 
             let pattern = pattern.to_str()?;
             let s = s.to_str()?;
-            
-            let Some((start, end, captures)) = find(s, pattern, init.map(|i| i as isize), plain).map_err(|err| {
-                let err = err.to_string();
-                err.into_value(ctx)
-            })? else {
+
+            let Some((start, end, captures)) = find(s, pattern, init.map(|i| i as isize), plain)
+                .map_err(|err| {
+                    let err = err.to_string();
+                    err.into_value(ctx)
+                })?
+            else {
                 stack.replace(ctx, Value::Nil);
                 return Ok(CallbackReturn::Return);
             };
@@ -204,69 +221,65 @@ pub fn load_string(ctx: Context) {
             }
 
             Ok(CallbackReturn::Return)
-        })
+        }),
     );
-    
-    string.set_field(ctx, "match", Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let (s, pattern, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
 
-        let pattern = pattern.to_str()?;
-        let s = s.to_str()?;
+    string.set_field(
+        ctx,
+        "match",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (s, pattern, init) = stack.consume::<(String, String, Option<i64>)>(ctx)?;
 
-        let Some(captures) = r#match(s, pattern, init.map(|i| i as isize)).map_err(|err| {
-            let err = err.to_string();
-            err.into_value(ctx)
-        })? else {
-            stack.replace(ctx, Value::Nil);
-            return Ok(CallbackReturn::Return);
-        };
+            let pattern = pattern.to_str()?;
+            let s = s.to_str()?;
 
-        stack.replace(ctx, captures);
+            let Some(captures) = r#match(s, pattern, init.map(|i| i as isize)).map_err(|err| {
+                let err = err.to_string();
+                err.into_value(ctx)
+            })?
+            else {
+                stack.replace(ctx, Value::Nil);
+                return Ok(CallbackReturn::Return);
+            };
 
-        Ok(CallbackReturn::Return)
-    }));
+            stack.replace(ctx, captures);
 
-    string.set_field(ctx, "gmatch", Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let (s, pattern) = stack.consume::<(String, String)>(ctx)?;
+            Ok(CallbackReturn::Return)
+        }),
+    );
 
-        let pattern = pattern.to_str()?;
-        let s = s.to_str()?;
+    // TODO: implement `gmatch`, which should return a function iterator
 
-        let it = gmatch(s, pattern).map_err(|err| {
-            let err = err.to_string();
-            err.into_value(ctx)
-        })?;
+    string.set_field(
+        ctx,
+        "gsub",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (s, pattern, repl, n) =
+                stack.consume::<(String, String, String, Option<i64>)>(ctx)?;
 
-        let captures = it.collect::<lsonar::Result<Vec<_>>>().map_err(|err| {
-            let err = err.to_string();
-            err.into_value(ctx)
-        })?;
+            let pattern = pattern.to_str()?;
+            let s = s.to_str()?;
+            let repl = repl.to_str()?;
 
-        stack.replace(ctx, captures);
-        
+            // TODO: we need to support [`Repl::Function`] and [`Repl::Table`]
+            let (value, n) = gsub(
+                s,
+                pattern,
+                lsonar::Repl::String(repl),
+                n.map(|n| n as usize),
+            )
+            .map_err(|err| {
+                let err = err.to_string();
+                err.into_value(ctx)
+            })?;
 
-        Ok(CallbackReturn::Return)
-    }));
+            stack.clear();
+            stack.into_back(ctx, value);
+            stack.into_back(ctx, n as i64);
 
-    string.set_field(ctx, "gsub", Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let (s, pattern, repl, n) = stack.consume::<(String, String, String, Option<i64>)>(ctx)?;
-
-        let pattern = pattern.to_str()?;
-        let s = s.to_str()?;
-        let repl = repl.to_str()?;
-
-        // TODO: we need to support [`Repl::Function`] and [`Repl::Table`]
-        let (value, n) = gsub(s, pattern, lsonar::Repl::String(repl), n.map(|n| n as usize)).map_err(|err| {
-            let err = err.to_string();
-            err.into_value(ctx)
-        })?;
-
-        stack.clear();
-        stack.into_back(ctx, value);
-        stack.into_back(ctx, n as i64);
-
-        Ok(CallbackReturn::Return)
-    }));
+            Ok(CallbackReturn::Return)
+        }),
+    );
 
     ctx.set_global("string", string);
 }
