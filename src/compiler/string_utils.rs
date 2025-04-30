@@ -243,7 +243,48 @@ pub fn read_hex_float(s: &[u8]) -> Option<f64> {
         base = -base;
     }
 
-    Some(base * (exp as f64).exp2())
+    Some(ldexp(base, exp))
+}
+
+fn ldexp(mut val: f64, exp: i32) -> f64 {
+    fn iexp2(exp: i32) -> f64 {
+        assert!(exp >= -1022 && exp <= 1023);
+        f64::from_bits(((exp + 1023) as u64) << 52)
+    }
+    fn extract_exp(val: f64) -> u64 {
+        (val.to_bits() >> 52) & 0x7ff
+    }
+    fn extract_mantissa(val: f64) -> u64 {
+        val.to_bits() & ((1 << 52) - 1)
+    }
+
+    let mut orig_exp = extract_exp(val) as i32;
+    let mantissa = extract_mantissa(val);
+    if orig_exp == 0 {
+        if mantissa == 0 {
+            return val;
+        }
+        // input is subnormal
+        val *= iexp2(54);
+        orig_exp = extract_exp(val) as i32 - 54;
+    } else if orig_exp == 2047 {
+        // input is NaN of Inf
+        return val;
+    }
+
+    let new_exp = orig_exp.saturating_add(exp);
+    if new_exp >= 2047 {
+        f64::copysign(f64::INFINITY, val) // overflow
+    } else if new_exp <= -54 {
+        f64::copysign(0.0, val) // underflow
+    } else if new_exp <= 0 {
+        // output is subnormal
+        let sign = val.is_sign_negative() as u64;
+        f64::from_bits((sign << 63) | (((new_exp + 54) as u64) << 52) | mantissa) * iexp2(-54)
+    } else {
+        let sign = val.is_sign_negative() as u64;
+        f64::from_bits((sign << 63) | ((new_exp as u64) << 52) | mantissa)
+    }
 }
 
 /// Read an optional '-' or '+' prefix and return whether the value is negated (starts with a '-'
