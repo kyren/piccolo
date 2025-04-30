@@ -1,5 +1,10 @@
 use std::{
-    alloc, borrow::Cow, fmt, hash::{BuildHasherDefault, Hash, Hasher}, ops, slice, str::{self, Utf8Error}
+    alloc,
+    borrow::Cow,
+    fmt,
+    hash::{BuildHasherDefault, Hash, Hasher},
+    ops, slice,
+    str::{self, Utf8Error},
 };
 
 use ahash::AHasher;
