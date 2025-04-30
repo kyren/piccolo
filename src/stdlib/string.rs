@@ -1,10 +1,6 @@
-use std::{
-    io::{self, Cursor, Write},
-    mem,
-};
-
-use crate::{Callback, CallbackReturn, Context, Error, IntoValue, String, Table, Value};
-use lsonar::{find, gsub, r#match};
+use std::{collections::HashMap, io::{self, Cursor, Write}, mem, rc::Rc, sync::Mutex};
+use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Error, IntoMultiValue, IntoValue, Sequence, String, Table, Value};
+use lsonar::{find, gmatch, gsub, r#match};
 
 pub fn load_string(ctx: Context) {
     let string = Table::new(&ctx);
@@ -241,30 +237,127 @@ pub fn load_string(ctx: Context) {
         }),
     );
 
-    // TODO: implement `gmatch`, which should return a function iterator
+
+    string.set_field(
+        ctx,
+        "gmatch",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+
+            #[derive(gc_arena::Collect, Clone)]
+            #[collect(require_static)]
+            struct GMatchIteratorWrapper(Rc<Mutex<lsonar::gmatch::GMatchIterator>>);
+
+            impl GMatchIteratorWrapper {
+                fn new(iter: lsonar::gmatch::GMatchIterator) -> Self {
+                    Self(Rc::new(Mutex::new(iter)))
+                }
+            }
+        
+            impl<'gc> Sequence<'gc> for GMatchIteratorWrapper {
+                fn poll(
+                        self: std::pin::Pin<&mut Self>,
+                        ctx: Context<'gc>,
+                        _exec: crate::Execution<'gc, '_>,
+                        mut stack: crate::Stack<'gc, '_>,
+                    ) -> Result<crate::SequencePoll<'gc>, Error<'gc>> {
+                        stack.clear();
+                    let root = Rc::clone(&self.0);
+                    let mut root = root.lock().map_err(|err| {
+                        let err = err.to_string();
+                        err.into_value(ctx)
+                    })?;
+                    match root.next() {
+                        Some(captures) => {
+                            let captures = captures.map_err(|err| {
+                                let err = err.to_string();
+                                err.into_value(ctx)
+                            })?;
+                            stack.extend(captures.into_multi_value(ctx));
+                            Ok(crate::SequencePoll::Return)
+                        }
+                        None => {
+                            stack.into_back(ctx, Value::Nil);
+                            Ok(crate::SequencePoll::Return)
+                        }
+                    }
+                }
+            }
+
+            let (s, pattern) = stack.consume::<(String, String)>(ctx)?;
+
+            let s = s.to_str()?;
+            let pattern = pattern.to_str()?;
+            
+            let iter = gmatch(s, pattern).map_err(|err| {
+                let err = err.to_string();
+                err.into_value(ctx)
+            })?;
+
+            let root = GMatchIteratorWrapper::new(iter);
+
+            let gmatch = Callback::from_fn_with(&ctx, root, |root, ctx, _, _| {
+                Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, root.clone())))
+            });
+
+            stack.replace(ctx, gmatch);
+            Ok(CallbackReturn::Return)
+        }),
+    );
 
     string.set_field(
         ctx,
         "gsub",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (s, pattern, repl, n) =
-                stack.consume::<(String, String, String, Option<i64>)>(ctx)?;
+                stack.consume::<(String, String, Value, Option<i64>)>(ctx)?;
 
             let pattern = pattern.to_str()?;
             let s = s.to_str()?;
-            let repl = repl.to_str()?;
 
-            // TODO: we need to support [`Repl::Function`] and [`Repl::Table`]
-            let (value, n) = gsub(
-                s,
-                pattern,
-                lsonar::Repl::String(repl),
-                n.map(|n| n as usize),
-            )
-            .map_err(|err| {
-                let err = err.to_string();
-                err.into_value(ctx)
-            })?;
+            let (value, n) = match repl {
+                Value::String(repl) => {
+                    gsub(
+                        s,
+                        pattern,
+                        lsonar::Repl::String(repl.to_str()?),
+                        n.map(|n| n as usize),
+                    )
+                    .map_err(|err| {
+                        let err = err.to_string();
+                        err.into_value(ctx)
+                    })?
+                },
+                Value::Table(repl) => {
+                    let mut map = HashMap::with_capacity(repl.length() as usize); // TODO: we need work with `Table` directly
+                    for (key, value) in repl.iter() {
+                        let key = key.into_string(ctx).ok_or_else(|| {
+                            Error::from_value("key must be a `string`, `number` or `integer`".into_value(ctx))
+                        })?;
+                        let value = value.into_string(ctx).ok_or_else(|| {
+                            Error::from_value("value must be a `string`, `number`, or `integer`".into_value(ctx))
+                        })?;
+                        map.insert(key.to_str_lossy().into_owned(), value.to_str_lossy().into_owned());
+                    }
+                    gsub(
+                        s,
+                        pattern,
+                        lsonar::Repl::Table(&map),
+                        n.map(|n| n as usize),
+                    )
+                    .map_err(|err| {
+                        let err = err.to_string();
+                        err.into_value(ctx)
+                    })?
+                },
+                Value::Function(_) => {
+                    // TODO: implement this
+                    let _call = meta_ops::call(ctx, repl)?;
+                    return Err("not implemented".into_value(ctx).into())
+                },
+                _ => {
+                    return Err(format!("invalid `repl` value, expected `string`, `table` or `function`").into_value(ctx).into())
+                }
+            };
 
             stack.clear();
             stack.into_back(ctx, value);

@@ -1,8 +1,5 @@
 use std::{
-    alloc, fmt,
-    hash::{BuildHasherDefault, Hash, Hasher},
-    ops, slice,
-    str::{self, Utf8Error},
+    alloc, borrow::Cow, fmt, hash::{BuildHasherDefault, Hash, Hasher}, ops, slice, str::{self, Utf8Error}
 };
 
 use ahash::AHasher;
@@ -177,6 +174,10 @@ impl<'gc> String<'gc> {
 
     pub fn to_str(self) -> Result<&'gc str, Utf8Error> {
         str::from_utf8(self.as_bytes())
+    }
+
+    pub fn to_str_lossy(self) -> Cow<'gc, str> {
+        std::string::String::from_utf8_lossy(self.as_bytes())
     }
 
     /// Display a potentially non-utf8 `String` in a lossy way.
