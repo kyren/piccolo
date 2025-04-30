@@ -241,9 +241,8 @@ do -- Floating-point edgecases
     assert_eq(string.format("%a %g", small, small), "0x1.ffffffffffffep-1021 8.9003e-308")
 
     -- A subnormal float with 1 more bit of precision than is representable
-    -- TODO: The lexer currently incorrectly parses this as 0
     local mismatch, alt = 0x1.fffffffffffffp-1023, 2.2250738585072013e-308
-    -- assert_eq(string.format("%a %g", mismatch, mismatch), "0x1p-1022 2.22507e-308")
+    assert_eq(string.format("%a %g", mismatch, mismatch), "0x1p-1022 2.22507e-308")
     assert_eq(string.format("%a %g", alt, alt), "0x1p-1022 2.22507e-308")
 
     local n = 0x1.888p-1022
