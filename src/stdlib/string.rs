@@ -212,7 +212,9 @@ pub fn load_string(ctx: Context) {
                 return Ok(CallbackReturn::Return);
             };
 
-            stack.replace(ctx, [start as i64, end as i64]);
+            stack.clear();
+            stack.into_back(ctx, start as i64);
+            stack.into_back(ctx, end as i64);
 
             for capture in captures {
                 stack.into_back(ctx, capture)
@@ -240,7 +242,10 @@ pub fn load_string(ctx: Context) {
                 return Ok(CallbackReturn::Return);
             };
 
-            stack.replace(ctx, captures);
+            stack.clear();
+            for capture in captures {
+                stack.into_back(ctx, capture)
+            }
 
             Ok(CallbackReturn::Return)
         }),
@@ -279,7 +284,9 @@ pub fn load_string(ctx: Context) {
                                 let err = err.to_string();
                                 err.into_value(ctx)
                             })?;
-                            stack.extend(captures.into_multi_value(ctx));
+                            for capture in captures {
+                                stack.into_back(ctx, capture)
+                            }
                             Ok(crate::SequencePoll::Return)
                         }
                         None => {
@@ -381,165 +388,6 @@ pub fn load_string(ctx: Context) {
             Ok(CallbackReturn::Return)
         }),
     );
-
-    /* lua 5.3 manuals
-        `string.pack`
-
-    ```
-
-    Returns a binary string containing the values v1, v2, etc.
-
-    packed (that is, serialized in binary form)
-
-    according to the format string fmt (see §6.4.2).
-
-
-    §6.4.2
-
-
-    The first argument to string.pack,string.packsize, and string.unpack
-
-    is a format string,
-
-    which describes the layout of the structure being created or read.
-
-
-    A format string is a sequence of conversion options.
-
-    The conversion options are as follows:
-
-
-    <: sets little endian
-
-    >: sets big endian
-
-    =: sets native endian
-
-    ![n]: sets maximum alignment to n
-
-    (default is native alignment)
-
-    b: a signed byte (char)
-
-    B: an unsigned byte (char)
-
-    h: a signed short (native size)
-
-    H: an unsigned short (native size)
-
-    l: a signed long (native size)
-
-    L: an unsigned long (native size)
-
-    j: a lua_Integer
-
-    J: a lua_Unsigned
-
-    T: a size_t (native size)
-
-    i[n]: a signed int with n bytes
-
-    (default is native size)
-
-    I[n]: an unsigned int with n bytes
-
-    (default is native size)
-
-    f: a float (native size)
-
-    d: a double (native size)
-
-    n: a lua_Number
-
-    cn: a fixed-sized string with n bytes
-
-    z: a zero-terminated string
-
-    s[n]: a string preceded by its length
-
-    coded as an unsigned integer with n bytes
-
-    (default is a size_t)
-
-    x: one byte of padding
-
-    Xop: an empty item that aligns
-
-    according to option op
-
-    (which is otherwise ignored)
-
-    ' ': (empty space) ignored
-
-
-    (A "[n]" means an optional integral numeral.)
-
-    Except for padding, spaces, and configurations
-
-    (options "xX <=>!"),
-
-    each option corresponds to an argument (in string.pack)
-
-    or a result (in string.unpack).
-
-
-    For options "!n", "sn", "in", and "In",n can be any integer between 1 and 16.
-
-    All integral options check overflows;string.pack checks whether the given value fits in the given size;string.unpack checks whether the read value fits in a Lua integer.
-
-
-    Any format string starts as if prefixed by "!1=",
-
-    that is,
-
-    with maximum alignment of 1 (no alignment)
-
-    and native endianness.
-
-
-    Alignment works as follows:
-
-    For each option,
-
-    the format gets extra padding until the data starts
-
-    at an offset that is a multiple of the minimum between the
-
-    option size and the maximum alignment;
-
-    this minimum must be a power of 2.
-
-    Options "c" and "z" are not aligned;
-
-    option "s" follows the alignment of its starting integer.
-
-
-    All padding is filled with zeros by string.pack
-
-    (and ignored by string.unpack).
-
-    ```
-
-
-    `string.unpack`
-
-    ```
-
-    Returns the values packed in string s (see string.pack)
-
-    according to the format string fmt (see §6.4.2).
-
-    An optional pos marks where
-
-    to start reading in s (default is 1).
-
-    After the read values,
-
-    this function also returns the index of the first unread byte in s.
-
-    ```
-
-         */
 
     string.set_field(
         ctx,
@@ -817,27 +665,30 @@ pub fn load_string(ctx: Context) {
                         write_padding(&mut writer, 1)?;
                     }
                     'X' => {
-                         let align_char = chars.next().ok_or_else(||
+                         let mut chars_peek = chars.clone();
+                         let align_char = chars_peek.next().ok_or_else(||
                              Error::from_value("'X' must be followed by an option character".into_value(ctx))
                          )?;
-                         let align_num_opt = parse_optional_int(&mut chars, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
-                         let data_size = get_format_size(align_char, align_num_opt).ok_or_else(||
+                         let align_num_opt = parse_optional_int(&mut chars_peek, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+
+                         let data_size_for_align = match align_char {
+                            's' => {
+                                let len_size = align_num_opt.unwrap_or(mem::size_of::<usize>());
+                                if !(1..=16).contains(&len_size) {
+                                    return Err(Error::from_value("size for 's' in X must be 1-16".into_value(ctx)));
+                                }
+                                Some(len_size)
+                            },
+                            'c' | 'z' => Some(0),
+                            _ => get_format_size(align_char, align_num_opt)
+                         };
+
+                         let data_size = data_size_for_align.ok_or_else(|| {
                              Error::from_value(format!("invalid option '{}' following 'X'", align_char).into_value(ctx))
-                         )?;
+                         })?;
 
                          let padding = calculate_padding(current_pos, data_size, state.max_alignment);
                          write_padding(&mut writer, padding)?;
-
-                         match align_char {
-                             ' ' | 'x' | 'X' | '<' | '>' | '=' | '!' => {
-                                 // These options don't consume arguments and were handled or ignored
-                             },
-                              _ => {
-                                 // It's a data type, it needs an arg, handle it like below
-                                 // BUT WE DON'T WANT TO WRITE THE DATA HERE, just align.
-                                 // The Lua manual says Xop "is otherwise ignored". This implies we only pad.
-                              }
-                         }
                     }
                     op @ ('b' | 'B' | 'h' | 'H' | 'l' | 'L' | 'j' | 'J' | 'T' | 'i' | 'I' | 'f' | 'd' | 'n') => {
                         check_pack_arg(ctx, stack.len(), current_arg_idx, op)?;
@@ -1185,8 +1036,9 @@ pub fn load_string(ctx: Context) {
                         if cfg!(target_endian = "little") {
                             bytes[..size].copy_from_slice(read_bytes);
                         } else {
+                            // Target is big-endian, read little-endian bytes. Reverse into beginning.
                             for (i, byte) in read_bytes.iter().rev().enumerate() {
-                                bytes[i] = *byte;
+                                if i < size { bytes[i] = *byte; }
                             }
                         }
                     }
@@ -1194,19 +1046,15 @@ pub fn load_string(ctx: Context) {
                          if cfg!(target_endian = "big") {
                             bytes[..size].copy_from_slice(read_bytes);
                          } else {
-                             let start = 16 - size;
+                             // Target is little-endian, read big-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
-                                 bytes[start + i] = *byte;
+                                 if i < size { bytes[i] = *byte; }
                              }
                          }
                      }
                     Endianness::Native => {
-                         if cfg!(target_endian = "little") {
-                             bytes[..size].copy_from_slice(read_bytes);
-                         } else {
-                            let start = 16 - size;
-                            bytes[start..].copy_from_slice(read_bytes);
-                         }
+                         // Copy directly regardless of target endianness, conversion uses from_ne_bytes
+                         bytes[..size].copy_from_slice(read_bytes);
                     }
                 }
 
@@ -1238,8 +1086,9 @@ pub fn load_string(ctx: Context) {
                         if cfg!(target_endian = "little") {
                             bytes[..size].copy_from_slice(read_bytes);
                         } else {
+                            // Target is big-endian, read little-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
-                                 bytes[i] = *byte;
+                                 if i < size { bytes[i] = *byte; }
                             }
                         }
                     }
@@ -1247,19 +1096,15 @@ pub fn load_string(ctx: Context) {
                          if cfg!(target_endian = "big") {
                              bytes[..size].copy_from_slice(read_bytes);
                          } else {
-                             let start = 16 - size;
+                             // Target is little-endian, read big-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
-                                 bytes[start + i] = *byte;
+                                 if i < size { bytes[i] = *byte; }
                              }
                          }
                      }
                      Endianness::Native => {
-                         if cfg!(target_endian = "little") {
-                              bytes[..size].copy_from_slice(read_bytes);
-                          } else {
-                             let start = 16 - size;
-                             bytes[start..].copy_from_slice(read_bytes);
-                          }
+                         // Copy directly regardless of target endianness, conversion uses from_ne_bytes
+                          bytes[..size].copy_from_slice(read_bytes);
                      }
                  }
 
@@ -1336,13 +1181,27 @@ pub fn load_string(ctx: Context) {
                         read_exact_bytes(&mut reader, 1, 'x', ctx)?;
                     }
                     'X' => {
-                        let align_char = chars.next().ok_or_else(||
+                        let mut chars_peek = chars.clone();
+                        let align_char = chars_peek.next().ok_or_else(||
                              Error::from_value("'X' must be followed by an option character".into_value(ctx))
                          )?;
-                         let align_num_opt = parse_optional_int(&mut chars, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
-                         let data_size = get_format_size(align_char, align_num_opt).ok_or_else(||
+                         let align_num_opt = parse_optional_int(&mut chars_peek, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+
+                         let data_size_for_align = match align_char {
+                            's' => {
+                                let len_size = align_num_opt.unwrap_or(mem::size_of::<usize>());
+                                if !(1..=16).contains(&len_size) {
+                                    return Err(Error::from_value("size for 's' in X must be 1-16".into_value(ctx)));
+                                }
+                                Some(len_size)
+                            },
+                            'c' | 'z' => Some(0),
+                            _ => get_format_size(align_char, align_num_opt)
+                         };
+
+                         let data_size = data_size_for_align.ok_or_else(|| {
                              Error::from_value(format!("invalid option '{}' following 'X'", align_char).into_value(ctx))
-                         )?;
+                         })?;
 
                          let padding = calculate_padding(initial_read_pos, data_size, state.max_alignment);
                          read_padding(&mut reader, padding, ctx)?;
@@ -1512,7 +1371,8 @@ pub fn load_string(ctx: Context) {
                 }
             }
 
-            stack.replace(ctx, results);
+            stack.clear();
+            stack.extend(results);
             stack.into_back(ctx, reader.position() as i64 + 1);
 
             Ok(CallbackReturn::Return)
@@ -1651,10 +1511,11 @@ pub fn load_string(ctx: Context) {
                         current_offset += 1;
                     }
                     'X' => {
-                        let align_char = chars.next().ok_or_else(||
+                        let mut chars_peek = chars.clone();
+                        let align_char = chars_peek.next().ok_or_else(||
                              Error::from_value("'X' must be followed by an option character".into_value(ctx))
                          )?;
-                         let align_num_opt = parse_optional_int(&mut chars, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
+                         let align_num_opt = parse_optional_int(&mut chars_peek, 16).map_err(|err| Into::<Error>::into(err.into_value(ctx)))?;
 
                          let data_size_for_align = match align_char {
                             's' => {
