@@ -21,7 +21,7 @@ do
     assert(is_err(function() return string.len(coroutine.create(test_coroutine_len)) end))
     assert(string.len("") == 0)
     assert(string.len("x") == 1)
-    assert(string.len("x\0") == 3) -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
+    assert(string.len("x\0") == 2)
     assert(string.len(1) == 1)
     assert(string.len(-1) == 2)
     assert(string.len(12) == 2)
@@ -52,15 +52,10 @@ do
 end
 
 do
-    local multi_line = [[
+    assert([[
 foo
 bar
-baz]]
-    -- FIXME: Piccolo parser doesn't handle '\n' escape in regular strings correctly.
-    -- It treats '\n' as literal '' + 'n' (2 chars) instead of a single newline char.
-    -- Comparing multi-line literal (parsed correctly) to manually constructed string.
-    local expected = "foo" .. string.char(10) .. "bar" .. string.char(10) .. "baz"
-    assert(multi_line == expected)
+baz]] == "foo\nbar\nbaz")
 end
 
 do
@@ -119,19 +114,14 @@ do
     assert(select("#", string.byte("abc", 4)) == 0)
     assert(select("#", string.byte("abc", 1, 0)) == 0)
     assert(select("#", string.byte("abc", -1, -2)) == 0)
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(string.byte("a\0b", 1, 3) == 97 and select(2, string.byte("a\0b", 1, 3)) == 0 and select(3, string.byte("a\0b", 1, 3)) == 98)
+    assert(string.byte("a\0b", 1, 3) == 97 and select(2, string.byte("a\0b", 1, 3)) == 0 and select(3, string.byte("a\0b", 1, 3)) == 98)
 end
 
 do
     assert(string.char() == nil)
     assert(string.char(97, 98, 99) == "abc")
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(string.char(0) == "\0")
-    -- FIXME: Piccolo parser doesn't handle '\xff' escape in regular strings correctly.
-    -- assert(string.char(255) == "\xff")
-    -- FIXME: Piccolo parser doesn't handle Unicode characters in regular strings correctly.
-    -- assert(string.char(0x1F600) == "\xF0\x9F\x98\x80") -- U+1F600 GRINNING FACE
+    assert(string.char(0) == "\0")
+    assert(string.char(255) == "\xff")
     assert(string.char(0x41, 0x42, 0x43) == "ABC")
     assert(is_err(function() return string.char(-1) end))
     assert(is_err(function() return string.char(0x110000) end))
@@ -184,17 +174,13 @@ do
 
     local packed_str_fixed = string.pack("c5", "abc")
     assert(#packed_str_fixed == 5)
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(packed_str_fixed == "abc\0\0")
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(string.unpack("c5", packed_str_fixed) == "abc\0\0")
+    assert(packed_str_fixed == "abc\0\0")
+    assert(string.unpack("c5", packed_str_fixed) == "abc\0\0")
 
     local packed_str_z = string.pack("z", "hello")
     assert(#packed_str_z == 6)
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(packed_str_z == "hello\0")
-    -- FIXME: Piccolo parser doesn't handle '\0' escape in regular strings correctly.
-    -- assert(string.unpack("z", packed_str_z) == "hello")
+    assert(packed_str_z == "hello\0")
+    assert(string.unpack("z", packed_str_z) == "hello")
 
     local packed_str_len = string.pack("s2", "world")
     assert(#packed_str_len == 2 + 5)
@@ -297,7 +283,7 @@ do
     assert(count == 0)
 
     results = {}
-    -- FIXME: `_` and `_` must be position of `()`, but it's `nil`.
+    -- FIXME: Empty capture `()` pattern matching seems broken in string.gmatch (returns empty/nil instead of position)
     for _, word, _ in string.gmatch("first second third", "()(%a+)()") do
         table.insert(results, word)
     end
@@ -347,7 +333,7 @@ do
     -- s, n = string.gsub("a=1 b=2", "(%a)=(%d)", function (a, b) return t[a] or b end)
     -- assert(s == "X Y" and n == 2)
 
-    s, n = string.gsub("hello", ".", "%%") -- Escape %
+    s, n = string.gsub("hello", ".", "%%")
     assert(s == "%%%%%" and n == 5)
     assert(string.gsub("a\0b", "a\0b", "test") == "test")
 end

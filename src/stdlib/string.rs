@@ -1,6 +1,6 @@
 use crate::{
-    meta_ops, BoxSequence, Callback, CallbackReturn, Context, Error, IntoMultiValue, IntoValue,
-    Sequence, String, Table, Value,
+    meta_ops, BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, String,
+    Table, Value,
 };
 use lsonar::{find, gmatch, gsub, r#match};
 use std::{
@@ -114,10 +114,10 @@ pub fn load_string(ctx: Context) {
         ctx,
         "byte",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let (s, i, j) = stack.consume::<(String, i64, Option<i64>)>(ctx)?;
+            let (s, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
             let bytes = s.as_bytes();
 
-            let i = match i {
+            let i = match i.unwrap_or(1) {
                 i if i > 0 => i.saturating_sub(1).try_into()?,
                 0 => 0,
                 i => bytes.len().saturating_sub(i.unsigned_abs().try_into()?),
@@ -157,7 +157,7 @@ pub fn load_string(ctx: Context) {
 
             let iter = stack.into_iter();
 
-            let mut result = std::string::String::with_capacity(iter.len());
+            let mut result = Vec::with_capacity(iter.len());
 
             for ch in iter {
                 let number = match ch.to_integer() {
@@ -168,25 +168,19 @@ pub fn load_string(ctx: Context) {
                             .into())
                     }
                 };
-                let code = match u32::try_from(number) {
-                    Ok(c) if c <= 0x10FFFF => c,
+                let code = match u8::try_from(number) {
+                    Ok(c) => c,
                     _ => {
                         return Err(format!("value out of range (`{}`)", number)
                             .into_value(ctx)
                             .into());
                     }
                 };
-                match std::char::from_u32(code) {
-                    Some(ch) => result.push(ch),
-                    None => {
-                        return Err(format!("invalid code point (`{}`)", code)
-                            .into_value(ctx)
-                            .into())
-                    }
-                }
+
+                result.push(code);
             }
 
-            stack.replace(ctx, result);
+            stack.replace(ctx, ctx.intern(&result));
             Ok(CallbackReturn::Return)
         }),
     );
