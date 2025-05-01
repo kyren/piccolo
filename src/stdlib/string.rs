@@ -1575,5 +1575,48 @@ pub fn load_string(ctx: Context) {
         }),
     );
 
+    string.set_field(
+        ctx,
+        "rep",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let (s, n, sep) = stack.consume::<(String, i64, Option<String>)>(ctx)?;
+
+            if n <= 0 {
+                stack.replace(ctx, ctx.intern(b""));
+                return Ok(CallbackReturn::Return);
+            }
+
+            if n == 1 {
+                stack.replace(ctx, s);
+                return Ok(CallbackReturn::Return);
+            }
+
+            let s = s.as_bytes();
+            let n = n as usize;
+            let sep = sep.map(|s| s.as_bytes()).unwrap_or(b"");
+
+            let s_total_len = s.len().checked_mul(n);
+            let sep_total_len = sep.len().checked_mul(n - 1);
+
+            let required_cap = match (s_total_len, sep_total_len) {
+                (Some(s_total), Some(sep_total)) => s_total.checked_add(sep_total),
+                _ => None,
+            };
+
+            let capacity = required_cap
+                .ok_or_else(|| Error::from_value("resulting string too large".into_value(ctx)))?;
+
+            let mut result = Vec::with_capacity(capacity);
+            result.extend_from_slice(s);
+            for _ in 1..n {
+                result.extend_from_slice(sep);
+                result.extend_from_slice(s);
+            }
+
+            stack.replace(ctx, ctx.intern(&result));
+            Ok(CallbackReturn::Return)
+        }),
+    );
+
     ctx.set_global("string", string);
 }
