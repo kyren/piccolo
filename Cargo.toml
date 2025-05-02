@@ -24,8 +24,8 @@ hashbrown = { version = "0.14.5", features = ["raw"] }
 rand = { version = "0.8.5", features = ["small_rng"] }
 serde = "1.0"
 thiserror = "2.0.12"
-lsonar = "0.2.3"
-lformat = "0.2.1"
+lsonar = "0.2.4"
+lformat = "0.2.2"
 
 piccolo = { path = ".", version = "0.3.3" }
 

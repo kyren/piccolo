@@ -235,9 +235,9 @@ checksum = "f8478577c03552c21db0e2724ffb8986a5ce7af88107e6be5d2ee6e158c12800"
 
 [[package]]
 name = "lformat"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d6cdeb6d3956d4236a13610043bb6b082ebbc0df1fed5525e4f6ca5627c6437"
+checksum = "5c53f62a0a85643b6b9d27f9c5ec88e03c86a677e4e3d94b9a5f7d4343a8c242"
 dependencies = [
  "fhex",
  "thiserror",
@@ -263,9 +263,9 @@ checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "lsonar"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "940989f2dc1633302d2b7c038c95a2e1a0cc102eb033599433f72689ab4d0203"
+checksum = "156eab9d44bb1641543489513038937530aa708cb2ebd19f9d9f343ef2aa930c"
 
 [[package]]
 name = "memchr"
