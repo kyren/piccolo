@@ -105,8 +105,8 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
 | 🔵   | `find(s, pattern[, init, plain])` |             |       |
-| ⚫️️   | `format(formatstring, args...)`   |             |       |
-| 🔵   | `gmatch(s, pattern[, init])`      |             |       |
+| 🔵   | `format(formatstring, args...)`   |             |       |
+| 🔵   | `gmatch(s, pattern)`      |             |       |
 | 🔵   | `gsub(s, pattern, repl[, n])`     |             |       |
 | 🔵     | `len(s)`                          |             |       |
 | 🔵   | `lower(s)`                        |             |       |
