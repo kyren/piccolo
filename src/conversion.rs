@@ -216,6 +216,7 @@ macro_rules! impl_int_from {
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
                     if let Some(i) = value.to_integer() {
+                        #[allow(irrefutable_let_patterns)]
                         if let Ok(i) = <$i>::try_from(i) {
                             Ok(i)
                         } else {
