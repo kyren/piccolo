@@ -2,6 +2,7 @@ use crate::{
     meta_ops, BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, String,
     Table, Value,
 };
+use lformat::{format, Format};
 use lsonar::{find, gmatch, gsub, r#match};
 use std::{
     collections::HashMap,
@@ -181,6 +182,52 @@ pub fn load_string(ctx: Context) {
             }
 
             stack.replace(ctx, ctx.intern(&result));
+            Ok(CallbackReturn::Return)
+        }),
+    );
+
+    string.set_field(
+        ctx,
+        "format",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            enum FormatValue<'gc> {
+                String(&'gc str),
+                Number(f64),
+                Integer(i64),
+            }
+
+            let formatstring = stack.get(0);
+            let formatstring = formatstring.into_string(ctx).ok_or_else(|| {
+                Error::from_value("`formatstring` must be a string".into_value(ctx))
+            })?;
+
+            let args = stack.into_iter().skip(1).collect::<Vec<_>>();
+
+            let args = args
+                .iter()
+                .map(|arg| match arg {
+                    Value::String(s) => Ok::<FormatValue, Error>(FormatValue::String(s.to_str()?)),
+                    Value::Number(n) => Ok(FormatValue::Number(*n)),
+                    Value::Integer(i) => Ok(FormatValue::Integer(*i)),
+                    Value::Boolean(b) => Ok(FormatValue::String(if *b { "true" } else { "false" })),
+                    _ => Err("unsupported argument type".into_value(ctx).into()),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let args = args
+                .iter()
+                .map(|arg| match arg {
+                    FormatValue::String(s) => s as &dyn Format,
+                    FormatValue::Number(n) => n as &dyn Format,
+                    FormatValue::Integer(i) => i as &dyn Format,
+                })
+                .collect::<Vec<_>>();
+
+            let formatted = format(formatstring.to_str()?, &args).map_err(|err| {
+                let err = err.to_string();
+                err.into_value(ctx)
+            })?;
+
+            stack.replace(ctx, formatted);
             Ok(CallbackReturn::Return)
         }),
     );
@@ -1080,7 +1127,6 @@ pub fn load_string(ctx: Context) {
                         if cfg!(target_endian = "little") {
                             bytes[..size].copy_from_slice(read_bytes);
                         } else {
-                            // Target is big-endian, read little-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
                                  if i < size { bytes[i] = *byte; }
                             }
@@ -1090,14 +1136,12 @@ pub fn load_string(ctx: Context) {
                          if cfg!(target_endian = "big") {
                              bytes[..size].copy_from_slice(read_bytes);
                          } else {
-                             // Target is little-endian, read big-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
                                  if i < size { bytes[i] = *byte; }
                              }
                          }
                      }
                      Endianness::Native => {
-                         // Copy directly regardless of target endianness, conversion uses from_ne_bytes
                           bytes[..size].copy_from_slice(read_bytes);
                      }
                  }

@@ -318,20 +318,12 @@ do
     -- FIXME: string.gsub does not correctly handle the %0 (whole match) escape sequence in the replacement string.
     -- assert(string.gsub("abc", ".", "%0-") == "a-b-c-")
 
-    -- TODO: not implemented
-    -- local s, n = string.gsub("a=1, b=2", "(%a+)=(%d+)", function(k, v) return k .. "=" .. (v+1) end)
-    -- assert(s == "a=2, b=3" and n == 2)
-
     local t = {a = "X", b = "Y"}
     s, n = string.gsub("abc", "(%a)", t)
     -- FIXME: Piccolo currently returns n=3 (counts non-replacement)
     assert(s == "XYc") -- Check only string for now
     s, n = string.gsub("a b c", "%a", {a = "X", b = "Y", c = "Z"})
     assert(s == "X Y Z" and n == 3)
-
-    -- TODO: not implemented
-    -- s, n = string.gsub("a=1 b=2", "(%a)=(%d)", function (a, b) return t[a] or b end)
-    -- assert(s == "X Y" and n == 2)
 
     s, n = string.gsub("hello", ".", "%%")
     assert(s == "%%%%%" and n == 5)
@@ -364,4 +356,34 @@ do
     assert(is_err(function() return string.rep("a", 2, {}) end))
     assert(is_err(function() return string.rep("a", 2, true) end))
     assert(string.len(string.rep("a", 100)) == 100)
+end
+
+do
+    assert(string.format("Hello, %s!", "world") == "Hello, world!")
+    assert(string.format("%s %s", "Hello", "world") == "Hello world")
+    assert(string.format("%s", "test") == "test")
+    assert(string.format("No format specifiers") == "No format specifiers")
+    assert(string.format("%d", 42) == "42")
+    assert(string.format("%i", -10) == "-10")
+    assert(string.format("%f", 3.14) == "3.140000")
+    assert(string.format("%.2f", 3.14159) == "3.14")
+    assert(string.format("%g", 1000000.0) == "1.e+06")
+    assert(string.format("%.4g", 1234.5678) == "1235")
+    assert(string.format("%x", 255) == "ff")
+    assert(string.format("%X", 255) == "FF")
+    assert(string.format("%10s", "test") == "      test")
+    assert(string.format("%-10s", "test") == "test      ")
+    assert(string.format("%04d", 42) == "0042")
+    assert(string.format("%+d", 42) == "+42")
+    assert(string.format("% d", 42) == " 42")
+    assert(string.format("%%") == "%")
+    assert(string.format("This is a percent sign: %%") == "This is a percent sign: %")
+    assert(is_err(function() return string.format() end))
+    assert(is_err(function() return string.format("%d") end))
+    assert(is_err(function() return string.format("%s", nil) end))
+    assert(is_err(function() return string.format("%s", {}) end))
+    assert(is_err(function() return string.format("%s", is_err) end))
+    assert(string.format("%s: %d, %s: %.2f", "Integer", 42, "Float", 3.14159) == "Integer: 42, Float: 3.14")
+    assert(string.format("%d %s %f", 10, "test", 3.14) == "10 test 3.140000")
+    assert(string.format("%s and %s", true, false) == "true and false")
 end

@@ -170,6 +170,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhex"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab38b859c87b0261390060978076394bd66921e93344f2c5b73938cc7c49477d"
+
+[[package]]
 name = "gc-arena"
 version = "0.5.3"
 source = "git+https://github.com/kyren/gc-arena?rev=5a7534b883b703f23cfb8c3cfdf033460aa77ea9#5a7534b883b703f23cfb8c3cfdf033460aa77ea9"
@@ -226,6 +232,16 @@ name = "is_terminal_polyfill"
 version = "1.70.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8478577c03552c21db0e2724ffb8986a5ce7af88107e6be5d2ee6e158c12800"
+
+[[package]]
+name = "lformat"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d6cdeb6d3956d4236a13610043bb6b082ebbc0df1fed5525e4f6ca5627c6437"
+dependencies = [
+ "fhex",
+ "thiserror",
+]
 
 [[package]]
 name = "libc"
@@ -294,6 +310,7 @@ dependencies = [
  "clap",
  "gc-arena",
  "hashbrown",
+ "lformat",
  "lsonar",
  "rand",
  "rustyline",

@@ -25,6 +25,7 @@ rand = { version = "0.8.5", features = ["small_rng"] }
 serde = "1.0"
 thiserror = "2.0.12"
 lsonar = "0.2.3"
+lformat = "0.2.1"
 
 piccolo = { path = ".", version = "0.3.3" }
 
@@ -45,6 +46,7 @@ anyhow.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
 lsonar.workspace = true
+lformat.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 
