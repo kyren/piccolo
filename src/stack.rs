@@ -177,7 +177,7 @@ impl<'gc, 'a, 'b> Extend<Value<'gc>> for &'b mut Stack<'gc, 'a> {
     }
 }
 
-impl<'gc: 'b, 'a, 'b> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
+impl<'gc, 'a> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
     fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
         self.values.extend(iter);
     }
