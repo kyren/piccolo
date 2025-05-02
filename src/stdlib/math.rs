@@ -8,7 +8,7 @@ use crate::{
     IntoValue, SequenceReturn, Table, Value,
 };
 
-pub fn load_math<'gc>(ctx: Context<'gc>) {
+pub fn load_math(ctx: Context) {
     fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> Callback<'gc>
     where
         F: Fn(Context<'gc>, A) -> Option<R> + 'static,

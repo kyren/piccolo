@@ -11,7 +11,7 @@ use crate::{
     Stack, Value,
 };
 
-pub fn load_io<'gc>(ctx: Context<'gc>) {
+pub fn load_io(ctx: Context) {
     ctx.set_global(
         "print",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
