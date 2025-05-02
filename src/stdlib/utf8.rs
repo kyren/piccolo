@@ -1,3 +1,5 @@
+use std::{rc::Rc, sync::atomic::AtomicUsize, sync::atomic::Ordering};
+
 use gc_arena::Collect;
 
 use crate::{
@@ -118,11 +120,12 @@ pub fn load_utf8(ctx: Context) {
                     let utf8_bytes = c.encode_utf8(&mut buf).as_bytes();
                     bytes.extend_from_slice(utf8_bytes);
                 } else {
-                    return Err(
-                        format!("bad argument #{} to 'char' (value out of range)", idx + 1)
-                            .into_value(ctx)
-                            .into(),
-                    );
+                    return Err(format!(
+                        "bad argument #{} to 'char' (value out of range)",
+                        idx + 1
+                    )
+                    .into_value(ctx)
+                    .into());
                 }
             }
 
@@ -143,38 +146,48 @@ pub fn load_utf8(ctx: Context) {
             #[collect(require_static)]
             struct Codes {
                 s: String,
-                pos: usize,
+                pos: Rc<AtomicUsize>,
             }
 
             impl<'gc> Sequence<'gc> for Codes {
                 fn poll(
-                    mut self: std::pin::Pin<&mut Self>,
+                    self: std::pin::Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: crate::Execution<'gc, '_>,
                     mut stack: crate::Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    let position = self.pos;
+                    let position = Rc::clone(&self.pos);
                     let bytes = self.s.as_bytes();
                     let len = bytes.len();
 
-                    if position >= len {
+                    if position.load(Ordering::Relaxed) >= len {
                         stack.replace(ctx, Value::Nil);
                         return Ok(SequencePoll::Return);
                     }
 
-                    let byte = bytes[position];
+                    let byte = bytes[position.load(Ordering::Relaxed)];
 
-                    let expected_bytes = utf8_sequence_length(ctx, byte, position)?;
+                    let expected_bytes =
+                        utf8_sequence_length(ctx, byte, position.load(Ordering::Relaxed))?;
 
-                    validate_utf8_sequence(ctx, position, expected_bytes, bytes)?;
+                    validate_utf8_sequence(
+                        ctx,
+                        position.load(Ordering::Relaxed),
+                        expected_bytes,
+                        bytes,
+                    )?;
 
-                    let code_point = decode_utf8_codepoint(position, expected_bytes, bytes);
+                    let code_point = decode_utf8_codepoint(
+                        position.load(Ordering::Relaxed),
+                        expected_bytes,
+                        bytes,
+                    );
 
                     stack.clear();
-                    stack.into_back(ctx, position as i64 + 1);
+                    stack.into_back(ctx, position.load(Ordering::Relaxed) as i64 + 1);
                     stack.into_back(ctx, code_point as i64);
 
-                    self.pos += expected_bytes;
+                    self.pos.fetch_add(expected_bytes, Ordering::Relaxed);
 
                     Ok(SequencePoll::Return)
                 }
@@ -184,7 +197,7 @@ pub fn load_utf8(ctx: Context) {
 
             let root = Codes {
                 s: s.to_owned(),
-                pos: 0,
+                pos: Rc::new(AtomicUsize::new(0)),
             };
 
             let codes = Callback::from_fn_with(&ctx, root, |root, ctx, _, _| {
@@ -225,29 +238,29 @@ pub fn load_utf8(ctx: Context) {
             let mut char_count = 0;
             let mut position = start;
 
-            while position < end {
+            while position <= end {
+                if position >= len {
+                    break;
+                }
+
                 let byte = bytes[position];
 
                 let expected_bytes = match utf8_sequence_length(ctx, byte, position) {
                     Ok(len) => len,
                     Err(_) => {
                         stack.clear();
-                        stack.push_back(Value::Boolean(false));
-                        stack.push_back(Value::Integer(position as i64 + 1));
+                        stack.into_back(ctx, Value::Nil);
+                        stack.into_back(ctx, position as i64 + 1);
                         return Ok(CallbackReturn::Return);
                     }
                 };
-
-                if position + expected_bytes > end {
-                    break;
-                }
 
                 match validate_utf8_sequence(ctx, position, expected_bytes, bytes) {
                     Ok(_) => {}
                     Err(_) => {
                         stack.clear();
-                        stack.push_back(Value::Boolean(false));
-                        stack.push_back(Value::Integer(position as i64 + 1));
+                        stack.into_back(ctx, Value::Nil);
+                        stack.into_back(ctx, position as i64 + 1);
                         return Ok(CallbackReturn::Return);
                     }
                 }
@@ -265,6 +278,16 @@ pub fn load_utf8(ctx: Context) {
         ctx,
         "codepoint",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            fn is_valid_lua_index(index: i64, length: i64) -> bool {
+                if index == 0 {
+                    false
+                } else if index > 0 {
+                    index <= length
+                } else {
+                    index >= -length
+                }
+            }
+
             let (s, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
             let bytes = s.as_bytes();
             let len = bytes.len();
@@ -272,10 +295,23 @@ pub fn load_utf8(ctx: Context) {
             let i = i.unwrap_or(1);
             let j = j.unwrap_or(i);
 
+            if !is_valid_lua_index(j, len as i64) {
+                return Err("bad argument #3 to 'codepoint' (out of bounds)"
+                    .into_value(ctx)
+                    .into());
+            }
+
+            if !is_valid_lua_index(i, len as i64) {
+                return Err(format!("bad argument #2 to 'codepoint' (out of bounds)",)
+                    .into_value(ctx)
+                    .into());
+            }
+
             let start = adjust_index(i, len);
             let end = adjust_index(j, len);
 
-            if start >= len || end >= len || end < start {
+            if start >= len || end < start {
+                // Return empty result if normalized range is invalid
                 return Ok(CallbackReturn::Return);
             }
 
@@ -321,27 +357,39 @@ pub fn load_utf8(ctx: Context) {
 
             let i = i.unwrap_or(if n >= 0 { 1 } else { len as i64 + 1 });
 
-            let mut pos = adjust_index(i, len);
+            if i == 0 {
+                return Err("bad argument #3 to 'offset' (position out of bounds)"
+                    .into_value(ctx)
+                    .into());
+            }
+
+            let mut position = adjust_index(i, len);
+
+            if n != 0 && position < len && (bytes[position] & 0xC0) == 0x80 {
+                return Err("initial position is a continuation byte"
+                    .into_value(ctx)
+                    .into());
+            }
 
             if n == 0 {
-                if pos >= len {
+                if position >= len {
                     stack.replace(ctx, Value::Nil);
                     return Ok(CallbackReturn::Return);
                 }
 
-                while pos > 0 && (bytes[pos] & 0xC0) == 0x80 {
-                    pos -= 1;
+                while position > 0 && (bytes[position] & 0xC0) == 0x80 {
+                    position -= 1;
                 }
 
-                stack.replace(ctx, (pos as i64) + 1);
+                stack.replace(ctx, (position as i64) + 1);
                 return Ok(CallbackReturn::Return);
             }
 
             if n > 0 {
                 let mut count = 0;
 
-                while count < n && pos < len {
-                    if (bytes[pos] & 0xC0) != 0x80 {
+                while count < n && position < len {
+                    if (bytes[position] & 0xC0) != 0x80 {
                         count += 1;
                     }
 
@@ -349,47 +397,41 @@ pub fn load_utf8(ctx: Context) {
                         break;
                     }
 
-                    pos += 1;
+                    position += 1;
                 }
 
-                if count == n - 1 && pos == len {
-                    stack.replace(ctx, (pos as i64) + 1);
+                if count == n {
+                    stack.replace(ctx, (position as i64) + 1);
+                    return Ok(CallbackReturn::Return);
+                }
+
+                if count == n - 1 && position == len {
+                    stack.replace(ctx, (position as i64) + 1);
                     return Ok(CallbackReturn::Return);
                 } else if count < n {
                     stack.replace(ctx, Value::Nil);
                     return Ok(CallbackReturn::Return);
                 }
             } else if n < 0 {
-                let mut count = 0;
+                let target_count = -n;
+                let mut count = 0i64;
 
-                if pos > 0 && (bytes[pos - 1] & 0xC0) == 0x80 {
-                    while pos > 0 && (bytes[pos - 1] & 0xC0) == 0x80 {
-                        pos -= 1;
+                let mut current_byte_index = adjust_index(i, len);
+
+                while count < target_count {
+                    if current_byte_index == 0 {
+                        stack.replace(ctx, Value::Nil);
+                        return Ok(CallbackReturn::Return);
                     }
-                    if pos > 0 {
-                        pos -= 1;
+                    current_byte_index -= 1;
+                    if (bytes[current_byte_index] & 0xC0) != 0x80 {
+                        count += 1;
                     }
-                } else if pos > 0 {
-                    pos -= 1;
                 }
-
-                while count < (-n) && pos > 0 {
-                    pos -= 1;
-
-                    while pos > 0 && (bytes[pos] & 0xC0) == 0x80 {
-                        pos -= 1;
-                    }
-
-                    count += 1;
-                }
-
-                if count < (-n) {
-                    stack.replace(ctx, Value::Nil);
-                    return Ok(CallbackReturn::Return);
-                }
+                stack.replace(ctx, (current_byte_index as i64) + 1);
+                return Ok(CallbackReturn::Return);
             }
 
-            stack.replace(ctx, (pos as i64) + 1);
             Ok(CallbackReturn::Return)
         }),
     );
