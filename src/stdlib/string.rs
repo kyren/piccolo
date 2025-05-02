@@ -409,7 +409,7 @@ pub fn load_string(ctx: Context) {
                     )?
                 }
                 Value::Function(_) => {
-                    // TODO: implement this
+                    // TODO: we need to implement this, but i don't know how to do it
                     let _call = meta_ops::call(ctx, repl)?;
                     return Err("not implemented".into_value(ctx).into());
                 }
@@ -1077,7 +1077,6 @@ pub fn load_string(ctx: Context) {
                         if cfg!(target_endian = "little") {
                             bytes[..size].copy_from_slice(read_bytes);
                         } else {
-                            // Target is big-endian, read little-endian bytes. Reverse into beginning.
                             for (i, byte) in read_bytes.iter().rev().enumerate() {
                                 if i < size { bytes[i] = *byte; }
                             }
@@ -1087,14 +1086,12 @@ pub fn load_string(ctx: Context) {
                          if cfg!(target_endian = "big") {
                             bytes[..size].copy_from_slice(read_bytes);
                          } else {
-                             // Target is little-endian, read big-endian bytes. Reverse into beginning.
                              for (i, byte) in read_bytes.iter().rev().enumerate() {
                                  if i < size { bytes[i] = *byte; }
                              }
                          }
                      }
                     Endianness::Native => {
-                         // Copy directly regardless of target endianness, conversion uses from_ne_bytes
                          bytes[..size].copy_from_slice(read_bytes);
                     }
                 }
