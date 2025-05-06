@@ -187,7 +187,7 @@ I see a module in the code repo that is labelled the IO library, but it only cre
 | ⚫️    | `input([file])`               |                                                                                                                             |       |
 | ⚫️    | `lines([filename, args...])`  |                                                                                                                             |       |
 | ⚫️    | `open(filename [, mode])`     |                                                                                                                             |       |
-|        | `output([file])`              |                                                                                                                             |       |
+| ⚫️    | `output([file])`              |                                                                                                                             |       |
 | ⚫️/❗ | `popen(prog[, mode])`         | Might be classifiable as "C weirdness" or it's just creating another process which kinda feels as icky as the OS module imo |       |
 | ⚫️    | `read(args...)`               |                                                                                                                             |       |
 | ⚫️    | `tmpfile()`                   |                                                                                                                             |       |
@@ -198,7 +198,7 @@ I see a module in the code repo that is labelled the IO library, but it only cre
 | ⚫️    | `file:lines(args...)`         |                                                                                                                             |       |
 | ⚫️    | `file:read(args...)`          |                                                                                                                             |       |
 | ⚫️    | `file:seek([whence, offset])` |                                                                                                                             |       |
-| ⚫️    | `file:setvbuf(mode[, size])`  |                                                                                                                             |       |
+| ⚫️/❗ | `file:setvbuf(mode[, size])`  | I think it's better not to touch this because it would require `libc` and `winapi`.                                         |       |
 | ⚫️    | `file:write(args...)`         |                                                                                                                             |       |
 
 ## OS
