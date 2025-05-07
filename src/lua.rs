@@ -72,6 +72,10 @@ impl<'gc> Context<'gc> {
         self.state.finalizers
     }
 
+    pub fn io_metatable(self) -> Table<'gc> {
+        self.state.io_metatable
+    }
+
     // Calls `ctx.globals().get(key)`
     pub fn get_global<V: FromValue<'gc>>(self, key: &'static str) -> Result<V, TypeError> {
         self.state.globals.get(self, key)
@@ -298,6 +302,7 @@ struct State<'gc> {
     registry: Registry<'gc>,
     strings: InternedStringSet<'gc>,
     finalizers: Finalizers<'gc>,
+    io_metatable: Table<'gc>,
 }
 
 impl<'gc> State<'gc> {
@@ -307,6 +312,7 @@ impl<'gc> State<'gc> {
             registry: Registry::new(mc),
             strings: InternedStringSet::new(mc),
             finalizers: Finalizers::new(mc),
+            io_metatable: Table::new(mc),
         }
     }
 

@@ -4,6 +4,7 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::async_callback::{AsyncSequence, Locals};
+use crate::stdlib::IoFile;
 use crate::{async_sequence, SequenceReturn, Stack};
 use crate::{
     table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
@@ -203,27 +204,34 @@ pub fn index<'gc>(
 
             idx
         }
-        Value::UserData(u) if u.metatable().is_some() => {
-            let idx = if let Some(mt) = u.metatable() {
-                mt.get_value(ctx, MetaMethod::Index)
-            } else {
-                Value::Nil
-            };
-
+        Value::UserData(u) if u.downcast_static::<IoFile>().is_ok() => {
+            let idx = ctx.io_metatable().get_value(ctx, MetaMethod::Index);
             if idx.is_nil() {
-                return Err(MetaOperatorError::Unary(
-                    MetaMethod::Index,
-                    table.type_name(),
-                ));
+                return Ok(MetaResult::Value(Value::Nil));
             }
-
             idx
+        }
+        Value::UserData(u) if u.metatable().is_some() => {
+                let idx = if let Some(mt) = u.metatable() {
+                    mt.get_value(ctx, MetaMethod::Index)
+                } else {
+                    Value::Nil
+                };
+    
+                if idx.is_nil() {
+                    return Err(MetaOperatorError::Unary(
+                        MetaMethod::Index,
+                        table.type_name(),
+                    ));
+                }
+    
+                idx
         }
         _ => {
             return Err(MetaOperatorError::Unary(
                 MetaMethod::Index,
                 table.type_name(),
-            ))
+            ));
         }
     };
 

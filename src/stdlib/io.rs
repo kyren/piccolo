@@ -1,317 +1,23 @@
 use either::Either;
 use gc_arena::Collect;
 use std::{
-    cell::RefCell,
-    fs::{File, OpenOptions},
-    io::{self, Read, Seek, SeekFrom, Write},
+    fs::OpenOptions,
+    io::{self, Seek, SeekFrom, Write},
     pin::Pin,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+mod file;
+mod state;
+mod std_file_kind;
+
+use self::{state::IoState, std_file_kind::StdFileKind};
 use crate::{
-    meta_ops::{self, MetaResult},
-    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, Sequence,
-    SequencePoll, Stack, String, Table, UserData, Value,
+    meta_ops::{self, MetaResult}, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod, Sequence, SequencePoll, Stack, String, Table, UserData, Value
 };
 
-#[derive(Collect, Clone)]
-#[collect(require_static)]
-pub struct FileWrapper(Rc<Either<RefCell<Option<File>>, StdFileKind>>);
-
-impl FileWrapper {
-    pub fn new(file: File) -> Self {
-        Self(Rc::new(Either::Left(RefCell::new(Some(file)))))
-    }
-    pub fn stdin() -> Self {
-        Self(Rc::new(Either::Right(StdFileKind::Stdin)))
-    }
-    pub fn stdout() -> Self {
-        Self(Rc::new(Either::Right(StdFileKind::Stdout)))
-    }
-    pub fn stderr() -> Self {
-        Self(Rc::new(Either::Right(StdFileKind::Stderr)))
-    }
-    pub fn is_std(&self) -> bool {
-        matches!(self.0.as_ref(), Either::Right(_))
-    }
-    pub fn close(&self) -> Result<(), io::Error> {
-        if self.is_std() {
-            Ok(())
-        } else {
-            let Either::Left(left) = self.0.as_ref() else {
-                unreachable!()
-            };
-
-            let mut file_lock = left.borrow_mut();
-            if let Some(file_handle) = file_lock.take() {
-                file_handle.sync_all()?;
-            }
-            Ok(())
-        }
-    }
-    pub fn flush(&self) -> Result<(), io::Error> {
-        match self.0.as_ref() {
-            Either::Left(left) =>    {
-                let mut file_lock = left.borrow_mut();
-                if let Some(ref mut file_handle) = *file_lock {
-                    file_handle.flush()?;
-                }
-                Ok(())
-            }
-            Either::Right(kind) => {
-                if matches!(kind, StdFileKind::Stdout | StdFileKind::Stderr) {
-                    io::stdout().flush()
-                } else {
-                    Ok(())
-                }
-            }
-        }
-    }
-    pub fn read_with_format<'gc>(
-        &self,
-        ctx: Context<'gc>,
-        format: &str,
-    ) -> Result<Option<Value<'gc>>, Error<'gc>> {
-        fn read_from_stream<'gc, R: Read>(
-            ctx: Context<'gc>,
-            stream: &mut R,
-            format: &str,
-        ) -> Result<Option<Value<'gc>>, Error<'gc>> {
-            match format {
-                "*l" | "l" => {
-                    let mut buf = Vec::new();
-                    let mut byte = [0u8; 1];
-
-                    loop {
-                        match stream.read(&mut byte) {
-                            Ok(0) => {
-                                if buf.is_empty() {
-                                    return Ok(None);
-                                }
-                                break;
-                            }
-                            Ok(_) => {
-                                if byte[0] == b'\n' {
-                                    break;
-                                } else if byte[0] == b'\r' {
-                                    let mut next_byte = [0u8; 1];
-                                    match stream.read(&mut next_byte) {
-                                        Ok(1) => {
-                                            if next_byte[0] != b'\n' {
-                                                // Wasn't \r\n, but we can't put it back if the stream doesn't support seek
-                                                // We'll just consider this a part of the next line when reading continues
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    break;
-                                } else {
-                                    buf.push(byte[0]);
-                                }
-                            }
-                            Err(e) => return Err(e.to_string().into_value(ctx).into()),
-                        }
-                    }
-
-                    Ok(Some(ctx.intern(&buf).into()))
-                }
-
-                "*L" | "L" => {
-                    let mut buf = Vec::new();
-                    let mut byte = [0u8; 1];
-
-                    loop {
-                        match stream.read(&mut byte) {
-                            Ok(0) => {
-                                if buf.is_empty() {
-                                    return Ok(None);
-                                }
-                                break;
-                            }
-                            Ok(_) => {
-                                buf.push(byte[0]);
-                                if byte[0] == b'\n' {
-                                    break;
-                                } else if byte[0] == b'\r' {
-                                    let mut next_byte = [0u8; 1];
-                                    match stream.read(&mut next_byte) {
-                                        Ok(1) => {
-                                            if next_byte[0] == b'\n' {
-                                                buf.push(next_byte[0]);
-                                            } else {
-                                                // Again, we can't put back what we read in a generic Read
-                                                // This byte will be part of the next line
-                                            }
-                                            break;
-                                        }
-                                        _ => break,
-                                    }
-                                }
-                            }
-                            Err(e) => return Err(e.to_string().into_value(ctx).into()),
-                        }
-                    }
-
-                    Ok(Some(ctx.intern(&buf).into()))
-                }
-
-                "*a" | "a" => {
-                    let mut buf = Vec::new();
-                    match stream.read_to_end(&mut buf) {
-                        Ok(0) => Ok(Some(ctx.intern(&[]).into())),
-                        Ok(_) => Ok(Some(ctx.intern(&buf).into())),
-                        Err(e) => Err(e.to_string().into_value(ctx).into()),
-                    }
-                }
-
-                "n" => {
-                    let mut buf = Vec::new();
-                    let mut byte = [0u8; 1];
-                    let mut has_digit = false;
-
-                    loop {
-                        match stream.read(&mut byte) {
-                            Ok(0) => return Ok(None),
-                            Ok(_) => {
-                                if !byte[0].is_ascii_whitespace() {
-                                    buf.push(byte[0]);
-                                    if byte[0].is_ascii_digit() {
-                                        has_digit = true;
-                                    }
-                                    break;
-                                }
-                            }
-                            Err(e) => return Err(e.to_string().into_value(ctx).into()),
-                        }
-                    }
-
-                    loop {
-                        match stream.read(&mut byte) {
-                            Ok(0) => break,
-                            Ok(_) => {
-                                if byte[0].is_ascii_digit()
-                                    || byte[0] == b'.'
-                                    || byte[0] == b'-'
-                                    || byte[0] == b'+'
-                                    || byte[0] == b'e'
-                                    || byte[0] == b'E'
-                                {
-                                    buf.push(byte[0]);
-                                    if byte[0].is_ascii_digit() {
-                                        has_digit = true;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            Err(e) => return Err(e.to_string().into_value(ctx).into()),
-                        }
-                    }
-
-                    if !has_digit {
-                        return Ok(None);
-                    }
-
-                    let s = std::string::String::from_utf8_lossy(&buf);
-                    if let Ok(i) = s.parse::<i64>() {
-                        Ok(Some(i.into()))
-                    } else if let Ok(f) = s.parse::<f64>() {
-                        Ok(Some(f.into()))
-                    } else {
-                        Ok(None)
-                    }
-                }
-
-                _ => {
-                    if let Ok(n) = format.parse::<usize>() {
-                        if n == 0 {
-                            let mut empty_buf: [u8; 0] = [];
-                            match stream.read_exact(&mut empty_buf) {
-                                Ok(_) => return Ok(Some(ctx.intern(&[]).into())),
-                                Err(_) => return Ok(None),
-                            }
-                        }
-
-                        let mut buf = vec![0u8; n];
-                        match stream.read(&mut buf) {
-                            Ok(0) => Ok(None),
-                            Ok(bytes_read) => {
-                                buf.truncate(bytes_read);
-                                Ok(Some(ctx.intern(&buf).into()))
-                            }
-                            Err(e) => Err(e.to_string().into_value(ctx).into()),
-                        }
-                    } else {
-                        Err(format!("invalid format '{}'", format)
-                            .into_value(ctx)
-                            .into())
-                    }
-                }
-            }
-        }
-
-        match self.0.as_ref() {
-            Either::Left(left) => {
-                let mut file = left.borrow_mut();
-                if let Some(mut file) = file.take() {
-                    read_from_stream(ctx, &mut file, format)
-                } else {
-                    Err("attempt to use a closed file".into_value(ctx).into())
-                }
-            }
-            Either::Right(kind) => match kind {
-                StdFileKind::Stdin => {
-                    let mut stdin = io::stdin();
-                    read_from_stream(ctx, &mut stdin, format)
-                }
-                _ => Err("attempt to read from output file".into_value(ctx).into()),
-            },
-        }
-    }
-    pub fn is_some(&self) -> bool {
-        match self.0.as_ref() {
-            Either::Left(left) => left.borrow().is_some(),
-            Either::Right(_) => true,
-        }
-    }
-}
-
-#[derive(Collect, Clone, Copy, Debug)]
-#[collect(require_static)]
-pub enum StdFileKind {
-    Stdin,
-    Stdout,
-    Stderr,
-}
-
-#[derive(Collect, Clone)]
-#[collect(no_drop)]
-struct IoState {
-    input: RefCell<FileWrapper>,
-    output: RefCell<FileWrapper>,
-}
-
-impl IoState {
-    fn new() -> Self {
-        Self {
-            input: RefCell::new(FileWrapper::stdin()),
-            output: RefCell::new(FileWrapper::stdout()),
-        }
-    }
-    fn replace_input(&self, input: FileWrapper) {
-        self.input.replace(input);
-    }
-    fn replace_output(&self, output: FileWrapper) {
-        self.output.replace(output);
-    }
-    fn input(&self) -> FileWrapper {
-        self.input.borrow().clone()
-    }
-    fn output(&self) -> FileWrapper {
-        self.output.borrow().clone()
-    }
-}
+pub use file::IoFile;
 
 pub fn load_io<'gc>(ctx: Context<'gc>) {
     thread_local! {
@@ -319,22 +25,21 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
     }
 
     let io = Table::new(&ctx);
-    let file = Table::new(&ctx);
 
     io.set_field(
         ctx,
         "stdin",
-        UserData::new_static(&ctx, FileWrapper::stdin()),
+        UserData::new_static(&ctx, IoFile::stdin()),
     );
     io.set_field(
         ctx,
         "stdout",
-        UserData::new_static(&ctx, FileWrapper::stdout()),
+        UserData::new_static(&ctx, IoFile::stdout()),
     );
     io.set_field(
         ctx,
         "stderr",
-        UserData::new_static(&ctx, FileWrapper::stderr()),
+        UserData::new_static(&ctx, IoFile::stderr()),
     );
 
     ctx.set_global(
@@ -419,7 +124,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             match file.open(filename) {
                 Ok(file) => {
-                    stack.replace(ctx, UserData::new_static(&ctx, FileWrapper::new(file)));
+                    stack.replace(ctx, UserData::new_static(&ctx, IoFile::new(file)));
                     Ok(CallbackReturn::Return)
                 }
                 Err(err) => {
@@ -456,7 +161,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
                     match file {
                         Value::UserData(file) => {
-                            if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                            if let Ok(file) = file.downcast_static::<IoFile>() {
                                 IO_STATE.with(|state| state.replace_input(file.clone()));
                                 Ok(SequencePoll::Return)
                             } else {
@@ -491,7 +196,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     })
                 }
                 Value::UserData(file) => {
-                    if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    if let Ok(file) = file.downcast_static::<IoFile>() {
                         IO_STATE.with(|state| state.replace_input(file.clone()));
 
                         stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
@@ -528,7 +233,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
                     match file {
                         Value::UserData(file) => {
-                            if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                            if let Ok(file) = file.downcast_static::<IoFile>() {
                                 IO_STATE.with(|state| state.replace_output(file.clone()));
                                 Ok(SequencePoll::Return)
                             } else {
@@ -563,7 +268,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     });
                 }
                 Value::UserData(file) => {
-                    if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    if let Ok(file) = file.downcast_static::<IoFile>() {
                         IO_STATE.with(|state| state.replace_output(file.clone()));
 
                         stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
@@ -592,7 +297,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                         );
                         return Ok(CallbackReturn::Return);
                     }
-                    IO_STATE.with(|state| state.replace_output(FileWrapper::stdout()));
+                    IO_STATE.with(|state| state.replace_output(IoFile::stdout()));
                     stack.replace(ctx, true);
                     return Ok(CallbackReturn::Return);
                 }
@@ -602,7 +307,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             }
 
             let file: UserData = stack.consume(ctx)?;
-            let file_wrapper = if let Ok(fw) = file.downcast_static::<FileWrapper>() {
+            let file_wrapper = if let Ok(fw) = file.downcast_static::<IoFile>() {
                 fw
             } else {
                 return Err("expected `file`".into_value(ctx).into());
@@ -649,7 +354,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let input = IO_STATE.with(|state| state.input());
 
-            let file: Table = ctx.globals().get(ctx, "file")?;
+            let file: Table = ctx.io_metatable().get(ctx, MetaMethod::Index)?;
             let read: Callback = file.get(ctx, "read")?;
 
             stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, input)));
@@ -663,7 +368,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         "write",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let output = IO_STATE.with(|state| state.output());
-            let file: Table = ctx.globals().get(ctx, "file")?;
+            let file: Table = ctx.io_metatable().get(ctx, MetaMethod::Index)?;
             let write: Callback = file.get(ctx, "write")?;
 
             stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, output)));
@@ -744,7 +449,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             }
 
-            let file: Table = ctx.globals().get(ctx, "file")?;
+            let file: Table = ctx.io_metatable().get(ctx, MetaMethod::Index)?;
             let lines: Callback = file.get(ctx, "lines")?;
 
             if stack.is_empty() {
@@ -756,7 +461,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             } else {
                 let filename = stack.consume(ctx)?;
                 if let Value::String(_) = filename {
-                    let io: Table = ctx.globals().get(ctx, "io")?;
+                    let io: Table = ctx.io_metatable().get(ctx, MetaMethod::Index)?;
                     let open: Callback = io.get(ctx, "open")?;
 
                     let formats = if stack.is_empty() {
@@ -794,7 +499,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             match file {
                 Value::UserData(file) => {
-                    if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    if let Ok(file) = file.downcast_static::<IoFile>() {
                         if file.is_some() {
                             stack.replace(ctx, "file")
                         } else {
@@ -817,11 +522,15 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let tmpfile = tempfile::tempfile()?;
 
-            stack.replace(ctx, UserData::new_static(&ctx, FileWrapper::new(tmpfile)));
+            stack.replace(ctx, UserData::new_static(&ctx, IoFile::new(tmpfile)));
 
             Ok(CallbackReturn::Return)
         }),
     );
+
+    let file = Table::new(&ctx);
+
+    ctx.io_metatable().set(ctx, MetaMethod::Index, file).unwrap();
 
     file.set_field(
         ctx,
@@ -834,7 +543,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             }
 
             let file: UserData = stack.consume(ctx)?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
+            let file = if let Ok(file) = file.downcast_static::<IoFile>() {
                 file
             } else {
                 return Err("bad argument #1 to 'close' (file expected)"
@@ -869,7 +578,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             }
 
             let file: UserData = stack.consume(ctx)?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
+            let file = if let Ok(file) = file.downcast_static::<IoFile>() {
                 file
             } else {
                 return Err("bad argument #1 to 'flush' (file expected)"
@@ -905,7 +614,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             let file: Value = stack.get(0);
             let file = if let Value::UserData(file) = file {
-                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                if let Ok(file) = file.downcast_static::<IoFile>() {
                     file
                 } else {
                     return Err("bad argument #1 to 'read' (file expected)"
@@ -964,7 +673,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             #[collect(require_static)]
             struct Lines {
                 position: Rc<AtomicUsize>,
-                file: FileWrapper,
+                file: IoFile,
                 formats: Vec<std::string::String>,
             }
 
@@ -998,7 +707,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             let file: Value = stack.get(0);
             let file = if let Value::UserData(file) = file {
-                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                if let Ok(file) = file.downcast_static::<IoFile>() {
                     file
                 } else {
                     return Err("bad argument #1 to 'lines' (file expected)"
@@ -1067,7 +776,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             let (file, whence, offset) =
                 stack.consume::<(UserData, Option<String>, Option<i64>)>(ctx)?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
+            let file = if let Ok(file) = file.downcast_static::<IoFile>() {
                 file
             } else {
                 return Err("bad argument #1 to 'seek' (file expected)"
@@ -1130,7 +839,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             let file: Value = stack.get(0);
             let file = if let Value::UserData(file) = file {
-                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                if let Ok(file) = file.downcast_static::<IoFile>() {
                     file
                 } else {
                     return Err("bad argument #1 to 'write' (file expected)"
@@ -1192,5 +901,4 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
     );
 
     ctx.set_global("io", io);
-    ctx.set_global("file", file);
 }
