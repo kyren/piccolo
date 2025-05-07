@@ -349,8 +349,8 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
     let state = UserData::new_static(&ctx, io_state);
 
-    let _ = io.set(ctx, "__state", state);
-    
+    io.set_field(ctx, "__state", state);
+
     io.set_field(
         ctx,
         "stdin",
@@ -544,7 +544,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         ctx,
         "output",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            // Sequence for handling io.output with filename
             #[derive(Collect)]
             #[collect(no_drop)]
             struct OutputOpenThen(IoState);
@@ -626,13 +625,12 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 let output = io_state.output();
 
                 if !output.is_std() {
-                    if let Err(e) = output.close() {
-                        // Возвращаем (false, err_msg, err_code) или просто ошибку?
-                        // Lua io.close() возвращает true/nil+err+errno
-                        // Здесь, если это implicit close (нет аргументов), Lua возвращает true при успехе
-                        // или ошибку (которая будет поймана pcall, если есть).
-                        // Для соответствия, вернем ошибку Piccolo.
-                        return Err(e.to_string().into_value(ctx).into());
+                    if let Err(err) = output.close() {
+                        stack.replace(
+                            ctx,
+                            (Value::Nil, err.to_string(), err.raw_os_error().unwrap_or(0)),
+                        );
+                        return Ok(CallbackReturn::Return);
                     }
                     io_state.replace_output(FileWrapper::stdout());
                     stack.replace(ctx, true);
@@ -650,10 +648,9 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 return Err("expected `file`".into_value(ctx).into());
             };
 
-            // file:close() в Lua возвращает true в случае успеха, или (nil, error message, error code) в случае ошибки.
             match file_wrapper.close() {
                 Ok(_) => {
-                    stack.replace(ctx, true); // Lua file:close() возвращает true при успехе
+                    stack.replace(ctx, true);
                     Ok(CallbackReturn::Return)
                 }
                 Err(e) => {
@@ -675,17 +672,16 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             let io_state = state.downcast_static::<IoState>()?;
             let output = io_state.output();
 
-            // io.flush() в Lua возвращает true в случае успеха, или (nil, error message, error code) в случае ошибки.
-            // Однако стандартная реализация io.flush() просто пробрасывает ошибку или возвращает сам файл (что странно).
-            // Будем следовать текущей логике Piccolo - проброс ошибки или возврат файла.
-            if let Err(e) = output.flush() {
-                return Err(e.to_string().into_value(ctx).into());
+            if let Err(err) = output.flush() {
+                stack.replace(
+                    ctx,
+                    (Value::Nil, err.to_string(), err.raw_os_error().unwrap_or(0)),
+                );
+                Ok(CallbackReturn::Return)
+            } else {
+                stack.replace(ctx, UserData::new_static(&ctx, output.clone()));
+                Ok(CallbackReturn::Return)
             }
-            // Lua обычно возвращает true/nil+err. Здесь возвращаем сам файл.
-            // Это соответствует file:flush(), но не io.flush() из стандарта Lua, который ничего не возвращает при успехе.
-            // Оставим как есть, так как это текущее поведение Piccolo.
-            stack.replace(ctx, UserData::new_static(&ctx, output.clone()));
-            Ok(CallbackReturn::Return)
         }),
     );
 
@@ -897,22 +893,13 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         }),
     );
 
-    // io.tmpfile - Create a temporary file
     io.set_field(
         ctx,
         "tmpfile",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let tmpdir = std::env::temp_dir();
-            let tmpfile = tmpdir.join(format!("lua_tmpfile_{}", std::process::id()));
+            let tmpfile = tempfile::tempfile()?;
 
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&tmpfile)?; // TODO: handle error correctly
-
-            let wrapper = FileWrapper::new(file);
-            stack.replace(ctx, UserData::new_static(&ctx, wrapper));
+            stack.replace(ctx, UserData::new_static(&ctx, FileWrapper::new(tmpfile)));
 
             Ok(CallbackReturn::Return)
         }),
@@ -928,19 +915,18 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file_ud: UserData = stack.consume(ctx)?;
-            let file_wrapper = if let Ok(fw) = file_ud.downcast_static::<FileWrapper>() {
-                fw
+            let file: UserData = stack.consume(ctx)?;
+            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                file
             } else {
                 return Err("bad argument #1 to 'close' (file expected)"
                     .into_value(ctx)
                     .into());
             };
 
-            // file:close() в Lua возвращает true в случае успеха, или (nil, error message, error code) в случае ошибки.
-            match file_wrapper.close() {
+            match file.close() {
                 Ok(_) => {
-                    stack.replace(ctx, true); // Lua file:close() возвращает true при успехе
+                    stack.replace(ctx, true);
                     Ok(CallbackReturn::Return)
                 }
                 Err(e) => {
@@ -964,19 +950,18 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file_ud: UserData = stack.consume(ctx)?;
-            let file_wrapper = if let Ok(fw) = file_ud.downcast_static::<FileWrapper>() {
-                fw
+            let file: UserData = stack.consume(ctx)?;
+            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                file
             } else {
                 return Err("bad argument #1 to 'flush' (file expected)"
                     .into_value(ctx)
                     .into());
             };
 
-            // file:flush() в Lua возвращает сам файл в случае успеха, или (nil, error message, error code) в случае ошибки.
-            match file_wrapper.flush() {
+            match file.flush() {
                 Ok(_) => {
-                    stack.replace(ctx, UserData::new_static(&ctx, file_wrapper.clone()));
+                    stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
                     Ok(CallbackReturn::Return)
                 }
                 Err(e) => {
@@ -1217,14 +1202,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: UserData = stack.consume(ctx)?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                file
-            } else {
-                return Err("bad argument #1 to 'write' (file expected)"
-                    .into_value(ctx)
-                    .into());
-            };
+            let file: Value = stack.consume(ctx)?;
             let values = stack
                 .into_iter()
                 .enumerate()
@@ -1244,32 +1222,63 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     }
                 })
                 .collect::<Result<Vec<_>, Error<'_>>>()?;
-            match &file.0 {
-                Either::Left(left) => {
-                    let mut left = left.borrow_mut();
-                    if let Some(ref mut file) = *left {
-                        for value in values {
-                            file.write_all(value.as_bytes())?;
+            match file {
+                Value::UserData(file) => {
+                    if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                        match &file.0 {
+                            Either::Left(left) => {
+                                let mut left = left.borrow_mut();
+                                if let Some(ref mut file) = *left {
+                                    for value in values {
+                                        file.write_all(value.as_bytes())?;
+                                    }
+                                }
+                                stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
+                                Ok(CallbackReturn::Return)
+                            }
+                            Either::Right(kind) => {
+                                let mut output: Box<dyn Write> = match kind {
+                                    StdFileKind::Stdout => Box::new(io::stdout()),
+                                    StdFileKind::Stderr => Box::new(io::stderr()),
+                                    StdFileKind::Stdin => unreachable!(),
+                                };
+                                for value in values {
+                                    output.write_all(value.as_bytes())?;
+                                }
+                                stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
+                                Ok(CallbackReturn::Return)
+                            }
                         }
+                    } else {
+                        return Err("bad argument #1 to 'write' (file or string expected)"
+                            .into_value(ctx)
+                            .into());
                     }
-                    // TODO: Lua поддерживает также запись в `string`
-                    stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
+                }
+                Value::String(s) => {
+                    let s = s.to_str()?;
+                    let bytes = s.as_bytes();
+                    let mut bytes = bytes.to_vec();
+                    for value in values {
+                        bytes.write_all(value.as_bytes())?;
+                    }
+                    stack.replace(ctx, ctx.intern(&bytes));
                     Ok(CallbackReturn::Return)
                 }
-                Either::Right(kind) => {
-                    let mut output: Box<dyn Write> = match kind {
-                        StdFileKind::Stdout => Box::new(io::stdout()),
-                        StdFileKind::Stderr => Box::new(io::stderr()),
-                        StdFileKind::Stdin => {
-                            stack.replace(ctx, (Value::Nil, "Bad file descriptor", 9));
-                            return Ok(CallbackReturn::Return);
+                other => {
+                    if let Some(s) = other.into_string(ctx) {
+                        let bytes = s.as_bytes();
+                        let mut bytes = bytes.to_vec();
+                        for value in values {
+                            bytes.write_all(value.as_bytes())?;
                         }
-                    };
-                    for value in values {
-                        output.write_all(value.as_bytes())?;
+                        stack.replace(ctx, ctx.intern(&bytes));
+                        Ok(CallbackReturn::Return)
+                    } else {
+                        return Err("bad argument #1 to 'write' (file or string expected)"
+                            .into_value(ctx)
+                            .into());
                     }
-                    stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
-                    Ok(CallbackReturn::Return)
                 }
             }
         }),
