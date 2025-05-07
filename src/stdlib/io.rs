@@ -17,29 +17,29 @@ use crate::{
 
 #[derive(Collect, Clone)]
 #[collect(require_static)]
-pub struct FileWrapper(Either<Rc<RefCell<Option<File>>>, StdFileKind>);
+pub struct FileWrapper(Rc<Either<RefCell<Option<File>>, StdFileKind>>);
 
 impl FileWrapper {
     pub fn new(file: File) -> Self {
-        Self(Either::Left(Rc::new(RefCell::new(Some(file)))))
+        Self(Rc::new(Either::Left(RefCell::new(Some(file)))))
     }
     pub fn stdin() -> Self {
-        Self(Either::Right(StdFileKind::Stdin))
+        Self(Rc::new(Either::Right(StdFileKind::Stdin)))
     }
     pub fn stdout() -> Self {
-        Self(Either::Right(StdFileKind::Stdout))
+        Self(Rc::new(Either::Right(StdFileKind::Stdout)))
     }
     pub fn stderr() -> Self {
-        Self(Either::Right(StdFileKind::Stderr))
+        Self(Rc::new(Either::Right(StdFileKind::Stderr)))
     }
     pub fn is_std(&self) -> bool {
-        matches!(self.0, Either::Right(_))
+        matches!(self.0.as_ref(), Either::Right(_))
     }
     pub fn close(&self) -> Result<(), io::Error> {
         if self.is_std() {
             Ok(())
         } else {
-            let Either::Left(left) = &self.0 else {
+            let Either::Left(left) = self.0.as_ref() else {
                 unreachable!()
             };
 
@@ -51,8 +51,8 @@ impl FileWrapper {
         }
     }
     pub fn flush(&self) -> Result<(), io::Error> {
-        match &self.0 {
-            Either::Left(left) => {
+        match self.0.as_ref() {
+            Either::Left(left) =>    {
                 let mut file_lock = left.borrow_mut();
                 if let Some(ref mut file_handle) = *file_lock {
                     file_handle.flush()?;
@@ -251,7 +251,7 @@ impl FileWrapper {
             }
         }
 
-        match &self.0 {
+        match self.0.as_ref() {
             Either::Left(left) => {
                 let mut file = left.borrow_mut();
                 if let Some(mut file) = file.take() {
@@ -270,14 +270,14 @@ impl FileWrapper {
         }
     }
     pub fn is_some(&self) -> bool {
-        match &self.0 {
+        match self.0.as_ref() {
             Either::Left(left) => left.borrow().is_some(),
             Either::Right(_) => true,
         }
     }
 }
 
-#[derive(Collect, Clone, Copy)]
+#[derive(Collect, Clone, Copy, Debug)]
 #[collect(require_static)]
 pub enum StdFileKind {
     Stdin,
@@ -292,64 +292,34 @@ struct IoState {
     output: RefCell<FileWrapper>,
 }
 
-fn get_io_state<'gc>(ctx: Context<'gc>) -> Result<UserData<'gc>, Error<'gc>> {
-    let io: Table = ctx.globals().get(ctx, "io")?;
-    let state: UserData = io.get(ctx, "__state")?;
-    Ok(state)
-}
-
 impl IoState {
-    pub fn replace_input(&self, input: FileWrapper) {
+    fn new() -> Self {
+        Self {
+            input: RefCell::new(FileWrapper::stdin()),
+            output: RefCell::new(FileWrapper::stdout()),
+        }
+    }
+    fn replace_input(&self, input: FileWrapper) {
         self.input.replace(input);
     }
-    pub fn replace_output(&self, output: FileWrapper) {
+    fn replace_output(&self, output: FileWrapper) {
         self.output.replace(output);
     }
-    pub fn input(&self) -> FileWrapper {
+    fn input(&self) -> FileWrapper {
         self.input.borrow().clone()
     }
-    pub fn output(&self) -> FileWrapper {
+    fn output(&self) -> FileWrapper {
         self.output.borrow().clone()
     }
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
-struct CallWithValues<'gc> {
-    callback: Callback<'gc>,
-    values: Vec<Value<'gc>>,
-}
-
-impl<'gc> Sequence<'gc> for CallWithValues<'gc> {
-    fn poll(
-        self: Pin<&mut Self>,
-        ctx: Context<'gc>,
-        _exec: Execution<'gc, '_>,
-        mut stack: Stack<'gc, '_>,
-    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-        for value in &self.values {
-            stack.into_back(ctx, *value);
-        }
-
-        Ok(SequencePoll::Call {
-            function: self.callback.into(),
-            bottom: 0,
-        })
-    }
-}
-
 pub fn load_io<'gc>(ctx: Context<'gc>) {
+    thread_local! {
+        static IO_STATE: IoState = IoState::new();
+    }
+
     let io = Table::new(&ctx);
     let file = Table::new(&ctx);
-
-    let io_state = IoState {
-        input: RefCell::new(FileWrapper::stdin()),
-        output: RefCell::new(FileWrapper::stdout()),
-    };
-
-    let state = UserData::new_static(&ctx, io_state);
-
-    io.set_field(ctx, "__state", state);
 
     io.set_field(
         ctx,
@@ -367,8 +337,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         UserData::new_static(&ctx, FileWrapper::stderr()),
     );
 
-    io.set_field(
-        ctx,
+    ctx.set_global(
         "print",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
@@ -454,7 +423,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     Ok(CallbackReturn::Return)
                 }
                 Err(err) => {
-                    // Return nil, error message, error code (Lua-style error handling)
                     stack.replace(
                         ctx,
                         (Value::Nil, err.to_string(), err.raw_os_error().unwrap_or(0)),
@@ -471,16 +439,16 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(no_drop)]
-            struct InputOpenThen(IoState);
+            struct InputOpenThen;
 
             impl<'gc> Sequence<'gc> for InputOpenThen {
                 fn poll(
                     self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    mut stack: Stack<'gc, '_>,
+                    stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    let file: Value = stack.consume(ctx)?;
+                    let file: Value = stack.get(0);
 
                     if file.is_nil() {
                         return Ok(SequencePoll::Return);
@@ -489,7 +457,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     match file {
                         Value::UserData(file) => {
                             if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                                self.0.replace_input(file.clone());
+                                IO_STATE.with(|state| state.replace_input(file.clone()));
                                 Ok(SequencePoll::Return)
                             } else {
                                 Err("bad argument #1 to 'input' (file expected)"
@@ -504,11 +472,8 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             }
 
-            let state = get_io_state(ctx)?;
-            let io_state = state.downcast_static::<IoState>()?;
-
             if stack.is_empty() {
-                stack.replace(ctx, UserData::new_static(&ctx, io_state.input()));
+                stack.replace(ctx, UserData::new_static(&ctx, IO_STATE.with(|state| state.input())));
                 return Ok(CallbackReturn::Return);
             }
 
@@ -522,12 +487,12 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     stack.replace(ctx, (filename, "r"));
                     Ok(CallbackReturn::Call {
                         function: open.into(),
-                        then: Some(BoxSequence::new(&ctx, InputOpenThen(io_state.clone()))),
+                        then: Some(BoxSequence::new(&ctx, InputOpenThen)),
                     })
                 }
                 Value::UserData(file) => {
                     if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                        io_state.replace_input(file.clone());
+                        IO_STATE.with(|state| state.replace_input(file.clone()));
 
                         stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
                         Ok(CallbackReturn::Return)
@@ -546,16 +511,16 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             #[derive(Collect)]
             #[collect(no_drop)]
-            struct OutputOpenThen(IoState);
+            struct OutputOpenThen;
 
             impl<'gc> Sequence<'gc> for OutputOpenThen {
                 fn poll(
                     self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    mut stack: Stack<'gc, '_>,
+                    stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    let file: Value = stack.consume(ctx)?;
+                    let file: Value = stack.get(0);
 
                     if file.is_nil() {
                         return Ok(SequencePoll::Return);
@@ -564,7 +529,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     match file {
                         Value::UserData(file) => {
                             if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                                self.0.replace_output(file.clone());
+                                IO_STATE.with(|state| state.replace_output(file.clone()));
                                 Ok(SequencePoll::Return)
                             } else {
                                 Err("bad argument #1 to 'input' (file expected)"
@@ -579,11 +544,8 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             }
 
-            let state = get_io_state(ctx)?;
-            let io_state = state.downcast_static::<IoState>()?;
-
             if stack.is_empty() {
-                stack.replace(ctx, UserData::new_static(&ctx, io_state.output()));
+                stack.replace(ctx, UserData::new_static(&ctx, IO_STATE.with(|state| state.output())));
                 return Ok(CallbackReturn::Return);
             }
 
@@ -597,12 +559,12 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     stack.replace(ctx, (filename, "w"));
                     return Ok(CallbackReturn::Call {
                         function: open.into(),
-                        then: Some(BoxSequence::new(&ctx, OutputOpenThen(io_state.clone()))),
+                        then: Some(BoxSequence::new(&ctx, OutputOpenThen)),
                     });
                 }
                 Value::UserData(file) => {
                     if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                        io_state.replace_output(file.clone());
+                        IO_STATE.with(|state| state.replace_output(file.clone()));
 
                         stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
                         Ok(CallbackReturn::Return)
@@ -620,9 +582,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         "close",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if stack.is_empty() {
-                let state = get_io_state(ctx)?;
-                let io_state = state.downcast_static::<IoState>()?;
-                let output = io_state.output();
+                let output = IO_STATE.with(|state| state.output());
 
                 if !output.is_std() {
                     if let Err(err) = output.close() {
@@ -632,7 +592,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                         );
                         return Ok(CallbackReturn::Return);
                     }
-                    io_state.replace_output(FileWrapper::stdout());
+                    IO_STATE.with(|state| state.replace_output(FileWrapper::stdout()));
                     stack.replace(ctx, true);
                     return Ok(CallbackReturn::Return);
                 }
@@ -668,9 +628,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
         ctx,
         "flush",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let state = get_io_state(ctx)?;
-            let io_state = state.downcast_static::<IoState>()?;
-            let output = io_state.output();
+            let output = IO_STATE.with(|state| state.output());
 
             if let Err(err) = output.flush() {
                 stack.replace(
@@ -688,58 +646,29 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
     io.set_field(
         ctx,
         "read",
-        Callback::from_fn(&ctx, |ctx, _, stack| {
-            let state = get_io_state(ctx)?;
-            let io_state = state.downcast_static::<IoState>()?;
-
-            let input = io_state.input();
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let input = IO_STATE.with(|state| state.input());
 
             let file: Table = ctx.globals().get(ctx, "file")?;
             let read: Callback = file.get(ctx, "read")?;
 
-            let mut values = Vec::with_capacity(stack.len().wrapping_add(1));
-            values.push(Value::UserData(UserData::new_static(&ctx, input)));
+            stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, input)));
 
-            stack.into_iter().for_each(|value| {
-                values.push(value);
-            });
-
-            Ok(CallbackReturn::Sequence(BoxSequence::new(
-                &ctx,
-                CallWithValues {
-                    callback: read,
-                    values,
-                },
-            )))
+            Ok(CallbackReturn::Call { function: read.into(), then: None })
         }),
     );
 
     io.set_field(
         ctx,
         "write",
-        Callback::from_fn(&ctx, |ctx, _, stack| {
-            let state = get_io_state(ctx)?;
-            let io_state = state.downcast_static::<IoState>()?;
-
-            let output = io_state.output();
-
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let output = IO_STATE.with(|state| state.output());
             let file: Table = ctx.globals().get(ctx, "file")?;
             let write: Callback = file.get(ctx, "write")?;
 
-            let mut values = Vec::with_capacity(stack.len().wrapping_add(1));
-            values.push(Value::UserData(UserData::new_static(&ctx, output)));
+            stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, output)));
 
-            stack.into_iter().for_each(|value| {
-                values.push(value);
-            });
-
-            Ok(CallbackReturn::Sequence(BoxSequence::new(
-                &ctx,
-                CallWithValues {
-                    callback: write,
-                    values,
-                },
-            )))
+            Ok(CallbackReturn::Call { function: write.into(), then: None })
         }),
     );
 
@@ -819,22 +748,11 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             let lines: Callback = file.get(ctx, "lines")?;
 
             if stack.is_empty() {
-                let state = get_io_state(ctx)?;
-                let io_state = state.downcast_static::<IoState>()?;
+                let input = IO_STATE.with(|state| state.input());
 
-                let input = io_state.input();
+                stack.replace(ctx, (UserData::new_static(&ctx, input), "l"));
 
-                let mut values = Vec::with_capacity(2);
-                values.push(Value::UserData(UserData::new_static(&ctx, input)));
-                values.push(ctx.intern(b"l").into_value(ctx));
-
-                Ok(CallbackReturn::Sequence(BoxSequence::new(
-                    &ctx,
-                    CallWithValues {
-                        callback: lines,
-                        values,
-                    },
-                )))
+                Ok(CallbackReturn::Call { function: lines.into(), then: None })
             } else {
                 let filename = stack.consume(ctx)?;
                 if let Value::String(_) = filename {
@@ -985,15 +903,24 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: UserData = stack.consume(ctx)?;
-            let values = if stack.is_empty() {
-                vec![ctx.intern(b"l").into_value(ctx)] // default format
+            let file: Value = stack.get(0);
+            let file = if let Value::UserData(file) = file {
+                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    file
+                } else {
+                    return Err("bad argument #1 to 'read' (file expected)"
+                        .into_value(ctx)
+                        .into());
+                }
             } else {
-                stack.into_iter().collect::<Vec<_>>()
+                return Err("bad argument #1 to 'read' (file expected)"
+                    .into_value(ctx)
+                    .into());
             };
 
-            let formats = values
+            let formats = stack
                 .into_iter()
+                .skip(1)
                 .enumerate()
                 .map(|(n, value)| {
                     let Some(format) = value.into_string(ctx) else {
@@ -1011,13 +938,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     }
                 })
                 .collect::<Result<Vec<_>, Error<'_>>>()?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                file
-            } else {
-                return Err("bad argument #1 to 'read' (file expected)"
-                    .into_value(ctx)
-                    .into());
-            };
 
             stack.clear();
             for format in formats {
@@ -1076,9 +996,15 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: UserData = stack.consume(ctx)?;
-            let file = if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                file
+            let file: Value = stack.get(0);
+            let file = if let Value::UserData(file) = file {
+                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    file
+                } else {
+                    return Err("bad argument #1 to 'lines' (file expected)"
+                        .into_value(ctx)
+                        .into());
+                }
             } else {
                 return Err("bad argument #1 to 'lines' (file expected)"
                     .into_value(ctx)
@@ -1088,7 +1014,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             let values = if stack.is_empty() {
                 vec![ctx.intern(b"l").into_value(ctx)] // default format
             } else {
-                stack.into_iter().collect::<Vec<_>>()
+                stack.into_iter().skip(1).collect::<Vec<_>>()
             };
 
             let formats = values
@@ -1163,7 +1089,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             };
 
-            match &file.0 {
+            match file.0.as_ref() {
                 Either::Left(left) => {
                     let mut file = left.borrow_mut();
                     if let Some(ref mut file) = *file {
@@ -1202,9 +1128,23 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: Value = stack.consume(ctx)?;
+            let file: Value = stack.get(0);
+            let file = if let Value::UserData(file) = file {
+                if let Ok(file) = file.downcast_static::<FileWrapper>() {
+                    file
+                } else {
+                    return Err("bad argument #1 to 'write' (file expected)"
+                        .into_value(ctx)
+                        .into());
+                }
+            } else {
+                return Err("bad argument #1 to 'write' (file expected)"
+                    .into_value(ctx)
+                    .into());
+            };
             let values = stack
                 .into_iter()
+                .skip(1)
                 .enumerate()
                 .map(|(n, value)| {
                     let Some(s) = value.into_string(ctx) else {
@@ -1222,63 +1162,30 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     }
                 })
                 .collect::<Result<Vec<_>, Error<'_>>>()?;
-            match file {
-                Value::UserData(file) => {
-                    if let Ok(file) = file.downcast_static::<FileWrapper>() {
-                        match &file.0 {
-                            Either::Left(left) => {
-                                let mut left = left.borrow_mut();
-                                if let Some(ref mut file) = *left {
-                                    for value in values {
-                                        file.write_all(value.as_bytes())?;
-                                    }
-                                }
-                                stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
-                                Ok(CallbackReturn::Return)
-                            }
-                            Either::Right(kind) => {
-                                let mut output: Box<dyn Write> = match kind {
-                                    StdFileKind::Stdout => Box::new(io::stdout()),
-                                    StdFileKind::Stderr => Box::new(io::stderr()),
-                                    StdFileKind::Stdin => unreachable!(),
-                                };
-                                for value in values {
-                                    output.write_all(value.as_bytes())?;
-                                }
-                                stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
-                                Ok(CallbackReturn::Return)
-                            }
+            match file.0.as_ref() {
+                Either::Left(left) => {
+                    let mut left = left.borrow_mut();
+                    if let Some(ref mut file) = *left {
+                        for value in values {
+                            file.write_all(value.as_bytes())?;
                         }
-                    } else {
-                        return Err("bad argument #1 to 'write' (file or string expected)"
-                            .into_value(ctx)
-                            .into());
                     }
-                }
-                Value::String(s) => {
-                    let s = s.to_str()?;
-                    let bytes = s.as_bytes();
-                    let mut bytes = bytes.to_vec();
-                    for value in values {
-                        bytes.write_all(value.as_bytes())?;
-                    }
-                    stack.replace(ctx, ctx.intern(&bytes));
+                    stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
                     Ok(CallbackReturn::Return)
                 }
-                other => {
-                    if let Some(s) = other.into_string(ctx) {
-                        let bytes = s.as_bytes();
-                        let mut bytes = bytes.to_vec();
-                        for value in values {
-                            bytes.write_all(value.as_bytes())?;
-                        }
-                        stack.replace(ctx, ctx.intern(&bytes));
-                        Ok(CallbackReturn::Return)
-                    } else {
-                        return Err("bad argument #1 to 'write' (file or string expected)"
+                Either::Right(kind) => {
+                    let mut output: Box<dyn Write> = match kind {
+                        StdFileKind::Stdout => Box::new(io::stdout()),
+                        StdFileKind::Stderr => Box::new(io::stderr()),
+                        StdFileKind::Stdin => return Err("attempt to write to stdin"
                             .into_value(ctx)
-                            .into());
+                            .into()),
+                    };
+                    for value in values {
+                        output.write_all(value.as_bytes())?;
                     }
+                    stack.replace(ctx, UserData::new_static(&ctx, file.clone()));
+                    Ok(CallbackReturn::Return)
                 }
             }
         }),
