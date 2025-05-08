@@ -798,7 +798,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 }
             };
 
-            match file.0.as_ref() {
+            match file.inner() {
                 Either::Left(left) => {
                     let mut file = left.borrow_mut();
                     if let Some(ref mut file) = *file {
@@ -871,7 +871,8 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     }
                 })
                 .collect::<Result<Vec<_>, Error<'_>>>()?;
-            match file.0.as_ref() {
+
+            match file.inner() {
                 Either::Left(left) => {
                     let mut left = left.borrow_mut();
                     if let Some(ref mut file) = *left {
