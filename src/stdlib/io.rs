@@ -1,11 +1,7 @@
 use either::Either;
 use gc_arena::Collect;
 use std::{
-    fs::OpenOptions,
-    io::{self, Seek, SeekFrom, Write},
-    pin::Pin,
-    rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
+    cell::RefCell, fs::OpenOptions, io::{self, Seek, SeekFrom, Write}, pin::Pin
 };
 
 mod file;
@@ -612,7 +608,11 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: Value = stack.get(0);
+            let Some(file) = stack.pop_front() else {
+                return Err("bad argument #1 to 'read' (file expected)"
+                    .into_value(ctx)
+                    .into());
+            };
             let file = if let Value::UserData(file) = file {
                 if let Ok(file) = file.downcast_static::<IoFile>() {
                     file
@@ -629,7 +629,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             let formats = stack
                 .into_iter()
-                .skip(1)
                 .enumerate()
                 .map(|(n, value)| {
                     let Some(format) = value.into_string(ctx) else {
@@ -656,7 +655,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     }
                     None => {
                         stack.into_back(ctx, Value::Nil);
-                        break;
                     }
                 }
             }
@@ -672,7 +670,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             #[derive(Collect, Clone)]
             #[collect(require_static)]
             struct Lines {
-                position: Rc<AtomicUsize>,
+                position: RefCell<usize>,
                 file: IoFile,
                 formats: Vec<std::string::String>,
             }
@@ -684,14 +682,15 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    if let Some(format) = self.formats.get(self.position.load(Ordering::Relaxed)) {
+                    let mut position = self.position.borrow_mut();
+                    if let Some(format) = self.formats.get(*position) {
                         match self.file.read_with_format(ctx, format)? {
                             Some(value) => {
                                 stack.into_back(ctx, value);
                             }
                             None => {}
                         }
-                        self.position.fetch_add(1, Ordering::Relaxed);
+                        *position += 1;
                         return Ok(SequencePoll::Return);
                     } else {
                         return Ok(SequencePoll::Return);
@@ -747,7 +746,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 .collect::<Result<Vec<_>, Error<'_>>>()?;
 
             let root = Lines {
-                position: Rc::new(AtomicUsize::new(0)),
+                position: RefCell::new(0),
                 file: file.clone(),
                 formats,
             };
@@ -837,7 +836,11 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     .into());
             }
 
-            let file: Value = stack.get(0);
+            let Some(file) = stack.pop_front() else {
+                return Err("bad argument #1 to 'write' (file expected)"
+                    .into_value(ctx)
+                    .into());
+            };
             let file = if let Value::UserData(file) = file {
                 if let Ok(file) = file.downcast_static::<IoFile>() {
                     file
@@ -853,7 +856,6 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             };
             let values = stack
                 .into_iter()
-                .skip(1)
                 .enumerate()
                 .map(|(n, value)| {
                     let Some(s) = value.into_string(ctx) else {

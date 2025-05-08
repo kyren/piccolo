@@ -109,6 +109,7 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
         }
 
         "n" => {
+            let start_position = *position;
             let mut buf = Vec::new();
             let mut byte = [0u8; 1];
             let mut has_digit = false;
@@ -131,8 +132,7 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
             loop {
                 match seek_read(file, position, &mut byte) {
                     Ok(0) => break,
-                    Ok(n) => {
-                        *position += n;
+                    Ok(_) => {
                         if matches!(byte[0], b'0'..=b'9' | b'.' | b'-' | b'+' | b'e' | b'E')
                         {
                             buf.push(byte[0]);
@@ -148,6 +148,7 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
             }
 
             if !has_digit {
+                *position = start_position;
                 return Ok(None);
             }
 
@@ -156,7 +157,10 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
                 .or_else(|| s.parse::<f64>().ok().map(Value::from)) 
             {
                 Some(value) => Ok(Some(value)),
-                None => Ok(None)
+                None => {
+                    *position = start_position;
+                    Ok(None)
+                }
             }
         }
 
