@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use super::file::IoFile;
 use gc_arena::Collect;
+use std::cell::RefCell;
 
 #[derive(Collect, Clone)]
 #[collect(no_drop)]

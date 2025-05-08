@@ -212,20 +212,20 @@ pub fn index<'gc>(
             idx
         }
         Value::UserData(u) if u.metatable().is_some() => {
-                let idx = if let Some(mt) = u.metatable() {
-                    mt.get_value(ctx, MetaMethod::Index)
-                } else {
-                    Value::Nil
-                };
-    
-                if idx.is_nil() {
-                    return Err(MetaOperatorError::Unary(
-                        MetaMethod::Index,
-                        table.type_name(),
-                    ));
-                }
-    
-                idx
+            let idx = if let Some(mt) = u.metatable() {
+                mt.get_value(ctx, MetaMethod::Index)
+            } else {
+                Value::Nil
+            };
+
+            if idx.is_nil() {
+                return Err(MetaOperatorError::Unary(
+                    MetaMethod::Index,
+                    table.type_name(),
+                ));
+            }
+
+            idx
         }
         _ => {
             return Err(MetaOperatorError::Unary(

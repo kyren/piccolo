@@ -1,7 +1,10 @@
 use either::Either;
 use gc_arena::Collect;
 use std::{
-    cell::RefCell, fs::OpenOptions, io::{self, Seek, SeekFrom, Write}, pin::Pin
+    cell::RefCell,
+    fs::OpenOptions,
+    io::{self, Seek, SeekFrom, Write},
+    pin::Pin,
 };
 
 mod file;
@@ -10,7 +13,9 @@ mod std_file_kind;
 
 use self::{state::IoState, std_file_kind::StdFileKind};
 use crate::{
-    meta_ops::{self, MetaResult}, BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod, Sequence, SequencePoll, Stack, String, Table, UserData, Value
+    meta_ops::{self, MetaResult},
+    BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
+    Sequence, SequencePoll, Stack, String, Table, UserData, Value,
 };
 
 pub use file::IoFile;
@@ -22,21 +27,9 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
     let io = Table::new(&ctx);
 
-    io.set_field(
-        ctx,
-        "stdin",
-        UserData::new_static(&ctx, IoFile::stdin()),
-    );
-    io.set_field(
-        ctx,
-        "stdout",
-        UserData::new_static(&ctx, IoFile::stdout()),
-    );
-    io.set_field(
-        ctx,
-        "stderr",
-        UserData::new_static(&ctx, IoFile::stderr()),
-    );
+    io.set_field(ctx, "stdin", UserData::new_static(&ctx, IoFile::stdin()));
+    io.set_field(ctx, "stdout", UserData::new_static(&ctx, IoFile::stdout()));
+    io.set_field(ctx, "stderr", UserData::new_static(&ctx, IoFile::stderr()));
 
     ctx.set_global(
         "print",
@@ -174,7 +167,10 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             }
 
             if stack.is_empty() {
-                stack.replace(ctx, UserData::new_static(&ctx, IO_STATE.with(|state| state.input())));
+                stack.replace(
+                    ctx,
+                    UserData::new_static(&ctx, IO_STATE.with(|state| state.input())),
+                );
                 return Ok(CallbackReturn::Return);
             }
 
@@ -246,7 +242,10 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
             }
 
             if stack.is_empty() {
-                stack.replace(ctx, UserData::new_static(&ctx, IO_STATE.with(|state| state.output())));
+                stack.replace(
+                    ctx,
+                    UserData::new_static(&ctx, IO_STATE.with(|state| state.output())),
+                );
                 return Ok(CallbackReturn::Return);
             }
 
@@ -355,7 +354,10 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, input)));
 
-            Ok(CallbackReturn::Call { function: read.into(), then: None })
+            Ok(CallbackReturn::Call {
+                function: read.into(),
+                then: None,
+            })
         }),
     );
 
@@ -369,7 +371,10 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             stack.into_front(ctx, Value::UserData(UserData::new_static(&ctx, output)));
 
-            Ok(CallbackReturn::Call { function: write.into(), then: None })
+            Ok(CallbackReturn::Call {
+                function: write.into(),
+                then: None,
+            })
         }),
     );
 
@@ -453,7 +458,10 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
                 stack.replace(ctx, (UserData::new_static(&ctx, input), "l"));
 
-                Ok(CallbackReturn::Call { function: lines.into(), then: None })
+                Ok(CallbackReturn::Call {
+                    function: lines.into(),
+                    then: None,
+                })
             } else {
                 let filename = stack.consume(ctx)?;
                 if let Value::String(_) = filename {
@@ -526,7 +534,9 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
     let file = Table::new(&ctx);
 
-    ctx.io_metatable().set(ctx, MetaMethod::Index, file).unwrap();
+    ctx.io_metatable()
+        .set(ctx, MetaMethod::Index, file)
+        .unwrap();
 
     file.set_field(
         ctx,
@@ -803,7 +813,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     if let Some(ref mut left) = *left {
                         match left.seek(seek_from) {
                             Ok(position) => {
-                                file.set_read_state(position as usize);
+                                file.set_read_position(position as usize);
                                 stack.replace(ctx, position as i64);
                                 Ok(CallbackReturn::Return)
                             }
@@ -890,9 +900,9 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                     let mut output: Box<dyn Write> = match kind {
                         StdFileKind::Stdout => Box::new(io::stdout()),
                         StdFileKind::Stderr => Box::new(io::stderr()),
-                        StdFileKind::Stdin => return Err("attempt to write to stdin"
-                            .into_value(ctx)
-                            .into()),
+                        StdFileKind::Stdin => {
+                            return Err("attempt to write to stdin".into_value(ctx).into())
+                        }
                     };
                     for value in values {
                         output.write_all(value.as_bytes())?;

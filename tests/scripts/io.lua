@@ -81,3 +81,10 @@ do
   assert(file:read(10)== "nd Line\nSo")
   file:close()
 end
+
+do
+  tmp = io.tmpfile()
+  tmp:write("1234\n"):write("4321\n")
+  assert(tmp:read("l") == "1234")
+  assert(tmp:read("n") == 4321)
+end

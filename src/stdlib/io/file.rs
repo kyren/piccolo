@@ -1,19 +1,33 @@
-use std::{cell::RefCell, fs::File, io::{self, Cursor, Read, Seek, Write}, rc::Rc};
 use crate::{Context, Error, IntoValue, Value};
+use std::{
+    cell::RefCell,
+    fs::File,
+    io::{self, Cursor, Read, Seek, Write},
+    rc::Rc,
+};
 
 use super::std_file_kind::StdFileKind;
 use either::Either;
 use gc_arena::Collect;
 
-fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, format: &str, position: &mut usize) -> Result<Option<Value<'gc>>, Error<'gc>> {
-    fn seek_read<'gc, W: Write + Read + Seek>(file: &mut W, position: &mut usize, buf: &mut [u8]) -> io::Result<usize> {
+fn read_from_any<'gc, W: Write + Read + Seek>(
+    ctx: Context<'gc>,
+    file: &mut W,
+    format: &str,
+    position: &mut usize,
+) -> Result<Option<Value<'gc>>, Error<'gc>> {
+    fn seek_read<'gc, W: Write + Read + Seek>(
+        file: &mut W,
+        position: &mut usize,
+        buf: &mut [u8],
+    ) -> io::Result<usize> {
         file.seek(io::SeekFrom::Start(*position as u64))?;
         match file.read(buf) {
             Ok(n) => {
                 *position += n;
                 Ok(n)
             }
-            Err(err) => Err(err)
+            Err(err) => Err(err),
         }
     }
 
@@ -133,8 +147,7 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
                 match seek_read(file, position, &mut byte) {
                     Ok(0) => break,
                     Ok(_) => {
-                        if matches!(byte[0], b'0'..=b'9' | b'.' | b'-' | b'+' | b'e' | b'E')
-                        {
+                        if matches!(byte[0], b'0'..=b'9' | b'.' | b'-' | b'+' | b'e' | b'E') {
                             buf.push(byte[0]);
                             if byte[0].is_ascii_digit() {
                                 has_digit = true;
@@ -153,8 +166,11 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
             }
 
             let s = std::string::String::from_utf8_lossy(&buf);
-            match s.parse::<i64>().ok().map(Value::from)
-                .or_else(|| s.parse::<f64>().ok().map(Value::from)) 
+            match s
+                .parse::<i64>()
+                .ok()
+                .map(Value::from)
+                .or_else(|| s.parse::<f64>().ok().map(Value::from))
             {
                 Some(value) => Ok(Some(value)),
                 None => {
@@ -200,32 +216,32 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
 #[collect(require_static)]
 pub struct IoFile {
     inner: Rc<Either<RefCell<Option<File>>, StdFileKind>>,
-    read_state: RefCell<usize>,
+    read_position: RefCell<usize>,
 }
 
 impl IoFile {
     pub fn new(file: File) -> Self {
         Self {
             inner: Rc::new(Either::Left(RefCell::new(Some(file)))),
-            read_state: RefCell::new(0)
+            read_position: RefCell::new(0),
         }
     }
     pub fn stdin() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stdin)),
-            read_state: RefCell::new(0)
+            read_position: RefCell::new(0),
         }
     }
     pub fn stdout() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stdout)),
-            read_state: RefCell::new(0)
+            read_position: RefCell::new(0),
         }
     }
     pub fn stderr() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stderr)),
-            read_state: RefCell::new(0)
+            read_position: RefCell::new(0),
         }
     }
     pub fn is_std(&self) -> bool {
@@ -248,7 +264,7 @@ impl IoFile {
     }
     pub fn flush(&self) -> Result<(), io::Error> {
         match self.inner() {
-            Either::Left(left) =>    {
+            Either::Left(left) => {
                 let mut file_lock = left.borrow_mut();
                 if let Some(ref mut file_handle) = *file_lock {
                     file_handle.flush()?;
@@ -276,12 +292,12 @@ impl IoFile {
                     Some(ref mut file) => file,
                     None => return Err("attempt to use a closed file".into_value(ctx).into()),
                 };
-                let mut read_state = self.read_state.borrow_mut();
+                let mut read_state = self.read_position.borrow_mut();
                 read_from_any(ctx, file, format, &mut read_state)
             }
             Either::Right(kind) => match kind {
                 StdFileKind::Stdin => {
-                    let mut read_bytes = self.read_state.borrow_mut();
+                    let mut read_bytes = self.read_position.borrow_mut();
                     let mut stdin = io::stdin();
                     let mut buf = Vec::new();
                     stdin.read_exact(&mut buf)?;
@@ -301,7 +317,7 @@ impl IoFile {
     pub fn inner(&self) -> &Either<RefCell<Option<File>>, StdFileKind> {
         self.inner.as_ref()
     }
-    pub fn set_read_state(&self, state: usize) {
-        self.read_state.replace(state);
+    pub fn set_read_position(&self, state: usize) {
+        self.read_position.replace(state);
     }
 }
