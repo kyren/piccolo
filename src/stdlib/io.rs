@@ -791,7 +791,7 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
                 "cur" => SeekFrom::Current(offset),
                 "end" => SeekFrom::End(offset),
                 _ => {
-                    return Err(format!("invalid option '{}'", whence_str)
+                    return Err("bad argument #2 to 'seek' (invalid option)"
                         .into_value(ctx)
                         .into())
                 }
@@ -799,10 +799,11 @@ pub fn load_io<'gc>(ctx: Context<'gc>) {
 
             match file.inner() {
                 Either::Left(left) => {
-                    let mut file = left.borrow_mut();
-                    if let Some(ref mut file) = *file {
-                        match file.seek(seek_from) {
+                    let mut left = left.borrow_mut();
+                    if let Some(ref mut left) = *left {
+                        match left.seek(seek_from) {
                             Ok(position) => {
+                                file.set_read_state(position as usize);
                                 stack.replace(ctx, position as i64);
                                 Ok(CallbackReturn::Return)
                             }

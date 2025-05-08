@@ -200,32 +200,32 @@ fn read_from_any<'gc, W: Write + Read + Seek>(ctx: Context<'gc>, file: &mut W, f
 #[collect(require_static)]
 pub struct IoFile {
     inner: Rc<Either<RefCell<Option<File>>, StdFileKind>>,
-    read_bytes: RefCell<usize>,
+    read_state: RefCell<usize>,
 }
 
 impl IoFile {
     pub fn new(file: File) -> Self {
         Self {
             inner: Rc::new(Either::Left(RefCell::new(Some(file)))),
-            read_bytes: RefCell::new(0)
+            read_state: RefCell::new(0)
         }
     }
     pub fn stdin() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stdin)),
-            read_bytes: RefCell::new(0)
+            read_state: RefCell::new(0)
         }
     }
     pub fn stdout() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stdout)),
-            read_bytes: RefCell::new(0)
+            read_state: RefCell::new(0)
         }
     }
     pub fn stderr() -> Self {
         Self {
             inner: Rc::new(Either::Right(StdFileKind::Stderr)),
-            read_bytes: RefCell::new(0)
+            read_state: RefCell::new(0)
         }
     }
     pub fn is_std(&self) -> bool {
@@ -276,12 +276,12 @@ impl IoFile {
                     Some(ref mut file) => file,
                     None => return Err("attempt to use a closed file".into_value(ctx).into()),
                 };
-                let mut read_bytes = self.read_bytes.borrow_mut();
-                read_from_any(ctx, file, format, &mut read_bytes)
+                let mut read_state = self.read_state.borrow_mut();
+                read_from_any(ctx, file, format, &mut read_state)
             }
             Either::Right(kind) => match kind {
                 StdFileKind::Stdin => {
-                    let mut read_bytes = self.read_bytes.borrow_mut();
+                    let mut read_bytes = self.read_state.borrow_mut();
                     let mut stdin = io::stdin();
                     let mut buf = Vec::new();
                     stdin.read_exact(&mut buf)?;
@@ -300,5 +300,8 @@ impl IoFile {
     }
     pub fn inner(&self) -> &Either<RefCell<Option<File>>, StdFileKind> {
         self.inner.as_ref()
+    }
+    pub fn set_read_state(&self, state: usize) {
+        self.read_state.replace(state);
     }
 }
