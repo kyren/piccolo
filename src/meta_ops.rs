@@ -1,4 +1,5 @@
-use std::io::Write;
+use alloc::{string::ToString, vec::Vec};
+use core::fmt::Write;
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -424,10 +425,14 @@ pub fn tostring<'gc>(
         }
     }
 
-    Ok(match v {
-        v @ Value::String(_) => MetaResult::Value(v),
-        v => MetaResult::Value(ctx.intern(v.display().to_string().as_bytes()).into()),
-    })
+    match v {
+        v @ Value::String(_) => Ok(MetaResult::Value(v)),
+        v => {
+            let string = v.display().to_string();
+            let interned = ctx.intern(string.as_bytes());
+            Ok(MetaResult::Value(interned.into()))
+        }
+    }
 }
 
 pub fn equal<'gc>(
@@ -763,8 +768,8 @@ pub fn concat<'gc>(
             let mut bytes = Vec::new();
             for value in [a, b] {
                 match value {
-                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                    Value::Integer(i) => write!(VecWriter(&mut bytes), "{}", i).unwrap(),
+                    Value::Number(n) => write!(VecWriter(&mut bytes), "{}", n).unwrap(),
                     Value::String(s) => bytes.extend(s.as_bytes()),
                     _ => return None,
                 }
@@ -813,8 +818,8 @@ pub fn concat_many<'gc>(
         let mut bytes = Vec::with_capacity(len);
         for value in values {
             match value {
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::Integer(i) => write!(VecWriter(&mut bytes), "{}", i).unwrap(),
+                Value::Number(n) => write!(VecWriter(&mut bytes), "{}", n).unwrap(),
                 Value::String(s) => bytes.extend(s.as_bytes()),
                 _ => unreachable!(),
             }
@@ -877,8 +882,8 @@ pub fn concat_separated<'gc>(
         let mut iter = values.iter();
         if let Some(val) = iter.next() {
             match val {
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                Value::Integer(i) => write!(VecWriter(&mut bytes), "{}", i).unwrap(),
+                Value::Number(n) => write!(VecWriter(&mut bytes), "{}", n).unwrap(),
                 Value::String(s) => bytes.extend(s.as_bytes()),
                 _ => unreachable!(),
             }
@@ -886,8 +891,8 @@ pub fn concat_separated<'gc>(
             while let Some(val) = iter.next() {
                 bytes.extend(&*sep_str);
                 match val {
-                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
+                    Value::Integer(i) => write!(VecWriter(&mut bytes), "{}", i).unwrap(),
+                    Value::Number(n) => write!(VecWriter(&mut bytes), "{}", n).unwrap(),
                     Value::String(s) => bytes.extend(s.as_bytes()),
                     _ => unreachable!(),
                 }
@@ -927,6 +932,15 @@ pub fn concat_separated<'gc>(
         Ok(CallbackReturn::Sequence(b))
     });
     Ok(ConcatMetaResult::Call(func.into()))
+}
+
+struct VecWriter<'a>(&'a mut Vec<u8>);
+
+impl core::fmt::Write for VecWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
 }
 
 #[must_use]

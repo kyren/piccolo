@@ -1,4 +1,4 @@
-use std::{fmt, hash::Hash, i64, mem};
+use core::{fmt, hash::Hash, mem};
 
 use allocator_api2::vec;
 use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};

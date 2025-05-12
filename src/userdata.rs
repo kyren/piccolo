@@ -1,4 +1,4 @@
-use std::{
+use core::{
     hash::{Hash, Hasher},
     mem,
 };

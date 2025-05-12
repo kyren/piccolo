@@ -1,4 +1,5 @@
-use std::{char, fmt};
+use alloc::vec::Vec;
+use core::{char, fmt};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -919,7 +920,7 @@ fn get_reserved_word_token<S>(word: &[u8]) -> Option<Token<S>> {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use alloc::rc::Rc;
 
     use crate::compiler::interning::BasicInterner;
 

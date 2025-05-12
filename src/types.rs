@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug};
+use core::fmt::{self, Debug};
 
 use gc_arena::Collect;
 

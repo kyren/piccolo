@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use crate::{Callback, CallbackReturn, Context, FromValue, String, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
@@ -100,7 +102,7 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
     ctx.set_global("string", string);
 }
 
-fn sub(string: &[u8], i: i64, j: Option<i64>) -> Result<&[u8], std::num::TryFromIntError> {
+fn sub(string: &[u8], i: i64, j: Option<i64>) -> Result<&[u8], core::num::TryFromIntError> {
     let i = match i {
         i if i > 0 => i.saturating_sub(1).try_into()?,
         0 => 0,

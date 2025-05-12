@@ -1,4 +1,5 @@
-use std::{cell::RefCell, marker::PhantomData, mem, rc::Rc};
+use alloc::rc::Rc;
+use core::{cell::RefCell, marker::PhantomData, mem};
 
 use thiserror::Error;
 

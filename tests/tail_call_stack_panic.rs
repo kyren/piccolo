@@ -1,4 +1,6 @@
-use std::string::String as StdString;
+extern crate alloc;
+
+use alloc::string::String as StdString;
 
 use piccolo::{meta_ops::MetaCallError, Closure, Executor, Lua};
 

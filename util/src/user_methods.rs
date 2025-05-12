@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use gc_arena::{arena::Root, barrier, Collect, Rootable, Static};
 use piccolo::{

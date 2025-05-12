@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher};
+use core::hash::{Hash, Hasher};
 
 use gc_arena::Collect;
 
