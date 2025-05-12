@@ -139,7 +139,11 @@ impl<S: AsRef<[u8]>> Constant<S> {
                     Some(Self::Integer(d))
                 }
             }
-            (a, b) => Some(Self::Number((a.to_number()? / b.to_number()?).floor())),
+            (a, b) => {
+                let a = a.to_number()?;
+                let b = b.to_number()?;
+                Some(Self::Number(crate::math::floor(a / b)))
+            }
         }
     }
 
@@ -163,7 +167,12 @@ impl<S: AsRef<[u8]>> Constant<S> {
 
     /// This operation always returns a Number, even when called with Integer arguments.
     pub fn exponentiate(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Number(self.to_number()?.powf(rhs.to_number()?)))
+        let lhs = self.to_number()?;
+        let rhs = rhs.to_number()?;
+        // This may fail if the environment doesn't support powf, as is
+        // currently the case for #![no_std] builds.  This will cause an
+        // operator error when evaluating.
+        Some(Self::Number(crate::math::try_powf(lhs, rhs)?))
     }
 
     pub fn negate(&self) -> Option<Self> {

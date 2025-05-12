@@ -29,10 +29,14 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     load_baseline(ctx, math);
     load_cmp(ctx, math);
 
+    #[cfg(feature = "rng")]
     load_random(ctx, math);
 
-    load_trig(ctx, math);
-    load_float(ctx, math);
+    #[cfg(feature = "std")]
+    {
+        load_trig(ctx, math);
+        load_float(ctx, math);
+    }
 
     ctx.set_global("math", math);
 }
@@ -188,6 +192,7 @@ pub fn load_cmp<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     );
 }
 
+#[cfg(feature = "std")]
 pub fn load_float<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     fn to_int(v: Value) -> Value {
         if let Some(i) = v.to_integer() {
@@ -258,6 +263,7 @@ pub fn load_float<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     );
 }
 
+#[cfg(feature = "std")]
 pub fn load_trig<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     math.set_field(
         ctx,
@@ -290,6 +296,7 @@ pub fn load_trig<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     math.set_field(ctx, "tan", callback("tan", &ctx, |_, v: f64| Some(v.tan())));
 }
 
+#[cfg(feature = "rng")]
 pub fn load_random<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     use alloc::rc::Rc;
     use core::cell::RefCell;
