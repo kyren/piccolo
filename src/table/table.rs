@@ -1,6 +1,6 @@
-use std::{
+use core::{
     hash::{Hash, Hasher},
-    i64, mem,
+    mem,
 };
 
 use gc_arena::{lock::RefLock, Collect, Gc, Mutation};

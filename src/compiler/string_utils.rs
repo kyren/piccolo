@@ -1,4 +1,4 @@
-use std::{
+use core::{
     fmt::{self, Write as _},
     str,
 };

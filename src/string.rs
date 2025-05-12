@@ -1,5 +1,7 @@
-use std::{
-    alloc, fmt,
+use alloc::boxed::Box;
+use core::{
+    alloc::Layout,
+    fmt,
     hash::{BuildHasherDefault, Hash, Hasher},
     ops, slice,
     str::{self, Utf8Error},
@@ -145,10 +147,8 @@ impl<'gc> String<'gc> {
             match self.0.buffer {
                 Buffer::Indirect(p) => &(*p),
                 Buffer::Inline(len) => {
-                    let layout = alloc::Layout::new::<StringInner>();
-                    let (_, offset) = layout
-                        .extend(alloc::Layout::array::<u8>(len).unwrap())
-                        .unwrap();
+                    let layout = Layout::new::<StringInner>();
+                    let (_, offset) = layout.extend(Layout::array::<u8>(len).unwrap()).unwrap();
                     let data =
                         (Gc::as_ptr(self.0) as *const u8).offset(offset as isize) as *const u8;
                     slice::from_raw_parts(data, len)

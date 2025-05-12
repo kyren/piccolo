@@ -1,4 +1,6 @@
-use std::{cell::RefCell, f64, rc::Rc};
+use alloc::{format, rc::Rc};
+use core::array;
+use core::cell::RefCell;
 
 use gc_arena::Mutation;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -89,7 +91,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
     math.set_field(
         ctx,
         "exp",
-        callback("exp", &ctx, |_, v: f64| Some(f64::consts::E.powf(v))),
+        callback("exp", &ctx, |_, v: f64| Some(core::f64::consts::E.powf(v))),
     );
 
     math.set_field(
@@ -226,7 +228,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
         callback("modf", &ctx, |_, f: f64| Some((f as i64, f % 1.0))),
     );
 
-    math.set_field(ctx, "pi", Value::Number(f64::consts::PI));
+    math.set_field(ctx, "pi", Value::Number(core::f64::consts::PI));
 
     math.set_field(
         ctx,
@@ -276,7 +278,7 @@ pub fn load_math<'gc>(ctx: Context<'gc>) {
                     (Some(high), Some(low)) => {
                         let high_bytes = high.to_ne_bytes();
                         let low_bytes = low.to_ne_bytes();
-                        let seed = std::array::from_fn(|idx| {
+                        let seed = array::from_fn(|idx| {
                             let idx_mod_16 = idx % 16;
                             if idx_mod_16 >= 8 {
                                 high_bytes[idx_mod_16 - 8]

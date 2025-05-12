@@ -1,7 +1,6 @@
-use std::{
-    char, fmt,
-    io::{self, Read},
-};
+use alloc::vec::Vec;
+use core::{char, fmt};
+use std::io::{Error, ErrorKind, Read};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -243,7 +242,7 @@ pub enum LexError {
     #[error("malformed number")]
     BadNumber,
     #[error("IO Error: {0}")]
-    IOError(#[from] io::Error),
+    IOError(#[from] Error),
 }
 
 /// A 0-indexed line number of the current source input.
@@ -867,7 +866,7 @@ where
                         self.peek_buffer.push(c[0]);
                     }
                     Err(e) => {
-                        if e.kind() != io::ErrorKind::Interrupted {
+                        if e.kind() != ErrorKind::Interrupted {
                             self.source = None;
                             return Err(LexError::IOError(e));
                         }
@@ -945,7 +944,7 @@ fn get_reserved_word_token<S>(word: &[u8]) -> Option<Token<S>> {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use alloc::rc::Rc;
 
     use crate::compiler::interning::BasicInterner;
 

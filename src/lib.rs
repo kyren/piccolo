@@ -1,3 +1,8 @@
+#![no_std]
+
+extern crate alloc;
+extern crate std;
+
 pub mod any;
 pub mod async_callback;
 pub mod callback;

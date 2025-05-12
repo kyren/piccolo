@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use piccolo::{opcode::OpCode, Callback, Closure, String, Table, Thread, UserData, Value};
 

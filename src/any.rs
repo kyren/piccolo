@@ -1,4 +1,4 @@
-use std::{
+use core::{
     any::TypeId,
     fmt,
     hash::{Hash, Hasher},

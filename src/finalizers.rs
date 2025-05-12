@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use gc_arena::{lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation};
 
 use crate::{thread::ThreadInner, Thread};
