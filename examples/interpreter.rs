@@ -1,5 +1,5 @@
-use std::error::Error as StdError;
 use std::fs::File;
+use std::{error::Error as StdError, io::Read};
 
 use clap::{crate_description, crate_name, crate_version, Arg, Command};
 use rustyline::DefaultEditor;
@@ -107,10 +107,12 @@ fn main() -> Result<(), Box<dyn StdError>> {
     }
 
     let file_name = matches.get_one::<String>("file").unwrap();
-    let file = io::buffered_read(File::open(file_name)?)?;
+    let mut file = io::buffered_read(File::open(file_name)?)?;
+    let mut source = Vec::new();
+    file.read_to_end(&mut source)?;
 
     let executor = lua.try_enter(|ctx| {
-        let closure = Closure::load(ctx, Some(file_name.as_str()), file)?;
+        let closure = Closure::load(ctx, Some(file_name.as_str()), &source)?;
         Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
     })?;
 

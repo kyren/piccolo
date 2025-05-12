@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fs::File};
+use std::{error::Error as StdError, fs::File, io::Read};
 
 use clap::{crate_description, crate_name, crate_version, Arg, Command};
 
@@ -75,15 +75,17 @@ fn main() -> Result<(), Box<dyn StdError>> {
         )
         .get_matches();
 
-    let file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
+    let mut file = io::buffered_read(File::open(matches.get_one::<String>("file").unwrap())?)?;
+    let mut source = Vec::new();
+    file.read_to_end(&mut source)?;
 
     let mut interner = BasicInterner::default();
 
     if matches.contains_id("parse") {
-        let chunk = compiler::parse_chunk(file, &mut interner)?;
+        let chunk = compiler::parse_chunk(&source, &mut interner)?;
         println!("{:#?}", chunk);
     } else {
-        let chunk = compiler::parse_chunk(file, &mut interner)?;
+        let chunk = compiler::parse_chunk(&source, &mut interner)?;
         let prototype = compiler::compile_chunk(&chunk, &mut interner)?;
         print_function(&prototype, 0);
     }
