@@ -1,4 +1,4 @@
-use std::{io::Read, ops, rc::Rc};
+use std::{ops, rc::Rc};
 
 use thiserror::Error;
 
@@ -306,9 +306,8 @@ pub struct ParseError {
     pub line_number: LineNumber,
 }
 
-pub fn parse_chunk<R, S>(source: R, interner: S) -> Result<Chunk<S::String>, ParseError>
+pub fn parse_chunk<S>(source: &[u8], interner: S) -> Result<Chunk<S::String>, ParseError>
 where
-    R: Read,
     S: StringInterner,
 {
     Parser {
@@ -319,16 +318,13 @@ where
     .parse_chunk()
 }
 
-struct Parser<R, S: StringInterner> {
-    lexer: Lexer<R, S>,
+struct Parser<'a, S: StringInterner> {
+    lexer: Lexer<'a, S>,
     read_buffer: Vec<LineAnnotated<Token<S::String>>>,
     recursion_guard: Rc<()>,
 }
 
-impl<R, S: StringInterner> Parser<R, S>
-where
-    R: Read,
-{
+impl<S: StringInterner> Parser<'_, S> {
     fn parse_chunk(&mut self) -> Result<Chunk<S::String>, ParseError> {
         let block = self.parse_block()?;
         if !self.look_ahead(0)?.is_none() {
