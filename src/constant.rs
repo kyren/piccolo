@@ -139,7 +139,11 @@ impl<S: AsRef<[u8]>> Constant<S> {
                     Some(Self::Integer(d))
                 }
             }
-            (a, b) => Some(Self::Number((a.to_number()? / b.to_number()?).floor())),
+            (a, b) => {
+                let a = a.to_number()?;
+                let b = b.to_number()?;
+                Some(Self::Number(floor(a / b)))
+            }
         }
     }
 
@@ -163,7 +167,16 @@ impl<S: AsRef<[u8]>> Constant<S> {
 
     /// This operation always returns a Number, even when called with Integer arguments.
     pub fn exponentiate(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Number(self.to_number()?.powf(rhs.to_number()?)))
+        #[cfg(feature = "std")]
+        {
+            Some(Self::Number(self.to_number()?.powf(rhs.to_number()?)))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            // TODO: use libm directly?
+            let _ = rhs;
+            None
+        }
     }
 
     pub fn negate(&self) -> Option<Self> {
@@ -256,6 +269,29 @@ impl<S: AsRef<[u8]>> Constant<S> {
             (Self::String(a), Self::String(b)) => a.as_ref() <= b.as_ref(),
             _ => return None,
         })
+    }
+}
+
+#[cfg(feature = "std")]
+fn floor(res: f64) -> f64 {
+    res.floor()
+}
+
+#[cfg(not(feature = "std"))]
+fn floor(res: f64) -> f64 {
+    if !res.is_normal() {
+        return res;
+    }
+    let abs = res.abs();
+    if abs > (1i64 << f64::MANTISSA_DIGITS) as f64 {
+        return res;
+    }
+    if res >= 0.0 {
+        res as i64 as f64
+    } else {
+        let fract = res % 1.0;
+        let rem_euclid = if fract < 0.0 { fract + 1.0 } else { fract };
+        res - rem_euclid
     }
 }
 
