@@ -16,14 +16,14 @@ license = "MIT"
 repository = "https://github.com/kyren/piccolo"
 
 [workspace.dependencies]
-ahash = "0.8"
-allocator-api2 = "0.2"
-anyhow = "1.0"
+ahash = { version = "0.8", default-features = false, features = ["runtime-rng"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+anyhow = { version = "1.0.87", default-features = false }
 gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "5a7534b883b703f23cfb8c3cfdf033460aa77ea9", features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
-rand = { version = "0.8", features = ["small_rng"] }
-serde = "1.0"
-thiserror = "1.0"
+rand = { version = "0.8", default-features = false, features = ["small_rng", "std"] }
+serde = { version = "1.0", default-features = false, features = ["alloc"] }
+thiserror = { version = "2.0", default-features = false }
 
 piccolo = { path = "./", version = "0.3.3" }
 
