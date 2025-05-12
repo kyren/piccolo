@@ -208,8 +208,21 @@ impl<'h, 'f, F: for<'a> Freeze<'a>> ScopeGuard for FreezeGuard<'h, 'f, F> {
             //
             // This is impossible to trigger safely without calling the private `set` / `unset`
             // methods manually.
-            eprintln!("freeze lock held during `FreezeGuard::unset`, aborting!");
-            std::process::abort()
+
+            struct PanicOnDrop;
+            impl Drop for PanicOnDrop {
+                fn drop(&mut self) {
+                    panic!("intentionally double panicking to abort.")
+                }
+            }
+
+            #[allow(unused)]
+            let guard = PanicOnDrop;
+
+            panic!("freeze lock held during `FreezeGuard::unset`, aborting!");
+
+            #[allow(unreachable_code)]
+            drop(guard);
         }
     }
 }
