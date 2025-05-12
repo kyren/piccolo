@@ -1,4 +1,5 @@
-use std::{
+use alloc::format;
+use core::{
     cell::RefMut,
     hash::{Hash, Hasher},
 };

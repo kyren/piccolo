@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use gc_arena::{DynamicRoot, DynamicRootSet, Mutation, Rootable};
 

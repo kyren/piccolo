@@ -1,4 +1,5 @@
-use std::{
+use alloc::vec::Vec;
+use core::{
     iter,
     ops::{Bound, Index, IndexMut, RangeBounds},
     slice::{self, SliceIndex},
