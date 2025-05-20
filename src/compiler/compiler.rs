@@ -1,10 +1,9 @@
-use std::{
-    collections::{hash_map, VecDeque},
-    fmt, iter, mem,
-};
+use alloc::{boxed::Box, collections::VecDeque, vec, vec::Vec};
+use core::{fmt, iter, mem};
+use hashbrown::hash_map;
 
-use ahash::HashMap;
 use gc_arena::Collect;
+use hashbrown::HashMap;
 use thiserror::Error;
 
 use crate::{

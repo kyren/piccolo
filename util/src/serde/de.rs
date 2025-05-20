@@ -1,4 +1,5 @@
-use std::fmt;
+use alloc::string::{String, ToString};
+use core::fmt;
 
 use piccolo::{table::NextValue, Table, Value};
 use serde::de;

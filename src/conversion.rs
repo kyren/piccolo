@@ -1,4 +1,5 @@
-use std::{array, iter, ops, string::String as StdString};
+use alloc::{borrow::ToOwned, string::String as StdString, vec::Vec};
+use core::{array, iter, ops};
 
 use crate::{
     Callback, Closure, Context, Function, String, Table, Thread, TypeError, UserData, Value,

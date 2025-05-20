@@ -1,7 +1,4 @@
-use std::{
-    hash::{Hash, Hasher},
-    io::Read,
-};
+use core::hash::{Hash, Hasher};
 
 use allocator_api2::{boxed, vec, SliceExt};
 use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
@@ -115,7 +112,7 @@ impl<'gc> FunctionPrototype<'gc> {
     pub fn compile(
         ctx: Context<'gc>,
         source_name: &str,
-        source: impl Read,
+        source: &[u8],
     ) -> Result<FunctionPrototype<'gc>, CompilerError> {
         #[derive(Copy, Clone)]
         struct Interner<'gc>(Context<'gc>);
@@ -261,7 +258,7 @@ impl<'gc> Closure<'gc> {
     pub fn load(
         ctx: Context<'gc>,
         name: Option<&str>,
-        source: impl Read,
+        source: &[u8],
     ) -> Result<Closure<'gc>, CompilerError> {
         Self::load_with_env(ctx, name, source, ctx.globals())
     }
@@ -270,7 +267,7 @@ impl<'gc> Closure<'gc> {
     pub fn load_with_env(
         ctx: Context<'gc>,
         name: Option<&str>,
-        source: impl Read,
+        source: &[u8],
         env: Table<'gc>,
     ) -> Result<Closure<'gc>, CompilerError> {
         let proto = FunctionPrototype::compile(ctx, name.unwrap_or("<anonymous>"), source)?;

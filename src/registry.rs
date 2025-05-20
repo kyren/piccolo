@@ -1,4 +1,4 @@
-use std::{any::TypeId, hash::BuildHasherDefault};
+use core::{any::TypeId, hash::BuildHasherDefault};
 
 use ahash::AHasher;
 use gc_arena::{

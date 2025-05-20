@@ -16,16 +16,16 @@ license = "MIT"
 repository = "https://github.com/kyren/piccolo"
 
 [workspace.dependencies]
-ahash = "0.8"
-allocator-api2 = "0.2"
-anyhow = "1.0"
-gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "5a7534b883b703f23cfb8c3cfdf033460aa77ea9", features = ["allocator-api2", "hashbrown"] }
+ahash = { version = "0.8", default-features = false }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+anyhow = { version = "1.0.87", default-features = false }
+gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "4d526347a9b625c29e16f7165fd998615e51c52a", default-features = false, features = ["allocator-api2", "hashbrown"] }
 hashbrown = { version = "0.14", features = ["raw"] }
-rand = { version = "0.8", features = ["small_rng"] }
-serde = "1.0"
-thiserror = "1.0"
+rand = { version = "0.8", default-features = false, features = ["small_rng"] }
+serde = { version = "1.0", default-features = false, features = ["alloc"] }
+thiserror = { version = "2.0", default-features = false }
 
-piccolo = { path = "./", version = "0.3.3" }
+piccolo = { path = "./", version = "0.3.3", default-features = false }
 
 [package]
 name = "piccolo"
@@ -43,9 +43,15 @@ allocator-api2.workspace = true
 anyhow.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
-rand.workspace = true
 thiserror.workspace = true
+
+rand = { workspace = true, optional = true }
 
 [dev-dependencies]
 clap = { version = "4.5", features = ["cargo"] }
 rustyline = "14.0"
+
+[features]
+default = ["std", "rng"]
+rng = ["dep:rand", "ahash/runtime-rng"]
+std = ["rand?/std"]

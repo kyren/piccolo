@@ -1,11 +1,11 @@
-use std::{
+use alloc::rc::Rc;
+use core::{
     cell::Cell,
     future::{poll_fn, Future},
     marker::PhantomData,
     mem,
     pin::Pin,
     ptr,
-    rc::Rc,
     task::{self, Poll, RawWaker, RawWakerVTable, Waker},
 };
 

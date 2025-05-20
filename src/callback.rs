@@ -1,4 +1,4 @@
-use std::{
+use core::{
     fmt,
     hash::{Hash, Hasher},
     pin::Pin,

@@ -1,3 +1,10 @@
+#![no_std]
+
+extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
+
 pub mod any;
 pub mod async_callback;
 pub mod callback;
@@ -9,7 +16,6 @@ pub mod error;
 pub mod finalizers;
 pub mod fuel;
 pub mod function;
-pub mod io;
 pub mod lua;
 pub mod meta_ops;
 pub mod opcode;
@@ -23,6 +29,11 @@ pub mod thread;
 pub mod types;
 pub mod userdata;
 pub mod value;
+
+#[cfg(feature = "std")]
+pub mod io;
+
+mod math;
 
 pub use self::{
     async_callback::{async_sequence, SequenceReturn},

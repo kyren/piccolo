@@ -1,4 +1,8 @@
-use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc};
+use alloc::{
+    string::{String as StdString, ToString},
+    sync::Arc,
+};
+use core::{error::Error as StdError, fmt};
 
 use gc_arena::{Collect, Gc, Rootable};
 use thiserror::Error;
