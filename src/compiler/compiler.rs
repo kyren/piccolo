@@ -985,30 +985,45 @@ impl<S: StringInterner> Compiler<S> {
             Ok(())
         }
 
-        for i in 0..val_len {
-            let expr = self.expression(&assignment.values[i])?;
+        if target_len == 1 {
+            if let Some(val) = assignment.values.first() {
+                let expr = self.expression(val)?;
+                assign(self, &assignment.targets[0], expr)?;
+            }
 
-            if i >= target_len {
+            for i in 1..val_len {
+                let expr = self.expression(&assignment.values[i])?;
                 let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
                 self.current_function.register_allocator.free(reg);
-            } else if i == val_len - 1 {
-                let top = self.current_function.register_allocator.stack_top();
+            }
+        } else {
+            let mut registers = Vec::with_capacity(target_len);
+            for i in 0..val_len {
+                let expr = self.expression(&assignment.values[i])?;
 
-                let targets_left = (1 + target_len - val_len)
-                    .try_into()
-                    .map_err(|_| CompileErrorKind::Registers)?;
-                let results = self.expr_push_count(expr, targets_left)?;
+                if i >= target_len {
+                    let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                    self.current_function.register_allocator.free(reg);
+                } else if i == val_len - 1 {
+                    // The last expression in the assign list may have multiple values
+                    let remaining_targets =
+                        u8::try_from(target_len - i).map_err(|_| CompileErrorKind::Registers)?;
+                    let results = self.expr_push_count(expr, remaining_targets)?;
 
-                for j in 0..targets_left {
-                    let expr = ExprDescriptor::Variable(VariableDescriptor::Local(RegisterIndex(
-                        results.0 + j,
-                    )));
-                    assign(self, &assignment.targets[val_len - 1 + j as usize], expr)?;
+                    registers.extend((0..remaining_targets).map(|j| RegisterIndex(results.0 + j)));
+                } else {
+                    let reg = self.expr_discharge(expr, ExprDestination::AllocateNew)?;
+                    registers.push(reg);
                 }
+            }
 
-                self.current_function.register_allocator.pop_to(top);
-            } else {
-                assign(self, &assignment.targets[i], expr)?;
+            for (reg, target) in registers.into_iter().zip(&assignment.targets).rev() {
+                assign(
+                    self,
+                    target,
+                    ExprDescriptor::Variable(VariableDescriptor::Local(reg)),
+                )?;
+                self.current_function.register_allocator.free(reg);
             }
         }
 

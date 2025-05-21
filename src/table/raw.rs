@@ -18,8 +18,16 @@ pub enum InvalidTableKey {
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum NextValue<'gc> {
+    /// The key provided to [`Table::next`] was found and there is an element present after it.
+    ///
+    /// As a special case, this may be returned if the key provided to [`Table::next`] was an
+    /// integer that is a valid index into the array part of the table, *whether or not* that key
+    /// is actually present. This matches the behavior of PUC-Rio Lua and is necessary to allow any
+    /// field to be set to `Nil` during iteration.
     Found { key: Value<'gc>, value: Value<'gc> },
+    /// The key provided to [`Table::next`] was found and it was the last entry in iteration order.
     Last,
+    /// The key provided to [`Table::next`] did not match an existing entry.
     NotFound,
 }
 
@@ -238,6 +246,9 @@ impl<'gc> RawTable<'gc> {
         Ok(Value::Nil)
     }
 
+    /// Returns a 'border' for this table.
+    ///
+    /// See [`Table::length`] for a more full description of what this means.
     pub fn length(&self) -> i64 {
         // Binary search for a border. Entry at max must be Nil, min must be 0 or entry at min must
         // be != Nil.
@@ -304,9 +315,17 @@ impl<'gc> RawTable<'gc> {
         }
     }
 
+    /// Returns the next key for this table in iteration order following the given `key`.
+    ///
+    /// See [`Table::next`] for a more full description of what this means.
     pub fn next(&self, key: Value<'gc>) -> NextValue<'gc> {
+        // `start_index` being set means that we will scan for the first non-nil entry greater than
+        // or equal to this (0-based) index.
         let start_index = if let Some(index_key) = to_array_index(key) {
             if index_key < self.array.len() {
+                // In order to satisfy our rule that setting an entry to `Nil` is always allowed
+                // during iteration, we must allow being provided a missing entry in the array
+                // portion.
                 Some(index_key + 1)
             } else {
                 None
@@ -319,6 +338,9 @@ impl<'gc> RawTable<'gc> {
 
         let raw_table = self.map.raw_table();
 
+        // If `start_index` is set, then we search the array portion past `start_index` for any
+        // non-nil values, otherwise we return the first entry with a non-nil value in the map
+        // portion (which always follows the array portion in our iteration order).
         if let Some(start_index) = start_index {
             for i in start_index..self.array.len() {
                 if !self.array[i].is_nil() {
@@ -337,7 +359,7 @@ impl<'gc> RawTable<'gc> {
                             return NextValue::Found {
                                 key: key
                                     .live_key()
-                                    .expect("dead keys must have Nil values")
+                                    .expect("dead keys must have e values")
                                     .to_value(),
                                 value,
                             };
@@ -349,6 +371,8 @@ impl<'gc> RawTable<'gc> {
             return NextValue::Last;
         }
 
+        // Otherwise, if we were given a key present in the map portion, we return the key following
+        // it in bucket order.
         if let Ok(table_key) = CanonicalKey::new(key) {
             if let Some(bucket) = raw_table.find(self.hash_builder.hash_one(table_key), |(k, _)| {
                 k.eq(table_key)

@@ -40,7 +40,7 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | ⚫️    | `load(chunk[, chunkname, mode, env])`                          |                                                                                                                                        |       |
 | ⚫️    | `loadfile([filename, mode, env])`                              |                                                                                                                                        |       |
 | 🔵     | `next(table [, index])`                                        |                                                                                                                                        |       |
-| 🟡     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as piccolo returns `iter, table`. Also how `__pairs` works differs[^1]             |       |
+| 🔵     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as piccolo returns `iter, table`.                                                  |       |
 | 🔵     | `pcall(f, args...)`                                            |                                                                                                                                        |       |
 | 🔵     | `print(args...)`                                               |                                                                                                                                        |       |
 | ⚫️    | `rawequal(v1, v2)`                                             |                                                                                                                                        |       |
@@ -55,18 +55,6 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵    | `_VERSION` (value)                                             |                                                                                                                                        |       |
 | ⚫️    | `warn(msg, args...)`                                           |                                                                                                                                        |       |
 | ⚫️    | `xpcall(f, msgh, args...)`                                     |                                                                                                                                        |       |
-
-[^1]:
-    Given the code below, calling `pairs(t)`, PUC-Lua returns `1, 2, 3`, while piccolo returns `1, 2, 3, 4`. The documentation from PUC-Lua does state that `pairs(t)` "\[where] `t` has a metamethod `__pairs`, calls it with `t` as argument and returns the first three results from the call."
-
-    ```lua
-    t = {}
-    tm = {}
-    function tm:__pairs()
-    	return 1, 2, 3, 4
-    end
-    setmetatable(t, tm)
-    ```
 
 [^0]: Hedging b/c I don't know PUC-Lua like my reverse palm, and there might be differing behaviors if you poke both implementations to death, but that's not what this document is for.
 
@@ -101,8 +89,8 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 | Status | Function                          | Differences | Notes |
 | ------ | --------------------------------- | ----------- | ----- |
-| ⚫️️   | `byte(s[, i, j])`                 |             |       |
-| ⚫️️   | `char(args...)`                   |             |       |
+| 🔵   | `byte(s[, i, j])`                 |             |       |
+| 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
 | ⚫️️   | `find(s, pattern[, init, plain])` |             |       |
 | ⚫️️   | `format(formatstring, args...)`   |             |       |

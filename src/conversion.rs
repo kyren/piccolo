@@ -210,6 +210,7 @@ macro_rules! impl_int_from {
     ($($i:ty),* $(,)?) => {
         $(
             impl<'gc> FromValue<'gc> for $i {
+                #[allow(irrefutable_let_patterns)]
                 fn from_value(
                     _: Context<'gc>,
                     value: Value<'gc>,
