@@ -363,11 +363,20 @@ pub(super) fn run_vm<'gc>(
                 match meta_ops::concat_many(ctx, values)? {
                     ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
                     ConcatMetaResult::Call(func) => {
-                        lua_frame.call_meta_function_in_place(
+                        // lua_frame.call_meta_function_in_place(
+                        //     ctx,
+                        //     func,
+                        //     base,
+                        //     count,
+                        //     MetaReturn::Register(dest),
+                        // )?;
+                        // TODO: debug why in_place corrupts the stack on errors
+                        // (see tests/scripts/pcall_concat_err.lua)
+                        let args = values.to_owned();
+                        lua_frame.call_meta_function(
                             ctx,
                             func,
-                            base,
-                            count,
+                            &args,
                             MetaReturn::Register(dest),
                         )?;
                         break;
