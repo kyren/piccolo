@@ -81,7 +81,7 @@ impl<'gc> Value<'gc> {
         ValueDisplay(self)
     }
 
-    pub fn debug_shallow(self) -> impl fmt::Debug + 'gc {
+    pub(crate) fn debug_shallow(self) -> impl fmt::Debug + 'gc {
         struct ShallowDebug<'gc>(Value<'gc>);
 
         impl<'gc> fmt::Debug for ShallowDebug<'gc> {
@@ -110,7 +110,7 @@ impl<'gc> Value<'gc> {
                     Value::UserData(u) => {
                         write!(fmt, "Value::UserData({:p})", Gc::as_ptr(u.into_inner()))
                     }
-                    v => write!(fmt, "{v:?}"),
+                    v => write!(fmt, "{:?}", v),
                 }
             }
         }
@@ -256,5 +256,36 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
 impl<'gc> From<UserData<'gc>> for Value<'gc> {
     fn from(v: UserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gc_arena::Rootable;
+
+    use crate::table::Table;
+    use crate::{Lua, UserData};
+
+    #[test]
+    fn recursive_table_debug() {
+        let mut lua = Lua::core();
+        lua.enter(|ctx| {
+            let table = Table::new(&ctx);
+            table.set_field(ctx, "a", table);
+            println!("{:?}", table);
+
+            let table2 = Table::new(&ctx);
+            table2.set_metatable(&ctx, Some(table2));
+            println!("{:?}", table2);
+
+            let combined = Table::new(&ctx);
+            combined.set_field(ctx, "a", combined);
+            combined.set_metatable(&ctx, Some(combined));
+            println!("{:?}", combined);
+
+            let user = UserData::new::<Rootable![()]>(&ctx, ());
+            user.set_metatable(&ctx, Some(combined));
+            println!("{:?}", user);
+        });
     }
 }
