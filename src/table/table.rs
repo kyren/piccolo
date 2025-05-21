@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     hash::{Hash, Hasher},
     i64, mem,
 };
@@ -210,9 +211,44 @@ impl<'gc> IntoIterator for Table<'gc> {
     }
 }
 
-#[derive(Debug, Collect)]
+#[derive(Collect)]
 #[collect(no_drop)]
 pub struct TableState<'gc> {
     pub raw_table: RawTable<'gc>,
     pub metatable: Option<Table<'gc>>,
+}
+
+impl<'gc> fmt::Debug for TableState<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct ShallowTableDebug<'gc>(Table<'gc>);
+
+        impl<'gc> fmt::Debug for ShallowTableDebug<'gc> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let t = self.0.into_inner().borrow();
+                match t.metatable {
+                    Some(meta) => f
+                        .debug_struct("TableState")
+                        .field("raw_table", &t.raw_table)
+                        .field(
+                            "metatable",
+                            &Some(format_args!("Table({:p})", Gc::as_ptr(meta.into_inner()))),
+                        )
+                        .finish(),
+                    None => f
+                        .debug_struct("TableState")
+                        .field("raw_table", &t.raw_table)
+                        .field("metatable", &None::<()>)
+                        .finish(),
+                }
+            }
+        }
+
+        f.debug_struct("TableState")
+            .field("raw_table", &self.raw_table)
+            .field(
+                "metatable",
+                &self.metatable.as_ref().map(|t| ShallowTableDebug(*t)),
+            )
+            .finish()
+    }
 }
