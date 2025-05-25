@@ -58,6 +58,10 @@ pub enum CompileErrorKind {
     JumpOverflow,
     #[error("cannot assign to a const variable")]
     AssignToConst,
+    #[error("multiple to-be-closed variables in local list")]
+    MultipleClose,
+    #[error("close attribute currently unsupported")]
+    CloseUnsupported,
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -866,6 +870,16 @@ impl<S: StringInterner> Compiler<S> {
     ) -> Result<(), CompileErrorKind> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
+
+        let close_count = (local_statement.names.iter())
+            .filter(|(_, attr)| attr.is_close())
+            .count();
+
+        if close_count > 1 {
+            return Err(CompileErrorKind::MultipleClose);
+        } else if close_count == 1 {
+            return Err(CompileErrorKind::CloseUnsupported);
+        }
 
         if local_statement.values.is_empty() {
             let count = name_len

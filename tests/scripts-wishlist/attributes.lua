@@ -29,6 +29,6 @@ do
     -- Also, any local statement is only allowed to have
     -- 1 close attribute variable
 end
--- TODO This assert should pass when
--- close attribute is implemented
--- assert(ccount == 2)
+
+-- This assert should pass when the close attribute is implemented
+assert(ccount == 2)
