@@ -3,7 +3,7 @@ use std::{
     fmt, iter, mem,
 };
 
-use ahash::{HashMap, HashSet, HashSetExt as _};
+use ahash::HashMap;
 use gc_arena::Collect;
 use thiserror::Error;
 
@@ -11,8 +11,8 @@ use crate::{
     constant::IdenticalConstant,
     opcode::{OpCode, Operation, RCIndex},
     types::{
-        ConstantIndex16, ConstantIndex8, LocalAttribute, Opt254, PrototypeIndex, RegisterIndex,
-        UpValueDescriptor, UpValueIndex, VarCount,
+        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
+        UpValueIndex, VarCount,
     },
     Constant,
 };
@@ -27,10 +27,10 @@ use super::{
     parser::{
         AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
         ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
-        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalFunctionStatement,
-        LocalStatement, PrimaryExpression, RecordKey, RepeatStatement, ReturnStatement,
-        SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
-        UnaryOperator, WhileStatement,
+        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalAttributes,
+        LocalFunctionStatement, LocalStatement, PrimaryExpression, RecordKey, RepeatStatement,
+        ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
+        TableConstructor, UnaryOperator, WhileStatement,
     },
     register_allocator::RegisterAllocator,
     StringInterner,
@@ -56,8 +56,6 @@ pub enum CompileErrorKind {
     JumpLocal,
     #[error("jump offset overflow")]
     JumpOverflow,
-    #[error("invalid attribute")]
-    InvalidAttribute,
     #[error("cannot assign to a const variable")]
     AssignToConst,
 }
@@ -192,7 +190,7 @@ struct CompilerFunction<S> {
 
     has_varargs: bool,
     fixed_params: u8,
-    locals: Vec<(S, RegisterIndex, HashSet<LocalAttribute>)>,
+    locals: Vec<(S, RegisterIndex, LocalAttributes)>,
 
     blocks: Vec<BlockDescriptor>,
     unique_jump_id: u64,
@@ -263,8 +261,8 @@ enum ExprDescriptor<S> {
 
 #[derive(Debug)]
 enum VariableDescriptor<S> {
-    Local(RegisterIndex, HashSet<LocalAttribute>),
-    UpValue(UpValueIndex, HashSet<LocalAttribute>),
+    Local(RegisterIndex, LocalAttributes),
+    UpValue(UpValueIndex, LocalAttributes),
     Global(S),
 }
 
@@ -595,7 +593,7 @@ impl<S: StringInterner> Compiler<S> {
                     .ok_or(CompileErrorKind::Registers)?;
                 self.current_function
                     .locals
-                    .push((name.clone(), loop_var, HashSet::new()));
+                    .push((name.clone(), loop_var, LocalAttributes::NONE));
 
                 self.block_statements(body)?;
                 self.exit_block()?;
@@ -679,7 +677,7 @@ impl<S: StringInterner> Compiler<S> {
                     self.current_function.locals.push((
                         names[i as usize].clone(),
                         RegisterIndex(names_reg.0 + i),
-                        HashSet::new(),
+                        LocalAttributes::NONE,
                     ));
                 }
 
@@ -825,7 +823,7 @@ impl<S: StringInterner> Compiler<S> {
         } else {
             match self.find_variable(name.clone())? {
                 VariableDescriptor::Local(dest, attrs) => {
-                    if attrs.contains(&LocalAttribute::Const) {
+                    if attrs.is_const() {
                         return Err(CompileErrorKind::AssignToConst);
                     }
 
@@ -835,7 +833,7 @@ impl<S: StringInterner> Compiler<S> {
                     )?;
                 }
                 VariableDescriptor::UpValue(dest, attrs) => {
-                    if attrs.contains(&LocalAttribute::Const) {
+                    if attrs.is_const() {
                         return Err(CompileErrorKind::AssignToConst);
                     }
 
@@ -869,20 +867,6 @@ impl<S: StringInterner> Compiler<S> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
-        fn validate_attribute<S: AsRef<[u8]>>(
-            attribute_decl: &Option<S>,
-        ) -> Result<HashSet<LocalAttribute>, CompileErrorKind> {
-            match attribute_decl.as_ref().map(|s| s.as_ref()) {
-                None => Ok(HashSet::new()),
-                Some(b"const") => Ok(HashSet::from_iter([LocalAttribute::Const])),
-                Some(b"close") => Ok(HashSet::from_iter([
-                    LocalAttribute::Const,
-                    LocalAttribute::Close,
-                ])),
-                _ => Err(CompileErrorKind::InvalidAttribute),
-            }
-        }
-
         if local_statement.values.is_empty() {
             let count = name_len
                 .try_into()
@@ -900,7 +884,7 @@ impl<S: StringInterner> Compiler<S> {
                 self.current_function.locals.push((
                     name.clone(),
                     RegisterIndex(dest.0 + i as u8),
-                    validate_attribute(attr)?,
+                    *attr,
                 ));
             }
         } else {
@@ -921,17 +905,15 @@ impl<S: StringInterner> Compiler<S> {
                         self.current_function.locals.push((
                             name.clone(),
                             RegisterIndex(dest.0 + j),
-                            validate_attribute(attr)?,
+                            *attr,
                         ));
                     }
                 } else {
                     let reg = self.expr_discharge(expr, ExprDestination::PushNew)?;
                     let (name, attr) = &local_statement.names[i];
-                    self.current_function.locals.push((
-                        name.clone(),
-                        reg,
-                        validate_attribute(attr)?,
-                    ));
+                    self.current_function
+                        .locals
+                        .push((name.clone(), reg, *attr));
                 }
             }
         }
@@ -992,13 +974,13 @@ impl<S: StringInterner> Compiler<S> {
             match target {
                 AssignmentTarget::Name(name) => match this.find_variable(name.clone())? {
                     VariableDescriptor::Local(dest, attrs) => {
-                        if attrs.contains(&LocalAttribute::Const) {
+                        if attrs.is_const() {
                             return Err(CompileErrorKind::AssignToConst);
                         }
                         this.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
                     VariableDescriptor::UpValue(dest, attrs) => {
-                        if attrs.contains(&LocalAttribute::Const) {
+                        if attrs.is_const() {
                             return Err(CompileErrorKind::AssignToConst);
                         }
                         let (source, source_is_temp) = this.expr_any_register(expr)?;
@@ -1066,7 +1048,7 @@ impl<S: StringInterner> Compiler<S> {
                 assign(
                     self,
                     target,
-                    ExprDescriptor::Variable(VariableDescriptor::Local(reg, HashSet::new())),
+                    ExprDescriptor::Variable(VariableDescriptor::Local(reg, LocalAttributes::NONE)),
                 )?;
                 self.current_function.register_allocator.free(reg);
             }
@@ -1086,9 +1068,11 @@ impl<S: StringInterner> Compiler<S> {
             .register_allocator
             .push(1)
             .ok_or(CompileErrorKind::Registers)?;
-        self.current_function
-            .locals
-            .push((local_function.name.clone(), dest, HashSet::new()));
+        self.current_function.locals.push((
+            local_function.name.clone(),
+            dest,
+            LocalAttributes::NONE,
+        ));
 
         let proto = self.new_prototype(
             FunctionRef::Named(
@@ -1435,7 +1419,7 @@ impl<S: StringInterner> Compiler<S> {
                 if name.as_ref() == get_function(self, i).upvalues[j].0.as_ref() {
                     // Functions are never const unless assigned in a
                     // local statement, so synthesize a non-const
-                    let attrs = HashSet::new();
+                    let attrs = LocalAttributes::NONE;
                     let upvalue_index =
                         UpValueIndex(j.try_into().map_err(|_| CompileErrorKind::UpValues)?);
                     if i == current_function {
@@ -2517,7 +2501,7 @@ impl<S: Clone> CompilerFunction<S> {
             function.locals.push((
                 parameters[i as usize].clone(),
                 RegisterIndex(i),
-                HashSet::new(),
+                LocalAttributes::NONE,
             ));
         }
         Ok(function)
