@@ -1,5 +1,4 @@
-//! These tests test the Debug output of errors
-//! and the standard output of scripts
+//! These tests test the output of errors and the standard output of scripts.
 //!
 //! they look like
 //! ```
@@ -200,8 +199,9 @@ fn test_goldenscripts() {
                                 continue;
                             }
                             Err(e) => {
-                                if format!("{e:?}\n") != expected_output {
-                                    eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{e:?}");
+                                let formatted_error = format!("{e}\n");
+                                if formatted_error != expected_output {
+                                    eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{formatted_error}");
                                     failed_scripts.push(path);
                                     continue;
                                 }

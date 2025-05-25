@@ -96,8 +96,8 @@ pub enum Error<'gc> {
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Lua(err) => write!(f, "lua error: {}", err),
-            Error::Runtime(err) => write!(f, "runtime error: {}", err),
+            Error::Lua(err) => write!(f, "lua error: {err}"),
+            Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }
 }
@@ -193,7 +193,7 @@ impl fmt::Display for StaticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StaticError::Lua(err) => write!(f, "lua error: {err}"),
-            StaticError::Runtime(err) => write!(f, "runtime error: {err}"),
+            StaticError::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }
 }
