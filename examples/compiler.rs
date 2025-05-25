@@ -3,7 +3,7 @@ use std::{error::Error as StdError, fs::File};
 use clap::{crate_description, crate_name, crate_version, Arg, Command};
 
 use piccolo::{
-    compiler::{self, interning::BasicInterner, CompiledPrototype},
+    compiler::{self, interning::BasicInterner, string_utils::debug_utf8_lossy, CompiledPrototype},
     io,
 };
 
@@ -21,7 +21,7 @@ fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>, depth: usize)
                 "{indent}{}: {:?}",
                 i,
                 c.as_string_ref()
-                    .map_string(|s| String::from_utf8_lossy(s.as_ref()))
+                    .map_string(|s| debug_utf8_lossy(s.as_ref()))
             );
         }
     }

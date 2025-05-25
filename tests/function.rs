@@ -1,7 +1,7 @@
-use piccolo::{Callback, CallbackReturn, Executor, Function, Lua, StaticError, Variadic};
+use piccolo::{Callback, CallbackReturn, Executor, ExternError, Function, Lua, Variadic};
 
 #[test]
-fn function_compose_bind() -> Result<(), StaticError> {
+fn function_compose_bind() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     let executor = lua.try_enter(|ctx| {

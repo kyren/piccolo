@@ -295,7 +295,7 @@ pub enum ParseErrorKind {
     ExpressionNotStatement,
     #[error("recursion limit reached")]
     RecursionLimit,
-    #[error(transparent)]
+    #[error("lexer error")]
     LexError(#[from] LexError),
 }
 
@@ -1182,7 +1182,7 @@ fn binary_priority(operator: BinaryOperator) -> (u8, u8) {
         BinaryOperator::ShiftLeft => (7, 7),
         BinaryOperator::ShiftRight => (7, 7),
         BinaryOperator::Concat => (9, 8),
-        BinaryOperator::NotEqual => (10, 10),
+        BinaryOperator::NotEqual => (3, 3),
         BinaryOperator::Equal => (3, 3),
         BinaryOperator::LessThan => (3, 3),
         BinaryOperator::LessEqual => (3, 3),

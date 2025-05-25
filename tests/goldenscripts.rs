@@ -31,6 +31,7 @@ mod collected_print {
     };
     use std::{
         io::{Cursor, Write},
+        pin::Pin,
         sync::mpsc::Sender,
     };
 
@@ -66,7 +67,7 @@ mod collected_print {
 
     impl<'gc> Sequence<'gc> for PrintSeq<'gc> {
         fn poll(
-            &mut self,
+            mut self: Pin<&mut Self>,
             ctx: Context<'gc>,
             _exec: Execution<'gc, '_>,
             mut stack: Stack<'gc, '_>,
@@ -88,13 +89,14 @@ mod collected_print {
                         } else {
                             buf.write_all(b"\t")?;
                         }
-                        v.display(&mut buf)?;
+                        write!(buf, "{}", v.display())?;
                     }
                     MetaResult::Call(call) => {
+                        let bottom = stack.len();
                         stack.extend(call.args);
                         return Ok(SequencePoll::Call {
                             function: call.function,
-                            is_tail: false,
+                            bottom,
                         });
                     }
                 }
@@ -179,8 +181,7 @@ fn test_goldenscripts() {
                                 )))
                             },
                         ),
-                    )
-                    .unwrap();
+                    );
                 });
 
                 let result = lua

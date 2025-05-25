@@ -1,13 +1,73 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 
 use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
-    Sequence, SequencePoll, Stack, String, Table, Value, Variadic,
+    Sequence, SequencePoll, Stack, String, Table, TypeError, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
+    ctx.set_global(
+        "tonumber",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            use crate::compiler::string_utils::{read_neg, trim_whitespace};
+
+            fn extract_number_data(bytes: &[u8]) -> (&[u8], bool) {
+                let bytes = trim_whitespace(bytes);
+                let (is_neg, bytes) = read_neg(bytes);
+                (bytes, is_neg)
+            }
+
+            if stack.is_empty() {
+                Err("Missing argument(s) to tonumber".into_value(ctx))?
+            } else if stack.len() == 1 || stack.get(1).is_nil() {
+                let prenumber = stack.consume::<Value>(ctx)?;
+                stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
+            } else {
+                let (value, base) = stack.consume::<(Value, i64)>(ctx)?;
+                // Avoid implicitly converting value to a string
+                let s = match value {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(TypeError {
+                            expected: "string",
+                            found: value.type_name(),
+                        }
+                        .into())
+                    }
+                };
+                if !(2..=36).contains(&base) {
+                    Err("base out of range".into_value(ctx))?;
+                }
+                let (bytes, is_neg) = extract_number_data(s.as_bytes());
+                let result = bytes
+                    .iter()
+                    .map(|b| {
+                        if b.is_ascii_digit() {
+                            Some((*b - b'0') as i64)
+                        } else if b.is_ascii_lowercase() {
+                            Some((*b - b'a') as i64 + 10)
+                        } else if b.is_ascii_uppercase() {
+                            Some((*b - b'A') as i64 + 10)
+                        } else {
+                            None
+                        }
+                    })
+                    .try_fold(0i64, |acc, v| match v {
+                        Some(v) if v < base => Some(acc.wrapping_mul(base).wrapping_add(v)),
+                        _ => None,
+                    })
+                    .map(|v| if is_neg { v.wrapping_neg() } else { v });
+                stack.replace(ctx, result.map(Value::Integer).unwrap_or(Value::Nil));
+            }
+
+            Ok(CallbackReturn::Return)
+        }),
+    );
+
     ctx.set_global(
         "tostring",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
@@ -30,14 +90,12 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 }
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "error",
         Callback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "assert",
@@ -50,40 +108,11 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Err(stack.get(1).into())
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "pcall",
         Callback::from_fn(&ctx, move |ctx, _, mut stack| {
-            #[derive(Collect)]
-            #[collect(require_static)]
-            struct PCall;
-
-            impl<'gc> Sequence<'gc> for PCall {
-                fn poll(
-                    &mut self,
-                    _ctx: Context<'gc>,
-                    _exec: Execution<'gc, '_>,
-                    mut stack: Stack<'gc, '_>,
-                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    stack.push_front(Value::Boolean(true));
-                    Ok(SequencePoll::Return)
-                }
-
-                fn error(
-                    &mut self,
-                    ctx: Context<'gc>,
-                    _exec: Execution<'gc, '_>,
-                    error: Error<'gc>,
-                    mut stack: Stack<'gc, '_>,
-                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    stack.clear();
-                    stack.extend([Value::Boolean(false), error.to_value(ctx)]);
-                    Ok(SequencePoll::Return)
-                }
-            }
-
             let function = meta_ops::call(ctx, stack.get(0))?;
             stack.pop_front();
             Ok(CallbackReturn::Call {
@@ -91,8 +120,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 then: Some(BoxSequence::new(&ctx, PCall)),
             })
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "type",
@@ -104,8 +132,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Ok(CallbackReturn::Return)
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "select",
@@ -133,18 +160,25 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
             Err("Bad argument to 'select'".into_value(ctx).into())
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "rawget",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (table, key): (Table, Value) = stack.consume(ctx)?;
-            stack.replace(ctx, table.get(ctx, key));
+            stack.replace(ctx, table.get_value(ctx, key));
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
+
+    ctx.set_global(
+        "rawlen",
+        Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let table: Table = stack.consume(ctx)?;
+            stack.replace(ctx, table.length());
+            Ok(CallbackReturn::Return)
+        }),
+    );
 
     ctx.set_global(
         "rawset",
@@ -154,8 +188,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, table);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "getmetatable",
@@ -169,8 +202,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     .into())
             }
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "setmetatable",
@@ -180,8 +212,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, t);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     fn next<'gc>(
         ctx: Context<'gc>,
@@ -201,7 +232,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         Ok(CallbackReturn::Return)
     });
 
-    ctx.set_global("next", next).unwrap();
+    ctx.set_global("next", next);
 
     ctx.set_global(
         "pairs",
@@ -212,13 +243,32 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 Value::UserData(u) => u.metatable(),
                 _ => None,
             } {
-                let pairs = mt.get(ctx, MetaMethod::Pairs);
+                /// Simply matches PUC-Rio behavior of returning the first 3 elements of the __pairs metacall
+                #[derive(Collect)]
+                #[collect(require_static)]
+                struct PairsReturn;
+
+                impl<'gc> Sequence<'gc> for PairsReturn {
+                    fn poll(
+                        self: Pin<&mut Self>,
+                        _ctx: Context<'gc>,
+                        _exec: Execution<'gc, '_>,
+                        mut stack: Stack<'gc, '_>,
+                    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+                        if stack.len() > 3 {
+                            stack.drain(3..);
+                        }
+                        Ok(SequencePoll::Return)
+                    }
+                }
+
+                let pairs = mt.get_value(ctx, MetaMethod::Pairs);
                 if !pairs.is_nil() {
                     let function = meta_ops::call(ctx, pairs)?;
                     stack.replace(ctx, (table, Value::Nil));
                     return Ok(CallbackReturn::Call {
                         function,
-                        then: None,
+                        then: Some(BoxSequence::new(&ctx, PairsReturn)),
                     });
                 }
             }
@@ -226,12 +276,11 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.replace(ctx, (*next, table));
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     let inext = Callback::from_fn(&ctx, |ctx, _, mut stack| {
         let (table, index): (Value, Option<i64>) = stack.consume(ctx)?;
-        let next_index = index.unwrap_or(0) + 1;
+        let next_index = index.unwrap_or(0).wrapping_add(1);
         Ok(match meta_ops::index(ctx, table, next_index.into())? {
             MetaResult::Value(v) => {
                 if !v.is_nil() {
@@ -246,7 +295,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
                 impl<'gc> Sequence<'gc> for INext {
                     fn poll(
-                        &mut self,
+                        self: Pin<&mut Self>,
                         _ctx: Context<'gc>,
                         _exec: Execution<'gc, '_>,
                         mut stack: Stack<'gc, '_>,
@@ -273,8 +322,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.into_front(ctx, *inext);
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
 
     ctx.set_global(
         "collectgarbage",
@@ -290,6 +338,34 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             }
             Ok(CallbackReturn::Return)
         }),
-    )
-    .unwrap();
+    );
+
+    ctx.set_global("_VERSION", "piccolo");
+}
+
+#[derive(Collect)]
+#[collect(require_static)]
+pub struct PCall;
+
+impl<'gc> Sequence<'gc> for PCall {
+    fn poll(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        stack.into_front(ctx, true);
+        Ok(SequencePoll::Return)
+    }
+
+    fn error(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        error: Error<'gc>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        stack.replace(ctx, (false, error));
+        Ok(SequencePoll::Return)
+    }
 }

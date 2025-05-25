@@ -6,9 +6,9 @@ use thiserror::Error;
 
 use crate::{
     compiler::{FunctionRef, LineNumber},
-    BadThreadMode, CallbackReturn, Context, Error, FromMultiValue, Fuel, Function,
-    FunctionPrototype, IntoMultiValue, SequencePoll, Stack, String, Thread, ThreadMode, Value,
-    Variadic,
+    thread::BadThreadMode,
+    CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll,
+    Stack, String, Thread, ThreadMode, Variadic,
 };
 
 use super::{
@@ -49,20 +49,21 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 
 /// The entry-point for the Lua VM.
 ///
-/// `Executor` runs networks of `Threads` that may depend on each other and may pass control
-/// back and forth. All Lua code that is run is done so directly or indirectly by calling
-/// `Executor::step`.
+/// An `Executor` runs networks of [`Thread`]s that may depend on each other and may yield
+/// control back and forth. All Lua code that is run is done so directly or indirectly by calling
+/// [`Executor::step`].
 ///
 /// # Panics
 ///
-/// `Executor` is dangerous to use from within any kind of Lua callback. It has no protection
-/// against re-entrency, and calling `Executor` methods from within a callback that it is running
+/// `Executor` is dangerous to use from within any kind of Lua callback. It it not meant to be used
+/// reentrantly, and calling `Executor` methods from within a callback which it itself is running
 /// (other than `Executor::mode`) will panic. Additionally, even if an independent `Executor` is
-/// used, cross-thread upvalues may cause a panic if one `Executor` is used within the other.
+/// used, cross-thread upvalues can still panic when an inner `Executor` tries to change an upvalue
+/// in a `Thread` that an outer `Executor` has mutably borrowed.
 ///
 /// `Executor`s are not meant to be used from callbacks at all, and `Executor`s should not be
-/// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that it is run on
-/// the same executor calling the callback.
+/// nested. Instead, use the normal mechanisms for callbacks to call Lua code so that everything is
+/// run by the same `Executor` which called the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Executor<'gc>(Gc<'gc, ExecutorInner<'gc>>);
@@ -82,20 +83,30 @@ impl<'gc> Hash for Executor<'gc> {
 }
 
 impl<'gc> Executor<'gc> {
+    const VM_GRANULARITY: u32 = 64;
+
     const FUEL_PER_CALLBACK: i32 = 8;
     const FUEL_PER_SEQ_STEP: i32 = 4;
     const FUEL_PER_STEP: i32 = 4;
 
     /// Creates a new `Executor` with a stopped main thread.
     pub fn new(ctx: Context<'gc>) -> Self {
-        Self::run(&ctx, Thread::new(ctx))
+        Self::run(&ctx, Thread::new(ctx)).unwrap()
     }
 
-    /// Creates a new `Executor` that begins running the given thread.
-    pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Self {
-        let mut thread_stack = vec::Vec::new_in(MetricsAlloc::new(mc));
-        thread_stack.push(thread);
-        Executor(Gc::new(mc, RefLock::new(ExecutorState { thread_stack })))
+    /// Creates a new `Executor` that begins running the given [`Thread`].
+    ///
+    /// If the provided thread is in [`ThreadMode::Waiting`] or [`ThreadMode::Running`], then this
+    /// will return `Err(BadThreadMode)`.
+    pub fn run(mc: &Mutation<'gc>, thread: Thread<'gc>) -> Result<Self, BadThreadMode> {
+        let executor = Executor(Gc::new(
+            mc,
+            RefLock::new(ExecutorState {
+                thread_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
+            }),
+        ));
+        executor.reset(mc, thread)?;
+        Ok(executor)
     }
 
     pub fn from_inner(inner: Gc<'gc, ExecutorInner<'gc>>) -> Self {
@@ -106,7 +117,7 @@ impl<'gc> Executor<'gc> {
         self.0
     }
 
-    /// Creates a new `Executor` with a new `Thread` running the given function.
+    /// Creates a new `Executor` with a new [`Thread`] running the given function.
     pub fn start(
         ctx: Context<'gc>,
         function: Function<'gc>,
@@ -114,7 +125,7 @@ impl<'gc> Executor<'gc> {
     ) -> Self {
         let thread = Thread::new(ctx);
         thread.start(ctx, function, args).unwrap();
-        Self::run(&ctx, thread)
+        Self::run(&ctx, thread).unwrap()
     }
 
     pub fn mode(self) -> ExecutorMode {
@@ -127,7 +138,18 @@ impl<'gc> Executor<'gc> {
                     ThreadMode::Result => ExecutorMode::Result,
                     ThreadMode::Normal => ExecutorMode::Normal,
                     ThreadMode::Suspended => ExecutorMode::Suspended,
-                    ThreadMode::Waiting => unreachable!(),
+                    ThreadMode::Waiting => {
+                        // This should never happen from correct `Executor` / `Thread` use. In
+                        // order for the main thread to be in the `Waiting` state with no thread
+                        // being waited on, that thread must have been used by two `Executor`s at
+                        // one time, and the *other* `Executor` must have moved it to the `Waiting`
+                        // state.
+                        //
+                        // We call this `ExecutorMode::Normal` since the main thread is still not in
+                        // some completed state, but calling `Executor::step` will never exit this
+                        // mode (only forever return a `BadThreadMode` error).
+                        ExecutorMode::Normal
+                    }
                     ThreadMode::Running => ExecutorMode::Running,
                 }
             }
@@ -144,10 +166,26 @@ impl<'gc> Executor<'gc> {
     /// Returns `false` if the method has exhausted its fuel, but there is more work to
     /// do, and returns `true` if no more progress can be made. If `true` is returned, then
     /// `Executor::mode()` will no longer be `ExecutorMode::Normal`.
-    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// If a `Thread` being run by this `Executor` in an unexpected state, then this method will
+    /// return a `BadThreadMode` error.
+    ///
+    /// If a `Thread` is currently in the stack of threads being run by an `Executor`, then that
+    /// `Executor` expects to be the sole instance driving those threads to completion and expects
+    /// that the state of these threads will not be externally changed. This rule cannot be violated
+    /// from Lua or by normal `Rust` callbacks, only by purposefully misusing an `Executor` from
+    /// Rust by, for example, setting a single `Thread` as the main thread of two `Executor`s
+    /// at once or by manually calling [`Thread::take_result`] or [`Thread::reset`] on a thread
+    /// currently being run by an `Executor`.
+    ///
+    /// This is considered "outside" of a normal Lua or Rust callback error since it cannot be
+    /// triggered solely by Lua and likely indicates a bug in some Rust code, so this error is
+    /// delivered through a separate channel than normal results and cannot be caught by Lua.
+    pub fn step(self, ctx: Context<'gc>, fuel: &mut Fuel) -> Result<bool, BadThreadMode> {
         let mut state = self.0.borrow_mut(&ctx);
-
-        loop {
+        Ok(loop {
             let mut top_thread = state.thread_stack.last().copied().unwrap();
             let mut res_thread = None;
             match top_thread.mode() {
@@ -155,14 +193,21 @@ impl<'gc> Executor<'gc> {
                 ThreadMode::Running => {
                     panic!("`Executor` thread already running")
                 }
-                _ => {
-                    if state.thread_stack.len() == 1 {
-                        break true;
-                    } else {
-                        state.thread_stack.pop();
-                        res_thread = Some(top_thread);
-                        top_thread = state.thread_stack.last().copied().unwrap();
-                    }
+                ThreadMode::Stopped | ThreadMode::Suspended | ThreadMode::Result
+                    if state.thread_stack.len() == 1 =>
+                {
+                    break true;
+                }
+                ThreadMode::Result => {
+                    state.thread_stack.pop();
+                    res_thread = Some(top_thread);
+                    top_thread = state.thread_stack.last().copied().unwrap();
+                }
+                mode => {
+                    return Err(BadThreadMode {
+                        found: mode,
+                        expected: None,
+                    })
                 }
             }
 
@@ -170,167 +215,136 @@ impl<'gc> Executor<'gc> {
             let top_state = &mut *top_state;
             if let Some(res_thread) = res_thread {
                 let mode = top_state.mode();
-                if mode == ThreadMode::Waiting {
-                    assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
-                    match res_thread.mode() {
-                        ThreadMode::Result => {
-                            // Take the results from the res_thread and return them to our top
-                            // thread.
-                            let mut res_state = res_thread.into_inner().borrow_mut(&ctx);
-                            match res_state.take_result() {
-                                Ok(vals) => {
-                                    let bottom = top_state.stack.len();
-                                    top_state.stack.extend(vals);
-                                    top_state.return_to(bottom);
-                                }
-                                Err(err) => {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                }
-                            }
-                            drop(res_state);
-                        }
-                        ThreadMode::Normal => unreachable!(),
-                        res_mode => top_state.frames.push(Frame::Error(
-                            BadThreadMode {
-                                found: res_mode,
-                                expected: None,
-                            }
-                            .into(),
-                        )),
-                    }
-                } else {
-                    // Shenanigans have happened and the upper thread has had its state externally
+                if mode != ThreadMode::Waiting {
+                    // Shenanigans have happened and the top thread has had its state externally
                     // changed.
-                    top_state.frames.push(Frame::Error(
-                        BadThreadMode {
-                            found: mode,
-                            expected: None,
-                        }
-                        .into(),
-                    ));
+                    return Err(BadThreadMode {
+                        found: mode,
+                        expected: Some(ThreadMode::Waiting),
+                    });
                 }
+
+                assert!(matches!(top_state.frames.pop(), Some(Frame::WaitThread)));
+                assert_eq!(res_thread.mode(), ThreadMode::Result);
+                // Take the results from the res_thread and return them to our top
+                // thread.
+                let mut res_state = res_thread.into_inner().borrow_mut(&ctx);
+                match res_state.take_result() {
+                    Ok(vals) => {
+                        let bottom = top_state.stack.len();
+                        top_state.stack.extend(vals);
+                        top_state.return_to(bottom);
+                    }
+                    Err(err) => {
+                        top_state.frames.push(Frame::Error(err.into()));
+                    }
+                }
+                drop(res_state);
             }
 
             if top_state.mode() == ThreadMode::Normal {
-                fn callback_ret<'gc>(
+                fn do_yield<'gc>(
                     ctx: Context<'gc>,
                     thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
                     top_state: &mut ThreadState<'gc>,
-                    stack_bottom: usize,
-                    ret: CallbackReturn<'gc>,
+                    to_thread: Option<Thread<'gc>>,
+                    bottom: usize,
                 ) {
-                    match ret {
-                        CallbackReturn::Return => {
-                            top_state.return_to(stack_bottom);
-                        }
-                        CallbackReturn::Sequence(sequence) => {
-                            top_state.frames.push(Frame::Sequence {
-                                bottom: stack_bottom,
-                                sequence,
-                                pending_error: None,
-                            });
-                        }
-                        CallbackReturn::Yield { to_thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
+                    if let Some(to_thread) = to_thread {
+                        if let Err(err) =
+                            to_thread.resume(ctx, Variadic(top_state.stack.drain(bottom..)))
+                        {
+                            top_state.frames.push(Frame::Error(err.into()));
+                        } else {
                             top_state.frames.push(Frame::Yielded);
-
-                            if let Some(to_thread) = to_thread {
-                                if let Err(err) = to_thread
-                                    .resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                                {
-                                    top_state.frames.push(Frame::Error(err.into()));
-                                } else {
-                                    thread_stack.pop();
-                                    thread_stack.push(to_thread);
-                                }
-                            } else {
-                                top_state.frames.push(Frame::Result {
-                                    bottom: stack_bottom,
-                                });
-                            }
+                            thread_stack.pop();
+                            thread_stack.push(to_thread);
                         }
-                        CallbackReturn::Call { function, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.push_call(stack_bottom, function);
-                        }
-                        CallbackReturn::Resume { thread, then } => {
-                            if let Some(sequence) = then {
-                                top_state.frames.push(Frame::Sequence {
-                                    bottom: stack_bottom,
-                                    sequence,
-                                    pending_error: None,
-                                });
-                            }
-                            top_state.frames.push(Frame::WaitThread);
-
-                            if let Err(err) =
-                                thread.resume(ctx, Variadic(top_state.stack.drain(stack_bottom..)))
-                            {
-                                top_state.frames.push(Frame::Error(err.into()));
-                            } else {
-                                if top_state.frames.len() == 1 {
-                                    // Tail call the thread resume if we can.
-                                    assert!(matches!(top_state.frames[0], Frame::WaitThread));
-                                    thread_stack.pop();
-                                }
-                                thread_stack.push(thread);
-                            }
-                        }
+                    } else {
+                        top_state.frames.push(Frame::Yielded);
+                        top_state.frames.push(Frame::Result { bottom });
                     }
                 }
 
-                fn execution<'gc, 'a>(
-                    executor: Executor<'gc>,
-                    fuel: &'a mut Fuel,
-                    threads: &'a [Thread<'gc>],
-                    top_frames: &'a [Frame<'gc>],
-                    top_stack: &[Value<'gc>],
-                ) -> Execution<'gc, 'a> {
-                    let upper_lua = match top_frames.last() {
-                        Some(Frame::Lua { bottom, pc, .. }) => {
-                            let Value::Function(Function::Closure(closure)) = top_stack[*bottom]
-                            else {
-                                panic!("lua frame bottom is not a closure");
-                            };
-                            // Subtract 1 instruction for the Call opcode.
-                            Some((closure.prototype(), *pc - 1))
+                fn do_resume<'gc>(
+                    ctx: Context<'gc>,
+                    thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+                    top_state: &mut ThreadState<'gc>,
+                    thread: Thread<'gc>,
+                    bottom: usize,
+                ) {
+                    if let Err(err) = thread.resume(ctx, Variadic(top_state.stack.drain(bottom..)))
+                    {
+                        top_state.frames.push(Frame::Error(err.into()));
+                    } else {
+                        // Tail call the thread resume if we can.
+                        if top_state.frames.is_empty() {
+                            thread_stack.pop();
+                        } else {
+                            top_state.frames.push(Frame::WaitThread);
                         }
-                        _ => None,
-                    };
-
-                    Execution {
-                        executor,
-                        fuel,
-                        upper_lua,
-                        threads,
+                        thread_stack.push(thread);
                     }
                 }
 
                 match top_state.frames.pop() {
                     Some(Frame::Callback { bottom, callback }) => {
                         fuel.consume(Self::FUEL_PER_CALLBACK);
-                        let exec = execution(
-                            self,
-                            fuel,
-                            &state.thread_stack,
-                            &top_state.frames,
-                            &top_state.stack,
-                        );
-                        match callback.call(ctx, exec, Stack::new(&mut top_state.stack, bottom)) {
-                            Ok(ret) => {
-                                callback_ret(ctx, &mut state.thread_stack, top_state, bottom, ret)
+                        match callback.call(
+                            ctx,
+                            Execution {
+                                executor: self,
+                                fuel,
+                                threads: &state.thread_stack,
+                                upper_frames: &top_state.frames,
+                            },
+                            Stack::new(&mut top_state.stack, bottom),
+                        ) {
+                            Ok(CallbackReturn::Return) => {
+                                top_state.return_to(bottom);
+                            }
+                            Ok(CallbackReturn::Sequence(sequence)) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                            }
+                            Ok(CallbackReturn::Call { function, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                top_state.push_call(bottom, function);
+                            }
+                            Ok(CallbackReturn::Yield { to_thread, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    bottom,
+                                );
+                            }
+                            Ok(CallbackReturn::Resume { thread, then }) => {
+                                if let Some(sequence) = then {
+                                    top_state.frames.push(Frame::Sequence {
+                                        bottom,
+                                        sequence,
+                                        pending_error: None,
+                                    });
+                                }
+                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
                             }
                             Err(err) => {
                                 top_state.stack.truncate(bottom);
@@ -345,48 +359,89 @@ impl<'gc> Executor<'gc> {
                     }) => {
                         fuel.consume(Self::FUEL_PER_SEQ_STEP);
 
-                        let exec = execution(
-                            self,
+                        let exec = Execution {
+                            executor: self,
                             fuel,
-                            &state.thread_stack,
-                            &top_state.frames,
-                            &top_state.stack,
-                        );
-                        let fin = if let Some(err) = pending_error {
+                            threads: &state.thread_stack,
+                            upper_frames: &top_state.frames,
+                        };
+                        let poll = if let Some(err) = pending_error {
                             sequence.error(ctx, exec, err, Stack::new(&mut top_state.stack, bottom))
                         } else {
                             sequence.poll(ctx, exec, Stack::new(&mut top_state.stack, bottom))
                         };
 
-                        match fin {
-                            Ok(ret) => callback_ret(
-                                ctx,
-                                &mut state.thread_stack,
-                                top_state,
-                                bottom,
-                                match ret {
-                                    SequencePoll::Pending => CallbackReturn::Sequence(sequence),
-                                    SequencePoll::Return => CallbackReturn::Return,
-                                    SequencePoll::Yield { to_thread, is_tail } => {
-                                        CallbackReturn::Yield {
-                                            to_thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Call { function, is_tail } => {
-                                        CallbackReturn::Call {
-                                            function,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                    SequencePoll::Resume { thread, is_tail } => {
-                                        CallbackReturn::Resume {
-                                            thread,
-                                            then: if is_tail { None } else { Some(sequence) },
-                                        }
-                                    }
-                                },
-                            ),
+                        match poll {
+                            Ok(SequencePoll::Pending) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                            }
+                            Ok(SequencePoll::Return) => {
+                                top_state.return_to(bottom);
+                            }
+                            Ok(SequencePoll::Call {
+                                function,
+                                bottom: rel_bottom,
+                            }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                top_state.push_call(bottom + rel_bottom, function);
+                            }
+                            Ok(SequencePoll::TailCall(function)) => {
+                                top_state.push_call(bottom, function);
+                            }
+                            Ok(SequencePoll::Yield {
+                                to_thread,
+                                bottom: rel_bottom,
+                            }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    bottom + rel_bottom,
+                                );
+                            }
+                            Ok(SequencePoll::TailYield(to_thread)) => {
+                                do_yield(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    to_thread,
+                                    bottom,
+                                );
+                            }
+                            Ok(SequencePoll::Resume {
+                                thread,
+                                bottom: rel_bottom,
+                            }) => {
+                                top_state.frames.push(Frame::Sequence {
+                                    bottom,
+                                    sequence,
+                                    pending_error: None,
+                                });
+                                do_resume(
+                                    ctx,
+                                    &mut state.thread_stack,
+                                    top_state,
+                                    thread,
+                                    bottom + rel_bottom,
+                                );
+                            }
+                            Ok(SequencePoll::TailResume(thread)) => {
+                                do_resume(ctx, &mut state.thread_stack, top_state, thread, bottom);
+                            }
                             Err(error) => {
                                 top_state.stack.truncate(bottom);
                                 top_state.frames.push(Frame::Error(error));
@@ -396,14 +451,12 @@ impl<'gc> Executor<'gc> {
                     Some(frame @ Frame::Lua { .. }) => {
                         top_state.frames.push(frame);
 
-                        const VM_GRANULARITY: u32 = 64;
-
                         let lua_frame = LuaFrame {
                             state: top_state,
                             thread: top_thread,
                             fuel,
                         };
-                        match run_vm(ctx, lua_frame, VM_GRANULARITY) {
+                        match run_vm(ctx, lua_frame, Self::VM_GRANULARITY) {
                             Err(err) => {
                                 top_state.frames.push(Frame::Error(err.into()));
                             }
@@ -426,16 +479,16 @@ impl<'gc> Executor<'gc> {
                             Frame::Sequence {
                                 bottom,
                                 sequence,
-                                pending_error: error,
+                                pending_error,
                             } => {
-                                assert!(error.is_none());
+                                assert!(pending_error.is_none());
                                 top_state.frames.push(Frame::Sequence {
                                     bottom,
                                     sequence,
                                     pending_error: Some(err),
                                 });
                             }
-                            _ => top_state.frames.push(Frame::Error(err)),
+                            frame => panic!("tried to wind through improper frame {frame:?}"),
                         }
                     }
                     _ => panic!("tried to step invalid frame type"),
@@ -447,7 +500,7 @@ impl<'gc> Executor<'gc> {
             if !fuel.should_continue() {
                 break false;
             }
-        }
+        })
     }
 
     pub fn take_result<T: FromMultiValue<'gc>>(
@@ -506,12 +559,21 @@ impl<'gc> Executor<'gc> {
         state.thread_stack[0].reset(mc).unwrap();
     }
 
-    /// Reset this `Executor` entirely and begins running the given thread. Equivalent to
-    /// creating a new executor with `Executor::run`.
-    pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) {
+    /// Reset this `Executor` entirely and begins running the given thread.
+    ///
+    /// This is equivalent to creating a new executor with `Executor::run`.
+    pub fn reset(self, mc: &Mutation<'gc>, thread: Thread<'gc>) -> Result<(), BadThreadMode> {
+        let thread_mode = thread.mode();
+        if matches!(thread_mode, ThreadMode::Waiting | ThreadMode::Running) {
+            return Err(BadThreadMode {
+                found: thread_mode,
+                expected: Some(ThreadMode::Normal),
+            });
+        }
         let mut state = self.0.borrow_mut(mc);
         state.thread_stack.clear();
         state.thread_stack.push(thread);
+        Ok(())
     }
 
     /// Reset this `Executor` entirely and begins running the given function, equivalent to
@@ -533,11 +595,20 @@ impl<'gc> Executor<'gc> {
 pub struct Execution<'gc, 'a> {
     executor: Executor<'gc>,
     fuel: &'a mut Fuel,
-    upper_lua: Option<(Gc<'gc, FunctionPrototype<'gc>>, usize)>,
     threads: &'a [Thread<'gc>],
+    upper_frames: &'a [Frame<'gc>],
 }
 
 impl<'gc, 'a> Execution<'gc, 'a> {
+    pub fn reborrow(&mut self) -> Execution<'gc, '_> {
+        Execution {
+            executor: self.executor,
+            fuel: self.fuel,
+            threads: self.threads,
+            upper_frames: self.upper_frames,
+        }
+    }
+
     /// The fuel parameter passed to `Executor::step`.
     pub fn fuel(&mut self) -> &mut Fuel {
         self.fuel
@@ -563,12 +634,20 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// If the function we are returning to is Lua, returns information about the Lua frame we are
     /// returning to.
     pub fn upper_lua_frame(&self) -> Option<UpperLuaFrame<'gc>> {
-        self.upper_lua.map(|(proto, pc)| UpperLuaFrame {
+        let Some(Frame::Lua { closure, pc, .. }) = self.upper_frames.last() else {
+            return None;
+        };
+
+        let proto = closure.prototype();
+        // The previously executed instruction for a callback should be the Call opcode.
+        let call_opcode = *pc - 1;
+
+        Some(UpperLuaFrame {
             chunk_name: proto.chunk_name,
             current_function: proto.reference,
             current_line: match proto
                 .opcode_line_numbers
-                .binary_search_by_key(&pc, |(opi, _)| *opi)
+                .binary_search_by_key(&call_opcode, |(opi, _)| *opi)
             {
                 Ok(i) => proto.opcode_line_numbers[i].1,
                 Err(i) => proto.opcode_line_numbers[i - 1].1,

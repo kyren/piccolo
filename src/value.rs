@@ -1,9 +1,12 @@
-use std::{f64, fmt, i64, io, string::String as StdString};
+use std::{f64, fmt, i64};
 
 use gc_arena::{Collect, Gc};
 
 use crate::{Callback, Closure, Constant, Function, String, Table, Thread, UserData};
 
+/// The single data type for all Lua variables.
+///
+/// Every value that Lua code can manipulate directly is ultimately a some kind of `Value`.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
@@ -38,23 +41,81 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    pub fn display<W: io::Write>(self, mut w: W) -> Result<(), io::Error> {
-        match self {
-            Value::Nil => write!(w, "nil"),
-            Value::Boolean(b) => write!(w, "{}", b),
-            Value::Integer(i) => write!(w, "{}", i),
-            Value::Number(f) => write!(w, "{}", f),
-            Value::String(s) => w.write_all(s.as_bytes()),
-            Value::Table(t) => write!(w, "<table {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::Function(Function::Closure(c)) => {
-                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+    /// Returns a proxy object which can display any `Value`.
+    ///
+    /// [`Value::Nil`] is printed as "nil", booleans, integers, and numbers are always printed as
+    /// directly as they would be from Rust.
+    ///
+    /// [`Value::String`] is printed using the [`String::display_lossy`] method, which displays
+    /// strings in a lossy fashion if they are not UTF-8 internally.
+    ///
+    /// [`Value::Table`]s, [`Value::Function`]s, [`Value::Thread`]s, and [`Value::UserData`]
+    /// are all printed as `"<typename {:p}>"`, where 'typename' is the value returned by
+    /// [`Value::type_name`].
+    pub fn display(self) -> impl fmt::Display + 'gc {
+        struct ValueDisplay<'gc>(Value<'gc>);
+
+        impl<'gc> fmt::Display for ValueDisplay<'gc> {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    Value::Nil => write!(fmt, "nil"),
+                    Value::Boolean(b) => write!(fmt, "{}", b),
+                    Value::Integer(i) => write!(fmt, "{}", i),
+                    Value::Number(f) => write!(fmt, "{}", f),
+                    Value::String(s) => write!(fmt, "{}", s.display_lossy()),
+                    Value::Table(t) => write!(fmt, "<table {:p}>", Gc::as_ptr(t.into_inner())),
+                    Value::Function(Function::Closure(c)) => {
+                        write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+                    }
+                    Value::Function(Function::Callback(c)) => {
+                        write!(fmt, "<function {:p}>", Gc::as_ptr(c.into_inner()))
+                    }
+                    Value::Thread(t) => write!(fmt, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
+                    Value::UserData(u) => {
+                        write!(fmt, "<userdata {:p}>", Gc::as_ptr(u.into_inner()))
+                    }
+                }
             }
-            Value::Function(Function::Callback(c)) => {
-                write!(w, "<function {:p}>", Gc::as_ptr(c.into_inner()))
-            }
-            Value::Thread(t) => write!(w, "<thread {:p}>", Gc::as_ptr(t.into_inner())),
-            Value::UserData(u) => write!(w, "<userdata {:p}>", Gc::as_ptr(u.into_inner())),
         }
+
+        ValueDisplay(self)
+    }
+
+    pub(crate) fn debug_shallow(self) -> impl fmt::Debug + 'gc {
+        struct ShallowDebug<'gc>(Value<'gc>);
+
+        impl<'gc> fmt::Debug for ShallowDebug<'gc> {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    Value::Table(t) => {
+                        write!(fmt, "Value::Table({:p})", Gc::as_ptr(t.into_inner()))
+                    }
+                    Value::Function(Function::Closure(c)) => {
+                        write!(
+                            fmt,
+                            "Value::Function(Function::Closure({:p}))",
+                            Gc::as_ptr(c.into_inner())
+                        )
+                    }
+                    Value::Function(Function::Callback(c)) => {
+                        write!(
+                            fmt,
+                            "Value::Function(Function::Callback({:p}))",
+                            Gc::as_ptr(c.into_inner())
+                        )
+                    }
+                    Value::Thread(t) => {
+                        write!(fmt, "Value::Thread({:p})", Gc::as_ptr(t.into_inner()))
+                    }
+                    Value::UserData(u) => {
+                        write!(fmt, "Value::UserData({:p})", Gc::as_ptr(u.into_inner()))
+                    }
+                    v => write!(fmt, "{:?}", v),
+                }
+            }
+        }
+
+        ShallowDebug(self)
     }
 
     pub fn is_nil(self) -> bool {
@@ -70,8 +131,11 @@ impl<'gc> Value<'gc> {
         }
     }
 
-    pub fn not(self) -> Value<'gc> {
-        Value::Boolean(!self.to_bool())
+    /// Converts value to either a Number or an Integer, if possible.
+    pub fn to_numeric(self) -> Option<Self> {
+        self.to_constant()
+            .and_then(|c| c.to_numeric())
+            .map(|c| c.into())
     }
 
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
@@ -84,6 +148,30 @@ impl<'gc> Value<'gc> {
         self.to_constant().and_then(|c| c.to_integer())
     }
 
+    /// Interprets Numbers, Integers, and Strings as a String, otherwise returns None.
+    ///
+    /// If the value is a [`Value::String`], the string is returned directly. Otherwise, the
+    /// returned string will always be the same as what [`Value::display`] would display.
+    pub fn into_string(self, ctx: crate::Context<'gc>) -> Option<String<'gc>> {
+        match self {
+            Value::Integer(i) => Some(ctx.intern(i.to_string().as_bytes())),
+            Value::Number(n) => Some(ctx.intern(n.to_string().as_bytes())),
+            Value::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Indicates whether the value can be implicitly converted to a [`String`]; if so,
+    /// [`Value::into_string`] will always return `Some`.
+    pub fn is_implicit_string(self) -> bool {
+        match self {
+            Value::Integer(_) => true,
+            Value::Number(_) => true,
+            Value::String(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn to_constant(self) -> Option<Constant<String<'gc>>> {
         match self {
             Value::Nil => Some(Constant::Nil),
@@ -93,15 +181,6 @@ impl<'gc> Value<'gc> {
             Value::String(s) => Some(Constant::String(s)),
             _ => None,
         }
-    }
-}
-
-impl<'gc> fmt::Display for Value<'gc> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buf = Vec::new();
-        self.display(&mut buf).unwrap();
-        let s = StdString::from_utf8_lossy(&buf);
-        write!(fmt, "{}", s)
     }
 }
 
@@ -177,5 +256,36 @@ impl<'gc> From<Thread<'gc>> for Value<'gc> {
 impl<'gc> From<UserData<'gc>> for Value<'gc> {
     fn from(v: UserData<'gc>) -> Value<'gc> {
         Value::UserData(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gc_arena::Rootable;
+
+    use crate::table::Table;
+    use crate::{Lua, UserData};
+
+    #[test]
+    fn recursive_table_debug() {
+        let mut lua = Lua::core();
+        lua.enter(|ctx| {
+            let table = Table::new(&ctx);
+            table.set_field(ctx, "a", table);
+            println!("{:?}", table);
+
+            let table2 = Table::new(&ctx);
+            table2.set_metatable(&ctx, Some(table2));
+            println!("{:?}", table2);
+
+            let combined = Table::new(&ctx);
+            combined.set_field(ctx, "a", combined);
+            combined.set_metatable(&ctx, Some(combined));
+            println!("{:?}", combined);
+
+            let user = UserData::new::<Rootable![()]>(&ctx, ());
+            user.set_metatable(&ctx, Some(combined));
+            println!("{:?}", user);
+        });
     }
 }

@@ -40,33 +40,21 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | ⚫️    | `load(chunk[, chunkname, mode, env])`                          |                                                                                                                                        |       |
 | ⚫️    | `loadfile([filename, mode, env])`                              |                                                                                                                                        |       |
 | 🔵     | `next(table [, index])`                                        |                                                                                                                                        |       |
-| 🟡     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as piccolo returns `iter, table`. Also how `__pairs` works differs[^1]             |       |
+| 🔵     | `pairs(t)`                                                     | By default, PUC-Lua return `iter, table, nil` where as piccolo returns `iter, table`.                                                  |       |
 | 🔵     | `pcall(f, args...)`                                            |                                                                                                                                        |       |
 | 🔵     | `print(args...)`                                               |                                                                                                                                        |       |
 | ⚫️    | `rawequal(v1, v2)`                                             |                                                                                                                                        |       |
 | 🔵     | `rawget(table, index)`                                         |                                                                                                                                        |       |
-| ⚫️    | `rawlen(v)`                                                    |                                                                                                                                        |       |
+| 🔵    | `rawlen(v)`                                                    |                                                                                                                                        |       |
 | 🔵     | `rawset(table, index, value)`                                  |                                                                                                                                        |       |
 | 🔵     | `select(index, args...)`                                       |                                                                                                                                        |       |
 | 🔵     | `setmetatable(table, metatable)`                               |                                                                                                                                        |       |
-| ⚫️    | `tonumber(e[, base])`                                          |                                                                                                                                        |       |
+| 🔵    | `tonumber(e[, base])`                                          |                                                                                                                                        |       |
 | 🟡     | `tostring(v)`                                                  | piccolo does not use the metatable field `__name` by default, while PUC-Lua does.                                                      |       |
 | 🔵     | `type(v)`                                                      |                                                                                                                                        |       |
-| ⚫️    | `_VERSION` (value)                                             |                                                                                                                                        |       |
+| 🔵    | `_VERSION` (value)                                             |                                                                                                                                        |       |
 | ⚫️    | `warn(msg, args...)`                                           |                                                                                                                                        |       |
 | ⚫️    | `xpcall(f, msgh, args...)`                                     |                                                                                                                                        |       |
-
-[^1]:
-    Given the code below, calling `pairs(t)`, PUC-Lua returns `1, 2, 3`, while piccolo returns `1, 2, 3, 4`. The documentation from PUC-Lua does state that `pairs(t)` "\[where] `t` has a metamethod `__pairs`, calls it with `t` as argument and returns the first three results from the call."
-
-    ```lua
-    t = {}
-    tm = {}
-    function tm:__pairs()
-    	return 1, 2, 3, 4
-    end
-    setmetatable(t, tm)
-    ```
 
 [^0]: Hedging b/c I don't know PUC-Lua like my reverse palm, and there might be differing behaviors if you poke both implementations to death, but that's not what this document is for.
 
@@ -101,23 +89,23 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 | Status | Function                          | Differences | Notes |
 | ------ | --------------------------------- | ----------- | ----- |
-| ⚫️️   | `byte(s[, i, j])`                 |             |       |
-| ⚫️️   | `char(args...)`                   |             |       |
+| 🔵   | `byte(s[, i, j])`                 |             |       |
+| 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
 | ⚫️️   | `find(s, pattern[, init, plain])` |             |       |
 | ⚫️️   | `format(formatstring, args...)`   |             |       |
 | ⚫️️   | `gmatch(s, pattern[, init])`      |             |       |
 | ⚫️️   | `gsub(s, pattern, repl[, n])`     |             |       |
 | 🔵     | `len(s)`                          |             |       |
-| ⚫️️   | `lower(s)`                        |             |       |
+| 🔵   | `lower(s)`                        |             |       |
 | ⚫️️   | `match(s, pattern[, init])`       |             |       |
 | ⚫️️   | `pack(fmt, values...)`            |             |       |
 | ⚫️️   | `packsize(fmt)`                   |             |       |
 | ⚫️️   | `rep(s, n[, sep])`                |             |       |
-| ⚫️️   | `reverse(s)`                      |             |       |
-| ⚫️️   | `sub(s, i[, j])`                  |             |       |
+| 🔵   | `reverse(s)`                      |             |       |
+| 🔵   | `sub(s, i[, j])`                  |             |       |
 | ⚫️️   | `unpack(fmt, s[, pos])`           |             |       |
-| ⚫️️   | `upper(s)`                        |             |       |
+| 🔵   | `upper(s)`                        |             |       |
 
 ## UTF8
 
@@ -134,51 +122,47 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 
 | Status | Function                     | Differences | Notes |
 | ------ | ---------------------------- | ----------- | ----- |
-| ⚫️️   | `concat(list[, sep, i, j])`  |             |       |
-| ⚫️️   | `insert(list, [pos,] value)` |             |       |
-| ⚫️️   | `move(a1, f, e, t[, a2])`    |             |       |
+| 🔵     | `concat(list[, sep, i, j])`  |             | Supports the `__concat` metamethod |
+| 🔵     | `insert(list, [pos,] value)` |             |       |
+| 🔵     | `move(a1, f, e, t[, a2])`    |             | Currently implemented with a Lua polyfill |
 | 🔵     | `pack(args...)`              |             |       |
-| ⚫️️   | `remove(list[, pos])`        |             |       |
-| ⚫️️   | `sort(list[, comp])`         |             |       |
+| 🔵     | `remove(list[, pos])`        |             |       |
+| 🔵     | `sort(list[, comp])`         |             | Currently implemented with a Lua polyfill using a simple merge sort, rather than PUC-Rio Lua's quicksort impl |
 | 🔵     | `unpack(list[, i, j])`       |             |       |
 
 ## Math
 
 I'm not going over these with a fine-tooth comb, if it exists (and takes the specified number of arguments), it's considered implemented. (Except for "basic" identities like $\cos(0) = 1$ and stuff like that.)
 
-| Status | Function             | Differences                                                                                             | Notes |
-| ------ | -------------------- | ------------------------------------------------------------------------------------------------------- | ----- |
-| 🔵     | `abs(x)`             |                                                                                                         |       |
-| 🔵     | `acos(x)`            |                                                                                                         |       |
-| 🔵     | `asin(x)`            |                                                                                                         |       |
-| 🔵     | `atan(y[, x])`       |                                                                                                         |       |
-| 🔵     | `ceil(x)`            |                                                                                                         |       |
-| 🔵     | `cos(x)`             |                                                                                                         |       |
-| 🔵     | `deg(x)`             |                                                                                                         |       |
-| 🔵     | `exp(x)`             |                                                                                                         |       |
-| 🔵     | `floor(x)`           |                                                                                                         |       |
-| 🔵     | `fmod(x, y)`         |                                                                                                         |       |
-| 🔵     | `huge` (value)       |                                                                                                         |       |
-| 🔵     | `log(x[, base])`     |                                                                                                         |       |
-| 🔵     | `max(x, args...)`    |                                                                                                         |       |
-| 🔵     | `maxinteger` (value) |                                                                                                         |       |
-| 🔵     | `min(x, args...)`    |                                                                                                         |       |
-| 🔵     | `mininteger` (value) |                                                                                                         |       |
-| 🔵     | `modf(x)`            |                                                                                                         |       |
-| 🔵     | `pi` (value)         |                                                                                                         |       |
-| 🔵     | `rad(x)`             |                                                                                                         |       |
-| 🔵     | `random([m, n])`     |                                                                                                         |       |
-| 🔵     | `randomseed(x)`      |                                                                                                         |       |
-| ⚫️    | `randomseed()`       | `math.randomseed()` does not attempt to randomly generate a seed.[^6]                                   |       |
-| 🟡     | `randomseed(x, y)`   | Looking at the code, the second argument is ignored, leading to only be able to seed using 64-bits.[^6] |       |
-| 🔵     | `sin(x)`             |                                                                                                         |       |
-| 🔵     | `sqrt(x)`            |                                                                                                         |       |
-| 🔵     | `tan(x)`             |                                                                                                         |       |
-| 🔵     | `tointeger(x)`       |                                                                                                         |       |
-| 🔵     | `type(x)`            |                                                                                                         |       |
-| 🔵     | `ult(m, n)`          |                                                                                                         |       |
-
-[^6]: Change https://github.com/kyren/piccolo/blob/master/src/stdlib/math.rs#L214-L224 to properly hand the 0-argument and 2-argument cases (and thus can seed from 128-bits).
+| Status | Function             | Differences | Notes |
+| ------ | -------------------- | ----------- | ----- |
+| 🔵     | `abs(x)`             |             |       |
+| 🔵     | `acos(x)`            |             |       |
+| 🔵     | `asin(x)`            |             |       |
+| 🔵     | `atan(y[, x])`       |             |       |
+| 🔵     | `ceil(x)`            |             |       |
+| 🔵     | `cos(x)`             |             |       |
+| 🔵     | `deg(x)`             |             |       |
+| 🔵     | `exp(x)`             |             |       |
+| 🔵     | `floor(x)`           |             |       |
+| 🔵     | `fmod(x, y)`         |             |       |
+| 🔵     | `huge` (value)       |             |       |
+| 🔵     | `log(x[, base])`     |             |       |
+| 🔵     | `max(x, args...)`    |             |       |
+| 🔵     | `maxinteger` (value) |             |       |
+| 🔵     | `min(x, args...)`    |             |       |
+| 🔵     | `mininteger` (value) |             |       |
+| 🔵     | `modf(x)`            |             |       |
+| 🔵     | `pi` (value)         |             |       |
+| 🔵     | `rad(x)`             |             |       |
+| 🔵     | `random([m, n])`     |             |       |
+| 🔵     | `randomseed([x, y])` |             |       |
+| 🔵     | `sin(x)`             |             |       |
+| 🔵     | `sqrt(x)`            |             |       |
+| 🔵     | `tan(x)`             |             |       |
+| 🔵     | `tointeger(x)`       |             |       |
+| 🔵     | `type(x)`            |             |       |
+| 🔵     | `ult(m, n)`          |             |       |
 
 ## I/O
 

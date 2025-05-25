@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use gc_arena::Collect;
 
-use crate::compiler::lexer::{read_float, read_integer};
+use crate::compiler::string_utils::{read_float, read_integer, trim_whitespace};
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -49,36 +49,41 @@ impl<S> Constant<S> {
 }
 
 impl<S: AsRef<[u8]>> Constant<S> {
+    /// Converts the given constant to an integer or number, if possible.
+    pub fn to_numeric(&self) -> Option<Constant<S>> {
+        match self {
+            &Self::Integer(a) => Some(Constant::Integer(a)),
+            &Self::Number(a) => Some(Constant::Number(a)),
+            Self::String(a) => {
+                let a = trim_whitespace(a.as_ref());
+                if let Some(i) = read_integer(a) {
+                    Some(Constant::Integer(i))
+                } else if let Some(n) = read_float(a) {
+                    Some(Constant::Number(n))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
     pub fn to_number(&self) -> Option<f64> {
-        match self {
-            &Self::Integer(a) => Some(a as f64),
-            &Self::Number(a) => Some(a),
-            Self::String(a) => read_float(a.as_ref()),
+        match self.to_numeric() {
+            Some(Self::Integer(a)) => Some(a as f64),
+            Some(Self::Number(a)) => Some(a),
             _ => None,
         }
     }
 
     /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
     pub fn to_integer(&self) -> Option<i64> {
-        match self {
-            &Self::Integer(a) => Some(a),
-            &Self::Number(a) => {
+        match self.to_numeric() {
+            Some(Self::Integer(a)) => Some(a),
+            Some(Self::Number(a)) => {
                 if ((a as i64) as f64) == a {
                     Some(a as i64)
-                } else {
-                    None
-                }
-            }
-            Self::String(a) => {
-                if let Some(i) = read_integer(a.as_ref()) {
-                    Some(i)
-                } else if let Some(n) = read_float(a.as_ref()) {
-                    if ((n as i64) as f64) == n {
-                        Some(n as i64)
-                    } else {
-                        None
-                    }
                 } else {
                     None
                 }
@@ -123,7 +128,15 @@ impl<S: AsRef<[u8]>> Constant<S> {
                 if b == 0 {
                     None
                 } else {
-                    Some(Self::Integer(a.wrapping_div(b)))
+                    // Wrapping version of std's div_floor
+                    let d = a.wrapping_div(b);
+                    let r = a.wrapping_rem(b);
+                    let d = if (r > 0 && b < 0) || (r < 0 && b > 0) {
+                        d - 1
+                    } else {
+                        d
+                    };
+                    Some(Self::Integer(d))
                 }
             }
             (a, b) => Some(Self::Number((a.to_number()? / b.to_number()?).floor())),
@@ -180,13 +193,24 @@ impl<S: AsRef<[u8]>> Constant<S> {
     }
 
     pub fn shift_left(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Integer(self.to_integer()? << rhs.to_integer()?))
+        let rhs = rhs.to_integer()?;
+        if rhs < 0 {
+            return None;
+        }
+        let rhs = rhs.try_into().ok().unwrap_or(u32::MAX);
+        Some(Self::Integer(
+            self.to_integer()?.checked_shl(rhs).unwrap_or(0),
+        ))
     }
 
     pub fn shift_right(&self, rhs: &Self) -> Option<Self> {
-        Some(Self::Integer(
-            (self.to_integer()? as u64 >> rhs.to_integer()? as u64) as i64,
-        ))
+        let rhs = rhs.to_integer()?;
+        if rhs < 0 {
+            return None;
+        }
+        let lhs = self.to_integer()? as u64;
+        let rhs = rhs.try_into().ok().unwrap_or(u32::MAX);
+        Some(Self::Integer(lhs.checked_shr(rhs).unwrap_or(0) as i64))
     }
 
     // Comparison operators
@@ -215,16 +239,22 @@ impl<S: AsRef<[u8]>> Constant<S> {
     pub fn less_than(&self, rhs: &Self) -> Option<bool> {
         Some(match (self, rhs) {
             (Self::Integer(a), Self::Integer(b)) => a < b,
+            (Self::Integer(a), Self::Number(b)) => (*a as f64) < *b,
+            (Self::Number(a), Self::Number(b)) => a < b,
+            (Self::Number(a), Self::Integer(b)) => *a < *b as f64,
             (Self::String(a), Self::String(b)) => a.as_ref() < b.as_ref(),
-            (a, b) => a.to_number()? < b.to_number()?,
+            _ => return None,
         })
     }
 
     pub fn less_equal(&self, rhs: &Self) -> Option<bool> {
         Some(match (self, rhs) {
             (Self::Integer(a), Self::Integer(b)) => a <= b,
+            (Self::Integer(a), Self::Number(b)) => (*a as f64) <= *b,
+            (Self::Number(a), Self::Number(b)) => a <= b,
+            (Self::Number(a), Self::Integer(b)) => *a <= *b as f64,
             (Self::String(a), Self::String(b)) => a.as_ref() <= b.as_ref(),
-            (a, b) => a.to_number()? <= b.to_number()?,
+            _ => return None,
         })
     }
 }

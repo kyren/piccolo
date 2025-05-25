@@ -1,11 +1,13 @@
+use std::pin::Pin;
+
 use gc_arena::Collect;
 use piccolo::{
-    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
-    IntoValue, Lua, Sequence, SequencePoll, Stack, StaticError, String, Thread, Value,
+    BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Executor,
+    ExternError, Function, IntoValue, Lua, Sequence, SequencePoll, Stack, String, Thread, Value,
 };
 
 #[test]
-fn callback() -> Result<(), StaticError> {
+fn callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -13,7 +15,7 @@ fn callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(42));
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -37,7 +39,7 @@ fn callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn tail_call_trivial_callback() -> Result<(), StaticError> {
+fn tail_call_trivial_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -45,7 +47,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
             stack.push_back(Value::Integer(3));
             Ok(CallbackReturn::Return)
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -66,7 +68,7 @@ fn tail_call_trivial_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn loopy_callback() -> Result<(), StaticError> {
+fn loopy_callback() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -77,7 +79,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     _ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -104,7 +106,7 @@ fn loopy_callback() -> Result<(), StaticError> {
                 then: Some(BoxSequence::new(&ctx, Cont(4))),
             })
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -142,7 +144,7 @@ fn loopy_callback() -> Result<(), StaticError> {
 }
 
 #[test]
-fn yield_sequence() -> Result<(), StaticError> {
+fn yield_sequence() -> Result<(), ExternError> {
     let mut lua = Lua::core();
 
     lua.try_enter(|ctx| {
@@ -153,7 +155,7 @@ fn yield_sequence() -> Result<(), StaticError> {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
+                    mut self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
                     mut stack: Stack<'gc, '_>,
@@ -162,16 +164,21 @@ fn yield_sequence() -> Result<(), StaticError> {
                         0 => {
                             let (a, b): (i32, i32) = stack.consume(ctx)?;
                             assert_eq!((a, b), (5, 6));
-                            stack.extend([Value::Integer(7), Value::Integer(8)]);
+                            stack.extend([
+                                Value::Integer(5),
+                                Value::Integer(6),
+                                Value::Integer(7),
+                                Value::Integer(8),
+                            ]);
                             self.0 = 1;
                             Ok(SequencePoll::Yield {
                                 to_thread: None,
-                                is_tail: false,
+                                bottom: 2,
                             })
                         }
                         1 => {
-                            let (a, b): (i32, i32) = stack.consume(ctx)?;
-                            assert_eq!((a, b), (9, 10));
+                            let (a, b, c, d): (i32, i32, i32, i32) = stack.consume(ctx)?;
+                            assert_eq!((a, b, c, d), (5, 6, 9, 10));
                             stack.extend([Value::Integer(11), Value::Integer(12)]);
                             self.0 = 2;
                             Ok(SequencePoll::Return)
@@ -189,7 +196,7 @@ fn yield_sequence() -> Result<(), StaticError> {
                 then: Some(BoxSequence::new(&ctx, Cont(0))),
             })
         });
-        ctx.set_global("callback", callback)?;
+        ctx.set_global("callback", callback);
         Ok(())
     })?;
 
@@ -232,22 +239,30 @@ fn resume_with_err() {
 
             impl<'gc> Sequence<'gc> for Cont {
                 fn poll(
-                    &mut self,
-                    _ctx: Context<'gc>,
+                    self: Pin<&mut Self>,
+                    ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    _stack: Stack<'gc, '_>,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    panic!("did not error");
+                    stack.replace(ctx, 12);
+                    Ok(SequencePoll::Call {
+                        function: Callback::from_fn(&ctx, |ctx, _, _| {
+                            Err("an error".into_value(ctx).into())
+                        })
+                        .into(),
+                        bottom: 1,
+                    })
                 }
 
                 fn error(
-                    &mut self,
+                    self: Pin<&mut Self>,
                     ctx: Context<'gc>,
                     _exec: Execution<'gc, '_>,
-                    _error: Error<'gc>,
-                    _stack: Stack<'gc, '_>,
+                    error: Error<'gc>,
+                    mut stack: Stack<'gc, '_>,
                 ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    Err("a different error".into_value(ctx).into())
+                    assert_eq!(stack.consume::<i32>(ctx).unwrap(), 12);
+                    Err(error)
                 }
             }
 
@@ -267,25 +282,23 @@ fn resume_with_err() {
 
         thread.resume(ctx, "resume").unwrap();
 
-        ctx.stash(Executor::run(&ctx, thread))
+        ctx.stash(Executor::run(&ctx, thread).unwrap())
     });
 
-    lua.finish(&executor);
+    lua.finish(&executor).unwrap();
 
     lua.enter(|ctx| {
         let executor = ctx.fetch(&executor);
         assert!(executor.take_result::<String>(ctx).unwrap().unwrap() == "return");
-        executor
-            .resume_err(&ctx, "an error".into_value(ctx).into())
-            .unwrap();
+        executor.resume(ctx, ()).unwrap();
     });
 
-    lua.finish(&executor);
+    lua.finish(&executor).unwrap();
 
     lua.enter(
         |ctx| match ctx.fetch(&executor).take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
-                assert!(matches!(val.0, Value::String(s) if s == "a different error"))
+                assert!(matches!(val.0, Value::String(s) if s == "an error"))
             }
             _ => panic!("wrong error returned"),
         },

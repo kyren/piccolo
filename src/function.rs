@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
@@ -5,6 +7,7 @@ use crate::{
     Sequence, SequencePoll, Stack,
 };
 
+/// Any callable Lua value (either a [`Closure`] or a [`Callback`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
 pub enum Function<'gc> {
@@ -25,6 +28,12 @@ impl<'gc> From<Callback<'gc>> for Function<'gc> {
 }
 
 impl<'gc> Function<'gc> {
+    /// Compose functions together to form a single function.
+    ///
+    /// If given an array of functions `[f, g, h]`, then this will return a function equivalent to
+    /// one that calls `h(g(f(...)))`. Note that functions compose "backwards" from how you might
+    /// think, the first function given will be called first, and the second function called second,
+    /// etc.
     pub fn compose<I>(mc: &Mutation<'gc>, functions: I) -> Self
     where
         I: AsRef<[Function<'gc>]> + Collect + 'gc,
@@ -38,16 +47,23 @@ impl<'gc> Function<'gc> {
             I: AsRef<[Function<'gc>]> + Collect,
         {
             fn poll(
-                &mut self,
+                self: Pin<&mut Self>,
                 _: Context<'gc>,
                 _: Execution<'gc, '_>,
                 _: Stack<'gc, '_>,
             ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                let fns = (*self.0).as_ref();
-                let function = fns[self.1];
-                self.1 += 1;
-                let is_tail = self.1 == fns.len();
-                Ok(SequencePoll::Call { function, is_tail })
+                let this = self.get_mut();
+                let fns = (*this.0).as_ref();
+                let function = fns[this.1];
+                this.1 += 1;
+                if this.1 == fns.len() {
+                    Ok(SequencePoll::TailCall(function))
+                } else {
+                    Ok(SequencePoll::Call {
+                        function,
+                        bottom: 0,
+                    })
+                }
             }
         }
 
@@ -67,6 +83,10 @@ impl<'gc> Function<'gc> {
         ))
     }
 
+    /// Bind arguments to the given function and return a new function.
+    ///
+    /// If called on a function `f` with arguments `[a, b, c]`, then this will produce a function
+    /// that calls `f(a, b, c, ...)`.
     pub fn bind<A>(self, mc: &Mutation<'gc>, args: A) -> Self
     where
         A: IntoMultiValue<'gc> + Collect + Clone + 'gc,

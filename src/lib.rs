@@ -1,4 +1,5 @@
 pub mod any;
+pub mod async_callback;
 pub mod callback;
 pub mod closure;
 pub mod compiler;
@@ -12,9 +13,9 @@ pub mod io;
 pub mod lua;
 pub mod meta_ops;
 pub mod opcode;
-pub mod raw_ops;
 pub mod registry;
 pub mod stack;
+pub mod stash;
 pub mod stdlib;
 pub mod string;
 pub mod table;
@@ -23,29 +24,26 @@ pub mod types;
 pub mod userdata;
 pub mod value;
 
-#[doc(inline)]
 pub use self::{
+    async_callback::{async_sequence, SequenceReturn},
     callback::{BoxSequence, Callback, CallbackFn, CallbackReturn, Sequence, SequencePoll},
-    closure::{Closure, ClosureError, FunctionPrototype, PrototypeError},
+    closure::{Closure, CompilerError, FunctionPrototype},
     constant::Constant,
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
-    error::{Error, RuntimeError, StaticError, TypeError},
-    finalizers::Finalizers,
+    error::{Error, ExternError, RuntimeError, TypeError},
     fuel::Fuel,
     function::Function,
     lua::{Context, Lua},
     meta_ops::MetaMethod,
-    registry::{
-        Registry, Singleton, StashedCallback, StashedClosure, StashedExecutor, StashedFunction,
-        StashedTable, StashedThread, StashedUserData, StaticValue,
-    },
+    registry::{Registry, Singleton},
     stack::Stack,
-    string::{BadConcatType, String},
-    table::{InvalidTableKey, Table},
-    thread::{
-        BadExecutorMode, BadThreadMode, Execution, Executor, ExecutorMode, Thread, ThreadMode,
-        VMError,
+    stash::{
+        StashedCallback, StashedClosure, StashedError, StashedExecutor, StashedFunction,
+        StashedString, StashedTable, StashedThread, StashedUserData, StashedValue,
     },
-    userdata::{BadUserDataType, UserData},
+    string::String,
+    table::Table,
+    thread::{Execution, Executor, ExecutorMode, Thread, ThreadMode},
+    userdata::UserData,
     value::Value,
 };

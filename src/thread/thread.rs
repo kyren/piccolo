@@ -4,17 +4,23 @@ use std::{
 };
 
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, GcWeak, Mutation};
+use gc_arena::{
+    allocator_api::MetricsAlloc, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation,
+};
 use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
+    fuel::count_fuel,
     meta_ops,
     types::{RegisterIndex, VarCount},
     BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    TypeError, VMError, Value,
+    String, Table, UserData, Value,
 };
 
+use super::VMError;
+
+/// The current state of a [`Thread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadMode {
     /// No frames are on the thread and there are no available results, the thread can be started.
@@ -45,6 +51,10 @@ pub struct BadThreadMode {
 
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
+/// A Lua coroutine.
+///
+/// All running Lua or callback code is run as part of a larger `Thread`. `Thread`s may create other
+/// `Thread`s, suspend them, resume them, and may yield to calling `Thread`s.
 #[derive(Debug, Clone, Copy, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(Gc<'gc, RefLock<ThreadState<'gc>>>);
@@ -179,6 +189,27 @@ impl<'gc> Thread<'gc> {
         }
     }
 
+    /// For each open upvalue pointing to this thread, if the upvalue itself is live, then resurrect
+    /// the actual value that it is pointing to.
+    ///
+    /// Because open upvalues keep a *weak* pointer to their parent thread, their target values will
+    /// not be properly marked as live until until they are manually marked with this method.
+    pub(crate) fn resurrect_live_upvalues(
+        self,
+        fc: &Finalization<'gc>,
+    ) -> Result<(), BadThreadMode> {
+        // If this thread is not dead, then none of the held stack values can be dead, so we don't
+        // need to resurrect them.
+        if Gc::is_dead(fc, self.0) {
+            let state = self.0.try_borrow().map_err(|_| BadThreadMode {
+                found: ThreadMode::Running,
+                expected: None,
+            })?;
+            state.resurrect_live_upvalues(fc);
+        }
+        Ok(())
+    }
+
     fn check_mode(
         &self,
         mc: &Mutation<'gc>,
@@ -234,49 +265,40 @@ impl<'gc> OpenUpValue<'gc> {
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
 pub(super) enum MetaReturn {
-    // No return value is expected.
+    /// No return value is expected.
     None,
-    // Place a single return value at an index relative to the returned to function's stack bottom.
+    /// Place a single return value at an index relative to the returned to function's stack bottom.
     Register(RegisterIndex),
-    // Increment the PC by one if the returned value converted to a boolean is equal to this.
+    /// Increment the PC by one if the returned value converted to a boolean is equal to this.
     SkipIf(bool),
 }
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
 pub(super) enum LuaReturn {
-    // Normal function call, place return values at the bottom of the returning function's stack,
-    // as normal.
+    /// Normal function call, place return values at the bottom of the returning function's stack,
+    /// as normal.
     Normal(VarCount),
-    // Synthetic metamethod call, do the operation specified in MetaReturn.
+    /// Synthetic metamethod call, do the operation specified in MetaReturn.
     Meta(MetaReturn),
 }
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub(super) enum Frame<'gc> {
-    // A running Lua frame.
+    /// A running Lua frame.
     Lua {
         bottom: usize,
+        closure: Closure<'gc>,
         base: usize,
         is_variable: bool,
         pc: usize,
         stack_size: usize,
         expected_return: Option<LuaReturn>,
     },
-    // A suspended function call that has not yet been run. Must be the only frame in the stack.
-    Start(Function<'gc>),
-    // Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
-    // below a results frame.
-    Yielded,
-    // A callback that has been queued but not called yet. Must be the top frame of the stack.
-    Callback {
-        bottom: usize,
-        callback: Callback<'gc>,
-    },
-    // A frame for a running sequence. When it is the top frame, either the `poll` or `error` method
-    // will be called the next time this thread is stepped, depending on whether there is a pending
-    // error.
+    /// A frame for a running sequence. When it is the top frame, either the `poll` or `error`
+    /// method will be called the next time this thread is stepped, depending on whether there is a
+    /// pending error.
     Sequence {
         bottom: usize,
         sequence: BoxSequence<'gc>,
@@ -284,13 +306,21 @@ pub(super) enum Frame<'gc> {
         // of the stack.
         pending_error: Option<Error<'gc>>,
     },
-    // We are waiting on an upper thread to finish. Must be the top frame of the stack.
-    WaitThread,
-    // Results are waiting to be taken. Must be the top frame of the stack.
-    Result {
+    /// A suspended function call that has not yet been run. Must be the only frame in the stack.
+    Start(Function<'gc>),
+    /// A callback that has been queued but not called yet. Must be the top frame of the stack.
+    Callback {
         bottom: usize,
+        callback: Callback<'gc>,
     },
-    // An error is currently unwinding. Must be the top frame of the stack.
+    /// Thread has yielded and is waiting resume. Must be the top frame of the stack or immediately
+    /// below a Result frame.
+    Yielded,
+    /// We are waiting on an upper thread to finish. Must be the top frame of the stack.
+    WaitThread,
+    /// Results are waiting to be taken. Must be the top frame of the stack.
+    Result { bottom: usize },
+    /// An error is currently unwinding. Must be the top frame of the stack.
     Error(Error<'gc>),
 }
 
@@ -327,7 +357,10 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    // Pushes a function call frame, arguments start at the given stack bottom.
+    /// Pushes a new function call frame.
+    ///
+    /// Arguments are taken from the top of the stack starting at `bottom`, which will become the
+    /// bottom of the newly pushed frame.
     pub(super) fn push_call(&mut self, bottom: usize, function: Function<'gc>) {
         match function {
             Function::Closure(closure) => {
@@ -341,14 +374,14 @@ impl<'gc> ThreadState<'gc> {
                 } else {
                     0
                 };
-                self.stack.insert(bottom, closure.into());
-                self.stack[bottom + 1..].rotate_right(var_params);
-                let base = bottom + 1 + var_params;
+                self.stack[bottom..].rotate_right(var_params);
+                let base = bottom + var_params;
 
                 self.stack.resize(base + stack_size, Value::Nil);
 
                 self.frames.push(Frame::Lua {
                     bottom,
+                    closure,
                     base,
                     is_variable: false,
                     pc: 0,
@@ -362,13 +395,16 @@ impl<'gc> ThreadState<'gc> {
         }
     }
 
-    // Return to the current top frame from a popped frame. The current top frame must be a
-    // sequence, lua frame, or there must be no frames at all.
+    /// Return to the current top frame from a popped frame.
+    ///
+    /// The current top frame (the frame we are returning to) must be a Lua frame, Sequence, or
+    /// there must be no frames at all (in which case this will push a new `Result` frame.)
+    ///
+    /// `bottom` must be the bottom of the popped, returning frame, and the return values are taken
+    /// from the top of the stack starting at `bottom`.
     pub(super) fn return_to(&mut self, bottom: usize) {
         match self.frames.last_mut() {
-            Some(Frame::Sequence {
-                bottom: seq_bottom, ..
-            }) => assert_eq!(bottom, *seq_bottom),
+            Some(Frame::Sequence { .. }) => {}
             Some(Frame::Lua {
                 expected_return,
                 is_variable,
@@ -447,7 +483,7 @@ impl<'gc> ThreadState<'gc> {
         for &upval in &self.open_upvalues[start..] {
             match upval.get() {
                 UpValueState::Open(open_upvalue) => {
-                    assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
+                    debug_assert!(open_upvalue.thread.upgrade(mc).unwrap().as_ptr() == this_ptr);
                     upval.set(
                         mc,
                         UpValueState::Closed(self.stack[open_upvalue.stack_index]),
@@ -460,11 +496,36 @@ impl<'gc> ThreadState<'gc> {
         self.open_upvalues.truncate(start);
     }
 
-    fn reset(&mut self, mc: &Mutation<'gc>) {
+    pub(super) fn reset(&mut self, mc: &Mutation<'gc>) {
         self.close_upvalues(mc, 0);
         assert!(self.open_upvalues.is_empty());
         self.stack.clear();
         self.frames.clear();
+    }
+
+    fn resurrect_live_upvalues(&self, fc: &Finalization<'gc>) {
+        for &upval in &self.open_upvalues {
+            if !Gc::is_dead(fc, UpValue::into_inner(upval)) {
+                match upval.get() {
+                    UpValueState::Open(open_upvalue) => {
+                        match self.stack[open_upvalue.stack_index] {
+                            Value::String(s) => Gc::resurrect(fc, String::into_inner(s)),
+                            Value::Table(t) => Gc::resurrect(fc, Table::into_inner(t)),
+                            Value::Function(Function::Closure(c)) => {
+                                Gc::resurrect(fc, Closure::into_inner(c))
+                            }
+                            Value::Function(Function::Callback(c)) => {
+                                Gc::resurrect(fc, Callback::into_inner(c))
+                            }
+                            Value::Thread(t) => Gc::resurrect(fc, Thread::into_inner(t)),
+                            Value::UserData(u) => Gc::resurrect(fc, UserData::into_inner(u)),
+                            _ => {}
+                        }
+                    }
+                    UpValueState::Closed(_) => panic!("upvalue is not open"),
+                }
+            }
+        }
     }
 }
 
@@ -481,15 +542,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     // Returns the active closure for this Lua frame
     pub(super) fn closure(&self) -> Closure<'gc> {
         match self.state.frames.last() {
-            Some(Frame::Lua { bottom, .. }) => match self.state.stack[*bottom] {
-                Value::Function(Function::Closure(c)) => c,
-                _ => panic!("lua frame bottom is not a closure"),
-            },
+            Some(Frame::Lua { closure, .. }) => *closure,
             _ => panic!("top frame is not lua frame"),
         }
     }
 
-    // returns a view of the Lua frame's registers
+    /// returns a view of the Lua frame's registers
     pub(super) fn registers<'b>(&'b mut self) -> LuaRegisters<'gc, 'b> {
         match self.state.frames.last_mut() {
             Some(Frame::Lua {
@@ -510,7 +568,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
     }
 
-    // Place the current frame's varargs at the given register, expecting the given count
+    /// Place the current frame's varargs at the given register, expecting the given count
     pub(super) fn varargs(&mut self, dest: RegisterIndex, count: VarCount) -> Result<(), VMError> {
         let Some(Frame::Lua {
             bottom,
@@ -526,33 +584,44 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(false));
         }
 
-        let varargs_start = *bottom + 1;
-        let varargs_len = *base - varargs_start;
-
         self.fuel.consume(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
+
+        let varargs_start = *bottom;
+        let varargs_len = *base - varargs_start;
 
         let dest = *base + dest.0 as usize;
         if let Some(count) = count.to_constant() {
-            for i in 0..count as usize {
-                self.state.stack[dest + i] = if i < varargs_len {
-                    self.state.stack[varargs_start + i]
-                } else {
-                    Value::Nil
-                };
+            let count = count as usize;
+            self.fuel.consume(count_fuel(Self::FUEL_PER_ITEM, count));
+
+            if count <= varargs_len {
+                self.state
+                    .stack
+                    .copy_within(varargs_start..varargs_start + count, dest);
+            } else {
+                self.state
+                    .stack
+                    .copy_within(varargs_start..varargs_start + varargs_len, dest);
+                self.state.stack[dest + varargs_len..dest + count].fill(Value::Nil);
             }
         } else {
+            self.fuel
+                .consume(count_fuel(Self::FUEL_PER_ITEM, varargs_len));
+
             *is_variable = true;
-            self.state.stack.resize(dest + varargs_len, Value::Nil);
-            for i in 0..varargs_len {
-                self.state.stack[dest + i] = self.state.stack[varargs_start + i];
-            }
+            self.state.stack.truncate(dest);
+            self.state
+                .stack
+                .extend_from_within(varargs_start..varargs_start + varargs_len);
         }
 
         Ok(())
     }
 
+    /// Set elements of a table as a group according to the `SetList` opcode protocol.
+    ///
+    /// Expects a table at register `table_base`, the current table index at `table_base + 1`, and
+    /// `count` elements following this.
     pub(super) fn set_table_list(
         &mut self,
         mc: &Mutation<'gc>,
@@ -577,13 +646,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 
         let table_ind = base + table_base.0 as usize;
         let start_ind = table_ind + 1;
+
         let table = self.state.stack[table_ind];
-        let Value::Table(table) = table else {
-            return Err(TypeError {
-                expected: "table",
-                found: table.type_name(),
-            }
-            .into());
+        let start = self.state.stack[start_ind];
+
+        let (Value::Table(table), Value::Integer(mut start)) = (table, start) else {
+            return Err(VMError::BadSetList(table.type_name(), start.type_name()));
         };
 
         let set_count = count
@@ -591,21 +659,13 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - table_ind - 2);
 
-        let Value::Integer(mut start) = self.state.stack[start_ind] else {
-            return Err(TypeError {
-                expected: "integer",
-                found: self.state.stack[start_ind].type_name(),
-            }
-            .into());
-        };
-
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, set_count));
         for i in 0..set_count {
             if let Some(inc) = start.checked_add(1) {
                 start = inc;
                 table
-                    .set_value(mc, inc.into(), self.state.stack[table_ind + 2 + i])
+                    .set_raw(mc, inc.into(), self.state.stack[table_ind + 2 + i])
                     .unwrap();
             } else {
                 break;
@@ -622,8 +682,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         Ok(())
     }
 
-    // Call the function at the given register with the given arguments. On return, results will be
-    // placed starting at the function register.
+    /// Call the function at the given register with the given arguments. On return, results will be
+    /// placed starting at the function register.
     pub(super) fn call_function(
         self,
         ctx: Context<'gc>,
@@ -645,58 +705,31 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(args.is_variable()));
         }
 
-        *expected_return = Some(LuaReturn::Normal(returns));
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let function_index = *base + func.0 as usize;
         let arg_count = args
             .to_constant()
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - function_index - 1);
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
+        let call = meta_ops::call(ctx, self.state.stack[function_index])?;
+        *expected_return = Some(LuaReturn::Normal(returns));
+
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-        match meta_ops::call(ctx, self.state.stack[function_index])? {
-            Function::Closure(closure) => {
-                self.state.stack[function_index] = closure.into();
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.state.stack.remove(function_index);
+        self.state.stack.truncate(function_index + arg_count);
 
-                let base = if arg_count > fixed_params {
-                    self.state.stack.truncate(function_index + 1 + arg_count);
-                    self.state.stack[function_index + 1..].rotate_left(fixed_params);
-                    function_index + 1 + (arg_count - fixed_params)
-                } else {
-                    function_index + 1
-                };
+        self.state.push_call(function_index, call);
 
-                self.state.stack.resize(base + stack_size, Value::Nil);
-
-                self.state.frames.push(Frame::Lua {
-                    bottom: function_index,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.remove(function_index);
-                self.state.stack.truncate(function_index + arg_count);
-                self.state.frames.push(Frame::Callback {
-                    bottom: function_index,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
-    // Calls the function at the given index with a constant number of arguments without
-    // invalidating the function or its arguments. Returns are placed *after* the function and its
-    // aruments, and all registers past this are invalidated as normal.
+    /// Calls the function at the given index with a constant number of arguments without
+    /// invalidating the function or its arguments. Returns are placed *after* the function and its
+    /// arguments, and all registers past this are invalidated as normal.
     pub(super) fn call_function_keep(
         self,
         ctx: Context<'gc>,
@@ -718,67 +751,36 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(false));
         }
 
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let arg_count = arg_count as usize;
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
-        self.fuel
-            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
-
-        *expected_return = Some(LuaReturn::Normal(returns));
         let function_index = *base + func.0 as usize;
         let top = function_index + 1 + arg_count;
 
-        match meta_ops::call(ctx, self.state.stack[function_index])? {
-            Function::Closure(closure) => {
-                self.state.stack.resize(top + 1 + arg_count, Value::Nil);
-                for i in 1..arg_count + 1 {
-                    self.state.stack[top + i] = self.state.stack[function_index + i];
-                }
+        let call = meta_ops::call(ctx, self.state.stack[function_index])?;
+        *expected_return = Some(LuaReturn::Normal(returns));
 
-                self.state.stack[top] = closure.into();
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.fuel
+            .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-                let base = if arg_count > fixed_params {
-                    self.state.stack[top + 1..].rotate_left(fixed_params);
-                    top + 1 + (arg_count - fixed_params)
-                } else {
-                    top + 1
-                };
+        self.state.stack.truncate(top);
+        self.state
+            .stack
+            .extend_from_within(function_index + 1..function_index + 1 + arg_count);
 
-                self.state.stack.resize(base + stack_size, Value::Nil);
+        self.state.push_call(top, call);
 
-                self.state.frames.push(Frame::Lua {
-                    bottom: top,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.truncate(top);
-                self.state
-                    .stack
-                    .extend_from_within(function_index + 1..function_index + 1 + arg_count);
-                self.state.frames.push(Frame::Callback {
-                    bottom: top,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
-    // Calls an externally defined function in a completely non-destructive way in a new frame, and
-    // places an optional single result of this function call at the given register.
-    //
-    // Nothing at all in the frame is invalidated, other than optionally placing the return value.
+    /// Calls an externally defined function in a completely non-destructive way in a new frame, and
+    /// places an optional single result of this function call at the given register.
+    ///
+    /// Nothing at all in the frame is invalidated, other than optionally placing the return value.
     pub(super) fn call_meta_function(
         self,
-        ctx: Context<'gc>,
+        _ctx: Context<'gc>,
         func: Function<'gc>,
         args: &[Value<'gc>],
         meta_ret: MetaReturn,
@@ -799,53 +801,70 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         }
 
         self.fuel.consume(Self::FUEL_PER_CALL);
+
+        let top = self.state.stack.len();
+        debug_assert_eq!(top, *base + *stack_size);
+
+        *expected_return = Some(LuaReturn::Meta(meta_ret));
+
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, args.len()));
 
-        *expected_return = Some(LuaReturn::Meta(meta_ret));
-        let top = *base + *stack_size;
+        self.state.stack.extend_from_slice(args);
 
-        match meta_ops::call(ctx, func.into())? {
-            Function::Closure(closure) => {
-                self.state.stack.resize(top + 1 + args.len(), Value::Nil);
-                self.state.stack[top] = closure.into();
-                self.state.stack[top + 1..top + 1 + args.len()].copy_from_slice(args);
+        self.state.push_call(top, func);
 
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
-
-                let base = if args.len() > fixed_params {
-                    self.state.stack[top + 1..].rotate_left(fixed_params);
-                    top + 1 + (args.len() - fixed_params)
-                } else {
-                    top + 1
-                };
-
-                self.state.stack.resize(base + stack_size, Value::Nil);
-
-                self.state.frames.push(Frame::Lua {
-                    bottom: top,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state.stack.extend(args);
-                self.state.frames.push(Frame::Callback {
-                    bottom: top,
-                    callback,
-                });
-            }
-        }
         Ok(())
     }
 
-    // Tail-call the function at the given register with the given arguments. Pops the current Lua
-    // frame, pushing a new frame for the given function.
+    /// Calls an externally defined function with arguments placed on the stack
+    /// starting at `bottom`.  On return, places an optional single result of
+    /// the function call in the register indicated by [`MetaReturn`].
+    pub(super) fn call_meta_function_in_place(
+        self,
+        _ctx: Context<'gc>,
+        func: Function<'gc>,
+        bottom: usize,
+        args: u8,
+        meta_ret: MetaReturn,
+    ) -> Result<(), VMError> {
+        let Some(Frame::Lua {
+            expected_return,
+            is_variable,
+            base,
+            stack_size,
+            ..
+        }) = self.state.frames.last_mut()
+        else {
+            panic!("top frame is not lua frame");
+        };
+
+        if *is_variable {
+            return Err(VMError::ExpectedVariableStack(false));
+        }
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
+        let top = self.state.stack.len();
+        debug_assert_eq!(top, *base + *stack_size);
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
+        *expected_return = Some(LuaReturn::Meta(meta_ret));
+
+        // This does not need to consume fuel for each argument, as
+        // the arguments are used in-place on the stack and are not
+        // shifted.
+
+        self.state.stack.truncate(bottom + args as usize);
+
+        self.state.push_call(bottom, func);
+
+        Ok(())
+    }
+
+    /// Tail-call the function at the given register with the given arguments. Pops the current Lua
+    /// frame, pushing a new frame for the given function.
     pub(super) fn tail_call_function(
         self,
         ctx: Context<'gc>,
@@ -866,6 +885,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             return Err(VMError::ExpectedVariableStack(args.is_variable()));
         }
 
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         let function_index = base + func.0 as usize;
         let arg_count = args
             .to_constant()
@@ -877,56 +898,20 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         self.state.close_upvalues(&ctx, bottom);
         self.state.frames.pop();
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel
             .consume(count_fuel(Self::FUEL_PER_ITEM, arg_count));
 
-        match call {
-            Function::Closure(closure) => {
-                self.state.stack[bottom] = closure.into();
-                for i in 0..arg_count {
-                    self.state.stack[bottom + 1 + i] = self.state.stack[function_index + 1 + i];
-                }
+        self.state
+            .stack
+            .copy_within(function_index + 1..function_index + 1 + arg_count, bottom);
+        self.state.stack.truncate(bottom + arg_count);
 
-                let proto = closure.prototype();
-                let fixed_params = proto.fixed_params as usize;
-                let stack_size = proto.stack_size as usize;
+        self.state.push_call(bottom, call);
 
-                let base = if arg_count > fixed_params {
-                    self.state.stack.truncate(bottom + 1 + arg_count);
-                    self.state.stack[bottom + 1..].rotate_left(fixed_params);
-                    bottom + 1 + (arg_count - fixed_params)
-                } else {
-                    if arg_count < fixed_params {
-                        self.state.stack[bottom + 1 + arg_count..bottom + 1 + fixed_params]
-                            .fill(Value::Nil);
-                    }
-                    bottom + 1
-                };
-
-                self.state.stack.resize(base + stack_size, Value::Nil);
-
-                self.state.frames.push(Frame::Lua {
-                    bottom,
-                    base,
-                    is_variable: false,
-                    pc: 0,
-                    stack_size,
-                    expected_return: None,
-                });
-            }
-            Function::Callback(callback) => {
-                self.state
-                    .stack
-                    .copy_within(function_index + 1..function_index + 1 + arg_count, bottom);
-                self.state.stack.truncate(bottom + arg_count);
-                self.state.frames.push(Frame::Callback { bottom, callback });
-            }
-        }
         Ok(())
     }
 
-    // Return to the upper frame with results starting at the given register index.
+    /// Return to the upper frame with results starting at the given register index.
     pub(super) fn return_upper(
         self,
         mc: &Mutation<'gc>,
@@ -946,6 +931,9 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
         if is_variable != count.is_variable() {
             return Err(VMError::ExpectedVariableStack(count.is_variable()));
         }
+
+        self.fuel.consume(Self::FUEL_PER_CALL);
+
         self.state.close_upvalues(mc, bottom);
 
         let start = base + start.0 as usize;
@@ -954,80 +942,12 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
             .map(|c| c as usize)
             .unwrap_or(self.state.stack.len() - start);
 
-        self.fuel.consume(Self::FUEL_PER_CALL);
         self.fuel.consume(count_fuel(Self::FUEL_PER_ITEM, count));
 
-        match self.state.frames.last_mut() {
-            Some(Frame::Sequence {
-                bottom: seq_bottom, ..
-            }) => {
-                assert_eq!(bottom, *seq_bottom);
-                self.state.stack.copy_within(start..start + count, bottom);
-                self.state.stack.truncate(bottom + count);
-            }
-            Some(Frame::Lua {
-                expected_return,
-                is_variable,
-                base,
-                stack_size,
-                pc,
-                ..
-            }) => match expected_return.take() {
-                Some(LuaReturn::Normal(expected_return)) => {
-                    let returning = expected_return
-                        .to_constant()
-                        .map(|c| c as usize)
-                        .unwrap_or(count);
+        self.state.stack.copy_within(start..start + count, bottom);
+        self.state.stack.truncate(bottom + count);
+        self.state.return_to(bottom);
 
-                    for i in 0..returning.min(count) {
-                        self.state.stack[bottom + i] = self.state.stack[start + i]
-                    }
-
-                    self.state.stack.resize(bottom + returning, Value::Nil);
-                    for i in count..returning {
-                        self.state.stack[bottom + i] = Value::Nil;
-                    }
-
-                    if expected_return.is_variable() {
-                        *is_variable = true;
-                    } else {
-                        self.state.stack.resize(*base + *stack_size, Value::Nil);
-                        *is_variable = false;
-                    }
-                }
-                Some(LuaReturn::Meta(meta_ret)) => {
-                    let meta_val = if count > 0 {
-                        self.state.stack[start]
-                    } else {
-                        Value::Nil
-                    };
-                    self.state.stack.resize(*base + *stack_size, Value::Nil);
-                    *is_variable = false;
-
-                    match meta_ret {
-                        MetaReturn::None => {}
-                        MetaReturn::Register(reg) => {
-                            self.state.stack[*base + reg.0 as usize] = meta_val;
-                        }
-                        MetaReturn::SkipIf(skip_if) => {
-                            if meta_val.to_bool() == skip_if {
-                                *pc += 1;
-                            }
-                        }
-                    }
-                }
-                None => {
-                    panic!("no expected returns set for returned to lua frame")
-                }
-            },
-            None => {
-                assert_eq!(bottom, 0);
-                self.state.stack.copy_within(start..start + count, bottom);
-                self.state.stack.truncate(bottom + count);
-                self.state.frames.push(Frame::Result { bottom });
-            }
-            _ => panic!("lua frame must be above a sequence or lua frame"),
-        }
         Ok(())
     }
 }
@@ -1134,12 +1054,6 @@ impl<'gc, 'a> LuaRegisters<'gc, 'a> {
 
         self.open_upvalues.truncate(start);
     }
-}
-
-fn count_fuel(per_item: i32, len: usize) -> i32 {
-    i32::try_from(len)
-        .unwrap_or(i32::MAX)
-        .saturating_mul(per_item)
 }
 
 fn open_upvalue_ind<'gc>(u: UpValue<'gc>) -> usize {

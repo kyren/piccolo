@@ -9,6 +9,14 @@ use gc_arena::allocator_api::MetricsAlloc;
 
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
+/// The mechanism through which all callbacks receive parameters and return values.
+///
+/// Each [`Thread`](crate::Thread) has its own internal stack of [`Value`]s, and this stack is
+/// shared for all running Lua functions *and* callbacks.
+///
+/// The `Stack` is actually a mutable reference to the *top* of the internal stack inside a
+/// `Thread`. In this way, we avoid needing to constantly allocate space for callback arguments
+/// and returns.
 pub struct Stack<'gc, 'a> {
     values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
     bottom: usize,
@@ -18,6 +26,13 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn new(values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>, bottom: usize) -> Self {
         assert!(values.len() >= bottom);
         Self { values, bottom }
+    }
+
+    pub fn reborrow(&mut self) -> Stack<'gc, '_> {
+        Stack {
+            values: self.values,
+            bottom: self.bottom,
+        }
     }
 
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
@@ -42,19 +57,28 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.insert(self.bottom, value);
     }
 
-    pub fn pop_back(&mut self) -> Value<'gc> {
+    pub fn pop_back(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
-            self.values.pop().unwrap()
+            Some(self.values.pop().unwrap())
         } else {
-            Value::Nil
+            None
         }
     }
 
-    pub fn pop_front(&mut self) -> Value<'gc> {
+    pub fn pop_front(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
-            self.values.remove(self.bottom)
+            Some(self.values.remove(self.bottom))
         } else {
-            Value::Nil
+            None
+        }
+    }
+
+    pub fn remove(&mut self, i: usize) -> Option<Value<'gc>> {
+        let index = self.bottom + i;
+        if index < self.values.len() {
+            Some(self.values.remove(index))
+        } else {
+            None
         }
     }
 
@@ -72,6 +96,14 @@ impl<'gc, 'a> Stack<'gc, 'a> {
 
     pub fn resize(&mut self, size: usize) {
         self.values.resize(self.bottom + size, Value::Nil);
+    }
+
+    pub fn reserve(&mut self, additional: usize) {
+        self.values.reserve(additional);
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.values.capacity() - self.bottom
     }
 
     pub fn drain<R: RangeBounds<usize>>(
@@ -107,11 +139,11 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     }
 
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_back())
+        V::from_value(ctx, self.pop_back().unwrap_or_default())
     }
 
     pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_front())
+        V::from_value(ctx, self.pop_front().unwrap_or_default())
     }
 
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
@@ -145,7 +177,7 @@ impl<'gc, 'a, 'b> Extend<Value<'gc>> for &'b mut Stack<'gc, 'a> {
     }
 }
 
-impl<'gc: 'b, 'a, 'b> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
+impl<'gc, 'a> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
     fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
         self.values.extend(iter);
     }

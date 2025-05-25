@@ -1,6 +1,6 @@
 use std::string::String as StdString;
 
-use piccolo::{Closure, Executor, Lua, StaticError, VMError};
+use piccolo::{meta_ops::MetaCallError, Closure, Executor, Lua};
 
 const SOURCE: &str = r#"
     -- Purposeful typo of 'tostring'
@@ -22,6 +22,6 @@ fn tail_call_stack_panic() {
 
     assert!(matches!(
         lua.execute::<StdString>(&exec),
-        Err(StaticError::Runtime(err)) if matches!(err.downcast::<VMError>(), Some(VMError::BadType(_)))
+        Err(err) if err.root_cause().downcast_ref::<MetaCallError>().is_some()
     ));
 }

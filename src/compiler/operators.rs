@@ -143,15 +143,15 @@ pub fn comparison_binop_operation(
             left,
             right,
         },
-        ComparisonBinOp::GreaterThan => Operation::LessEq {
-            skip_if: !skip_if,
-            left,
-            right,
+        ComparisonBinOp::GreaterThan => Operation::Less {
+            skip_if,
+            left: right,
+            right: left,
         },
-        ComparisonBinOp::GreaterEqual => Operation::Less {
-            skip_if: !skip_if,
-            left,
-            right,
+        ComparisonBinOp::GreaterEqual => Operation::LessEq {
+            skip_if,
+            left: right,
+            right: left,
         },
     }
 }
@@ -163,15 +163,11 @@ pub fn comparison_binop_const_fold<S: AsRef<[u8]>>(
 ) -> Option<Constant<S>> {
     match comparison_binop {
         ComparisonBinOp::Equal => Some(Constant::Boolean(left.is_equal(right))),
-        ComparisonBinOp::LessThan => match left.less_than(right) {
-            Some(a) => Some(Constant::Boolean(a)),
-            _ => None,
-        },
-        ComparisonBinOp::LessEqual => match left.less_equal(right) {
-            Some(a) => Some(Constant::Boolean(a)),
-            _ => None,
-        },
-        _ => None,
+        ComparisonBinOp::NotEqual => Some(Constant::Boolean(!left.is_equal(right))),
+        ComparisonBinOp::LessThan => Some(Constant::Boolean(left.less_than(right)?)),
+        ComparisonBinOp::LessEqual => Some(Constant::Boolean(left.less_equal(right)?)),
+        ComparisonBinOp::GreaterThan => Some(Constant::Boolean(right.less_than(left)?)),
+        ComparisonBinOp::GreaterEqual => Some(Constant::Boolean(right.less_equal(left)?)),
     }
 }
 

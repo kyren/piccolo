@@ -1,54 +1,16 @@
 use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
-use thiserror::Error;
 
 use crate::{
-    meta_ops::{self, MetaResult},
+    meta_ops::{self, ConcatMetaResult, MetaResult},
     opcode::{Operation, RCIndex},
-    raw_ops,
     table::RawTable,
     thread::thread::MetaReturn,
     types::{RegisterIndex, UpValueDescriptor, VarCount},
-    Closure, Constant, Context, Function, RuntimeError, String, Table, Value,
+    Closure, Constant, Context, Function, String, Table, Value,
 };
 
 use super::{thread::LuaFrame, VMError};
-
-#[derive(Debug, Copy, Clone, Error)]
-pub enum BinaryOperatorError {
-    #[error("cannot add values")]
-    Add,
-    #[error("cannot subtract values")]
-    Subtract,
-    #[error("cannot multiply values")]
-    Multiply,
-    #[error("cannot float divide values")]
-    FloatDivide,
-    #[error("cannot floor divide values")]
-    FloorDivide,
-    #[error("cannot modulo values")]
-    Modulo,
-    #[error("cannot exponentiate values")]
-    Exponentiate,
-    #[error("cannot negate value")]
-    UnaryNegate,
-    #[error("cannot bitwise AND values")]
-    BitAnd,
-    #[error("cannot bitwise OR values")]
-    BitOr,
-    #[error("cannot bitwise XOR values")]
-    BitXor,
-    #[error("cannot bitwise NOT value")]
-    BitNot,
-    #[error("cannot shift value left")]
-    ShiftLeft,
-    #[error("cannot shift value right")]
-    ShiftRight,
-    #[error("cannot compare values with <")]
-    LessThan,
-    #[error("cannot compare values with <=")]
-    LessEqual,
-}
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed.
@@ -58,7 +20,7 @@ pub(super) fn run_vm<'gc>(
     ctx: Context<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     max_instructions: u32,
-) -> Result<u32, RuntimeError> {
+) -> Result<u32, VMError> {
     if max_instructions == 0 {
         return Ok(0);
     }
@@ -116,10 +78,11 @@ pub(super) fn run_vm<'gc>(
                 array_size,
                 map_size,
             } => {
-                let mut raw_table = RawTable::new(&ctx);
-                raw_table.reserve_array(array_size as usize);
-                raw_table.reserve_map(map_size as usize);
-                let table = Table::from_parts(&ctx, raw_table, None);
+                let table = Table::from_parts(
+                    &ctx,
+                    RawTable::with_capacity(&ctx, array_size as usize, map_size as usize),
+                    None,
+                );
                 registers.stack_frame[dest.0 as usize] = Value::Table(table);
             }
 
@@ -273,11 +236,16 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::NumericForPrep { base, jump } => {
-                registers.stack_frame[base.0 as usize] = raw_ops::subtract(
+                registers.stack_frame[base.0 as usize] = raw_subtract(
                     registers.stack_frame[base.0 as usize],
                     registers.stack_frame[base.0 as usize + 2],
                 )
-                .ok_or(BinaryOperatorError::Subtract)?;
+                .ok_or_else(|| {
+                    VMError::BadForLoopPrep(
+                        registers.stack_frame[base.0 as usize].type_name(),
+                        registers.stack_frame[base.0 as usize + 2].type_name(),
+                    )
+                })?;
                 *registers.pc = add_offset(*registers.pc, jump);
             }
 
@@ -288,17 +256,41 @@ pub(super) fn run_vm<'gc>(
                     registers.stack_frame[base.0 as usize + 2],
                 ) {
                     (Value::Integer(index), Value::Integer(limit), Value::Integer(step)) => {
-                        let index = index + step;
+                        let (index, overflow) = index.overflowing_add(step);
                         registers.stack_frame[base.0 as usize] = Value::Integer(index);
 
-                        let past_end = if step < 0 {
-                            index < limit
-                        } else {
-                            limit < index
-                        };
+                        let past_end = overflow
+                            || if step < 0 {
+                                index < limit
+                            } else {
+                                index > limit
+                            };
                         if !past_end {
                             *registers.pc = add_offset(*registers.pc, jump);
                             registers.stack_frame[base.0 as usize + 3] = Value::Integer(index);
+                        }
+                    }
+                    (Value::Integer(index), limit, Value::Integer(step)) => {
+                        if let Some(limit) = limit.to_number() {
+                            let (index, overflow) = index.overflowing_add(step);
+                            registers.stack_frame[base.0 as usize] = Value::Integer(index);
+
+                            let past_end = overflow
+                                || if step < 0 {
+                                    !(index as f64 >= limit)
+                                } else {
+                                    !(index as f64 <= limit)
+                                };
+                            if !past_end {
+                                *registers.pc = add_offset(*registers.pc, jump);
+                                registers.stack_frame[base.0 as usize + 3] = Value::Integer(index);
+                            }
+                        } else {
+                            return Err(VMError::BadForLoop(
+                                "integer",
+                                limit.type_name(),
+                                "integer",
+                            ));
                         }
                     }
                     (index, limit, step) => {
@@ -309,16 +301,20 @@ pub(super) fn run_vm<'gc>(
                             registers.stack_frame[base.0 as usize] = Value::Number(index);
 
                             let past_end = if step < 0.0 {
-                                index < limit
+                                !(index >= limit)
                             } else {
-                                limit < index
+                                !(index <= limit)
                             };
                             if !past_end {
                                 *registers.pc = add_offset(*registers.pc, jump);
                                 registers.stack_frame[base.0 as usize + 3] = Value::Number(index);
                             }
                         } else {
-                            return Err(BinaryOperatorError::Add.into());
+                            return Err(VMError::BadForLoop(
+                                index.type_name(),
+                                limit.type_name(),
+                                step.type_name(),
+                            ));
                         }
                     }
                 }
@@ -362,10 +358,21 @@ pub(super) fn run_vm<'gc>(
                 source,
                 count,
             } => {
-                registers.stack_frame[dest.0 as usize] = Value::String(String::concat(
-                    ctx,
-                    &registers.stack_frame[source.0 as usize..source.0 as usize + count as usize],
-                )?);
+                let base = source.0 as usize;
+                let values = &registers.stack_frame[base..base + count as usize];
+                match meta_ops::concat_many(ctx, values)? {
+                    ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    ConcatMetaResult::Call(func) => {
+                        lua_frame.call_meta_function_in_place(
+                            ctx,
+                            func,
+                            base,
+                            count,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::GetUpValue { source, dest } => {
@@ -430,10 +437,21 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_than(left, right).ok_or(BinaryOperatorError::LessThan)?)
-                    == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_than(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
@@ -444,112 +462,263 @@ pub(super) fn run_vm<'gc>(
             } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                if (raw_ops::less_equal(left, right).ok_or(BinaryOperatorError::LessEqual)?)
-                    == skip_if
-                {
-                    *registers.pc += 1;
+                match meta_ops::less_equal(ctx, left, right)? {
+                    MetaResult::Value(v) => {
+                        if v.to_bool() == skip_if {
+                            *registers.pc += 1;
+                        }
+                    }
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::SkipIf(skip_if),
+                        )?;
+                        break;
+                    }
                 }
             }
 
             Operation::Not { dest, source } => {
                 let source = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] = source.not();
+                registers.stack_frame[dest.0 as usize] = (!source.to_bool()).into();
             }
 
             Operation::Minus { dest, source } => {
                 let value = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::negate(value).ok_or(BinaryOperatorError::UnaryNegate)?;
+                match meta_ops::negate(ctx, value)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitNot { dest, source } => {
                 let value = registers.stack_frame[source.0 as usize];
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_not(value).ok_or(BinaryOperatorError::BitNot)?;
+                match meta_ops::bitwise_not(ctx, value)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Add { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::add(left, right).ok_or(BinaryOperatorError::Add)?;
+                match meta_ops::add(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Sub { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::subtract(left, right).ok_or(BinaryOperatorError::Add)?;
+                match meta_ops::subtract(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Mul { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::multiply(left, right).ok_or(BinaryOperatorError::Multiply)?;
+                match meta_ops::multiply(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Div { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::float_divide(left, right).ok_or(BinaryOperatorError::FloatDivide)?;
+                match meta_ops::float_divide(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::IDiv { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::floor_divide(left, right).ok_or(BinaryOperatorError::FloorDivide)?;
+                match meta_ops::floor_divide(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Mod { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::modulo(left, right).ok_or(BinaryOperatorError::Modulo)?;
+                match meta_ops::modulo(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::Pow { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::exponentiate(left, right).ok_or(BinaryOperatorError::Exponentiate)?;
+                match meta_ops::exponentiate(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitAnd { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_and(left, right).ok_or(BinaryOperatorError::BitAnd)?;
+                match meta_ops::bitwise_and(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitOr { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_or(left, right).ok_or(BinaryOperatorError::BitOr)?;
+                match meta_ops::bitwise_or(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::BitXor { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::bitwise_xor(left, right).ok_or(BinaryOperatorError::BitXor)?;
+                match meta_ops::bitwise_xor(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::ShiftLeft { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::shift_left(left, right).ok_or(BinaryOperatorError::ShiftLeft)?;
+                match meta_ops::shift_left(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
 
             Operation::ShiftRight { dest, left, right } => {
                 let left = get_rc(&registers.stack_frame, &current_prototype.constants, left);
                 let right = get_rc(&registers.stack_frame, &current_prototype.constants, right);
-                registers.stack_frame[dest.0 as usize] =
-                    raw_ops::shift_right(left, right).ok_or(BinaryOperatorError::ShiftRight)?;
+                match meta_ops::shift_right(ctx, left, right)? {
+                    MetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
+                    MetaResult::Call(call) => {
+                        lua_frame.call_meta_function(
+                            ctx,
+                            call.function,
+                            &call.args,
+                            MetaReturn::Register(dest),
+                        )?;
+                        break;
+                    }
+                }
             }
         }
 
@@ -570,4 +739,8 @@ fn add_offset(pc: usize, offset: i16) -> usize {
     } else {
         pc
     }
+}
+
+fn raw_subtract<'gc>(lhs: Value<'gc>, rhs: Value<'gc>) -> Option<Value<'gc>> {
+    Some(lhs.to_constant()?.subtract(&rhs.to_constant()?)?.into())
 }
