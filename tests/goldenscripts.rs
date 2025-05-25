@@ -126,111 +126,134 @@ fn test_goldenscripts() {
 
     let (tx, rx) = channel();
 
-    'main: for dir in read_dir(DIR).expect("could not list dir contents") {
-        let path = dir.expect("could not read dir entry").path();
-        // Open up the file, and read up to (and including) a --- line indicating the
-        // start of the Lua section
+    let files = read_dir(DIR)
+        .and_then(|e| e.collect::<Result<Vec<_>, _>>())
+        .expect("could not list dir contents");
+
+    let mut files = files
+        .into_iter()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|s| s == "lua").unwrap_or(false))
+        .collect::<Vec<_>>();
+
+    files.sort();
+
+    'main: for path in files {
+        // Read the first line of the file to find the mode, specified like
+        // "--- mode"
         let mut file = BufReader::new(File::open(&path).unwrap());
         let mut result_type = String::new();
         file.read_line(&mut result_type).unwrap();
-        let mode = match result_type.trim_start_matches("---").trim() {
-            "error" => GoldenScriptMode::CompileError,
-            "pass" => GoldenScriptMode::Pass,
+        let mode = match result_type.strip_prefix("---").map(|s| s.trim()) {
+            Some("error") => GoldenScriptMode::CompileError,
+            Some("pass") => GoldenScriptMode::Pass,
             mode => {
-                eprintln!("{path:?}: goldenscript did not specify an existing mode: {mode:?}");
+                eprintln!("{path:?}: goldenscript has unknown mode {mode:?}");
                 failed_scripts.push(path);
                 continue;
             }
         };
+
         let mut expected_output = String::new();
         let mut line = String::new();
-        while line.trim() != "---" {
+        loop {
             if let Err(_) = file.read_line(&mut line) {
                 eprintln!("{path:?}: reached EOF w/o encountering end of prelude");
                 failed_scripts.push(path);
                 continue 'main;
             }
-            if line.trim() != "---" {
-                expected_output.extend(line.trim_start_matches("---").trim_start().chars());
+            if let Some(str) = line
+                .strip_prefix("--- ")
+                .or_else(|| line.strip_prefix("---"))
+            {
+                expected_output.push_str(str);
                 line.clear();
+            } else {
+                break;
             }
         }
+
         eprintln!("{path:?}: operating in {mode:?} mode");
         // Do some tricks to reset file position to the "start of script"
         let script_start = file.seek(SeekFrom::Start(0)).unwrap();
         let mut file = file.into_inner();
         file.seek(SeekFrom::Start(script_start)).unwrap();
         let file = io::buffered_read(file).unwrap();
-        if let Some(ext) = path.extension() {
-            if ext == "lua" {
-                eprintln!("running {:?}", path);
-                let mut lua = Lua::full();
+        eprintln!("running {:?}", path);
 
-                let tx = tx.clone();
-                lua.enter(|ctx| {
-                    ctx.set_global(
-                        "print",
-                        Callback::from_fn(
+        let mut lua = Lua::full();
+
+        let tx = tx.clone();
+        lua.enter(|ctx| {
+            ctx.set_global(
+                "print",
+                Callback::from_fn(
+                    &ctx,
+                    move |ctx: Context<'_>, _: Execution<'_, '_>, mut stack: Stack<'_, '_>| {
+                        Ok(CallbackReturn::Sequence(BoxSequence::new(
                             &ctx,
-                            move |ctx: Context<'_>,
-                                  _: Execution<'_, '_>,
-                                  mut stack: Stack<'_, '_>| {
-                                Ok(CallbackReturn::Sequence(BoxSequence::new(
-                                    &ctx,
-                                    PrintSeq::new(stack.drain(..).rev(), tx.clone()),
-                                )))
-                            },
-                        ),
-                    );
-                });
+                            PrintSeq::new(stack.drain(..).rev(), tx.clone()),
+                        )))
+                    },
+                ),
+            );
+        });
 
-                let result = lua
-                    .try_enter(|ctx| {
-                        let closure =
-                            Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
-                        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
-                    })
-                    .and_then(|executor| lua.execute::<()>(&executor));
-                match mode {
-                    GoldenScriptMode::CompileError => {
-                        match result {
-                            Ok(()) => {
-                                eprintln!("{path:?}: expected script to fail to compile, but it succeeded");
-                                failed_scripts.push(path);
-                                continue;
-                            }
-                            Err(e) => {
-                                let formatted_error = format!("{e}\n");
-                                if formatted_error != expected_output {
-                                    eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{formatted_error}");
-                                    failed_scripts.push(path);
-                                    continue;
-                                }
-                            }
-                        };
-                        eprintln!("{path:?}: succeeded");
+        let compile_result = lua.try_enter(|ctx| {
+            let closure = Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
+            Ok(ctx.stash(closure))
+        });
+        let (closure, compile_error) = match compile_result {
+            Ok(o) => (Some(o), None),
+            Err(e) => (None, Some(e)),
+        };
+        let run_result = closure.map(|closure| {
+            lua.try_enter(|ctx| {
+                let closure = ctx.fetch(&closure);
+                Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
+            })
+            .and_then(|executor| lua.execute::<()>(&executor))
+        });
+        let run_error = run_result.map(|r| r.err()).flatten();
+
+        match mode {
+            GoldenScriptMode::CompileError => {
+                if let Some(error) = compile_error {
+                    let formatted_error = format!("{error}\n");
+                    if formatted_error != expected_output {
+                        eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{formatted_error}");
+                        failed_scripts.push(path);
+                        continue;
                     }
-                    GoldenScriptMode::Pass => {
-                        match result {
-                            Err(_) => {
-                                eprintln!("{path:?}: expected script to compile, but failed");
-                                failed_scripts.push(path);
-                                continue;
-                            }
-                            Ok(()) => {
-                                // Stitch together our expected byte output, and compare
-                                let output: Vec<_> = rx.try_iter().flatten().collect();
-                                if output != expected_output.as_bytes() {
-                                    // Technically `output` is ASCII, but UTF8 is compatible
-                                    eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{}\n---\n{output:?}", String::from_utf8_lossy(&output));
-                                    failed_scripts.push(path);
-                                    continue;
-                                }
-                            }
-                        };
-                        eprintln!("{path:?}: succeeded");
-                    }
+                } else {
+                    eprintln!("{path:?}: expected script to fail to compile, but it succeeded");
+                    failed_scripts.push(path);
+                    continue;
                 }
+                eprintln!("{path:?}: succeeded");
+            }
+            GoldenScriptMode::Pass => {
+                if let Some(error) = compile_error {
+                    eprintln!(
+                        "{path:?}: expected script to compile, but it failed\nerror: {error}"
+                    );
+                    failed_scripts.push(path);
+                    continue;
+                }
+                if let Some(error) = run_error {
+                    eprintln!("{path:?}: expected script to pass, but it threw and error at runtime\nerror: {error}");
+                    failed_scripts.push(path);
+                    continue;
+                }
+                // Stitch together our expected byte output, and compare
+                let output: Vec<_> = rx.try_iter().flatten().collect();
+                if output != expected_output.as_bytes() {
+                    // Technically `output` is ASCII, but UTF8 is compatible
+                    eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{}\n---\n{output:?}", String::from_utf8_lossy(&output));
+                    failed_scripts.push(path);
+                    continue;
+                }
+                eprintln!("{path:?}: succeeded");
             }
         }
     }
