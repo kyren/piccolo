@@ -11,13 +11,8 @@
 //! where `mode` dictates how to handle errors
 //! and `script` is a valid Lua script.
 
-use piccolo::{io, Closure, Executor, Lua};
-use std::{
-    fs::{read_dir, File},
-    io::{BufRead, BufReader, Seek, SeekFrom},
-    path::PathBuf,
-    sync::mpsc::channel,
-};
+use piccolo::{Closure, Executor, Lua};
+use std::{fs::read_dir, io::BufRead, path::PathBuf, sync::mpsc::channel};
 
 use crate::collected_print::print_callback;
 
@@ -132,9 +127,12 @@ fn test_goldenscripts() {
     'main: for path in files {
         // Read the first line of the file to find the mode, specified like
         // "--- mode"
-        let mut file = BufReader::new(File::open(&path).unwrap());
+        let source = std::fs::read(&path).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&source);
+
         let mut result_type = String::new();
-        file.read_line(&mut result_type).unwrap();
+        cursor.read_line(&mut result_type).unwrap();
         let mode = match result_type.strip_prefix("---").map(|s| s.trim()) {
             Some("error") => GoldenScriptMode::CompileError,
             Some("pass") => GoldenScriptMode::Pass,
@@ -148,7 +146,7 @@ fn test_goldenscripts() {
         let mut expected_output = String::new();
         let mut line = String::new();
         loop {
-            if let Err(_) = file.read_line(&mut line) {
+            if let Err(_) = cursor.read_line(&mut line) {
                 eprintln!("{path:?}: reached EOF w/o encountering end of prelude");
                 failed_scripts.push(path);
                 continue 'main;
@@ -165,11 +163,6 @@ fn test_goldenscripts() {
         }
 
         eprintln!("{path:?}: operating in {mode:?} mode");
-        // Do some tricks to reset file position to the "start of script"
-        let script_start = file.seek(SeekFrom::Start(0)).unwrap();
-        let mut file = file.into_inner();
-        file.seek(SeekFrom::Start(script_start)).unwrap();
-        let file = io::buffered_read(file).unwrap();
         eprintln!("running {:?}", path);
 
         let mut lua = Lua::full();
@@ -180,7 +173,7 @@ fn test_goldenscripts() {
         });
 
         let compile_result = lua.try_enter(|ctx| {
-            let closure = Closure::load(ctx, Some(path.to_string_lossy().as_ref()), file)?;
+            let closure = Closure::load(ctx, Some(path.to_string_lossy().as_ref()), &source)?;
             Ok(ctx.stash(closure))
         });
         let (closure, compile_error) = match compile_result {
