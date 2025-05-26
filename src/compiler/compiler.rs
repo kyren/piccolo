@@ -27,10 +27,10 @@ use super::{
     parser::{
         AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
         ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
-        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalFunctionStatement,
-        LocalStatement, PrimaryExpression, RecordKey, RepeatStatement, ReturnStatement,
-        SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
-        UnaryOperator, WhileStatement,
+        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalAttributes,
+        LocalFunctionStatement, LocalStatement, PrimaryExpression, RecordKey, RepeatStatement,
+        ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
+        TableConstructor, UnaryOperator, WhileStatement,
     },
     register_allocator::RegisterAllocator,
     StringInterner,
@@ -56,6 +56,12 @@ pub enum CompileErrorKind {
     JumpLocal,
     #[error("jump offset overflow")]
     JumpOverflow,
+    #[error("cannot assign to a const variable")]
+    AssignToConst,
+    #[error("multiple to-be-closed variables in local list")]
+    MultipleClose,
+    #[error("close attribute currently unsupported")]
+    CloseUnsupported,
 }
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -188,7 +194,7 @@ struct CompilerFunction<S> {
 
     has_varargs: bool,
     fixed_params: u8,
-    locals: Vec<(S, RegisterIndex)>,
+    locals: Vec<(S, RegisterIndex, LocalAttributes)>,
 
     blocks: Vec<BlockDescriptor>,
     unique_jump_id: u64,
@@ -259,8 +265,8 @@ enum ExprDescriptor<S> {
 
 #[derive(Debug)]
 enum VariableDescriptor<S> {
-    Local(RegisterIndex),
-    UpValue(UpValueIndex),
+    Local(RegisterIndex, LocalAttributes),
+    UpValue(UpValueIndex, LocalAttributes),
     Global(S),
 }
 
@@ -356,8 +362,10 @@ impl<S: StringInterner> Compiler<S> {
 
     fn exit_block(&mut self) -> Result<(), CompileErrorKind> {
         let last_block = self.current_function.blocks.pop().unwrap();
+        // TODO This is where to handle closing of <close> locals
+        // TODO Make sure __close is called in reverse declaration
 
-        while let Some((_, last)) = self.current_function.locals.last() {
+        while let Some((_, last, _attrs)) = self.current_function.locals.last() {
             if last.0 as u16 >= last_block.stack_bottom {
                 self.current_function.register_allocator.free(*last);
                 self.current_function.locals.pop();
@@ -587,7 +595,9 @@ impl<S: StringInterner> Compiler<S> {
                     .register_allocator
                     .push(1)
                     .ok_or(CompileErrorKind::Registers)?;
-                self.current_function.locals.push((name.clone(), loop_var));
+                self.current_function
+                    .locals
+                    .push((name.clone(), loop_var, LocalAttributes::NONE));
 
                 self.block_statements(body)?;
                 self.exit_block()?;
@@ -668,9 +678,11 @@ impl<S: StringInterner> Compiler<S> {
                     .push(name_count)
                     .ok_or(CompileErrorKind::Registers)?;
                 for i in 0..name_count {
-                    self.current_function
-                        .locals
-                        .push((names[i as usize].clone(), RegisterIndex(names_reg.0 + i)));
+                    self.current_function.locals.push((
+                        names[i as usize].clone(),
+                        RegisterIndex(names_reg.0 + i),
+                        LocalAttributes::NONE,
+                    ));
                 }
 
                 self.jump(loop_label.clone())?;
@@ -814,13 +826,21 @@ impl<S: StringInterner> Compiler<S> {
             )?;
         } else {
             match self.find_variable(name.clone())? {
-                VariableDescriptor::Local(dest) => {
+                VariableDescriptor::Local(dest, attrs) => {
+                    if attrs.is_const() {
+                        return Err(CompileErrorKind::AssignToConst);
+                    }
+
                     self.expr_discharge(
                         ExprDescriptor::Closure(proto),
                         ExprDestination::Register(dest),
                     )?;
                 }
-                VariableDescriptor::UpValue(dest) => {
+                VariableDescriptor::UpValue(dest, attrs) => {
+                    if attrs.is_const() {
+                        return Err(CompileErrorKind::AssignToConst);
+                    }
+
                     let source = self.expr_discharge(
                         ExprDescriptor::Closure(proto),
                         ExprDestination::AllocateNew,
@@ -851,6 +871,16 @@ impl<S: StringInterner> Compiler<S> {
         let name_len = local_statement.names.len();
         let val_len = local_statement.values.len();
 
+        let close_count = (local_statement.names.iter())
+            .filter(|(_, attr)| attr.is_close())
+            .count();
+
+        if close_count > 1 {
+            return Err(CompileErrorKind::MultipleClose);
+        } else if close_count == 1 {
+            return Err(CompileErrorKind::CloseUnsupported);
+        }
+
         if local_statement.values.is_empty() {
             let count = name_len
                 .try_into()
@@ -864,9 +894,11 @@ impl<S: StringInterner> Compiler<S> {
                 .operations
                 .push(Operation::LoadNil { dest, count });
             for i in 0..name_len {
+                let (name, attr) = &local_statement.names[i];
                 self.current_function.locals.push((
-                    local_statement.names[i].clone(),
+                    name.clone(),
                     RegisterIndex(dest.0 + i as u8),
+                    *attr,
                 ));
             }
         } else {
@@ -883,16 +915,19 @@ impl<S: StringInterner> Compiler<S> {
                     let dest = self.expr_push_count(expr, names_left)?;
 
                     for j in 0..names_left {
+                        let (name, attr) = &local_statement.names[val_len - 1 + j as usize];
                         self.current_function.locals.push((
-                            local_statement.names[val_len - 1 + j as usize].clone(),
+                            name.clone(),
                             RegisterIndex(dest.0 + j),
+                            *attr,
                         ));
                     }
                 } else {
                     let reg = self.expr_discharge(expr, ExprDestination::PushNew)?;
+                    let (name, attr) = &local_statement.names[i];
                     self.current_function
                         .locals
-                        .push((local_statement.names[i].clone(), reg));
+                        .push((name.clone(), reg, *attr));
                 }
             }
         }
@@ -952,10 +987,16 @@ impl<S: StringInterner> Compiler<S> {
         ) -> Result<(), CompileErrorKind> {
             match target {
                 AssignmentTarget::Name(name) => match this.find_variable(name.clone())? {
-                    VariableDescriptor::Local(dest) => {
+                    VariableDescriptor::Local(dest, attrs) => {
+                        if attrs.is_const() {
+                            return Err(CompileErrorKind::AssignToConst);
+                        }
                         this.expr_discharge(expr, ExprDestination::Register(dest))?;
                     }
-                    VariableDescriptor::UpValue(dest) => {
+                    VariableDescriptor::UpValue(dest, attrs) => {
+                        if attrs.is_const() {
+                            return Err(CompileErrorKind::AssignToConst);
+                        }
                         let (source, source_is_temp) = this.expr_any_register(expr)?;
                         this.current_function
                             .operations
@@ -1021,7 +1062,7 @@ impl<S: StringInterner> Compiler<S> {
                 assign(
                     self,
                     target,
-                    ExprDescriptor::Variable(VariableDescriptor::Local(reg)),
+                    ExprDescriptor::Variable(VariableDescriptor::Local(reg, LocalAttributes::NONE)),
                 )?;
                 self.current_function.register_allocator.free(reg);
             }
@@ -1041,9 +1082,11 @@ impl<S: StringInterner> Compiler<S> {
             .register_allocator
             .push(1)
             .ok_or(CompileErrorKind::Registers)?;
-        self.current_function
-            .locals
-            .push((local_function.name.clone(), dest));
+        self.current_function.locals.push((
+            local_function.name.clone(),
+            dest,
+            LocalAttributes::NONE,
+        ));
 
         let proto = self.new_prototype(
             FunctionRef::Named(
@@ -1340,10 +1383,10 @@ impl<S: StringInterner> Compiler<S> {
 
         for i in (0..=current_function).rev() {
             for j in (0..get_function(self, i).locals.len()).rev() {
-                let (local_name, register) = get_function(self, i).locals[j].clone();
+                let (local_name, register, attrs) = get_function(self, i).locals[j].clone();
                 if name.as_ref() == local_name.as_ref() {
                     if i == current_function {
-                        return Ok(VariableDescriptor::Local(register));
+                        return Ok(VariableDescriptor::Local(register, attrs));
                     } else {
                         // If we've found an upvalue in an upper function, we need to mark the
                         // blocks in that function as owning an upvalue. This allows us to skip
@@ -1373,7 +1416,7 @@ impl<S: StringInterner> Compiler<S> {
                                     .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     }
                 }
             }
@@ -1388,10 +1431,13 @@ impl<S: StringInterner> Compiler<S> {
 
             for j in 0..get_function(self, i).upvalues.len() {
                 if name.as_ref() == get_function(self, i).upvalues[j].0.as_ref() {
+                    // Functions are never const unless assigned in a
+                    // local statement, so synthesize a non-const
+                    let attrs = LocalAttributes::NONE;
                     let upvalue_index =
                         UpValueIndex(j.try_into().map_err(|_| CompileErrorKind::UpValues)?);
                     if i == current_function {
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     } else {
                         let mut upvalue_index = upvalue_index;
                         for k in i + 1..=current_function {
@@ -1404,7 +1450,7 @@ impl<S: StringInterner> Compiler<S> {
                                     .map_err(|_| CompileErrorKind::UpValues)?,
                             );
                         }
-                        return Ok(VariableDescriptor::UpValue(upvalue_index));
+                        return Ok(VariableDescriptor::UpValue(upvalue_index, attrs));
                     }
                 }
             }
@@ -1571,7 +1617,7 @@ impl<S: StringInterner> Compiler<S> {
         value: ExprDescriptor<S::String>,
     ) -> Result<(), CompileErrorKind> {
         match table {
-            ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+            ExprDescriptor::Variable(VariableDescriptor::UpValue(table, _)) => {
                 self.set_uptable(table, key, value)?;
             }
             table => {
@@ -1804,7 +1850,7 @@ impl<S: StringInterner> Compiler<S> {
         expr: ExprDescriptor<S::String>,
     ) -> Result<(RegisterIndex, bool), CompileErrorKind> {
         Ok(
-            if let ExprDescriptor::Variable(VariableDescriptor::Local(register)) = expr {
+            if let ExprDescriptor::Variable(VariableDescriptor::Local(register, _)) = expr {
                 (register, false)
             } else {
                 (
@@ -1869,7 +1915,7 @@ impl<S: StringInterner> Compiler<S> {
             dest: ExprDestination,
         ) -> Result<RegisterIndex, CompileErrorKind> {
             Ok(match table {
-                ExprDescriptor::Variable(VariableDescriptor::UpValue(table)) => {
+                ExprDescriptor::Variable(VariableDescriptor::UpValue(table, _)) => {
                     let (key_rc, key_to_free) = this.expr_any_register_or_constant(key)?;
                     if let Some(to_free) = key_to_free {
                         this.current_function.register_allocator.free(to_free);
@@ -1906,7 +1952,7 @@ impl<S: StringInterner> Compiler<S> {
 
         let result = match expr {
             ExprDescriptor::Variable(variable) => match variable {
-                VariableDescriptor::Local(source) => {
+                VariableDescriptor::Local(source, _) => {
                     let dest = new_destination(self, dest)?;
                     self.current_function
                         .operations
@@ -1914,7 +1960,7 @@ impl<S: StringInterner> Compiler<S> {
                     dest
                 }
 
-                VariableDescriptor::UpValue(source) => {
+                VariableDescriptor::UpValue(source, _) => {
                     let dest = new_destination(self, dest)?;
                     self.current_function
                         .operations
@@ -2466,9 +2512,11 @@ impl<S: Clone> CompilerFunction<S> {
         function.has_varargs = has_varargs;
         function.fixed_params = fixed_params;
         for i in 0..fixed_params {
-            function
-                .locals
-                .push((parameters[i as usize].clone(), RegisterIndex(i)));
+            function.locals.push((
+                parameters[i as usize].clone(),
+                RegisterIndex(i),
+                LocalAttributes::NONE,
+            ));
         }
         Ok(function)
     }
@@ -2479,7 +2527,9 @@ impl<S: Clone> CompilerFunction<S> {
             count: VarCount::constant(0),
         });
         assert!(self.locals.len() == self.fixed_params as usize);
-        for (_, r) in self.locals.drain(..) {
+        for (_, r, _attrs) in self.locals.drain(..) {
+            // TODO Handle close locals
+            // TODO Maybe unify their handling to keep DRY?
             self.register_allocator.free(r);
         }
         assert_eq!(

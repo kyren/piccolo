@@ -1,4 +1,4 @@
-use std::{ops, rc::Rc};
+use std::{fmt, ops, rc::Rc};
 
 use thiserror::Error;
 
@@ -44,6 +44,44 @@ impl<T> LineAnnotated<T> {
             inner: f(self.inner)?,
             line_number: self.line_number,
         })
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct LocalAttributes(u8);
+
+impl LocalAttributes {
+    pub const NONE: Self = LocalAttributes(0);
+    pub const CONST: Self = LocalAttributes(0b01);
+    pub const CONST_CLOSE: Self = LocalAttributes(0b11);
+    pub fn is_const(&self) -> bool {
+        self.0 & 1 != 0
+    }
+    pub fn is_close(&self) -> bool {
+        self.0 & 2 != 0
+    }
+}
+
+impl fmt::Debug for LocalAttributes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LocalAttributes(")?;
+        let mut first = false;
+        if self.is_const() {
+            first = false;
+            write!(f, "CONST")?;
+        }
+        if self.is_close() {
+            if !first {
+                write!(f, " | ")?;
+            }
+            first = false;
+            write!(f, "CLOSE")?;
+        }
+        if first {
+            write!(f, "NONE")?;
+        }
+        write!(f, ")")?;
+        Ok(())
     }
 }
 
@@ -142,7 +180,7 @@ pub struct LocalFunctionStatement<S> {
 
 #[derive(Debug, Clone)]
 pub struct LocalStatement<S> {
-    pub names: Vec<S>,
+    pub names: Vec<(S, LocalAttributes)>,
     pub values: Vec<Expression<S>>,
 }
 
@@ -297,6 +335,8 @@ pub enum ParseErrorKind {
     RecursionLimit,
     #[error("lexer error")]
     LexError(#[from] LexError),
+    #[error("invalid attribute {0:?}")]
+    InvalidAttribute(String),
 }
 
 #[derive(Debug, Error)]
@@ -587,11 +627,38 @@ impl<S: StringInterner> Parser<'_, S> {
 
     fn parse_local_statement(&mut self) -> Result<LocalStatement<S::String>, ParseError> {
         self.expect_next(Token::Local)?;
+
         let mut names = Vec::new();
-        names.push(self.expect_name()?.inner);
+        let take_local_name_and_attr = |this: &mut Self| {
+            let name = this.expect_name()?.inner;
+            let attribute = if this.check_ahead(0, Token::LessThan)? {
+                this.take_next()?;
+                let attr = this.expect_name()?.inner;
+                let line_number = this.lexer.line_number();
+                this.expect_next(Token::GreaterThan)?;
+
+                match attr.as_ref() {
+                    b"const" => LocalAttributes::CONST,
+                    b"close" => LocalAttributes::CONST_CLOSE,
+                    _ => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::InvalidAttribute(
+                                String::from_utf8_lossy(attr.as_ref()).into_owned(),
+                            ),
+                            line_number,
+                        })
+                    }
+                }
+            } else {
+                LocalAttributes::NONE
+            };
+            Ok((name, attribute))
+        };
+
+        names.push(take_local_name_and_attr(self)?);
         while self.check_ahead(0, Token::Comma)? {
             self.take_next()?;
-            names.push(self.expect_name()?.inner);
+            names.push(take_local_name_and_attr(self)?);
         }
 
         let values = if self.check_ahead(0, Token::Assign)? {

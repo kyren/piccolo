@@ -157,8 +157,8 @@ pub enum Error<'gc> {
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Lua(err) => write!(f, "lua error: {}", err),
-            Error::Runtime(err) => write!(f, "runtime error: {}", err),
+            Error::Lua(err) => write!(f, "lua error: {err}"),
+            Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }
 }
@@ -281,7 +281,7 @@ impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ExternError::Lua(err) => write!(f, "lua error: {err}"),
-            ExternError::Runtime(err) => write!(f, "runtime error: {err}"),
+            ExternError::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }
 }
