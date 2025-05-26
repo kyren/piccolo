@@ -1,7 +1,4 @@
-use std::{
-    char, fmt,
-    io::{self, Read},
-};
+use std::{char, fmt};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -242,8 +239,6 @@ pub enum LexError {
     UnfinishedLongString,
     #[error("malformed number")]
     BadNumber,
-    #[error("IO Error: {0}")]
-    IOError(#[from] io::Error),
 }
 
 /// A 0-indexed line number of the current source input.
@@ -257,24 +252,23 @@ impl fmt::Display for LineNumber {
     }
 }
 
-pub struct Lexer<R, S> {
-    source: Option<R>,
+pub struct Lexer<'a, S> {
+    source: &'a [u8],
     interner: S,
-    peek_buffer: Vec<u8>,
+    peek_count: usize,
     string_buffer: Vec<u8>,
     line_number: u64,
 }
 
-impl<R, S> Lexer<R, S>
+impl<'a, S> Lexer<'a, S>
 where
-    R: Read,
     S: StringInterner,
 {
-    pub fn new(source: R, interner: S) -> Lexer<R, S> {
+    pub fn new(source: &'a [u8], interner: S) -> Lexer<'a, S> {
         Lexer {
-            source: Some(source),
+            source,
             interner,
-            peek_buffer: Vec::new(),
+            peek_count: 0,
             string_buffer: Vec::new(),
             line_number: 0,
         }
@@ -506,8 +500,8 @@ where
 
     // End of stream encountered, clear any input handles and temp buffers
     fn reset(&mut self) {
-        self.source = None;
-        self.peek_buffer.clear();
+        self.source = &[];
+        self.peek_count = 0;
         self.string_buffer.clear();
     }
 
@@ -855,36 +849,17 @@ where
     }
 
     fn peek(&mut self, n: usize) -> Result<Option<u8>, LexError> {
-        if let Some(source) = self.source.as_mut() {
-            while self.peek_buffer.len() <= n {
-                let mut c = [0];
-                match source.read(&mut c) {
-                    Ok(0) => {
-                        self.source = None;
-                        break;
-                    }
-                    Ok(_) => {
-                        self.peek_buffer.push(c[0]);
-                    }
-                    Err(e) => {
-                        if e.kind() != io::ErrorKind::Interrupted {
-                            self.source = None;
-                            return Err(LexError::IOError(e));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(self.peek_buffer.get(n).copied())
+        self.peek_count = (n + 1).max(self.peek_count).min(self.source.len());
+        Ok(self.source.get(n).copied())
     }
 
     fn advance(&mut self, n: usize) {
         assert!(
-            n <= self.peek_buffer.len(),
+            n <= self.peek_count,
             "cannot advance over un-peeked characters"
         );
-        self.peek_buffer.drain(0..n);
+        self.peek_count -= n;
+        self.source = &self.source[n..];
     }
 
     fn take_string(&mut self) -> S::String {

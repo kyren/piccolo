@@ -1,10 +1,13 @@
 use std::fs::File;
+use std::io::Read;
 
 use piccolo::{io::buffered_read, Closure, Executor, Lua};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load the Lua file
-    let file = buffered_read(File::open("./examples/execute.lua")?)?;
+    let mut file = buffered_read(File::open("./examples/execute.lua")?)?;
+    let mut source = Vec::new();
+    file.read_to_end(&mut source)?;
 
     // Instantiate the Lua instance
     let mut lua = Lua::full();
@@ -14,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Get the global env
         let env = ctx.globals();
         // Run the lua script in the global context
-        let closure = Closure::load_with_env(ctx, None, file, env)?;
+        let closure = Closure::load_with_env(ctx, None, &*source, env)?;
         // Create an executor that will run the lua script
         let ex = Executor::start(ctx, closure.into(), ());
 
