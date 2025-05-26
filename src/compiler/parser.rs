@@ -74,8 +74,8 @@ impl fmt::Debug for LocalAttributes {
             if !first {
                 write!(f, " | ")?;
             }
-            write!(f, "CLOSE")?;
             first = false;
+            write!(f, "CLOSE")?;
         }
         if first {
             write!(f, "NONE")?;

@@ -11,9 +11,7 @@
 //! where `mode` dictates how to handle errors
 //! and `script` is a valid Lua script.
 
-use piccolo::{
-    io, BoxSequence, Callback, CallbackReturn, Closure, Context, Execution, Executor, Lua, Stack,
-};
+use piccolo::{io, Closure, Executor, Lua};
 use std::{
     fs::{read_dir, File},
     io::{BufRead, BufReader, Seek, SeekFrom},
@@ -21,13 +19,14 @@ use std::{
     sync::mpsc::channel,
 };
 
-use crate::collected_print::PrintSeq;
+use crate::collected_print::print_callback;
 
 mod collected_print {
     use gc_arena::Collect;
     use piccolo::{
         meta_ops::{self, MetaResult},
-        Context, Execution, Sequence, SequencePoll, Stack, Value,
+        BoxSequence, Callback, CallbackReturn, Context, Execution, Sequence, SequencePoll, Stack,
+        Value,
     };
     use std::{
         io::{Cursor, Write},
@@ -35,61 +34,52 @@ mod collected_print {
         sync::mpsc::Sender,
     };
 
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
-    #[collect(require_static)]
-    enum Mode {
-        Init,
-        First,
-        Rest,
+    pub fn print_callback<'gc>(ctx: piccolo::Context<'gc>, tx: Sender<Vec<u8>>) -> Callback<'gc> {
+        Callback::from_fn(
+            &ctx,
+            move |ctx: Context<'_>, _: Execution<'_, '_>, mut stack: Stack<'_, '_>| {
+                stack[..].reverse();
+
+                Ok(CallbackReturn::Sequence(BoxSequence::new(
+                    &ctx,
+                    PrintSeq {
+                        first: true,
+                        buf: Cursor::new(Vec::new()),
+                        output: tx.clone(),
+                    },
+                )))
+            },
+        )
     }
 
     #[derive(Collect)]
     #[collect(require_static)]
-    struct Output(Sender<Vec<u8>>);
-
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    pub struct PrintSeq<'gc> {
-        mode: Mode,
-        values: Vec<Value<'gc>>,
-        output: Output,
+    struct PrintSeq {
+        first: bool,
+        buf: Cursor<Vec<u8>>,
+        output: Sender<Vec<u8>>,
     }
 
-    impl<'gc> PrintSeq<'gc> {
-        pub fn new(values: impl Iterator<Item = Value<'gc>>, sender: Sender<Vec<u8>>) -> Self {
-            Self {
-                mode: Mode::Init,
-                values: values.into_iter().collect(),
-                output: Output(sender),
-            }
-        }
-    }
-
-    impl<'gc> Sequence<'gc> for PrintSeq<'gc> {
+    impl<'gc> Sequence<'gc> for PrintSeq {
         fn poll(
             mut self: Pin<&mut Self>,
             ctx: Context<'gc>,
             _exec: Execution<'gc, '_>,
             mut stack: Stack<'gc, '_>,
-        ) -> Result<piccolo::SequencePoll<'gc>, piccolo::Error<'gc>> {
-            let mut buf = Cursor::new(Vec::new());
-
-            if self.mode == Mode::Init {
-                self.mode = Mode::First;
-            } else {
-                self.values.push(stack.get(0));
-            }
-            stack.clear();
-
-            while let Some(value) = self.values.pop() {
+        ) -> Result<SequencePoll<'gc>, piccolo::Error<'gc>> {
+            while let Some(value) = stack.pop_back() {
                 match meta_ops::tostring(ctx, value)? {
                     MetaResult::Value(v) => {
-                        if self.mode == Mode::First {
-                            self.mode = Mode::Rest;
+                        if self.first {
+                            self.first = false;
                         } else {
-                            buf.write_all(b"\t")?;
+                            self.buf.write_all(b"\t")?;
                         }
-                        write!(buf, "{}", v.display())?;
+                        if let Value::String(s) = v {
+                            self.buf.write_all(s.as_bytes())?;
+                        } else {
+                            write!(self.buf, "{}", v.display())?;
+                        }
                     }
                     MetaResult::Call(call) => {
                         let bottom = stack.len();
@@ -102,9 +92,10 @@ mod collected_print {
                 }
             }
 
-            buf.write_all(b"\n")?;
-            buf.flush()?;
-            self.output.0.send(buf.into_inner())?;
+            self.buf.write_all(b"\n")?;
+            self.buf.flush()?;
+            let buf = std::mem::take(&mut self.buf).into_inner();
+            self.output.send(buf)?;
             Ok(SequencePoll::Return)
         }
     }
@@ -185,18 +176,7 @@ fn test_goldenscripts() {
 
         let tx = tx.clone();
         lua.enter(|ctx| {
-            ctx.set_global(
-                "print",
-                Callback::from_fn(
-                    &ctx,
-                    move |ctx: Context<'_>, _: Execution<'_, '_>, mut stack: Stack<'_, '_>| {
-                        Ok(CallbackReturn::Sequence(BoxSequence::new(
-                            &ctx,
-                            PrintSeq::new(stack.drain(..).rev(), tx.clone()),
-                        )))
-                    },
-                ),
-            );
+            ctx.set_global("print", print_callback(ctx, tx.clone()));
         });
 
         let compile_result = lua.try_enter(|ctx| {
