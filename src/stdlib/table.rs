@@ -213,8 +213,8 @@ fn table_remove_impl<'gc>(
         match array_remove_shift(&mut inner.raw_table, index) {
             (RawArrayOpResult::Success(val), len) => {
                 // Consume fuel after the operation to avoid computing length twice
-                let shifted_items =
-                    len.saturating_sub(index.unwrap_or(len as i64).try_into().unwrap_or(0));
+                let start_idx = index.unwrap_or(len as i64).try_into().unwrap_or(0);
+                let shifted_items = len.saturating_sub(start_idx);
                 exec.fuel()
                     .consume(count_fuel(FUEL_PER_SHIFTED_ITEM, shifted_items));
 
@@ -260,7 +260,8 @@ fn table_remove_impl<'gc>(
 
             let index = index.unwrap_or(length);
 
-            if index == 0 && length == 0 || index == length + 1 {
+            // either index and length are zero, or index == length + 1 (without overflow)
+            if index.saturating_sub(1) == length {
                 seq.enter(|_, _, _, mut stack| {
                     stack.push_back(Value::Nil);
                 });
@@ -394,12 +395,33 @@ fn table_insert_impl<'gc>(
                 len
             };
 
-            let index = index.unwrap_or(length + 1);
+            let end_index = match length.checked_add(1) {
+                Some(i) => i,
+                None => {
+                    return seq.try_enter(|ctx, _, _, _| {
+                        Err("Invalid table length in table.insert"
+                            .into_value(ctx)
+                            .into())
+                    });
+                }
+            };
 
-            if index >= 1 && index <= length + 1 {
+            let index = index.unwrap_or(end_index);
+
+            if !(1..=end_index).contains(&index) {
+                return seq.try_enter(|ctx, _, _, _| {
+                    Err("Invalid index passed to table.insert"
+                        .into_value(ctx)
+                        .into())
+                });
+            }
+
+            // Avoid evaluating (index + 1), which may overflow, if the
+            // index is already at or past the end.
+            if index < end_index {
                 // Could make this more efficient by inlining the stack manipulation;
                 // only pushing the table once.
-                for i in (index + 1..=length + 1).rev() {
+                for i in (index + 1..=end_index).rev() {
                     // Push table[i - 1] onto the stack
                     index_helper(&mut seq, &table, i - 1, 0).await?;
                     let value = seq.enter(|ctx, locals, _, mut stack| {
@@ -412,18 +434,12 @@ fn table_insert_impl<'gc>(
                         exec.fuel().consume(FUEL_PER_SHIFTED_ITEM as i32);
                     });
                 }
-
-                // table[index] = value
-                index_set_helper(&mut seq, &table, index, value, 0).await?;
-
-                Ok(SequenceReturn::Return)
-            } else {
-                seq.try_enter(|ctx, _, _, _| {
-                    Err("Invalid index passed to table.insert"
-                        .into_value(ctx)
-                        .into())
-                })
             }
+
+            // table[index] = value
+            index_set_helper(&mut seq, &table, index, value, 0).await?;
+
+            Ok(SequenceReturn::Return)
         }
     });
     Ok(CallbackReturn::Sequence(s))
