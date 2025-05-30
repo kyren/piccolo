@@ -820,6 +820,7 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
     /// Calls an externally defined function with arguments placed on the stack
     /// starting at `bottom`.  On return, places an optional single result of
     /// the function call in the register indicated by [`MetaReturn`].
+    #[allow(dead_code)] // temporary, until concat is fixed (see #116)
     pub(super) fn call_meta_function_in_place(
         self,
         _ctx: Context<'gc>,
