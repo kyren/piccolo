@@ -166,12 +166,15 @@ pub fn load_utf8(ctx: Context) {
                     }
 
                     if let Some(c) = chunk.valid().chars().next() {
-                        if c.is_ascii() {
-                            stack.into_back(ctx, c as i64);
+                        if n == 0 {
+                            stack.replace(ctx, (1, c as i64));
                         } else {
-                            let len = c.len_utf8();
-                            let n = stack.consume::<i64>(ctx)?;
-                            stack.replace(ctx, (n + len as i64, c as i64));
+                            if c.is_ascii() {
+                                stack.replace(ctx, (n as i64 + 1, c as i64));
+                            } else {
+                                let len = c.len_utf8();
+                                stack.replace(ctx, ((n + len) as i64, c as i64));
+                            }
                         }
                         Ok(CallbackReturn::Return)
                     } else {
