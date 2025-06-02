@@ -143,7 +143,7 @@ pub fn load_utf8(ctx: Context) {
                 let (s, n) = stack.consume::<(LuaString, i64)>(ctx)?;
 
                 let s = s.to_str()?;
-                let n = (n - 1) as usize;
+                let n = adjust_index(n, s.len());
 
                 if n >= s.len() {
                     stack.replace(ctx, (Value::Nil, Value::Nil));
