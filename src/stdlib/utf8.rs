@@ -1,10 +1,5 @@
-use std::{rc::Rc, sync::atomic::AtomicUsize, sync::atomic::Ordering};
-
-use gc_arena::Collect;
-
 use crate::{
-    BoxSequence, Callback, CallbackReturn, Context, Error, IntoValue, Sequence, SequencePoll,
-    Table, Value,
+    Callback, CallbackReturn, Context, Error, IntoValue, String as LuaString, Table, Value,
 };
 
 fn utf8_sequence_length<'gc>(
@@ -142,72 +137,46 @@ pub fn load_utf8(ctx: Context) {
         ctx,
         "codes",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            #[derive(Collect, Clone)]
-            #[collect(require_static)]
-            struct Codes {
-                s: String,
-                pos: Rc<AtomicUsize>,
-            }
+            let s = stack.consume::<LuaString>(ctx)?;
 
-            impl<'gc> Sequence<'gc> for Codes {
-                fn poll(
-                    self: std::pin::Pin<&mut Self>,
-                    ctx: Context<'gc>,
-                    _exec: crate::Execution<'gc, '_>,
-                    mut stack: crate::Stack<'gc, '_>,
-                ) -> Result<SequencePoll<'gc>, Error<'gc>> {
-                    let position = Rc::clone(&self.pos);
-                    let bytes = self.s.as_bytes();
-                    let len = bytes.len();
+            let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let (s, n) = stack.consume::<(LuaString, i64)>(ctx)?;
 
-                    if position.load(Ordering::Relaxed) >= len {
-                        stack.replace(ctx, Value::Nil);
-                        return Ok(SequencePoll::Return);
+                let s = s.to_str()?;
+                let n = (n - 1) as usize;
+
+                if n >= s.len() {
+                    stack.replace(ctx, (Value::Nil, Value::Nil));
+                    return Ok(CallbackReturn::Return);
+                }
+
+                let bytes = &s.as_bytes()[n..];
+
+                let mut chunks = bytes.utf8_chunks();
+
+                if let Some(chunk) = chunks.next() {
+                    if !chunk.invalid().is_empty() {
+                        return Err("Invalid UTF-8 byte sequence".into_value(ctx).into());
                     }
 
-                    let byte = bytes[position.load(Ordering::Relaxed)];
+                    if let Some(c) = chunk.valid().chars().next() {
+                        let len = c.len_utf8();
+                        let p = n + len;
+                        let p = (p + 1) as i64;
 
-                    let expected_bytes =
-                        utf8_sequence_length(ctx, byte, position.load(Ordering::Relaxed))?;
-
-                    validate_utf8_sequence(
-                        ctx,
-                        position.load(Ordering::Relaxed),
-                        expected_bytes,
-                        bytes,
-                    )?;
-
-                    let code_point = decode_utf8_codepoint(
-                        position.load(Ordering::Relaxed),
-                        expected_bytes,
-                        bytes,
-                    );
-
-                    stack.clear();
-                    stack.into_back(ctx, position.load(Ordering::Relaxed) as i64 + 1);
-                    stack.into_back(ctx, code_point as i64);
-
-                    self.pos.fetch_add(expected_bytes, Ordering::Relaxed);
-
-                    Ok(SequencePoll::Return)
+                        stack.replace(ctx, (p, c as i64));
+                        Ok(CallbackReturn::Return)
+                    } else {
+                        stack.replace(ctx, (Value::Nil, Value::Nil));
+                        Ok(CallbackReturn::Return)
+                    }
+                } else {
+                    stack.replace(ctx, (Value::Nil, Value::Nil));
+                    Ok(CallbackReturn::Return)
                 }
-            }
-
-            let s = stack.consume::<String>(ctx)?;
-
-            let root = Codes {
-                s: s.to_owned(),
-                pos: Rc::new(AtomicUsize::new(0)),
-            };
-
-            let codes = Callback::from_fn_with(&ctx, root, |root, ctx, _, _| {
-                Ok(CallbackReturn::Sequence(BoxSequence::new(
-                    &ctx,
-                    root.clone(),
-                )))
             });
 
-            stack.replace(ctx, codes);
+            stack.replace(ctx, (callback, s, 1));
 
             Ok(CallbackReturn::Return)
         }),
