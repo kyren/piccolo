@@ -142,12 +142,6 @@ pub fn load_utf8(ctx: Context) {
             let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let (s, n) = stack.consume::<(LuaString, i64)>(ctx)?;
 
-                if n == 0 {
-                    stack.into_back(ctx, 1);
-                } else {
-                    stack.into_back(ctx, n + 1);
-                }
-
                 let s = s.to_str()?;
                 let n = n as usize;
 
