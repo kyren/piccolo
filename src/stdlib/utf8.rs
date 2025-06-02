@@ -139,11 +139,17 @@ pub fn load_utf8(ctx: Context) {
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let s = stack.consume::<LuaString>(ctx)?;
 
-            let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let callback = Callback::from_fn_with(&ctx, None, |first_call, ctx, _, mut stack| {
                 let (s, n) = stack.consume::<(LuaString, i64)>(ctx)?;
 
+                if n == 0 {
+                    stack.into_back(ctx, 1);
+                } else {
+                    stack.into_back(ctx, n + 1);
+                }
+
                 let s = s.to_str()?;
-                let n = adjust_index(n, s.len());
+                let n = n as usize;
 
                 if n >= s.len() {
                     stack.replace(ctx, (Value::Nil, Value::Nil));
@@ -160,11 +166,13 @@ pub fn load_utf8(ctx: Context) {
                     }
 
                     if let Some(c) = chunk.valid().chars().next() {
-                        let len = c.len_utf8();
-                        let p = n + len;
-                        let p = (p + 1) as i64;
-
-                        stack.replace(ctx, (p, c as i64));
+                        if c.is_ascii() {
+                            stack.into_back(ctx, c as i64);
+                        } else {
+                            let len = c.len_utf8();
+                            let n = stack.consume::<i64>(ctx)?;
+                            stack.replace(ctx, (n + len as i64, c as i64));
+                        }
                         Ok(CallbackReturn::Return)
                     } else {
                         stack.replace(ctx, (Value::Nil, Value::Nil));
@@ -176,7 +184,7 @@ pub fn load_utf8(ctx: Context) {
                 }
             });
 
-            stack.replace(ctx, (callback, s, 1));
+            stack.replace(ctx, (callback, s, 0));
 
             Ok(CallbackReturn::Return)
         }),
