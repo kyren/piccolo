@@ -78,14 +78,6 @@ fn adjust_index(index: i64, len: usize) -> usize {
     }
 }
 
-fn calculate_string_range(start: usize, end: usize, len: usize) -> Option<(usize, usize)> {
-    if start >= len || (end < start && end != 0) {
-        None
-    } else {
-        Some((start, end.min(len)))
-    }
-}
-
 pub fn load_utf8(ctx: Context) {
     let utf8 = Table::new(&ctx);
 
@@ -142,15 +134,15 @@ pub fn load_utf8(ctx: Context) {
             let callback = Callback::from_fn(&ctx, |ctx, _, mut stack| {
                 let (s, n) = stack.consume::<(LuaString, i64)>(ctx)?;
 
-                let s = s.to_str()?;
+                let bytes = s.as_bytes();
                 let n = n as usize;
 
-                if n >= s.len() {
+                if n >= bytes.len() {
                     stack.replace(ctx, (Value::Nil, Value::Nil));
                     return Ok(CallbackReturn::Return);
                 }
 
-                let bytes = &s.as_bytes()[n..];
+                let bytes = &bytes[n..];
 
                 let mut chunks = bytes.utf8_chunks();
 
@@ -192,8 +184,17 @@ pub fn load_utf8(ctx: Context) {
         "len",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (s, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
-            let bytes = s.as_bytes();
-            let len = bytes.len();
+
+            let s = match std::str::from_utf8(s.as_bytes()) {
+                Ok(s) => s,
+                Err(err) => {
+                    let position = err.error_len().unwrap_or_default();
+                    stack.replace(ctx, (false, position as i64 + 1));
+                    return Ok(CallbackReturn::Return);
+                }
+            };
+
+            let len = s.len();
 
             let i = i.unwrap_or(1);
             let j = j.unwrap_or(-1);
@@ -201,49 +202,17 @@ pub fn load_utf8(ctx: Context) {
             let start = adjust_index(i, len);
             let end = adjust_index(j, len);
 
-            let (start, end) = match calculate_string_range(start, end, len) {
-                Some(range) => range,
-                None => {
-                    stack.replace(ctx, 0);
-                    return Ok(CallbackReturn::Return);
-                }
-            };
-
-            let mut char_count = 0;
-            let mut position = start;
-
-            while position <= end {
-                if position >= len {
-                    break;
-                }
-
-                let byte = bytes[position];
-
-                let expected_bytes = match utf8_sequence_length(ctx, byte, position) {
-                    Ok(len) => len,
-                    Err(_) => {
-                        stack.clear();
-                        stack.into_back(ctx, Value::Nil);
-                        stack.into_back(ctx, position as i64 + 1);
-                        return Ok(CallbackReturn::Return);
-                    }
-                };
-
-                match validate_utf8_sequence(ctx, position, expected_bytes, bytes) {
-                    Ok(_) => {}
-                    Err(_) => {
-                        stack.clear();
-                        stack.into_back(ctx, Value::Nil);
-                        stack.into_back(ctx, position as i64 + 1);
-                        return Ok(CallbackReturn::Return);
-                    }
-                }
-
-                char_count += 1;
-                position += expected_bytes;
+            if start >= len || (end < start && end != 0) {
+                stack.replace(ctx, 0);
+                return Ok(CallbackReturn::Return);
             }
 
-            stack.replace(ctx, char_count);
+            let end = end.min(len);
+
+            let s = &s[start..=end];
+
+            stack.replace(ctx, s.chars().count() as i64);
+
             Ok(CallbackReturn::Return)
         }),
     );
