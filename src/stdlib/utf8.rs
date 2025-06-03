@@ -1,81 +1,20 @@
-use crate::{
-    Callback, CallbackReturn, Context, Error, IntoValue, String as LuaString, Table, Value,
-};
+use crate::{Callback, CallbackReturn, Context, IntoValue, String as LuaString, Table, Value};
 
-fn utf8_sequence_length<'gc>(
-    ctx: Context<'gc>,
-    byte: u8,
-    position: usize,
-) -> Result<usize, Error<'gc>> {
-    if byte & 0x80 == 0 {
-        Ok(1)
-    } else if byte & 0xE0 == 0xC0 {
-        Ok(2)
-    } else if byte & 0xF0 == 0xE0 {
-        Ok(3)
-    } else if byte & 0xF8 == 0xF0 {
-        Ok(4)
-    } else {
-        Err(
-            format!("invalid UTF-8 sequence at position {}", position + 1)
-                .into_value(ctx)
-                .into(),
-        )
-    }
+fn convert_index(i: i64, len: usize) -> Option<usize> {
+    let val = match i {
+        0 => 0,
+        v @ 1.. => v - 1,
+        v @ ..=-1 => (len as i64 + v).max(0),
+    };
+    usize::try_from(val).ok()
 }
 
-fn validate_utf8_sequence<'gc>(
-    ctx: Context<'gc>,
-    position: usize,
-    expected_bytes: usize,
-    bytes: &[u8],
-) -> Result<(), Error<'gc>> {
-    if position + expected_bytes > bytes.len() {
-        return Err(
-            format!("incomplete UTF-8 code at position {}", position + 1)
-                .into_value(ctx)
-                .into(),
-        );
-    }
-
-    for i in 1..expected_bytes {
-        if bytes[position + i] & 0xC0 != 0x80 {
-            return Err(format!("invalid UTF-8 code at position {}", position + 1)
-                .into_value(ctx)
-                .into());
-        }
-    }
-
-    Ok(())
-}
-
-fn decode_utf8_codepoint(position: usize, expected_bytes: usize, bytes: &[u8]) -> u32 {
-    match expected_bytes {
-        1 => bytes[position] as u32,
-        2 => ((bytes[position] & 0x1F) as u32) << 6 | ((bytes[position + 1] & 0x3F) as u32),
-        3 => {
-            ((bytes[position] & 0x0F) as u32) << 12
-                | ((bytes[position + 1] & 0x3F) as u32) << 6
-                | ((bytes[position + 2] & 0x3F) as u32)
-        }
-        4 => {
-            ((bytes[position] & 0x07) as u32) << 18
-                | ((bytes[position + 1] & 0x3F) as u32) << 12
-                | ((bytes[position + 2] & 0x3F) as u32) << 6
-                | ((bytes[position + 3] & 0x3F) as u32)
-        }
-        _ => unreachable!(), // this should never happen!!
-    }
-}
-
-fn adjust_index(index: i64, len: usize) -> usize {
-    if index > 0 {
-        index.saturating_sub(1) as usize
-    } else if index < 0 {
-        len.saturating_sub(index.unsigned_abs() as usize)
-    } else {
-        0
-    }
+fn convert_index_end(i: i64, len: usize) -> Option<usize> {
+    let val = match i {
+        v @ 0.. => v,
+        v @ ..=-1 => (len as i64 + v + 1).max(0),
+    };
+    usize::try_from(val).ok()
 }
 
 pub fn load_utf8(ctx: Context) {
@@ -193,21 +132,18 @@ pub fn load_utf8(ctx: Context) {
                     return Ok(CallbackReturn::Return);
                 }
             };
-
             let len = s.len();
 
-            let i = i.unwrap_or(1);
-            let j = j.unwrap_or(-1);
+            let start = convert_index(i.unwrap_or(1), len).unwrap_or(usize::MAX);
+            let end = convert_index_end(j.unwrap_or(len as i64), len)
+                .unwrap_or(usize::MAX)
+                .min(len);
 
-            let start = adjust_index(i, len);
-            let end = adjust_index(j, len);
-
+            // TODO: we need to check this conditions
             if start >= len || (end < start && end != 0) {
                 stack.replace(ctx, 0);
                 return Ok(CallbackReturn::Return);
             }
-
-            let end = end.min(len);
 
             let s = &s[start..=end];
 
@@ -221,70 +157,39 @@ pub fn load_utf8(ctx: Context) {
         ctx,
         "codepoint",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            fn is_valid_lua_index(index: i64, length: i64) -> bool {
-                if index == 0 {
-                    false
-                } else if index > 0 {
-                    index <= length
-                } else {
-                    index >= -length
-                }
-            }
-
             let (s, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
-            let bytes = s.as_bytes();
-            let len = bytes.len();
+
+            let s = std::str::from_utf8(s.as_bytes()).map_err(|err| {
+                format!(
+                    "bad argument #1 to 'codepoint' (invalid byte sequence at {})",
+                    err.error_len().unwrap_or_default()
+                )
+                .into_value(ctx)
+            })?;
+            let len = s.len();
 
             let i = i.unwrap_or(1);
             let j = j.unwrap_or(i);
 
-            if !is_valid_lua_index(j, len as i64) {
-                return Err("bad argument #3 to 'codepoint' (out of bounds)"
-                    .into_value(ctx)
-                    .into());
-            }
+            let start = convert_index(i, len).unwrap_or(usize::MAX);
+            let end = convert_index_end(j, len).unwrap_or(usize::MAX).min(len);
 
-            if !is_valid_lua_index(i, len as i64) {
-                return Err(format!("bad argument #2 to 'codepoint' (out of bounds)",)
-                    .into_value(ctx)
-                    .into());
-            }
-
-            let start = adjust_index(i, len);
-            let end = adjust_index(j, len);
-
-            if start >= len || end < start {
-                // Return empty result if normalized range is invalid
+            if start > len {
+                stack.replace(ctx, Value::Nil);
                 return Ok(CallbackReturn::Return);
             }
 
-            let mut position = start;
-            let mut codepoints = Vec::new();
-
-            while position <= end {
-                if position >= len {
-                    break;
-                }
-
-                let byte = bytes[position];
-
-                let expected_bytes = utf8_sequence_length(ctx, byte, position)?;
-
-                validate_utf8_sequence(ctx, position, expected_bytes, bytes)?;
-
-                let code_point = decode_utf8_codepoint(position, expected_bytes, bytes);
-
-                if position <= end {
-                    codepoints.push(code_point as i64);
-                }
-
-                position += expected_bytes;
+            if start < 1 {
+                return Err("bad argument #2 (out of range)".into_value(ctx).into());
             }
 
-            stack.clear();
-            for codepoint in codepoints {
-                stack.push_back(Value::Integer(codepoint));
+            if start > end {
+                return Ok(CallbackReturn::Return);
             }
+
+            let s = &s[start..=end];
+
+            stack.extend(s.chars().map(|c| Value::Integer(c as i64)));
 
             Ok(CallbackReturn::Return)
         }),
@@ -306,7 +211,7 @@ pub fn load_utf8(ctx: Context) {
                     .into());
             }
 
-            let mut position = adjust_index(i, len);
+            let mut position = convert_index(i, len).unwrap_or(usize::MAX);
 
             if n != 0 && position < len && (bytes[position] & 0xC0) == 0x80 {
                 return Err("initial position is a continuation byte"
@@ -359,7 +264,7 @@ pub fn load_utf8(ctx: Context) {
                 let target_count = -n;
                 let mut count = 0i64;
 
-                let mut current_byte_index = adjust_index(i, len);
+                let mut current_byte_index = convert_index(i, len).unwrap_or(usize::MAX);
 
                 while count < target_count {
                     if current_byte_index == 0 {
