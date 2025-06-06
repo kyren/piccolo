@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::{error::Error as StdError, io::Read};
 
-use clap::{crate_description, crate_name, crate_version, Arg, Command};
+use clap::{crate_description, crate_name, crate_version, Arg, ArgAction, Command};
 use rustyline::DefaultEditor;
 
 use piccolo::{
@@ -94,7 +94,8 @@ fn main() -> Result<(), Box<dyn StdError>> {
             Arg::new("repl")
                 .short('r')
                 .long("repl")
-                .help("Load into REPL after loading file, if any"),
+                .help("Load into REPL after loading file, if any")
+                .action(ArgAction::SetTrue),
         )
         .arg(Arg::new("file").help("File to interpret").index(1))
         .get_matches();
@@ -118,7 +119,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     lua.execute::<()>(&executor)?;
 
-    if matches.contains_id("repl") {
+    if matches.get_flag("repl") {
         run_repl(&mut lua)?;
     }
 
