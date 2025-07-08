@@ -3,6 +3,7 @@ use std::pin::Pin;
 use gc_arena::Collect;
 
 use crate::{
+    error::LuaError,
     meta_ops::{self, MetaResult},
     table::NextValue,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
@@ -94,7 +95,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
 
     ctx.set_global(
         "error",
-        Callback::from_fn(&ctx, |_, _, stack| Err(stack.get(0).into())),
+        Callback::from_fn(&ctx, |_, _, stack| Err(LuaError::from(stack.get(0)).into())),
     );
 
     ctx.set_global(
@@ -103,9 +104,9 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             if stack.get(0).to_bool() {
                 Ok(CallbackReturn::Return)
             } else if stack.get(1).is_nil() {
-                Err("assertion failed!".into_value(ctx).into())
+                Err(LuaError::from("assertion failed!".into_value(ctx)).into())
             } else {
-                Err(stack.get(1).into())
+                Err(LuaError::from(stack.get(1)).into())
             }
         }),
     );

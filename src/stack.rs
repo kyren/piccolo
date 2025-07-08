@@ -154,6 +154,10 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
         V::from_multi_value(ctx, self.drain(..))
     }
+
+    pub fn borrow_thread_view(&self) -> &[Value<'gc>] {
+        self.values.as_slice()
+    }
 }
 
 impl<'gc: 'b, 'a, 'b> IntoIterator for &'b Stack<'gc, 'a> {

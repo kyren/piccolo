@@ -111,6 +111,7 @@ impl<S> FunctionRef<S> {
 #[collect(no_drop)]
 pub struct CompiledPrototype<S> {
     pub reference: FunctionRef<S>,
+    pub parameters: Vec<S>,
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
@@ -132,6 +133,7 @@ impl<S> CompiledPrototype<S> {
         ) -> CompiledPrototype<S2> {
             CompiledPrototype {
                 reference: this.reference.map_strings(f),
+                parameters: this.parameters.into_iter().map(f).collect(),
                 fixed_params: this.fixed_params,
                 has_varargs: this.has_varargs,
                 stack_size: this.stack_size,
@@ -183,6 +185,7 @@ struct Compiler<S: StringInterner> {
 
 struct CompilerFunction<S> {
     reference: FunctionRef<S>,
+    parameters: Vec<S>,
 
     constants: Vec<Constant<S>>,
     constant_table: HashMap<IdenticalConstant<S>, ConstantIndex16>,
@@ -804,14 +807,14 @@ impl<S: StringInterner> Compiler<S> {
             parameters.extend_from_slice(&function_statement.definition.parameters);
 
             self.new_prototype(
-                FunctionRef::Named(name.clone(), self.current_function.current_line_number),
+                FunctionRef::Named(name.clone(), function_statement.definition.line_number),
                 &parameters,
                 function_statement.definition.has_varargs,
                 &function_statement.definition.body,
             )?
         } else {
             self.new_prototype(
-                FunctionRef::Named(name.clone(), self.current_function.current_line_number),
+                FunctionRef::Named(name.clone(), function_statement.definition.line_number),
                 &function_statement.definition.parameters,
                 function_statement.definition.has_varargs,
                 &function_statement.definition.body,
@@ -1091,7 +1094,7 @@ impl<S: StringInterner> Compiler<S> {
         let proto = self.new_prototype(
             FunctionRef::Named(
                 local_function.name.clone(),
-                self.current_function.current_line_number,
+                local_function.definition.line_number,
             ),
             &local_function.definition.parameters,
             local_function.definition.has_varargs,
@@ -1185,7 +1188,7 @@ impl<S: StringInterner> Compiler<S> {
         function: &FunctionDefinition<S::String>,
     ) -> Result<ExprDescriptor<S::String>, CompileErrorKind> {
         let proto = self.new_prototype(
-            FunctionRef::Expression(self.current_function.current_line_number),
+            FunctionRef::Expression(function.line_number),
             &function.parameters,
             function.has_varargs,
             &function.body,
@@ -2477,14 +2480,9 @@ impl<S: Clone> CompilerFunction<S> {
         parameters: &[S],
         has_varargs: bool,
     ) -> Result<CompilerFunction<S>, CompileErrorKind> {
-        let current_line_number = match reference {
-            FunctionRef::Named(_, ln) => ln,
-            FunctionRef::Expression(ln) => ln,
-            FunctionRef::Chunk => LineNumber(0),
-        };
-
         let mut function = CompilerFunction {
             reference,
+            parameters: parameters.to_vec(),
             constants: Vec::new(),
             constant_table: HashMap::default(),
             upvalues: Vec::new(),
@@ -2499,8 +2497,13 @@ impl<S: Clone> CompilerFunction<S> {
             pending_jumps: Vec::new(),
             operations: Vec::new(),
             operation_lines: Vec::new(),
-            current_line_number,
+            current_line_number: LineNumber(0),
         };
+        function.set_line_number(match &function.reference {
+            FunctionRef::Named(_, ln) => *ln,
+            FunctionRef::Expression(ln) => *ln,
+            FunctionRef::Chunk => LineNumber(0),
+        });
 
         let fixed_params: u8 = parameters
             .len()
@@ -2556,6 +2559,7 @@ impl<S: Clone> CompilerFunction<S> {
 
         Ok(CompiledPrototype {
             reference: self.reference,
+            parameters: self.parameters,
             fixed_params: self.fixed_params,
             has_varargs: self.has_varargs,
             stack_size: self.register_allocator.stack_size(),

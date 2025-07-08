@@ -214,7 +214,7 @@ fn test_goldenscripts() {
                     continue;
                 }
                 if let Some(error) = run_error {
-                    eprintln!("{path:?}: expected script to pass, but it threw and error at runtime\nerror: {error}");
+                    eprintln!("{path:?}: expected script to pass, but it threw an error at runtime\nerror: {error:#}");
                     failed_scripts.push(path);
                     continue;
                 }

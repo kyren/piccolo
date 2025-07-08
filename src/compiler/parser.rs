@@ -275,6 +275,7 @@ pub struct SuffixedExpression<S> {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition<S> {
+    pub line_number: LineNumber,
     pub parameters: Vec<S>,
     pub has_varargs: bool,
     pub body: Block<S>,
@@ -584,7 +585,7 @@ impl<S: StringInterner> Parser<'_, S> {
     }
 
     fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParseError> {
-        self.expect_next(Token::Function)?;
+        let line_number = self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
         let mut fields = Vec::new();
@@ -604,7 +605,7 @@ impl<S: StringInterner> Parser<'_, S> {
             }
         }
 
-        let definition = self.parse_function_definition()?;
+        let definition = self.parse_function_definition(line_number)?;
 
         Ok(FunctionStatement {
             name,
@@ -617,10 +618,10 @@ impl<S: StringInterner> Parser<'_, S> {
     fn parse_local_function_statement(
         &mut self,
     ) -> Result<LocalFunctionStatement<S::String>, ParseError> {
-        self.expect_next(Token::Function)?;
+        let line_number = self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
-        let definition = self.parse_function_definition()?;
+        let definition = self.parse_function_definition(line_number)?;
 
         Ok(LocalFunctionStatement { name, definition })
     }
@@ -828,8 +829,8 @@ impl<S: StringInterner> Parser<'_, S> {
             }
             Token::LeftBrace => SimpleExpression::TableConstructor(self.parse_table_constructor()?),
             Token::Function => {
-                self.take_next()?;
-                SimpleExpression::Function(self.parse_function_definition()?)
+                let line_number = self.take_next()?.line_number;
+                SimpleExpression::Function(self.parse_function_definition(line_number)?)
             }
             _ => SimpleExpression::Suffixed(self.parse_suffixed_expression()?),
         })
@@ -965,7 +966,10 @@ impl<S: StringInterner> Parser<'_, S> {
         Ok(SuffixedExpression { primary, suffixes })
     }
 
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S::String>, ParseError> {
+    fn parse_function_definition(
+        &mut self,
+        line_number: LineNumber,
+    ) -> Result<FunctionDefinition<S::String>, ParseError> {
         self.expect_next(Token::LeftParen)?;
 
         let mut parameters = Vec::new();
@@ -1002,6 +1006,7 @@ impl<S: StringInterner> Parser<'_, S> {
         self.expect_next(Token::End)?;
 
         Ok(FunctionDefinition {
+            line_number,
             parameters,
             has_varargs,
             body,

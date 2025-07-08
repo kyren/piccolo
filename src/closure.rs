@@ -32,6 +32,7 @@ pub enum CompilerError {
 pub struct FunctionPrototype<'gc> {
     pub chunk_name: String<'gc>,
     pub reference: FunctionRef<String<'gc>>,
+    pub parameters: boxed::Box<[String<'gc>], MetricsAlloc<'gc>>,
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
@@ -65,6 +66,10 @@ impl<'gc> FunctionPrototype<'gc> {
         ) -> FunctionPrototype<'gc> {
             let alloc = MetricsAlloc::new(mc);
 
+            let mut parameters_vec = vec::Vec::new_in(alloc.clone());
+            parameters_vec.extend(compiled_function.parameters.iter().map(map_string));
+            let parameters = parameters_vec.into_boxed_slice();
+
             let mut constants = vec::Vec::new_in(alloc.clone());
             constants.extend(
                 compiled_function
@@ -95,6 +100,7 @@ impl<'gc> FunctionPrototype<'gc> {
                     .reference
                     .as_string_ref()
                     .map_strings(map_string),
+                parameters,
                 fixed_params: compiled_function.fixed_params,
                 has_varargs: compiled_function.has_varargs,
                 stack_size: compiled_function.stack_size,

@@ -298,7 +298,7 @@ fn resume_with_err() {
     lua.enter(
         |ctx| match ctx.fetch(&executor).take_result::<()>(ctx).unwrap() {
             Err(Error::Lua(val)) => {
-                assert!(matches!(val.0, Value::String(s) if s == "an error"))
+                assert!(matches!(val.value, Value::String(s) if s == "an error"))
             }
             _ => panic!("wrong error returned"),
         },

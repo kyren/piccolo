@@ -72,7 +72,7 @@ that are usable from safe Rust. It achieves this by combining two things:
    that such pointers are isolated to a single root object, and to guarantee
    that, outside an active call to `mutate`, all such pointers are either
    reachable from the root object or are safe to collect.
-   
+
 ## Stackless VM
 
 The `mutate` based GC API means that long running calls to `mutate` can be
@@ -235,7 +235,6 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
   generate and the VM sorely needs optimization (very little effort has gone
   here so far).
 * Error messages that don't make you want to cry
-* Stack traces
 * Debugger
 * Aggressive optimization and *real* effort towards matching or beating (or
   even just being within a respectable distance of) PUC-Rio Lua's performance
