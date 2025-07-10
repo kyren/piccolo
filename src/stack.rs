@@ -109,7 +109,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn drain<R: RangeBounds<usize>>(
         &mut self,
         range: R,
-    ) -> vec::Drain<Value<'gc>, MetricsAlloc<'gc>> {
+    ) -> vec::Drain<'_, Value<'gc>, MetricsAlloc<'gc>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(r) => Bound::Included(self.bottom + r),
             Bound::Excluded(r) => Bound::Excluded(self.bottom + r),
