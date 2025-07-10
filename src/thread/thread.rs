@@ -214,7 +214,7 @@ impl<'gc> Thread<'gc> {
         &self,
         mc: &Mutation<'gc>,
         expected: ThreadMode,
-    ) -> Result<RefMut<ThreadState<'gc>>, BadThreadMode> {
+    ) -> Result<RefMut<'_, ThreadState<'gc>>, BadThreadMode> {
         assert!(expected != ThreadMode::Running);
         if let Ok(state) = self.0.try_borrow_mut(mc) {
             let found = state.mode();

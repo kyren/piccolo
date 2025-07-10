@@ -51,7 +51,7 @@ impl<'gc> String<'gc> {
             fn drop(&mut self) {
                 match self.header.buffer {
                     Buffer::Indirect(ptr) => unsafe {
-                        self.metrics.mark_external_deallocation((*ptr).len());
+                        self.metrics.mark_external_deallocation(ptr.len());
                         drop(Box::from_raw(ptr as *mut [u8]));
                     },
                     Buffer::Inline(_) => unreachable!(),
