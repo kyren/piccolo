@@ -225,7 +225,7 @@ very much WIP, so ensuring this is done correctly is an ongoing effort.
 ## What currently doesn't work
 
 * A large amount of the stdlib is not implemented yet. Most "peripheral" parts
-  of the stdlib are this way, the `io`, `file`, `os`, `package`, `string`,
+  of the stdlib are this way, the  `os`, `package`, `string`,
   `table`, and `utf8` libs are either missing or very sparsely implemented.
 * There is no support yet for finalization. `gc-arena` supports finalization in
   such a way now that it should be possible to implement `__gc` metamethods with
