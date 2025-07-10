@@ -12,11 +12,14 @@ use crate::{
     Constant, Context, String, Table, Value,
 };
 
+// Note: These errors must not have #[error(transparent)] so that
+// anyhow::Error::root_cause and downcasting work as expected by the
+// interpreter. (Even though that gives slightly cleaner error messages).
 #[derive(Debug, Error)]
 pub enum CompilerError {
-    #[error(transparent)]
+    #[error("parse error")]
     Parsing(#[from] compiler::ParseError),
-    #[error(transparent)]
+    #[error("compile error")]
     Compilation(#[from] compiler::CompileError),
 }
 
