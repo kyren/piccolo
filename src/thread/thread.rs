@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::{
     closure::{UpValue, UpValueState},
+    error::BacktraceFrame,
     fuel::count_fuel,
     meta_ops,
     types::{RegisterIndex, VarCount},
@@ -264,7 +265,7 @@ impl<'gc> OpenUpValue<'gc> {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
-pub(super) enum MetaReturn {
+pub(crate) enum MetaReturn {
     /// No return value is expected.
     None,
     /// Place a single return value at an index relative to the returned to function's stack bottom.
@@ -275,7 +276,7 @@ pub(super) enum MetaReturn {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
-pub(super) enum LuaReturn {
+pub(crate) enum LuaReturn {
     /// Normal function call, place return values at the bottom of the returning function's stack,
     /// as normal.
     Normal(VarCount),
@@ -285,7 +286,7 @@ pub(super) enum LuaReturn {
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub(super) enum Frame<'gc> {
+pub(crate) enum Frame<'gc> {
     /// A running Lua frame.
     Lua {
         bottom: usize,
@@ -355,6 +356,16 @@ impl<'gc> ThreadState<'gc> {
                 }
             },
         }
+    }
+
+    /// Borrow the frames of this thread.
+    pub(crate) fn frames(&self) -> &[Frame<'gc>] {
+        &self.frames
+    }
+
+    /// Borrow the stack of this thread.
+    pub(crate) fn stack(&self) -> &[Value<'gc>] {
+        &self.stack
     }
 
     /// Pushes a new function call frame.
@@ -527,6 +538,100 @@ impl<'gc> ThreadState<'gc> {
             }
         }
     }
+}
+
+pub(crate) fn backtrace<'gc>(
+    frames: &[Frame<'gc>],
+    stack: &[Value<'gc>],
+    thread_stack: &[Thread<'gc>],
+    top_frame: Option<BacktraceFrame>,
+) -> Vec<BacktraceFrame> {
+    let mut trace_frames = Vec::new();
+
+    if let Some(frame) = top_frame {
+        trace_frames.push(frame);
+    }
+    for i in (0..frames.len()).rev() {
+        if let Some(frame) = frames.get(i) {
+            match frame {
+                Frame::Lua { closure, pc, .. } => {
+                    let proto = closure.prototype();
+                    let call_opcode = *pc - 1;
+                    let current_line = match proto
+                        .opcode_line_numbers
+                        .binary_search_by_key(&call_opcode, |(opi, _)| *opi)
+                    {
+                        Ok(i) => proto.opcode_line_numbers[i].1,
+                        Err(i) => proto.opcode_line_numbers[i - 1].1,
+                    };
+
+                    let mut args = Vec::new();
+                    if let Some(Frame::Lua { bottom, base, .. }) = frames.get(i) {
+                        for (arg_index, param_name) in proto.parameters.iter().enumerate() {
+                            if let Some(value) = stack.get(*base + arg_index) {
+                                args.push((
+                                    param_name.display_lossy().to_string(),
+                                    value.display().to_string(),
+                                ));
+                            }
+                        }
+
+                        if proto.has_varargs {
+                            if *base > *bottom {
+                                for value in &stack[*bottom..*base] {
+                                    args.push(("...".to_string(), value.display().to_string()));
+                                }
+                            }
+                        }
+                    }
+
+                    trace_frames.push(BacktraceFrame::Lua {
+                        chunk_name: proto.chunk_name.display_lossy().to_string(),
+                        function_name: proto
+                            .reference
+                            .as_string_ref()
+                            .map_strings(|s| s.display_lossy().to_string())
+                            .to_string(),
+                        line_number: current_line,
+                        args,
+                    });
+                }
+                Frame::Callback { .. } => {
+                    trace_frames.push(BacktraceFrame::Callback { name: "anonymous" });
+                }
+                Frame::Sequence { .. } => {
+                    trace_frames.push(BacktraceFrame::Sequence);
+                }
+                Frame::Start(_)
+                | Frame::Yielded
+                | Frame::WaitThread
+                | Frame::Result { .. }
+                | Frame::Error(_) => {
+                    // These frames do not have enough information to be represented in the backtrace.
+                    // They are typically used for control flow and do not represent a Lua function call.
+                    trace_frames.push(BacktraceFrame::Internal);
+                }
+            }
+        }
+    }
+
+    if !thread_stack.is_empty() {
+        for thread in thread_stack[0..thread_stack.len() - 1].iter().rev() {
+            // When adding frames from other threads to the backtrace,
+            // we should only do so if we can *safely* borrow its state.
+            // If it's running, we can't (it would panic) so we skip it.
+            if let Ok(borrowed_state) = thread.0.try_borrow() {
+                trace_frames.extend(backtrace(
+                    &borrowed_state.frames,
+                    &borrowed_state.stack,
+                    &[], // No nested thread_stack for recursive calls
+                    None,
+                ));
+            }
+        }
+    }
+
+    trace_frames
 }
 
 pub(super) struct LuaFrame<'gc, 'a> {
@@ -907,8 +1012,8 @@ impl<'gc, 'a> LuaFrame<'gc, 'a> {
 }
 
 pub(super) struct LuaRegisters<'gc, 'a> {
-    pub pc: &'a mut usize,
-    pub stack_frame: &'a mut [Value<'gc>],
+    pub(super) pc: &'a mut usize,
+    pub(super) stack_frame: &'a mut [Value<'gc>],
     upper_stack: &'a mut [Value<'gc>],
     bottom: usize,
     base: usize,

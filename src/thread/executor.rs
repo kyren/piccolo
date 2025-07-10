@@ -465,7 +465,29 @@ impl<'gc> Executor<'gc> {
                             }
                         }
                     }
-                    Some(Frame::Error(err)) => {
+                    Some(Frame::Error(mut err)) => {
+                        let needs_backtrace = match &err {
+                            Error::Lua(lua_err) => lua_err.backtrace.is_none(),
+                            Error::Runtime(runtime_err) => runtime_err.backtrace.is_none(),
+                        };
+
+                        if needs_backtrace {
+                            let backtrace = crate::thread::backtrace(
+                                top_state.frames(),
+                                top_state.stack(),
+                                &state.thread_stack,
+                                None,
+                            );
+                            match &mut err {
+                                Error::Lua(lua_err) => {
+                                    lua_err.backtrace = Some(backtrace);
+                                }
+                                Error::Runtime(runtime_err) => {
+                                    runtime_err.backtrace = Some(backtrace);
+                                }
+                            }
+                        }
+
                         match top_state
                             .frames
                             .pop()
@@ -629,6 +651,11 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// to store the pointer somewhere.
     pub fn executor(&self) -> Executor<'gc> {
         self.executor
+    }
+
+    /// Borrow the frames below the currently executing frame.
+    pub(crate) fn upper_frames(&self) -> &[Frame<'gc>] {
+        self.upper_frames
     }
 
     /// If the function we are returning to is Lua, returns information about the Lua frame we are

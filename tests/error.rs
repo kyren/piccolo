@@ -1,4 +1,4 @@
-use piccolo::{error::LuaError, Callback, Closure, Error, Executor, ExternError, Lua, Value};
+use piccolo::{Callback, Closure, Error, Executor, ExternError, Lua, Value};
 use thiserror::Error;
 
 #[test]
@@ -23,7 +23,9 @@ fn error_unwind() -> Result<(), ExternError> {
     lua.finish(&executor).unwrap();
     lua.try_enter(|ctx| {
         match ctx.fetch(&executor).take_result::<()>(ctx)? {
-            Err(Error::Lua(LuaError(Value::String(s)))) => assert!(s == "test error"),
+            Err(Error::Lua(lua_error)) => {
+                assert!(matches!(lua_error.value, Value::String(s) if s == "test error"))
+            }
             _ => panic!("wrong error returned"),
         }
         Ok(())

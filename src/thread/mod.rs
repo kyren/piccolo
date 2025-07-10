@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::meta_ops::{MetaCallError, MetaOperatorError};
 
+pub(crate) use self::thread::backtrace;
 pub use self::{
     executor::{
         BadExecutorMode, CurrentThread, Execution, Executor, ExecutorInner, ExecutorMode,
@@ -24,9 +25,9 @@ pub enum VMError {
     ExpectedVariableStack(bool),
     #[error("Bad types for SetList op, expected table, integer, found {0}, {1}")]
     BadSetList(&'static str, &'static str),
-    #[error("bad call")]
+    #[error("bad call: {0}")]
     BadCall(#[from] MetaCallError),
-    #[error("operator error")]
+    #[error("operator error: {0}")]
     OperatorError(#[from] MetaOperatorError),
     #[error("_ENV upvalue is only allowed on top-level closure")]
     BadEnvUpValue,

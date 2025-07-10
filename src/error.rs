@@ -1,11 +1,14 @@
-use std::{error::Error as StdError, fmt, string::String as StdString, sync::Arc};
+use std::{
+    collections::HashMap, error::Error as StdError, fmt, string::String as StdString, sync::Arc,
+    write,
+};
 
 use gc_arena::{Collect, Gc, Rootable};
 use thiserror::Error;
 
 use crate::{
-    Callback, CallbackReturn, Context, FromValue, Function, IntoValue, MetaMethod, Singleton,
-    Table, UserData, Value,
+    compiler::LineNumber, Callback, CallbackReturn, Context, FromValue, Function, IntoValue,
+    MetaMethod, Singleton, Table, UserData, Value,
 };
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -18,25 +21,34 @@ pub struct TypeError {
 /// An error raised directly from Lua which contains a Lua value.
 ///
 /// Any [`Value`] can be raised as an error and it will be contained here.
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
-pub struct LuaError<'gc>(pub Value<'gc>);
+pub struct LuaError<'gc> {
+    pub value: Value<'gc>,
+    pub backtrace: Option<Vec<BacktraceFrame>>,
+}
 
 impl<'gc> fmt::Display for LuaError<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.display())
+        if f.alternate() {
+            pretty_print_error_with_backtrace(
+                f,
+                &self.value.display(),
+                &self.backtrace.as_deref(),
+                None,
+            )
+        } else {
+            write!(f, "{}", self.value.display())
+        }
     }
 }
 
 impl<'gc> From<Value<'gc>> for LuaError<'gc> {
-    fn from(error: Value<'gc>) -> Self {
-        LuaError(error)
-    }
-}
-
-impl<'gc> LuaError<'gc> {
-    pub fn to_extern(self) -> ExternLuaError {
-        self.into()
+    fn from(value: Value<'gc>) -> Self {
+        LuaError {
+            value,
+            backtrace: None,
+        }
     }
 }
 
@@ -67,9 +79,9 @@ pub enum ExternLuaError {
     UserData(*const ()),
 }
 
-impl<'gc> From<LuaError<'gc>> for ExternLuaError {
-    fn from(error: LuaError<'gc>) -> Self {
-        match error.0 {
+impl<'gc> From<Value<'gc>> for ExternLuaError {
+    fn from(error: Value<'gc>) -> Self {
+        match error {
             Value::Nil => ExternLuaError::Nil,
             Value::Boolean(b) => ExternLuaError::Boolean(b),
             Value::Integer(i) => ExternLuaError::Integer(i),
@@ -93,17 +105,40 @@ impl<'gc> From<LuaError<'gc>> for ExternLuaError {
 unsafe impl Send for ExternLuaError {}
 unsafe impl Sync for ExternLuaError {}
 
+#[derive(Debug, Clone, Collect)]
+#[collect(require_static)]
+pub enum BacktraceFrame {
+    Lua {
+        chunk_name: StdString,
+        function_name: StdString,
+        line_number: LineNumber,
+        args: Vec<(StdString, StdString)>,
+    },
+    Callback {
+        name: &'static str,
+    },
+    Sequence,
+    Internal,
+}
+
 /// A shareable, dynamically typed wrapper around a normal Rust error.
 ///
 /// Rust errors can be caught and re-raised through Lua which allows for unrestricted sharing, so
 /// this type contains its error inside an `Arc` pointer to allow for this.
 #[derive(Debug, Clone, Collect)]
 #[collect(require_static)]
-pub struct RuntimeError(pub Arc<anyhow::Error>);
+pub struct RuntimeError {
+    pub error: Arc<anyhow::Error>,
+    pub backtrace: Option<Vec<BacktraceFrame>>,
+}
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        if f.alternate() {
+            pretty_print_error_with_backtrace(f, &self.error, &self.backtrace.as_deref(), None)
+        } else {
+            write!(f, "{}", self.error)
+        }
     }
 }
 
@@ -115,31 +150,34 @@ impl<E: Into<anyhow::Error>> From<E> for RuntimeError {
 
 impl RuntimeError {
     pub fn new(err: impl Into<anyhow::Error>) -> Self {
-        Self(Arc::new(err.into()))
+        Self {
+            error: Arc::new(err.into()),
+            backtrace: None,
+        }
     }
 
     pub fn root_cause(&self) -> &(dyn StdError + 'static) {
-        self.0.root_cause()
+        self.error.root_cause()
     }
 
     pub fn is<E>(&self) -> bool
     where
         E: fmt::Display + fmt::Debug + Send + Sync + 'static,
     {
-        self.0.is::<E>()
+        self.error.is::<E>()
     }
 
     pub fn downcast<E>(&self) -> Option<&E>
     where
         E: fmt::Display + fmt::Debug + Send + Sync + 'static,
     {
-        self.0.downcast_ref::<E>()
+        self.error.downcast_ref::<E>()
     }
 }
 
 impl AsRef<dyn StdError + 'static> for RuntimeError {
     fn as_ref(&self) -> &(dyn StdError + 'static) {
-        (*self.0).as_ref()
+        (*self.error).as_ref()
     }
 }
 
@@ -156,9 +194,16 @@ pub enum Error<'gc> {
 
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Lua(err) => write!(f, "lua error: {err}"),
-            Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
+        if f.alternate() {
+            match self {
+                Error::Lua(err) => write!(f, "lua error: {:#}", err),
+                Error::Runtime(err) => write!(f, "runtime error: {:#}", err),
+            }
+        } else {
+            match self {
+                Error::Lua(err) => write!(f, "lua error: {}", err),
+                Error::Runtime(err) => write!(f, "runtime error: {}", err),
+            }
         }
     }
 }
@@ -217,7 +262,7 @@ impl<'gc> Error<'gc> {
     /// when printed from Lua.
     pub fn to_value(&self, ctx: Context<'gc>) -> Value<'gc> {
         match self {
-            Error::Lua(err) => err.0,
+            Error::Lua(err) => err.value,
             Error::Runtime(err) => {
                 #[derive(Copy, Clone, Collect)]
                 #[collect(no_drop)]
@@ -233,7 +278,7 @@ impl<'gc> Error<'gc> {
                                 Callback::from_fn(&ctx, |ctx, _, mut stack| {
                                     let ud = stack.consume::<UserData>(ctx)?;
                                     let error = ud.downcast_static::<RuntimeError>()?;
-                                    stack.replace(ctx, error.to_string());
+                                    stack.replace(ctx, error.error.to_string());
                                     Ok(CallbackReturn::Return)
                                 }),
                             )
@@ -273,15 +318,30 @@ impl<'gc> FromValue<'gc> for Error<'gc> {
 /// An [`enum@Error`] that is not bound to the GC context.
 #[derive(Debug, Clone)]
 pub enum ExternError {
-    Lua(ExternLuaError),
+    Lua {
+        error: ExternLuaError,
+        backtrace: Option<Vec<BacktraceFrame>>,
+    },
     Runtime(RuntimeError),
 }
 
 impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExternError::Lua(err) => write!(f, "lua error: {err}"),
-            ExternError::Runtime(err) => write!(f, "runtime error: {err:#}"),
+        if f.alternate() {
+            match self {
+                ExternError::Lua { error, backtrace } => {
+                    write!(f, "lua error: ")?;
+                    pretty_print_error_with_backtrace(f, error, &backtrace.as_deref(), None)
+                }
+                ExternError::Runtime(err) => {
+                    write!(f, "runtime error: {:#}", err)
+                }
+            }
+        } else {
+            match self {
+                ExternError::Lua { error, .. } => write!(f, "lua error: {error}"),
+                ExternError::Runtime(err) => write!(f, "runtime error: {err}"),
+            }
         }
     }
 }
@@ -289,7 +349,7 @@ impl fmt::Display for ExternError {
 impl StdError for ExternError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            ExternError::Lua(err) => Some(err),
+            ExternError::Lua { error, .. } => Some(error),
             ExternError::Runtime(err) => Some(err.as_ref()),
         }
     }
@@ -298,15 +358,36 @@ impl StdError for ExternError {
 impl ExternError {
     pub fn root_cause(&self) -> &(dyn StdError + 'static) {
         match self {
-            ExternError::Lua(err) => err,
+            ExternError::Lua { error, .. } => error,
             ExternError::Runtime(err) => err.root_cause(),
+        }
+    }
+
+    pub fn pretty_print(
+        &self,
+        writer: &mut impl fmt::Write,
+        source_map: Option<&SourceMap>,
+    ) -> Result<(), fmt::Error> {
+        match self {
+            ExternError::Lua { error, backtrace } => {
+                pretty_print_error_with_backtrace(writer, error, &backtrace.as_deref(), source_map)
+            }
+            ExternError::Runtime(err) => pretty_print_error_with_backtrace(
+                writer,
+                &err.error,
+                &err.backtrace.as_deref(),
+                source_map,
+            ),
         }
     }
 }
 
 impl From<ExternLuaError> for ExternError {
     fn from(error: ExternLuaError) -> Self {
-        Self::Lua(error)
+        Self::Lua {
+            error,
+            backtrace: None,
+        }
     }
 }
 
@@ -319,8 +400,68 @@ impl From<RuntimeError> for ExternError {
 impl<'gc> From<Error<'gc>> for ExternError {
     fn from(err: Error<'gc>) -> Self {
         match err {
-            Error::Lua(err) => err.to_extern().into(),
+            Error::Lua(err) => ExternError::Lua {
+                error: err.value.into(),
+                backtrace: err.backtrace,
+            },
             Error::Runtime(e) => e.into(),
         }
     }
+}
+
+pub type SourceMap = HashMap<StdString, StdString>;
+
+pub(crate) fn pretty_print_error_with_backtrace(
+    writer: &mut impl fmt::Write,
+    error: &dyn fmt::Display,
+    backtrace: &Option<&[BacktraceFrame]>,
+    source_map: Option<&SourceMap>,
+) -> Result<(), fmt::Error> {
+    write!(writer, "{}", error)?;
+    if let Some(backtrace) = backtrace {
+        write!(writer, "\nstack traceback:")?;
+
+        if backtrace.is_empty() {
+            write!(writer, " <no frames>")?;
+        } else {
+            for frame in backtrace.iter() {
+                match frame {
+                    BacktraceFrame::Lua {
+                        chunk_name,
+                        function_name,
+                        line_number,
+                        args,
+                    } => {
+                        write!(
+                            writer,
+                            "\n  {}:{} in {}",
+                            chunk_name, line_number, function_name,
+                        )?;
+                        if let Some(source) = source_map.and_then(|sm| sm.get(chunk_name)) {
+                            if let Some(line) = source.lines().nth(line_number.0 as usize) {
+                                write!(writer, ": `{}`", line.trim())?;
+                            }
+                        }
+                        if !args.is_empty() {
+                            write!(writer, "\n    arguments:")?;
+                            for (name, value) in args {
+                                write!(writer, "\n      {}: {}", name, value)?;
+                            }
+                        }
+                    }
+                    BacktraceFrame::Callback { name } => {
+                        write!(writer, "\n  <callback: {}>", name)?;
+                    }
+                    BacktraceFrame::Sequence => {
+                        write!(writer, "\n  <sequence>")?;
+                    }
+                    BacktraceFrame::Internal => {
+                        write!(writer, "\n  <???>")?;
+                    }
+                }
+            }
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
 }

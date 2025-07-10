@@ -5,6 +5,7 @@ use gc_arena::{DynamicRoot, DynamicRootSet, Mutation, Rootable};
 use crate::{
     callback::CallbackInner,
     closure::ClosureInner,
+    error::LuaError,
     string::StringInner,
     table::TableInner,
     thread::{ExecutorInner, ThreadInner},
@@ -385,6 +386,7 @@ impl Fetchable for StashedValue {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum StashedError {
     Lua(StashedValue),
     Runtime(RuntimeError),
@@ -413,7 +415,7 @@ impl<'gc> Stashable<'gc> for Error<'gc> {
 
     fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
         match self {
-            Error::Lua(err) => StashedError::Lua(err.0.stash(mc, roots)),
+            Error::Lua(err) => StashedError::Lua(err.value.stash(mc, roots)),
             Error::Runtime(err) => StashedError::Runtime(err),
         }
     }
@@ -424,7 +426,10 @@ impl Fetchable for StashedError {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
         match self {
-            StashedError::Lua(err) => Error::from_value(err.fetch(roots)),
+            StashedError::Lua(err) => Error::Lua(LuaError {
+                value: err.fetch(roots),
+                backtrace: None,
+            }),
             StashedError::Runtime(err) => err.clone().into(),
         }
     }
