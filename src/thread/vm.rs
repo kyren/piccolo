@@ -363,11 +363,15 @@ pub(super) fn run_vm<'gc>(
                 match meta_ops::concat_many(ctx, values)? {
                     ConcatMetaResult::Value(v) => registers.stack_frame[dest.0 as usize] = v,
                     ConcatMetaResult::Call(func) => {
-                        lua_frame.call_meta_function_in_place(
+                        // This would be nice to do in-place (without copying params)
+                        // but that turns out to be difficult to do without corrupting
+                        // the stack, and likely isn't worth the complexity for the
+                        // fallback case.
+                        let args = values.to_owned();
+                        lua_frame.call_meta_function(
                             ctx,
                             func,
-                            base,
-                            count,
+                            &args,
                             MetaReturn::Register(dest),
                         )?;
                         break;
