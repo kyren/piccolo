@@ -24,28 +24,29 @@ pub fn load_debug<'gc>(ctx: Context<'gc>) {
             let level0 = BacktraceFrame::Callback {
                 name: "debug.traceback",
             };
-            let backtrace_frames = if let Some(t) = thread.filter(|t| t != &exec.current_thread().thread) {
-                // Try to borrow the target thread's state
-                // (Note: we filter out the current thread because we know it's already borrowed while running)
-                let thread_state_borrow = t.into_inner().try_borrow();
-                let thread_state = thread_state_borrow
-                    .as_ref()
-                    .map_err(|_| anyhow!("cannot get traceback for running thread"))?;
-                crate::thread::backtrace(
-                    thread_state.frames(),
-                    thread_state.stack(),
-                    &[],
-                    Some(level0),
-                )
-            } else {
-                // This is the current running thread, use its upper frames and the full stack
-                crate::thread::backtrace(
-                    exec.upper_frames(),
-                    stack.borrow_thread_view(),
-                    &[],
-                    Some(level0),
-                )
-            };
+            let backtrace_frames =
+                if let Some(t) = thread.filter(|t| t != &exec.current_thread().thread) {
+                    // Try to borrow the target thread's state
+                    // (Note: we filter out the current thread because we know it's already borrowed while running)
+                    let thread_state_borrow = t.into_inner().try_borrow();
+                    let thread_state = thread_state_borrow
+                        .as_ref()
+                        .map_err(|_| anyhow!("cannot get traceback for running thread"))?;
+                    crate::thread::backtrace(
+                        thread_state.frames(),
+                        thread_state.stack(),
+                        &[],
+                        Some(level0),
+                    )
+                } else {
+                    // This is the current running thread, use its upper frames and the full stack
+                    crate::thread::backtrace(
+                        exec.upper_frames(),
+                        stack.borrow_thread_view(),
+                        &[],
+                        Some(level0),
+                    )
+                };
 
             let mut formatted_error_str = String::new();
 
