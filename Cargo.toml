@@ -48,4 +48,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 clap = { version = "4.5", features = ["cargo"] }
+criterion = "0.5.1"
 rustyline = "14.0"
+
+[[bench]]
+name = "scripts"
+harness = false
