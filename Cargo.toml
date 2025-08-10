@@ -43,6 +43,7 @@ allocator-api2.workspace = true
 anyhow.workspace = true
 gc-arena.workspace = true
 hashbrown.workspace = true
+lsonar = "0.2.4"
 rand.workspace = true
 thiserror.workspace = true
 

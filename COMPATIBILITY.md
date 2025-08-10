@@ -92,13 +92,13 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵   | `byte(s[, i, j])`                 |             |       |
 | 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
-| ⚫️️   | `find(s, pattern[, init, plain])` |             |       |
+| 🔵   | `find(s, pattern[, init, plain])` |             |       |
 | ⚫️️   | `format(formatstring, args...)`   |             |       |
-| ⚫️️   | `gmatch(s, pattern[, init])`      |             |       |
-| ⚫️️   | `gsub(s, pattern, repl[, n])`     |             |       |
+| 🔵   | `gmatch(s, pattern[, init])`      |             |       |
+| 🔵   | `gsub(s, pattern, repl[, n])`     |             |       |
 | 🔵     | `len(s)`                          |             |       |
 | 🔵   | `lower(s)`                        |             |       |
-| ⚫️️   | `match(s, pattern[, init])`       |             |       |
+| 🔵   | `match(s, pattern[, init])`       |             |       |
 | ⚫️️   | `pack(fmt, values...)`            |             |       |
 | ⚫️️   | `packsize(fmt)`                   |             |       |
 | ⚫️️   | `rep(s, n[, sep])`                |             |       |
