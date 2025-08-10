@@ -101,7 +101,7 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | ⚫️️   | `match(s, pattern[, init])`       |             |       |
 | ⚫️️   | `pack(fmt, values...)`            |             |       |
 | ⚫️️   | `packsize(fmt)`                   |             |       |
-| ⚫️️   | `rep(s, n[, sep])`                |             |       |
+| 🔵   | `rep(s, n[, sep])`                |             |       |
 | 🔵   | `reverse(s)`                      |             |       |
 | 🔵   | `sub(s, i[, j])`                  |             |       |
 | ⚫️️   | `unpack(fmt, s[, pos])`           |             |       |
