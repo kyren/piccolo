@@ -99,12 +99,12 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵     | `len(s)`                          |             |       |
 | 🔵   | `lower(s)`                        |             |       |
 | ⚫️️   | `match(s, pattern[, init])`       |             |       |
-| ⚫️️   | `pack(fmt, values...)`            |             |       |
-| ⚫️️   | `packsize(fmt)`                   |             |       |
+| 🔵    | `pack(fmt, values...)`            |             |       |
+| 🔵    | `packsize(fmt)`                   |             |       |
 | ⚫️️   | `rep(s, n[, sep])`                |             |       |
 | 🔵   | `reverse(s)`                      |             |       |
 | 🔵   | `sub(s, i[, j])`                  |             |       |
-| ⚫️️   | `unpack(fmt, s[, pos])`           |             |       |
+| 🔵    | `unpack(fmt, s[, pos])`           |             |       |
 | 🔵   | `upper(s)`                        |             |       |
 
 ## UTF8
