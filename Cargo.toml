@@ -41,6 +41,7 @@ repository.workspace = true
 ahash.workspace = true
 allocator-api2.workspace = true
 anyhow.workspace = true
+fhex = "1.0.0"
 gc-arena.workspace = true
 hashbrown.workspace = true
 rand.workspace = true

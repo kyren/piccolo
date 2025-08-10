@@ -93,7 +93,7 @@ likely not be implemented due to differences between piccolo and PUC-Lua.
 | 🔵   | `char(args...)`                   |             |       |
 | ⚫️️   | `dump(function[, strip])`         |             |       |
 | ⚫️️   | `find(s, pattern[, init, plain])` |             |       |
-| ⚫️️   | `format(formatstring, args...)`   |             |       |
+| 🔵   | `format(formatstring, args...)`   |             |       |
 | ⚫️️   | `gmatch(s, pattern[, init])`      |             |       |
 | ⚫️️   | `gsub(s, pattern, repl[, n])`     |             |       |
 | 🔵     | `len(s)`                          |             |       |
