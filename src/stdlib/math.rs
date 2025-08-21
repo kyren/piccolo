@@ -1,5 +1,6 @@
 use gc_arena::Mutation;
 
+use super::argument_error;
 use crate::{
     async_sequence, meta_ops, Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue,
     IntoValue, SequenceReturn, Table, Value,
@@ -11,13 +12,16 @@ where
     A: FromMultiValue<'gc>,
     R: IntoMultiValue<'gc>,
 {
-    Callback::from_fn(mc, move |ctx, _, mut stack| {
-        if let Some(res) = f(ctx, stack.consume(ctx)?) {
-            stack.replace(ctx, res);
-            Ok(CallbackReturn::Return)
-        } else {
-            Err(format!("Bad argument to {name}").into_value(ctx).into())
+    Callback::from_fn(mc, move |ctx, _, mut stack| match stack.consume::<A>(ctx) {
+        Ok(args) => {
+            if let Some(res) = f(ctx, args) {
+                stack.replace(ctx, res);
+                Ok(CallbackReturn::Return)
+            } else {
+                Err(argument_error(ctx, name, 1, "value expected"))
+            }
         }
+        Err(_) => Err(argument_error(ctx, name, 1, "value expected")),
     })
 }
 

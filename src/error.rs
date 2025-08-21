@@ -4,8 +4,8 @@ use gc_arena::{Collect, Gc, Rootable};
 use thiserror::Error;
 
 use crate::{
-    Callback, CallbackReturn, Context, FromValue, Function, IntoValue, MetaMethod, Singleton,
-    Table, UserData, Value,
+    compiler::LineNumber, thread::Frame, Callback, CallbackReturn, Context, Executor, FromValue,
+    Function, IntoValue, MetaMethod, Singleton, Table, UserData, Value,
 };
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -143,6 +143,104 @@ impl AsRef<dyn StdError + 'static> for RuntimeError {
     }
 }
 
+/// The same as [`Error`], but with a formatted stack trace.
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct ErrorWithStackTrace<'gc> {
+    original: Error<'gc>,
+    stack_trace: String,
+}
+
+impl<'gc> ErrorWithStackTrace<'gc> {
+    /// Construct a formatted stack trace from [`Error`] and [`Executor`]
+    pub fn new(original: Error<'gc>, exec: Executor<'gc>) -> Self {
+        use crate::compiler::FunctionRef;
+        use std::fmt::Write;
+
+        let mut stack_trace = format!("stack traceback:");
+
+        let Ok(state) = exec.into_inner().try_borrow() else {
+            return Self {
+                original,
+                stack_trace,
+            };
+        };
+
+        let Some(thread) = state.thread_stack().last() else {
+            return Self {
+                original,
+                stack_trace,
+            };
+        };
+
+        let thread_state = thread.into_inner().borrow();
+
+        for frame in thread_state.frames().iter().rev() {
+            if let Frame::Lua { closure, pc, .. } = frame {
+                let prototype = closure.prototype();
+                let current_pc = pc.saturating_sub(1);
+                let line = match prototype
+                    .opcode_line_numbers
+                    .binary_search_by_key(&current_pc, |(opi, _)| *opi)
+                {
+                    Ok(index) => prototype
+                        .opcode_line_numbers
+                        .get(index)
+                        .map(|(_, line)| *line)
+                        .unwrap_or(LineNumber(0)),
+                    Err(index) => prototype
+                        .opcode_line_numbers
+                        .get(index.wrapping_sub(1))
+                        .map(|(_, line)| *line)
+                        .unwrap_or(LineNumber(0)),
+                };
+
+                let location = match prototype.reference {
+                    FunctionRef::Chunk => "in main chunk".into(),
+                    FunctionRef::Named(name, _) => {
+                        format!("in function '{}'", name.display_lossy())
+                    }
+                    FunctionRef::Expression(line) => format!(
+                        "in function <{}:{}>",
+                        prototype.chunk_name.display_lossy(),
+                        line
+                    ),
+                };
+
+                write!(
+                    stack_trace,
+                    "\n\t{}:{}: {}",
+                    prototype.chunk_name.display_lossy(),
+                    line,
+                    location
+                )
+                .ok();
+            } else {
+                write!(stack_trace, "\n\t[C]: in ?").ok();
+            }
+        }
+
+        Self {
+            original,
+            stack_trace,
+        }
+    }
+
+    pub fn stack_trace(&self) -> &str {
+        &self.stack_trace
+    }
+
+    pub fn original(&self) -> &Error<'gc> {
+        &self.original
+    }
+}
+
+impl<'gc> fmt::Display for ErrorWithStackTrace<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}\n{}", self.original, self.stack_trace)
+    }
+}
+
 /// An error that can be raised from Lua code.
 ///
 /// This can be either a [`LuaError`] containing a Lua [`Value`], or a [`RuntimeError`] containing a
@@ -157,8 +255,8 @@ pub enum Error<'gc> {
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Lua(err) => write!(f, "lua error: {err}"),
-            Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
+            Error::Lua(err) => write!(f, "{}", err),
+            Error::Runtime(err) => write!(f, "{}", err.root_cause()),
         }
     }
 }
@@ -249,6 +347,10 @@ impl<'gc> Error<'gc> {
         }
     }
 
+    pub fn into_error_with_stack_trace(self, exec: Executor<'gc>) -> ErrorWithStackTrace<'gc> {
+        ErrorWithStackTrace::new(self, exec)
+    }
+
     pub fn to_extern(&self) -> ExternError {
         self.clone().into_extern()
     }
@@ -280,8 +382,9 @@ pub enum ExternError {
 impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExternError::Lua(err) => write!(f, "lua error: {err}"),
-            ExternError::Runtime(err) => write!(f, "runtime error: {err:#}"),
+            // Mirror internal `Error` display: no prefixes, just the message.
+            ExternError::Lua(err) => write!(f, "{}", err),
+            ExternError::Runtime(err) => write!(f, "{}", err.root_cause()),
         }
     }
 }

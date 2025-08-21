@@ -1,6 +1,7 @@
+use std::error::Error as StdError;
 use std::{fmt, ops, rc::Rc};
 
-use thiserror::Error;
+// use thiserror::Error; // no longer deriving Error here
 
 use super::{
     lexer::{LexError, Lexer, LineNumber, Token},
@@ -315,36 +316,81 @@ pub enum RecordKey<S> {
     Indexed(Expression<S>),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ParseErrorKind {
-    #[error("found {unexpected:?}, expected {expected:?}")]
     Unexpected {
         unexpected: String,
         expected: String,
     },
-    #[error(
-        "unexpected end of token stream{}",
-        .expected.as_ref().map(|e| format!(", expected {e}")).unwrap_or_default()
-    )]
-    EndOfStream { expected: Option<String> },
-    #[error("cannot assign to expression")]
+    EndOfStream {
+        expected: Option<String>,
+    },
     AssignToExpression,
-    #[error("expression is not a statement")]
     ExpressionNotStatement,
-    #[error("recursion limit reached")]
     RecursionLimit,
-    #[error("lexer error")]
-    LexError(#[from] LexError),
-    #[error("invalid attribute {0:?}")]
+    LexError(LexError),
     InvalidAttribute(String),
+    ExpectedToClose {
+        what: String,
+        who: String,
+        where_line: LineNumber,
+    },
+    UnexpectedSymbol,
 }
 
-#[derive(Debug, Error)]
-#[error("parse error at line {line_number}: {kind}")]
+#[derive(Debug)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub line_number: LineNumber,
+    pub near: Option<String>,
 }
+
+impl fmt::Display for ParseErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseErrorKind::Unexpected {
+                unexpected: _,
+                expected,
+            } => {
+                write!(f, "{} expected", expected)
+            }
+            ParseErrorKind::EndOfStream {
+                expected: Some(expected),
+            } => {
+                write!(f, "{} expected", expected)
+            }
+            ParseErrorKind::EndOfStream { expected: None } => write!(f, "syntax error"),
+            ParseErrorKind::AssignToExpression => write!(f, "syntax error"),
+            ParseErrorKind::ExpressionNotStatement => write!(f, "unexpected symbol"),
+            ParseErrorKind::RecursionLimit => write!(f, "control structure too long"),
+            ParseErrorKind::LexError(e) => write!(f, "{}", e),
+            ParseErrorKind::InvalidAttribute(attr) => write!(f, "invalid attribute '{}'", attr),
+            ParseErrorKind::ExpectedToClose {
+                what,
+                who,
+                where_line,
+            } => {
+                write!(
+                    f,
+                    "{} expected (to close {} at line {})",
+                    what, who, where_line
+                )
+            }
+            ParseErrorKind::UnexpectedSymbol => write!(f, "unexpected symbol"),
+        }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.near {
+            Some(near) => write!(f, "{} near {}", self.kind, near),
+            None => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+impl StdError for ParseError {}
 
 pub fn parse_chunk<S>(source: &[u8], interner: S) -> Result<Chunk<S::String>, ParseError>
 where
@@ -365,13 +411,53 @@ struct Parser<'a, S: StringInterner> {
 }
 
 impl<S: StringInterner> Parser<'_, S> {
+    fn expect_close_at(
+        &mut self,
+        token: Token<S::String>,
+        who: &str,
+        where_line: LineNumber,
+    ) -> Result<LineNumber, ParseError> {
+        self.read_ahead(1)?;
+        if self.read_buffer.is_empty() {
+            let near = Some("<eof>".to_owned());
+            Err(build_parse_error(
+                ParseErrorKind::ExpectedToClose {
+                    what: expected_token_str(&token),
+                    who: who.to_owned(),
+                    where_line,
+                },
+                self.lexer.line_number(),
+                near,
+            ))
+        } else {
+            let next_token = self.read_buffer.remove(0);
+            if *next_token == token {
+                Ok(next_token.line_number)
+            } else {
+                Err(build_parse_error(
+                    ParseErrorKind::ExpectedToClose {
+                        what: expected_token_str(&token),
+                        who: who.to_owned(),
+                        where_line,
+                    },
+                    next_token.line_number,
+                    Some(token_to_text(&next_token.inner)),
+                ))
+            }
+        }
+    }
+
     fn parse_chunk(&mut self) -> Result<Chunk<S::String>, ParseError> {
         let block = self.parse_block()?;
         if !self.look_ahead(0)?.is_none() {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream { expected: None },
-                line_number: self.lexer.line_number(),
-            })
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream { expected: None },
+                self.lexer.line_number(),
+                self.look_ahead(0)
+                    .ok()
+                    .flatten()
+                    .map(|t| token_to_text(&t.inner)),
+            ))
         } else {
             Ok(Chunk { block })
         }
@@ -473,7 +559,7 @@ impl<S: StringInterner> Parser<'_, S> {
     }
 
     fn parse_if_statement(&mut self) -> Result<IfStatement<S::String>, ParseError> {
-        self.expect_next(Token::If)?;
+        let if_line = self.expect_next(Token::If)?;
         let if_cond = self.parse_expression()?;
         self.expect_next(Token::Then)?;
         let if_block = self.parse_block()?;
@@ -494,7 +580,7 @@ impl<S: StringInterner> Parser<'_, S> {
             None
         };
 
-        self.expect_next(Token::End)?;
+        self.expect_close_at(Token::End, "'if'", if_line)?;
 
         Ok(IfStatement {
             if_part: (if_cond, if_block),
@@ -506,15 +592,15 @@ impl<S: StringInterner> Parser<'_, S> {
     fn parse_while_statement(&mut self) -> Result<WhileStatement<S::String>, ParseError> {
         self.expect_next(Token::While)?;
         let condition = self.parse_expression()?;
-        self.expect_next(Token::Do)?;
+        let do_line = self.expect_next(Token::Do)?;
         let block = self.parse_block()?;
-        self.expect_next(Token::End)?;
+        self.expect_close_at(Token::End, "'do'", do_line)?;
 
         Ok(WhileStatement { condition, block })
     }
 
     fn parse_for_statement(&mut self) -> Result<ForStatement<S::String>, ParseError> {
-        self.expect_next(Token::For)?;
+        let for_line = self.expect_next(Token::For)?;
         let name = self.expect_name()?.inner;
 
         let next = self.get_next()?;
@@ -533,7 +619,7 @@ impl<S: StringInterner> Parser<'_, S> {
 
                 self.expect_next(Token::Do)?;
                 let body = self.parse_block()?;
-                self.expect_next(Token::End)?;
+                self.expect_close_at(Token::End, "'for'", for_line)?;
 
                 Ok(ForStatement::Numeric {
                     name,
@@ -556,7 +642,7 @@ impl<S: StringInterner> Parser<'_, S> {
 
                 self.expect_next(Token::Do)?;
                 let body = self.parse_block()?;
-                self.expect_next(Token::End)?;
+                self.expect_close_at(Token::End, "'for'", for_line)?;
 
                 Ok(ForStatement::Generic {
                     names,
@@ -565,26 +651,27 @@ impl<S: StringInterner> Parser<'_, S> {
                 })
             }
 
-            token => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: format!("{:?}", token),
+            token => Err(build_parse_error(
+                ParseErrorKind::Unexpected {
+                    unexpected: token_to_text(token),
                     expected: "'=' or 'in'".to_owned(),
                 },
-                line_number: next.line_number,
-            }),
+                next.line_number,
+                Some(token_to_text(token)),
+            )),
         }
     }
 
     fn parse_repeat_statement(&mut self) -> Result<RepeatStatement<S::String>, ParseError> {
-        self.expect_next(Token::Repeat)?;
+        let repeat_line = self.expect_next(Token::Repeat)?;
         let body = self.parse_block()?;
-        self.expect_next(Token::Until)?;
+        self.expect_close_at(Token::Until, "'repeat'", repeat_line)?;
         let until = self.parse_expression()?;
         Ok(RepeatStatement { body, until })
     }
 
     fn parse_function_statement(&mut self) -> Result<FunctionStatement<S::String>, ParseError> {
-        self.expect_next(Token::Function)?;
+        let function_line = self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
         let mut fields = Vec::new();
@@ -604,7 +691,7 @@ impl<S: StringInterner> Parser<'_, S> {
             }
         }
 
-        let definition = self.parse_function_definition()?;
+        let definition = self.parse_function_definition_at(Some(function_line))?;
 
         Ok(FunctionStatement {
             name,
@@ -617,10 +704,10 @@ impl<S: StringInterner> Parser<'_, S> {
     fn parse_local_function_statement(
         &mut self,
     ) -> Result<LocalFunctionStatement<S::String>, ParseError> {
-        self.expect_next(Token::Function)?;
+        let function_line = self.expect_next(Token::Function)?;
 
         let name = self.expect_name()?.inner;
-        let definition = self.parse_function_definition()?;
+        let definition = self.parse_function_definition_at(Some(function_line))?;
 
         Ok(LocalFunctionStatement { name, definition })
     }
@@ -641,12 +728,13 @@ impl<S: StringInterner> Parser<'_, S> {
                     b"const" => LocalAttributes::CONST,
                     b"close" => LocalAttributes::CONST_CLOSE,
                     _ => {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::InvalidAttribute(
+                        return Err(build_parse_error(
+                            ParseErrorKind::InvalidAttribute(
                                 String::from_utf8_lossy(attr.as_ref()).into_owned(),
                             ),
                             line_number,
-                        })
+                            None,
+                        ))
                     }
                 }
             } else {
@@ -699,20 +787,28 @@ impl<S: StringInterner> Parser<'_, S> {
                             AssignmentTarget::Field(suffixed_expression, field_suffix)
                         }
                         SuffixPart::Call(_) => {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::AssignToExpression,
+                            return Err(build_parse_error(
+                                ParseErrorKind::AssignToExpression,
                                 line_number,
-                            });
+                                self.look_ahead(0)
+                                    .ok()
+                                    .flatten()
+                                    .map(|t| token_to_text(&t.inner)),
+                            ));
                         }
                     }
                 } else {
                     match suffixed_expression.primary {
                         PrimaryExpression::Name(name) => AssignmentTarget::Name(name),
                         _ => {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::AssignToExpression,
+                            return Err(build_parse_error(
+                                ParseErrorKind::AssignToExpression,
                                 line_number,
-                            })
+                                self.look_ahead(0)
+                                    .ok()
+                                    .flatten()
+                                    .map(|t| token_to_text(&t.inner)),
+                            ))
                         }
                     }
                 };
@@ -741,16 +837,24 @@ impl<S: StringInterner> Parser<'_, S> {
                         call: call_suffix,
                     }))
                 }
-                SuffixPart::Field(_) => Err(ParseError {
-                    kind: ParseErrorKind::ExpressionNotStatement,
+                SuffixPart::Field(_) => Err(build_parse_error(
+                    ParseErrorKind::ExpressionNotStatement,
                     line_number,
-                }),
+                    self.look_ahead(0)
+                        .ok()
+                        .flatten()
+                        .map(|t| token_to_text(&t.inner)),
+                )),
             }
         } else {
-            Err(ParseError {
-                kind: ParseErrorKind::ExpressionNotStatement,
+            Err(build_parse_error(
+                ParseErrorKind::ExpressionNotStatement,
                 line_number,
-            })
+                self.look_ahead(0)
+                    .ok()
+                    .flatten()
+                    .map(|t| token_to_text(&t.inner)),
+            ))
         }
     }
 
@@ -840,23 +944,24 @@ impl<S: StringInterner> Parser<'_, S> {
         match next.inner {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
-                self.expect_next(Token::RightParen)?;
+                self.expect_close_at(Token::RightParen, "'('", next.line_number)?;
                 Ok(PrimaryExpression::GroupedExpression(expr))
             }
             Token::Name(n) => Ok(PrimaryExpression::Name(n)),
-            token => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: format!("{:?}", token),
+            token => Err(build_parse_error(
+                ParseErrorKind::Unexpected {
+                    unexpected: token_to_text(&token),
                     expected: "grouped expression or name".to_owned(),
                 },
-                line_number: next.line_number,
-            }),
+                next.line_number,
+                Some(token_to_text(&token)),
+            )),
         }
     }
 
     fn parse_field_suffix(&mut self) -> Result<FieldSuffix<S::String>, ParseError> {
-        let next = self.get_next()?;
-        match &next.inner {
+        let next_la = self.get_next()?.clone();
+        match &next_la.inner {
             Token::Dot => {
                 self.take_next()?;
                 Ok(FieldSuffix::Named(self.expect_name()?.inner))
@@ -864,16 +969,17 @@ impl<S: StringInterner> Parser<'_, S> {
             Token::LeftBracket => {
                 self.take_next()?;
                 let expr = self.parse_expression()?;
-                self.expect_next(Token::RightBracket)?;
+                self.expect_close_at(Token::RightBracket, "'['", next_la.line_number)?;
                 Ok(FieldSuffix::Indexed(expr))
             }
-            token => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: format!("{:?}", token),
+            token => Err(build_parse_error(
+                ParseErrorKind::Unexpected {
+                    unexpected: token_to_text(&token),
                     expected: "field or suffix".to_owned(),
                 },
-                line_number: next.line_number,
-            }),
+                next_la.line_number,
+                Some(token_to_text(&token)),
+            )),
         }
     }
 
@@ -911,13 +1017,14 @@ impl<S: StringInterner> Parser<'_, S> {
                 tail: vec![],
             }],
             token => {
-                return Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: format!("{:?}", token),
+                return Err(build_parse_error(
+                    ParseErrorKind::Unexpected {
+                        unexpected: token_to_text(&token),
                         expected: "function arguments".to_owned(),
                     },
-                    line_number: next.line_number,
-                });
+                    next.line_number,
+                    Some(token_to_text(&token)),
+                ));
             }
         };
 
@@ -935,13 +1042,14 @@ impl<S: StringInterner> Parser<'_, S> {
             Token::Colon | Token::LeftParen | Token::LeftBrace | Token::String(_) => {
                 Ok(SuffixPart::Call(self.parse_call_suffix()?))
             }
-            token => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: format!("{:?}", token),
+            token => Err(build_parse_error(
+                ParseErrorKind::Unexpected {
+                    unexpected: token_to_text(&token),
                     expected: "expression suffix".to_owned(),
                 },
-                line_number: next.line_number,
-            }),
+                next.line_number,
+                Some(token_to_text(&token)),
+            )),
         }
     }
 
@@ -966,7 +1074,7 @@ impl<S: StringInterner> Parser<'_, S> {
     }
 
     fn parse_function_definition(&mut self) -> Result<FunctionDefinition<S::String>, ParseError> {
-        self.expect_next(Token::LeftParen)?;
+        let lp_line = self.expect_next(Token::LeftParen)?;
 
         let mut parameters = Vec::new();
         let mut has_varargs = false;
@@ -980,13 +1088,14 @@ impl<S: StringInterner> Parser<'_, S> {
                         break;
                     }
                     token => {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected: format!("{:?}", token),
+                        return Err(build_parse_error(
+                            ParseErrorKind::Unexpected {
+                                unexpected: token_to_text(&token),
                                 expected: "parameter name or '...'".to_owned(),
                             },
-                            line_number: next.line_number,
-                        });
+                            next.line_number,
+                            Some(token_to_text(&token)),
+                        ));
                     }
                 }
                 if self.check_ahead(0, Token::Comma)? {
@@ -996,7 +1105,7 @@ impl<S: StringInterner> Parser<'_, S> {
                 }
             }
         }
-        self.expect_next(Token::RightParen)?;
+        self.expect_close_at(Token::RightParen, "'('", lp_line)?;
 
         let body = self.parse_block()?;
         self.expect_next(Token::End)?;
@@ -1008,8 +1117,59 @@ impl<S: StringInterner> Parser<'_, S> {
         })
     }
 
+    fn parse_function_definition_at(
+        &mut self,
+        start_line: Option<LineNumber>,
+    ) -> Result<FunctionDefinition<S::String>, ParseError> {
+        let lp_line = self.expect_next(Token::LeftParen)?;
+
+        let mut parameters = Vec::new();
+        let mut has_varargs = false;
+        if !self.check_ahead(0, Token::RightParen)? {
+            loop {
+                let next = self.take_next()?;
+                match next.inner {
+                    Token::Name(name) => parameters.push(name),
+                    Token::Dots => {
+                        has_varargs = true;
+                        break;
+                    }
+                    token => {
+                        return Err(build_parse_error(
+                            ParseErrorKind::Unexpected {
+                                unexpected: token_to_text(&token),
+                                expected: "parameter name or '...'".to_owned(),
+                            },
+                            next.line_number,
+                            Some(token_to_text(&token)),
+                        ));
+                    }
+                }
+                if self.check_ahead(0, Token::Comma)? {
+                    self.take_next()?;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_close_at(Token::RightParen, "'('", lp_line)?;
+
+        let body = self.parse_block()?;
+        if let Some(line) = start_line {
+            self.expect_close_at(Token::End, "'function'", line)?;
+        } else {
+            self.expect_next(Token::End)?;
+        }
+
+        Ok(FunctionDefinition {
+            parameters,
+            has_varargs,
+            body,
+        })
+    }
+
     fn parse_table_constructor(&mut self) -> Result<TableConstructor<S::String>, ParseError> {
-        self.expect_next(Token::LeftBrace)?;
+        let lb_line = self.expect_next(Token::LeftBrace)?;
         let mut fields = Vec::new();
         loop {
             if self.check_ahead(0, Token::RightBrace)? {
@@ -1023,7 +1183,7 @@ impl<S: StringInterner> Parser<'_, S> {
                 _ => break,
             }
         }
-        self.expect_next(Token::RightBrace)?;
+        self.expect_close_at(Token::RightBrace, "'{'", lb_line)?;
         Ok(TableConstructor { fields })
     }
 
@@ -1053,14 +1213,18 @@ impl<S: StringInterner> Parser<'_, S> {
 
     // Error if we have more than MAX_RECURSION guards live, otherwise return a new recursion guard
     // (a recursion guard is just an Rc used solely for its live count).
-    fn recursion_guard(&self) -> Result<Rc<()>, ParseError> {
+    fn recursion_guard(&mut self) -> Result<Rc<()>, ParseError> {
         if Rc::strong_count(&self.recursion_guard) < MAX_RECURSION {
             Ok(self.recursion_guard.clone())
         } else {
-            Err(ParseError {
-                kind: ParseErrorKind::RecursionLimit,
-                line_number: self.lexer.line_number(),
-            })
+            Err(build_parse_error(
+                ParseErrorKind::RecursionLimit,
+                self.lexer.line_number(),
+                self.look_ahead(0)
+                    .ok()
+                    .flatten()
+                    .map(|t| token_to_text(&t.inner)),
+            ))
         }
     }
 
@@ -1070,10 +1234,11 @@ impl<S: StringInterner> Parser<'_, S> {
         if let Some(token) = self.read_buffer.get(0) {
             Ok(token)
         } else {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream { expected: None },
-                line_number: self.lexer.line_number(),
-            })
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream { expected: None },
+                self.lexer.line_number(),
+                Some("<eof>".to_owned()),
+            ))
         }
     }
 
@@ -1081,24 +1246,31 @@ impl<S: StringInterner> Parser<'_, S> {
     fn expect_next(&mut self, token: Token<S::String>) -> Result<LineNumber, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream {
-                    expected: Some(format!("{:?}", token)),
+            let near = self
+                .read_buffer
+                .get(0)
+                .map(|t| token_to_text(&t.inner))
+                .or(Some("<eof>".to_owned()));
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream {
+                    expected: Some(expected_token_str(&token)),
                 },
-                line_number: self.lexer.line_number(),
-            })
+                self.lexer.line_number(),
+                near,
+            ))
         } else {
             let next_token = self.read_buffer.remove(0);
             if *next_token == token {
                 Ok(next_token.line_number)
             } else {
-                Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: format!("{:?}", next_token.inner),
-                        expected: format!("{:?}", token),
+                Err(build_parse_error(
+                    ParseErrorKind::Unexpected {
+                        unexpected: token_to_text(&next_token.inner),
+                        expected: expected_token_str(&token),
                     },
-                    line_number: next_token.line_number,
-                })
+                    next_token.line_number,
+                    Some(token_to_text(&next_token.inner)),
+                ))
             }
         }
     }
@@ -1107,22 +1279,27 @@ impl<S: StringInterner> Parser<'_, S> {
     fn expect_name(&mut self) -> Result<LineAnnotated<S::String>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream {
-                    expected: Some("name".to_owned()),
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream {
+                    expected: Some("<name>".to_owned()),
                 },
-                line_number: self.lexer.line_number(),
-            })
+                self.lexer.line_number(),
+                self.look_ahead(0)
+                    .ok()
+                    .flatten()
+                    .map(|t| token_to_text(&t.inner)),
+            ))
         } else {
             self.read_buffer.remove(0).try_map(|t| match t {
                 Token::Name(name) => Ok(name),
-                token => Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: format!("{:?}", token),
-                        expected: "name".to_owned(),
+                token => Err(build_parse_error(
+                    ParseErrorKind::Unexpected {
+                        unexpected: token_to_text(&token),
+                        expected: "<name>".to_owned(),
                     },
-                    line_number: self.lexer.line_number(),
-                }),
+                    self.lexer.line_number(),
+                    Some(token_to_text(&token)),
+                )),
             })
         }
     }
@@ -1131,22 +1308,27 @@ impl<S: StringInterner> Parser<'_, S> {
     fn expect_string(&mut self) -> Result<LineAnnotated<S::String>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream {
-                    expected: Some("string".to_owned()),
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream {
+                    expected: Some("<string>".to_owned()),
                 },
-                line_number: self.lexer.line_number(),
-            })
+                self.lexer.line_number(),
+                self.look_ahead(0)
+                    .ok()
+                    .flatten()
+                    .map(|t| token_to_text(&t.inner)),
+            ))
         } else {
             self.read_buffer.remove(0).try_map(|t| match t {
                 Token::String(string) => Ok(string),
-                token => Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: format!("{:?}", token),
-                        expected: "string".to_owned(),
+                token => Err(build_parse_error(
+                    ParseErrorKind::Unexpected {
+                        unexpected: token_to_text(&token),
+                        expected: "<string>".to_owned(),
                     },
-                    line_number: self.lexer.line_number(),
-                }),
+                    self.lexer.line_number(),
+                    Some(token_to_text(&token)),
+                )),
             })
         }
     }
@@ -1155,10 +1337,11 @@ impl<S: StringInterner> Parser<'_, S> {
     fn take_next(&mut self) -> Result<LineAnnotated<Token<S::String>>, ParseError> {
         self.read_ahead(1)?;
         if self.read_buffer.is_empty() {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream { expected: None },
-                line_number: self.lexer.line_number(),
-            })
+            Err(build_parse_error(
+                ParseErrorKind::EndOfStream { expected: None },
+                self.lexer.line_number(),
+                Some("<eof>".to_owned()),
+            ))
         } else {
             Ok(self.read_buffer.remove(0))
         }
@@ -1188,14 +1371,26 @@ impl<S: StringInterner> Parser<'_, S> {
     // possible).
     fn read_ahead(&mut self, n: usize) -> Result<(), ParseError> {
         while self.read_buffer.len() <= n {
-            self.lexer.skip_whitespace().map_err(|e| ParseError {
-                kind: ParseErrorKind::LexError(e),
-                line_number: self.lexer.line_number(),
+            self.lexer.skip_whitespace().map_err(|e| {
+                build_parse_error(
+                    ParseErrorKind::LexError(e),
+                    self.lexer.line_number(),
+                    self.look_ahead(0)
+                        .ok()
+                        .flatten()
+                        .map(|t| token_to_text(&t.inner)),
+                )
             })?;
             let line_number = self.lexer.line_number();
-            if let Some(token) = self.lexer.read_token().map_err(|e| ParseError {
-                kind: ParseErrorKind::LexError(e),
-                line_number: self.lexer.line_number(),
+            if let Some(token) = self.lexer.read_token().map_err(|e| {
+                build_parse_error(
+                    ParseErrorKind::LexError(e),
+                    self.lexer.line_number(),
+                    self.look_ahead(0)
+                        .ok()
+                        .flatten()
+                        .map(|t| token_to_text(&t.inner)),
+                )
             })? {
                 self.read_buffer
                     .push(LineAnnotated::new(line_number, token));
@@ -1204,6 +1399,95 @@ impl<S: StringInterner> Parser<'_, S> {
             }
         }
         Ok(())
+    }
+}
+
+// Format a token similarly to Lua's luaX_token2str (for "expected" messages):
+// reserved words and symbols are quoted (e.g., "'='"), names/strings show as <name>/<string>.
+fn expected_token_str<S: AsRef<[u8]>>(token: &Token<S>) -> String {
+    match token {
+        Token::Name(_) => "<name>".to_owned(),
+        Token::String(_) => "<string>".to_owned(),
+        Token::Integer(_) | Token::Float(_) => "<number>".to_owned(),
+        Token::Break => "'break'".to_owned(),
+        Token::Do => "'do'".to_owned(),
+        Token::Else => "'else'".to_owned(),
+        Token::ElseIf => "'elseif'".to_owned(),
+        Token::End => "'end'".to_owned(),
+        Token::Function => "'function'".to_owned(),
+        Token::Goto => "'goto'".to_owned(),
+        Token::If => "'if'".to_owned(),
+        Token::In => "'in'".to_owned(),
+        Token::Local => "'local'".to_owned(),
+        Token::Nil => "'nil'".to_owned(),
+        Token::For => "'for'".to_owned(),
+        Token::While => "'while'".to_owned(),
+        Token::Repeat => "'repeat'".to_owned(),
+        Token::Until => "'until'".to_owned(),
+        Token::Return => "'return'".to_owned(),
+        Token::Then => "'then'".to_owned(),
+        Token::True => "'true'".to_owned(),
+        Token::False => "'false'".to_owned(),
+        Token::Not => "'not'".to_owned(),
+        Token::And => "'and'".to_owned(),
+        Token::Or => "'or'".to_owned(),
+        Token::Minus => "'-'".to_owned(),
+        Token::Add => "'+'".to_owned(),
+        Token::Mul => "'*'".to_owned(),
+        Token::Div => "'/'".to_owned(),
+        Token::IDiv => "'//'".to_owned(),
+        Token::Pow => "'^'".to_owned(),
+        Token::Mod => "'%'".to_owned(),
+        Token::Len => "'#'".to_owned(),
+        Token::BitNotXor => "'~'".to_owned(),
+        Token::BitAnd => "'&'".to_owned(),
+        Token::BitOr => "'|'".to_owned(),
+        Token::ShiftRight => "'>>'".to_owned(),
+        Token::ShiftLeft => "'<<'".to_owned(),
+        Token::Concat => "'..'".to_owned(),
+        Token::Dots => "'...'".to_owned(),
+        Token::Assign => "'='".to_owned(),
+        Token::LessThan => "'<'".to_owned(),
+        Token::LessEqual => "'<='".to_owned(),
+        Token::GreaterThan => "'>'".to_owned(),
+        Token::GreaterEqual => "'>='".to_owned(),
+        Token::Equal => "'=='".to_owned(),
+        Token::NotEqual => "'~='".to_owned(),
+        Token::Dot => "'.'".to_owned(),
+        Token::SemiColon => "';'".to_owned(),
+        Token::Colon => "':'".to_owned(),
+        Token::DoubleColon => "'::'".to_owned(),
+        Token::Comma => "','".to_owned(),
+        Token::LeftParen => "'('".to_owned(),
+        Token::RightParen => "')'".to_owned(),
+        Token::LeftBracket => "'['".to_owned(),
+        Token::RightBracket => "']'".to_owned(),
+        Token::LeftBrace => "'{'".to_owned(),
+        Token::RightBrace => "'}'".to_owned(),
+    }
+}
+
+// Format a token like Lua's txtToken (for "near" messages): names/strings/numerals show actual
+// text in single quotes; symbols/keywords show quoted symbol text.
+fn token_to_text<S: AsRef<[u8]>>(token: &Token<S>) -> String {
+    match token {
+        Token::Name(n) => format!("'{}'", String::from_utf8_lossy(n.as_ref())),
+        Token::String(s) => format!("'{}'", String::from_utf8_lossy(s.as_ref())),
+        Token::Integer(i) => format!("'{}'", i),
+        Token::Float(n) => format!("'{}'", n),
+        _ => expected_token_str(token),
+    }
+}
+
+fn build_parse_error(
+    kind: ParseErrorKind,
+    line_number: LineNumber,
+    near: Option<String>,
+) -> ParseError {
+    ParseError {
+        kind,
+        line_number,
+        near,
     }
 }
 

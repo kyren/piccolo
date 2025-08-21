@@ -5,16 +5,19 @@ use clap::{crate_description, crate_name, crate_version, Arg, ArgAction, Command
 use rustyline::DefaultEditor;
 
 use piccolo::{
-    compiler::{ParseError, ParseErrorKind},
     io, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua,
-    StashedExecutor,
+    RuntimeError, StashedExecutor,
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), ExternError> {
+    // Compile and set up the function
     lua.try_enter(|ctx| {
         let closure = match Closure::load(ctx, None, ("return ".to_owned() + code).as_bytes()) {
-            Ok(closure) => closure,
-            Err(_) => Closure::load(ctx, None, code.as_bytes())?,
+            Ok(c) => c,
+            Err(_) => match Closure::load(ctx, None, code.as_bytes()) {
+                Ok(c) => c,
+                Err(e) => return Err(e.into()),
+            },
         };
         let function = Function::compose(
             &ctx,
@@ -37,7 +40,16 @@ fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(),
         Ok(())
     })?;
 
-    lua.execute::<()>(executor)
+    lua.finish(executor).map_err(RuntimeError::new)?;
+
+    lua.try_enter(|ctx| match ctx.fetch(executor).take_result::<()>(ctx) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => {
+            eprintln!("{}", err.into_error_with_stack_trace(ctx.fetch(executor)));
+            Ok(())
+        }
+        Err(e) => Err(RuntimeError::new(e).into()),
+    })
 }
 
 fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
@@ -45,7 +57,7 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
     let executor = lua.enter(|ctx| ctx.stash(Executor::new(ctx)));
 
     loop {
-        let mut prompt = "> ";
+        let prompt = "> ";
         let mut line = String::new();
 
         loop {
@@ -60,18 +72,6 @@ fn run_repl(lua: &mut Lua) -> Result<(), Box<dyn StdError>> {
             }
 
             match run_code(lua, &executor, &line) {
-                Err(err)
-                    if !read_empty
-                        && matches!(
-                            err.root_cause().downcast_ref::<ParseError>(),
-                            Some(ParseError {
-                                kind: ParseErrorKind::EndOfStream { .. },
-                                ..
-                            })
-                        ) =>
-                {
-                    prompt = ">> ";
-                }
                 Err(e) => {
                     editor.add_history_entry(line)?;
                     eprintln!("{}", e);

@@ -4,11 +4,12 @@ use std::pin::Pin;
 use anyhow::Context as _;
 use gc_arena::Collect;
 
+use super::type_error;
 use crate::{
     async_callback::{AsyncSequence, Locals},
     async_sequence,
     fuel::count_fuel,
-    meta_ops::{self, concat_separated, ConcatMetaResult, MetaResult},
+    meta_ops::{self, ConcatMetaResult, MetaResult},
     table::RawTable,
     BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Function, IntoValue,
     MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
@@ -43,7 +44,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             }
 
             let length = try_compute_length(start, end)
-                .ok_or_else(|| "Too many values to unpack".into_value(ctx))?;
+                .ok_or("too many results to unpack".into_value(ctx))?;
             Unpack::MainLoop {
                 start,
                 table,
@@ -70,7 +71,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
 
             let then_impl = Callback::from_fn_with(&ctx, sep, |sep, ctx, _, mut stack| {
                 let values = &stack[..];
-                match concat_separated(ctx, values, *sep)? {
+                match meta_ops::concat_separated(ctx, values, *sep)? {
                     ConcatMetaResult::Value(v) => {
                         stack.replace(ctx, v);
                         Ok(CallbackReturn::Return)
@@ -97,7 +98,6 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
                 }
             }
 
-            // Defer to table.unpack for indexing implementation.
             Ok(CallbackReturn::Call {
                 function: *unpack,
                 then: Some(BoxSequence::new(&ctx, CallSequence(then_impl.into()))),
@@ -118,6 +118,99 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
     table.set_field(ctx, "move", func);
 
     ctx.set_global("table", table);
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+struct ConcatThen<'gc> {
+    sep: Value<'gc>,
+    list: Value<'gc>,
+    i: i64,
+}
+
+impl<'gc> Sequence<'gc> for ConcatThen<'gc> {
+    fn poll(
+        self: Pin<&mut Self>,
+        ctx: Context<'gc>,
+        _exec: Execution<'gc, '_>,
+        mut stack: Stack<'gc, '_>,
+    ) -> Result<SequencePoll<'gc>, Error<'gc>> {
+        // after __len, there should be one value on top
+        let jv = stack.consume::<Value>(ctx)?;
+        let j = jv
+            .to_integer()
+            .ok_or_else(|| type_error(ctx, "concat", 4, "number", jv.type_name()))?;
+        let res = concat_range(ctx, self.list, self.sep, self.i, j)?;
+        // res returns a CallbackReturn; translate to SequencePoll
+        match res {
+            CallbackReturn::Return => Ok(SequencePoll::Return),
+            CallbackReturn::Call { function, .. } => Ok(SequencePoll::TailCall(function)),
+            CallbackReturn::Sequence(_seq) => {
+                // We do not expect concat to produce a Sequence here in practice because
+                // we only call concat_separated_with_validation which either returns a Value
+                // or a function to call next. Conservatively return.
+                Ok(SequencePoll::Return)
+            }
+            CallbackReturn::Yield { .. } | CallbackReturn::Resume { .. } => unreachable!(),
+        }
+    }
+}
+
+fn concat_range<'gc>(
+    ctx: Context<'gc>,
+    list: Value<'gc>,
+    sep: Value<'gc>,
+    mut i: i64,
+    j: i64,
+) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+    // Empty interval: return ""
+    if i > j {
+        return Ok(CallbackReturn::Return);
+    }
+
+    // Gather values via meta_ops::index for range [i..j]
+    let s = async_sequence(&ctx, |locals, mut seq| {
+        let list = locals.stash(&ctx, list);
+        let sep = locals.stash(&ctx, sep);
+        async move {
+            // Collect range values into the stack
+            while i <= j {
+                let call = seq.try_enter(|ctx, locals, _, mut stack| {
+                    let call = meta_ops::index(ctx, locals.fetch(&list), Value::Integer(i))?;
+                    let p = match call {
+                        MetaResult::Value(v) => {
+                            stack.push_back(v);
+                            None
+                        }
+                        MetaResult::Call(call) => {
+                            stack.extend(call.args);
+                            Some(locals.stash(&ctx, call.function))
+                        }
+                    };
+                    Ok(p)
+                })?;
+                if let Some(call) = call {
+                    seq.call(&call, 0).await?;
+                }
+                i = i.saturating_add(1);
+            }
+
+            // Validate element types and perform concatenation with separator
+            seq.try_enter(|ctx, locals, _, mut stack| {
+                let sep = locals.fetch(&sep);
+                match meta_ops::concat_separated(ctx, &stack[..], sep)? {
+                    ConcatMetaResult::Value(v) => {
+                        stack.replace(ctx, v);
+                        Ok(SequenceReturn::Return)
+                    }
+                    ConcatMetaResult::Call(func) => {
+                        Ok(SequenceReturn::Call(locals.stash(&ctx, func)))
+                    }
+                }
+            })
+        }
+    });
+    Ok(CallbackReturn::Sequence(s))
 }
 
 fn prep_metaop_call<'gc, const N: usize>(
@@ -195,6 +288,7 @@ fn table_remove_impl<'gc>(
     mut exec: Execution<'gc, '_>,
     mut stack: Stack<'gc, '_>,
 ) -> Result<CallbackReturn<'gc>, Error<'gc>> {
+    // Lua errors if the first argument is not a table-like value for write/len
     let (table, index): (Table, Option<i64>) = stack.consume(ctx)?;
     let length;
 
@@ -225,9 +319,7 @@ fn table_remove_impl<'gc>(
                 length = Some(len);
             }
             (RawArrayOpResult::Failed, _) => {
-                return Err("Invalid index passed to table.remove"
-                    .into_value(ctx)
-                    .into());
+                return Err("position out of bounds".into_value(ctx).into());
             }
         }
     } else {
@@ -293,11 +385,7 @@ fn table_remove_impl<'gc>(
                 // The last value is still on the stack
                 Ok(SequenceReturn::Return)
             } else {
-                seq.try_enter(|ctx, _, _, _| {
-                    Err("Invalid index passed to table.remove"
-                        .into_value(ctx)
-                        .into())
-                })
+                seq.try_enter(|ctx, _, _, _| Err("position out of bounds".into_value(ctx).into()))
             }
         }
     });
@@ -313,7 +401,11 @@ fn table_insert_impl<'gc>(
     let index: Option<i64>;
     let value: Value;
     match stack.len() {
-        0..=1 => return Err("Missing arguments to insert".into_value(ctx).into()),
+        0..=1 => {
+            return Err("wrong number of arguments to 'insert'"
+                .into_value(ctx)
+                .into())
+        }
         2 => {
             (table, value) = stack.consume(ctx)?;
             index = None;
@@ -361,9 +453,7 @@ fn table_insert_impl<'gc>(
                 length = Some(len);
             }
             (RawArrayOpResult::Failed, _) => {
-                return Err("Invalid index passed to table.insert"
-                    .into_value(ctx)
-                    .into());
+                return Err("position out of bounds".into_value(ctx).into());
             }
         }
     } else {
@@ -410,9 +500,7 @@ fn table_insert_impl<'gc>(
 
             if !(1..=end_index).contains(&index) {
                 return seq.try_enter(|ctx, _, _, _| {
-                    Err("Invalid index passed to table.insert"
-                        .into_value(ctx)
-                        .into())
+                    Err("position out of bounds".into_value(ctx).into())
                 });
             }
 

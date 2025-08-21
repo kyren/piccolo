@@ -45,6 +45,12 @@ pub struct ExecutorState<'gc> {
     thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
 }
 
+impl<'gc> ExecutorState<'gc> {
+    pub(crate) fn thread_stack(&self) -> &[Thread<'gc>] {
+        &self.thread_stack
+    }
+}
+
 pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 
 /// The entry-point for the Lua VM.

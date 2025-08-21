@@ -1,3 +1,4 @@
+use super::{argument_error, type_error};
 use crate::{Callback, CallbackReturn, Context, FromValue, String, Table, Value};
 
 pub fn load_string<'gc>(ctx: Context<'gc>) {
@@ -7,8 +8,16 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "len",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
-            let string = stack.consume::<String>(ctx)?;
-            let len = string.len();
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "len", 1, "string expected"));
+            }
+            // Accept numbers like Lua string library does via implicit tostring for some APIs
+            let value = stack.get(0);
+            let len = if let Some(s) = value.into_string(ctx) {
+                s.len()
+            } else {
+                return Err(type_error(ctx, "len", 1, "string", value.type_name()));
+            };
             stack.replace(ctx, len);
             Ok(CallbackReturn::Return)
         }),
@@ -18,6 +27,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "byte",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "byte", 1, "string expected"));
+            }
             let (string, i, j) = stack.consume::<(String, Option<i64>, Option<i64>)>(ctx)?;
             let i = i.unwrap_or(1);
             let substr = sub(string.as_bytes(), i, j.or(Some(i)))?;
@@ -33,7 +45,10 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
             let string = ctx.intern(
                 &stack
                     .into_iter()
-                    .map(|c| u8::from_value(ctx, c))
+                    .map(|c| {
+                        u8::from_value(ctx, c)
+                            .map_err(|_| argument_error(ctx, "char", 1, "value expected"))
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             );
             stack.replace(ctx, string);
@@ -45,6 +60,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "sub",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "sub", 1, "string expected"));
+            }
             let (string, i, j) = stack.consume::<(String, i64, Option<i64>)>(ctx)?;
             let substr = ctx.intern(sub(string.as_bytes(), i, j)?);
             stack.replace(ctx, substr);
@@ -56,6 +74,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "lower",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "lower", 1, "string expected"));
+            }
             let string = stack.consume::<String>(ctx)?;
             let lowered = ctx.intern(
                 &string
@@ -73,6 +94,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "reverse",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "reverse", 1, "string expected"));
+            }
             let string = stack.consume::<String>(ctx)?;
             let reversed = ctx.intern(&string.as_bytes().iter().copied().rev().collect::<Vec<_>>());
             stack.replace(ctx, reversed);
@@ -84,6 +108,9 @@ pub fn load_string<'gc>(ctx: Context<'gc>) {
         ctx,
         "upper",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            if stack.len() == 0 {
+                return Err(argument_error(ctx, "upper", 1, "string expected"));
+            }
             let string = stack.consume::<String>(ctx)?;
             let uppered = ctx.intern(
                 &string

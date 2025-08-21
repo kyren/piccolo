@@ -2,6 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use allocator_api2::{boxed, vec, SliceExt};
 use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
+use std::{error::Error as StdError, fmt};
 use thiserror::Error;
 
 use crate::{
@@ -12,16 +13,43 @@ use crate::{
     Constant, Context, String, Table, Value,
 };
 
-// Note: These errors must not have #[error(transparent)] so that
-// anyhow::Error::root_cause and downcasting work as expected by the
-// interpreter. (Even though that gives slightly cleaner error messages).
-#[derive(Debug, Error)]
+// Note: We format compiler errors like Lua: "<chunk>:<line>: <message>"
+#[derive(Debug, Clone)]
 pub enum CompilerError {
-    #[error("parse error")]
-    Parsing(#[from] compiler::ParseError),
-    #[error("compile error")]
-    Compilation(#[from] compiler::CompileError),
+    Parsing {
+        chunk: std::string::String,
+        line: LineNumber,
+        message: std::string::String,
+    },
+    Compilation {
+        chunk: std::string::String,
+        line: LineNumber,
+        message: std::string::String,
+    },
 }
+
+impl fmt::Display for CompilerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompilerError::Parsing {
+                chunk,
+                line,
+                message,
+            } => {
+                write!(f, "{}:{}: {}", chunk, line, message)
+            }
+            CompilerError::Compilation {
+                chunk,
+                line,
+                message,
+            } => {
+                write!(f, "{}:{}: {}", chunk, line, message)
+            }
+        }
+    }
+}
+
+impl StdError for CompilerError {}
 
 /// A compiled Lua function.
 ///
@@ -130,8 +158,26 @@ impl<'gc> FunctionPrototype<'gc> {
 
         let interner = Interner(ctx);
 
-        let chunk = compiler::parse_chunk(source, interner)?;
-        let compiled_function = compiler::compile_chunk(&chunk, interner)?;
+        let chunk = match compiler::parse_chunk(source, interner) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(CompilerError::Parsing {
+                    chunk: source_name.to_string(),
+                    line: e.line_number,
+                    message: e.to_string(),
+                })
+            }
+        };
+        let compiled_function = match compiler::compile_chunk(&chunk, interner) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(CompilerError::Compilation {
+                    chunk: source_name.to_string(),
+                    line: e.line_number,
+                    message: e.kind.to_string(),
+                })
+            }
+        };
 
         Ok(FunctionPrototype::from_compiled(
             &ctx,

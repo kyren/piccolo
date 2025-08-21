@@ -211,24 +211,12 @@ impl<S: AsRef<[u8]>> fmt::Debug for Token<S> {
     }
 }
 
-fn print_char(c: u8) -> char {
-    char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
-}
-
 #[derive(Debug, Error)]
 pub enum LexError {
-    #[error("short string not finished, expected matching {}", print_char(*.0))]
+    #[error("unfinished string")]
     UnfinishedShortString(u8),
-    #[error("unexpected character: {}", print_char(*.0))]
-    UnexpectedCharacter(u8),
     #[error("hexadecimal digit expected")]
     HexDigitExpected,
-    #[error("missing '{{' in \\u{{xxxx}} escape")]
-    EscapeUnicodeStart,
-    #[error("missing '}}' in \\u{{xxxx}} escape")]
-    EscapeUnicodeEnd,
-    #[error("invalid unicode value in \\u{{xxxx}} escape")]
-    EscapeUnicodeInvalid,
     #[error("\\ddd escape out of 0-255 range")]
     EscapeDecimalTooLarge,
     #[error("invalid escape sequence")]
@@ -480,7 +468,7 @@ where
                                 Token::Name(self.take_string())
                             }
                         } else {
-                            return Err(LexError::UnexpectedCharacter(c));
+                            return Err(LexError::InvalidEscape);
                         }
                     }
                 }))
@@ -623,28 +611,33 @@ where
 
                     b'u' => {
                         if self.peek(1)? != Some(b'{') {
-                            return Err(LexError::EscapeUnicodeStart);
+                            return Err(LexError::InvalidEscape);
                         }
                         self.advance(2);
 
                         let mut u: u32 = 0;
+                        let mut saw_digit = false;
                         loop {
                             if let Some(c) = self.peek(0)? {
                                 if c == b'}' {
+                                    if !saw_digit {
+                                        return Err(LexError::HexDigitExpected);
+                                    }
                                     self.advance(1);
                                     break;
                                 } else if let Some(h) = from_hex_digit(c) {
+                                    saw_digit = true;
                                     u = (u << 4) | h as u32;
                                     self.advance(1);
                                 } else {
-                                    return Err(LexError::EscapeUnicodeEnd);
+                                    return Err(LexError::HexDigitExpected);
                                 }
                             } else {
-                                return Err(LexError::EscapeUnicodeEnd);
+                                return Err(LexError::UnfinishedShortString(start_quote));
                             }
                         }
 
-                        let c = char::from_u32(u).ok_or(LexError::EscapeUnicodeInvalid)?;
+                        let c = char::from_u32(u).ok_or(LexError::InvalidEscape)?;
                         let mut buf = [0; 4];
                         for &b in c.encode_utf8(&mut buf).as_bytes() {
                             self.string_buffer.push(b);

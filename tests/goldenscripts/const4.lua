@@ -1,5 +1,5 @@
 --- error
---- runtime error: compile error: compiler error at line 7: cannot assign to a const variable
+--- ./tests/goldenscripts/const4.lua:7: cannot assign to a const variable
 
 local a <const> = 3
 

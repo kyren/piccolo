@@ -264,7 +264,7 @@ impl<'gc> OpenUpValue<'gc> {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
-pub(super) enum MetaReturn {
+pub(crate) enum MetaReturn {
     /// No return value is expected.
     None,
     /// Place a single return value at an index relative to the returned to function's stack bottom.
@@ -275,7 +275,7 @@ pub(super) enum MetaReturn {
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]
-pub(super) enum LuaReturn {
+pub(crate) enum LuaReturn {
     /// Normal function call, place return values at the bottom of the returning function's stack,
     /// as normal.
     Normal(VarCount),
@@ -285,7 +285,7 @@ pub(super) enum LuaReturn {
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
-pub(super) enum Frame<'gc> {
+pub(crate) enum Frame<'gc> {
     /// A running Lua frame.
     Lua {
         bottom: usize,
@@ -355,6 +355,10 @@ impl<'gc> ThreadState<'gc> {
                 }
             },
         }
+    }
+
+    pub(crate) fn frames(&self) -> &[Frame<'gc>] {
+        &self.frames
     }
 
     /// Pushes a new function call frame.

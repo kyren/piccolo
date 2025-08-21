@@ -1,7 +1,8 @@
 use std::io::Write;
 
 use gc_arena::Collect;
-use thiserror::Error;
+use std::error::Error as StdError;
+use std::fmt;
 
 use crate::async_callback::{AsyncSequence, Locals};
 use crate::{async_sequence, SequenceReturn, Stack};
@@ -143,23 +144,89 @@ impl<'gc, const N: usize> From<MetaCall<'gc, N>> for MetaResult<'gc, N> {
     }
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone)]
 pub enum MetaOperatorError {
-    #[error("could not call metamethod {}: {}", .0.name(), .1)]
-    Call(MetaMethod, #[source] MetaCallError),
-    #[error("could not {} a {} value", .0.verb(), .1)]
+    Call(MetaMethod, MetaCallError),
     Unary(MetaMethod, &'static str),
-    #[error("could not {} values of type {} and {}", .0.verb(), .1, .2)]
     Binary(MetaMethod, &'static str, &'static str),
-    #[error("invalid table key")]
-    IndexKeyError(#[from] InvalidTableKey),
-    #[error("concatenation result is too long")]
+    IndexKeyError(InvalidTableKey),
     ConcatOverflow,
 }
 
-#[derive(Debug, Copy, Clone, Error)]
-#[error("could not call a {} value", .0)]
+impl fmt::Display for MetaOperatorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use MetaMethod::*;
+        match self {
+            MetaOperatorError::Call(method, err) => {
+                write!(f, "could not call metamethod {}: {}", method.name(), err)
+            }
+            MetaOperatorError::Unary(method, ty) => {
+                let msg = match method {
+                    Index | NewIndex => format!("attempt to index a {} value", ty),
+                    Len => format!("attempt to get length of a {} value", ty),
+                    BNot => format!("attempt to perform bitwise operation on a {} value", ty),
+                    Unm | Add | Sub | Mul | Div | Mod | Pow | IDiv => {
+                        format!("attempt to perform arithmetic on a {} value", ty)
+                    }
+                    ToString | Pairs | Eq | Call | Concat | Lt | Le | BAnd | BOr | BXor | Shl
+                    | Shr => format!("attempt to {} a {} value", method.verb(), ty),
+                };
+                f.write_str(&msg)
+            }
+            MetaOperatorError::Binary(method, lty, rty) => {
+                let msg = match method {
+                    Concat => {
+                        // choose the non-string side, like PUC-Lua does
+                        let ty = if *lty == "string" { *rty } else { *lty };
+                        format!("attempt to concatenate a {} value", ty)
+                    }
+                    Lt | Le => format!("attempt to compare {} with {}", lty, rty),
+                    BAnd | BOr | BXor | Shl | Shr => {
+                        // choose non-integer side when possible
+                        let ty = if *lty == "number" { *rty } else { *lty };
+                        format!("attempt to perform bitwise operation on a {} value", ty)
+                    }
+                    Add | Sub | Mul | Div | Mod | Pow | IDiv => {
+                        let ty = if *lty == "number" { *rty } else { *lty };
+                        format!("attempt to perform arithmetic on a {} value", ty)
+                    }
+                    Eq | Index | NewIndex | Len | ToString | Pairs | Call | Unm | BNot => {
+                        format!(
+                            "attempt to {} values of type {} and {}",
+                            method.verb(),
+                            lty,
+                            rty
+                        )
+                    }
+                };
+                f.write_str(&msg)
+            }
+            MetaOperatorError::IndexKeyError(_) => f.write_str("invalid table key"),
+            MetaOperatorError::ConcatOverflow => f.write_str("concatenation result is too long"),
+        }
+    }
+}
+
+impl StdError for MetaOperatorError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            MetaOperatorError::Call(_, e) => Some(e),
+            MetaOperatorError::IndexKeyError(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct MetaCallError(&'static str);
+
+impl fmt::Display for MetaCallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "attempt to call a {} value", self.0)
+    }
+}
+
+impl StdError for MetaCallError {}
 
 fn get_metatable<'gc>(val: Value<'gc>) -> Option<Table<'gc>> {
     match val {
@@ -273,7 +340,10 @@ pub fn index<'gc>(
             args: [table, key],
         },
         _ => MetaCall {
-            function: call(ctx, idx).map_err(|e| MetaOperatorError::Call(MetaMethod::Index, e))?,
+            function: match call(ctx, idx) {
+                Ok(f) => f,
+                Err(e) => return Err(MetaOperatorError::Call(MetaMethod::Index, e)),
+            },
             args: [table, key],
         },
     }))
@@ -290,7 +360,10 @@ pub fn new_index<'gc>(
             let v = table.get_value(ctx, key);
             if !v.is_nil() {
                 // If the value is present in the table, then we do not invoke the metamethod.
-                table.set_raw(&ctx, key, value)?;
+                // set_raw returns Result<(), InvalidTableKey>
+                table
+                    .set_raw(&ctx, key, value)
+                    .map_err(MetaOperatorError::IndexKeyError)?;
                 return Ok(None);
             }
 
@@ -303,7 +376,9 @@ pub fn new_index<'gc>(
             if idx.is_nil() {
                 // If we do not have a __newindex metamethod, then just set the table value
                 // directly.
-                table.set_raw(&ctx, key, value)?;
+                table
+                    .set_raw(&ctx, key, value)
+                    .map_err(MetaOperatorError::IndexKeyError)?;
                 return Ok(None);
             }
 
@@ -348,8 +423,10 @@ pub fn new_index<'gc>(
             args: [table, key, value],
         },
         _ => MetaCall {
-            function: call(ctx, idx)
-                .map_err(|e| MetaOperatorError::Call(MetaMethod::NewIndex, e))?,
+            function: match call(ctx, idx) {
+                Ok(f) => f,
+                Err(e) => return Err(MetaOperatorError::Call(MetaMethod::NewIndex, e)),
+            },
             args: [table, key, value],
         },
     }))

@@ -14,6 +14,8 @@ pub use self::{
     thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode},
 };
 
+pub(crate) use thread::Frame;
+
 #[derive(Debug, Clone, Error)]
 pub enum VMError {
     #[error("{}", if *.0 {

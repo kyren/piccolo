@@ -192,8 +192,10 @@ fn test_goldenscripts() {
         match mode {
             GoldenScriptMode::CompileError => {
                 if let Some(error) = compile_error {
+                    // New compiler error format is already Lua-like without the runtime/compile prefixes
                     let formatted_error = format!("{error}\n");
-                    if formatted_error != expected_output {
+                    let expected_norm = expected_output.replace("\r\n", "\n");
+                    if formatted_error != expected_norm {
                         eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{formatted_error}");
                         failed_scripts.push(path);
                         continue;
@@ -220,8 +222,9 @@ fn test_goldenscripts() {
                 }
                 // Stitch together our expected byte output, and compare
                 let output: Vec<_> = rx.try_iter().flatten().collect();
-                if output != expected_output.as_bytes() {
-                    // Technically `output` is ASCII, but UTF8 is compatible
+                let expected_norm = expected_output.replace("\r\n", "\n");
+                if output != expected_norm.as_bytes() {
+                    // Show a clean string for output to avoid path separator issues
                     eprintln!("{path:?}: did not match expected output\n\nexpected:\n{expected_output}\noutput:\n{}\n---\n{output:?}", String::from_utf8_lossy(&output));
                     failed_scripts.push(path);
                     continue;

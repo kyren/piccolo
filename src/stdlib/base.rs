@@ -2,11 +2,12 @@ use std::pin::Pin;
 
 use gc_arena::Collect;
 
+use super::{argument_error, type_error};
 use crate::{
     meta_ops::{self, MetaResult},
     table::NextValue,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
-    Sequence, SequencePoll, Stack, String, Table, TypeError, Value, Variadic,
+    Sequence, SequencePoll, Stack, String, Table, Value, Variadic,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -21,8 +22,8 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 (bytes, is_neg)
             }
 
-            if stack.is_empty() {
-                Err("Missing argument(s) to tonumber".into_value(ctx))?
+            if stack.len() == 0 {
+                Err(argument_error(ctx, "tonumber", 1, "value expected"))?
             } else if stack.len() == 1 || stack.get(1).is_nil() {
                 let prenumber = stack.consume::<Value>(ctx)?;
                 stack.replace(ctx, prenumber.to_numeric().unwrap_or(Value::Nil));
@@ -31,16 +32,10 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 // Avoid implicitly converting value to a string
                 let s = match value {
                     Value::String(s) => s,
-                    _ => {
-                        return Err(TypeError {
-                            expected: "string",
-                            found: value.type_name(),
-                        }
-                        .into())
-                    }
+                    _ => return Err(type_error(ctx, "tonumber", 1, "string", value.type_name())),
                 };
                 if !(2..=36).contains(&base) {
-                    Err("base out of range".into_value(ctx))?;
+                    Err(argument_error(ctx, "tonumber", 2, "base out of range"))?;
                 }
                 let (bytes, is_neg) = extract_number_data(s.as_bytes());
                 let result = bytes
@@ -72,7 +67,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "tostring",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if stack.is_empty() {
-                Err("Bad argument to tostring".into_value(ctx).into())
+                Err(argument_error(ctx, "tostring", 1, "value expected"))
             } else {
                 match meta_ops::tostring(ctx, stack.get(0))? {
                     MetaResult::Value(v) => {
@@ -126,7 +121,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "type",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if stack.is_empty() {
-                Err("Missing argument to type".into_value(ctx).into())
+                Err(argument_error(ctx, "type", 1, "value expected"))
             } else {
                 stack.replace(ctx, stack.get(0).type_name());
                 Ok(CallbackReturn::Return)
@@ -158,7 +153,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 return Ok(CallbackReturn::Return);
             }
 
-            Err("Bad argument to 'select'".into_value(ctx).into())
+            Err(argument_error(ctx, "select", 1, "number expected"))
         }),
     );
 
@@ -197,9 +192,13 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 stack.replace(ctx, t.metatable());
                 Ok(CallbackReturn::Return)
             } else {
-                Err("'getmetatable' can only be used on table types"
-                    .into_value(ctx)
-                    .into())
+                Err(type_error(
+                    ctx,
+                    "getmetatable",
+                    1,
+                    "table",
+                    stack.get(0).type_name(),
+                ))
             }
         }),
     );
@@ -332,7 +331,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     stack.into_back(ctx, ctx.metrics().total_allocation() as f64 / 1024.0);
                 }
                 Some(_) => {
-                    return Err("bad argument to 'collectgarbage'".into_value(ctx).into());
+                    return Err(argument_error(ctx, "collectgarbage", 1, "string expected"));
                 }
                 None => {}
             }
