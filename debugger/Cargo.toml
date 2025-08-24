@@ -1,0 +1,19 @@
+[package]
+name = "piccolo-debugger"
+description = "Debugger for the `piccolo`"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+piccolo.workspace = true
+serde.workspace = true
+serde_json = "1.0"
+base64 = "0.22"
+
+[[example]]
+name = "simple_debug"
+path = "examples/simple_debug.rs"

@@ -42,7 +42,7 @@ pub struct BadExecutorMode {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ExecutorState<'gc> {
-    thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+    pub thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
 }
 
 pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
@@ -66,7 +66,7 @@ pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
 /// run by the same `Executor` which called the callback.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Executor<'gc>(Gc<'gc, ExecutorInner<'gc>>);
+pub struct Executor<'gc>(pub Gc<'gc, ExecutorInner<'gc>>);
 
 impl<'gc> PartialEq for Executor<'gc> {
     fn eq(&self, other: &Executor<'gc>) -> bool {

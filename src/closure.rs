@@ -187,8 +187,8 @@ pub enum ClosureError {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
-    proto: Gc<'gc, FunctionPrototype<'gc>>,
-    upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    pub proto: Gc<'gc, FunctionPrototype<'gc>>,
+    pub upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
 }
 
 /// A garbage collected pointer to an executable Lua function.

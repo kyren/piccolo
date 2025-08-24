@@ -1,6 +1,6 @@
-mod executor;
+pub mod executor;
 mod thread;
-mod vm;
+pub mod vm;
 
 use thiserror::Error;
 
@@ -11,7 +11,10 @@ pub use self::{
         BadExecutorMode, CurrentThread, Execution, Executor, ExecutorInner, ExecutorMode,
         UpperLuaFrame,
     },
-    thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode},
+    thread::{
+        BadThreadMode, Frame, LuaFrame, LuaRegisters, OpenUpValue, Thread, ThreadInner, ThreadMode,
+        ThreadState,
+    },
 };
 
 #[derive(Debug, Clone, Error)]

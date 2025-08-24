@@ -16,7 +16,7 @@ use super::{thread::LuaFrame, VMError};
 // changed.
 //
 // Returns the number of instructions that were run.
-pub(super) fn run_vm<'gc>(
+pub fn run_vm<'gc>(
     ctx: Context<'gc>,
     mut lua_frame: LuaFrame<'gc, '_>,
     max_instructions: u32,
