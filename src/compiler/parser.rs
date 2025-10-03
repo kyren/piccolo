@@ -333,7 +333,7 @@ pub enum ParseErrorKind {
     ExpressionNotStatement,
     #[error("recursion limit reached")]
     RecursionLimit,
-    #[error("lexer error")]
+    #[error("lexer error: {0}")]
     LexError(#[from] LexError),
     #[error("invalid attribute {0:?}")]
     InvalidAttribute(String),
