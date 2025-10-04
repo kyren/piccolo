@@ -185,6 +185,21 @@ pub fn index<'gc>(
     key: Value<'gc>,
 ) -> Result<MetaResult<'gc, 2>, MetaOperatorError> {
     let idx = match table {
+        // In PUC-Lua, all strings are given the same metatable with an __index
+        // that points to the global string table. Here, we do the same thing of
+        // looking up indexes in the global string table, but without actually
+        // defining a metatable. This means it is not 100% compatible since it
+        // is possible to write cursed Lua which modifies this special
+        // metatable, but it is compatible enough that it works for the most
+        // common case of calling string methods in an OOP style.
+        Value::String(_) => {
+            let metatable = ctx
+                .get_global::<Table<'_>>("string")
+                .map_err(|_| MetaOperatorError::IndexKeyError(InvalidTableKey::IsNil))?;
+            let v = metatable.get_value(ctx, key);
+
+            return Ok(MetaResult::Value(v));
+        }
         Value::Table(table) => {
             let v = table.get_value(ctx, key);
             if !v.is_nil() {

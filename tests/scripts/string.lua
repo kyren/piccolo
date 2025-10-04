@@ -137,3 +137,16 @@ do
     assert(is_err(function() return string.char(256) end))
     assert(is_err(function() return string.char(-1) end))
 end
+
+do
+    local p = "hello"
+    assert(p:len("lo") == 5)
+
+    string.world = function(s)
+        return s .. " world"
+    end
+
+    assert(p:world() == "hello world")
+    assert(p[0] == nil)
+    assert(p["len"] == string.len)
+end
