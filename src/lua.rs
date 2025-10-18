@@ -1,20 +1,16 @@
-use std::ops;
-
-use gc_arena::{
-    arena::{CollectionPhase, Root},
-    metrics::Metrics,
-    Arena, Collect, Mutation, Rootable,
-};
-
+use crate::finalizers::Finalizers;
+use crate::stash::{Fetchable, Stashable};
+use crate::stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table};
+use crate::string::InternedStringSet;
+use crate::thread::BadThreadMode;
 use crate::{
-    finalizers::Finalizers,
-    stash::{Fetchable, Stashable},
-    stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
-    string::InternedStringSet,
-    thread::BadThreadMode,
     Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
     Singleton, StashedExecutor, String, Table, TypeError, Value,
 };
+use core::ops;
+use gc_arena::arena::{CollectionPhase, Root};
+use gc_arena::metrics::Metrics;
+use gc_arena::{Arena, Collect, Mutation, Rootable};
 
 /// A value representing the main "execution context" of a Lua state.
 ///

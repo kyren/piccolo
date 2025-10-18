@@ -1,6 +1,6 @@
+use piccolo::meta_ops::MetaCallError;
+use piccolo::{Closure, Executor, Lua};
 use std::string::String as StdString;
-
-use piccolo::{meta_ops::MetaCallError, Closure, Executor, Lua};
 
 const SOURCE: &str = r#"
     -- Purposeful typo of 'tostring'

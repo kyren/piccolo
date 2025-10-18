@@ -1,11 +1,11 @@
-use std::{error::Error as StdError, fs::File, io::Read};
-
 use clap::{crate_description, crate_name, crate_version, Arg, Command};
-
-use piccolo::{
-    compiler::{self, interning::BasicInterner, string_utils::debug_utf8_lossy, CompiledPrototype},
-    io,
-};
+use piccolo::compiler::interning::BasicInterner;
+use piccolo::compiler::string_utils::debug_utf8_lossy;
+use piccolo::compiler::{self, CompiledPrototype};
+use piccolo::io;
+use std::error::Error as StdError;
+use std::fs::File;
+use std::io::Read;
 
 fn print_function<S: AsRef<[u8]>>(function: &CompiledPrototype<S>, depth: usize) {
     let indent = "  ".repeat(depth);

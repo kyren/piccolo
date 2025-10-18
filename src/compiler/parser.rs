@@ -1,11 +1,8 @@
-use std::{fmt, ops, rc::Rc};
-
+use super::lexer::{LexError, Lexer, LineNumber, Token};
+use super::StringInterner;
+use alloc::rc::Rc;
+use core::{fmt, ops};
 use thiserror::Error;
-
-use super::{
-    lexer::{LexError, Lexer, LineNumber, Token},
-    StringInterner,
-};
 
 #[derive(Debug, Clone)]
 pub struct LineAnnotated<T> {

@@ -2,17 +2,12 @@ mod executor;
 mod thread;
 mod vm;
 
-use thiserror::Error;
-
-use crate::meta_ops::{MetaCallError, MetaOperatorError};
-
-pub use self::{
-    executor::{
-        BadExecutorMode, CurrentThread, Execution, Executor, ExecutorInner, ExecutorMode,
-        UpperLuaFrame,
-    },
-    thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode},
+pub use self::executor::{
+    BadExecutorMode, CurrentThread, Execution, Executor, ExecutorInner, ExecutorMode, UpperLuaFrame,
 };
+pub use self::thread::{BadThreadMode, OpenUpValue, Thread, ThreadInner, ThreadMode};
+use crate::meta_ops::{MetaCallError, MetaOperatorError};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]
 pub enum VMError {

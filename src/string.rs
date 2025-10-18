@@ -1,18 +1,15 @@
-use std::{
-    alloc, fmt,
-    hash::{BuildHasherDefault, Hash, Hasher},
-    ops, slice,
-    str::{self, Utf8Error},
-};
-
-use ahash::AHasher;
-use gc_arena::{
-    allocator_api::MetricsAlloc, barrier::Unlock, lock::RefLock, metrics::Metrics, Collect,
-    Collection, Gc, GcWeak, Mutation, Static,
-};
-use hashbrown::{hash_map, raw::RawTable, HashMap};
-
 use crate::compiler::string_utils::{debug_utf8_lossy, display_utf8_lossy};
+use ahash::AHasher;
+use core::hash::{BuildHasherDefault, Hash, Hasher};
+use core::str::{self, Utf8Error};
+use core::{alloc, fmt, ops, slice};
+use gc_arena::allocator_api::MetricsAlloc;
+use gc_arena::barrier::Unlock;
+use gc_arena::lock::RefLock;
+use gc_arena::metrics::Metrics;
+use gc_arena::{Collect, Collection, Gc, GcWeak, Mutation, Static};
+use hashbrown::raw::RawTable;
+use hashbrown::{hash_map, HashMap};
 
 /// The Lua string type.
 ///
@@ -365,9 +362,8 @@ impl<'gc> InternedStringSet<'gc> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::arena::rootless_mutate;
-
     use super::*;
+    use gc_arena::arena::rootless_mutate;
 
     #[test]
     fn test_string_header() {

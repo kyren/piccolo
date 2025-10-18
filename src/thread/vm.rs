@@ -1,16 +1,13 @@
+use super::thread::LuaFrame;
+use super::VMError;
+use crate::meta_ops::{self, ConcatMetaResult, MetaResult};
+use crate::opcode::{Operation, RCIndex};
+use crate::table::RawTable;
+use crate::thread::thread::MetaReturn;
+use crate::types::{RegisterIndex, UpValueDescriptor, VarCount};
+use crate::{Closure, Constant, Context, Function, String, Table, Value};
 use allocator_api2::vec;
 use gc_arena::allocator_api::MetricsAlloc;
-
-use crate::{
-    meta_ops::{self, ConcatMetaResult, MetaResult},
-    opcode::{Operation, RCIndex},
-    table::RawTable,
-    thread::thread::MetaReturn,
-    types::{RegisterIndex, UpValueDescriptor, VarCount},
-    Closure, Constant, Context, Function, String, Table, Value,
-};
-
-use super::{thread::LuaFrame, VMError};
 
 // Runs the VM for the given number of instructions or until the current LuaFrame may have been
 // changed.

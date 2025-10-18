@@ -1,13 +1,11 @@
-use std::io::Write;
-
+use crate::async_callback::{AsyncSequence, Locals};
+use crate::table::InvalidTableKey;
+use crate::{
+    async_sequence, Callback, CallbackReturn, Context, Function, IntoValue, SequenceReturn, Stack,
+    Table, Value,
+};
 use gc_arena::Collect;
 use thiserror::Error;
-
-use crate::async_callback::{AsyncSequence, Locals};
-use crate::{async_sequence, SequenceReturn, Stack};
-use crate::{
-    table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
-};
 
 /// An enum of every possible Lua metamethod.
 ///
@@ -762,12 +760,7 @@ pub fn concat<'gc>(
         if a.is_implicit_string() && b.is_implicit_string() {
             let mut bytes = Vec::new();
             for value in [a, b] {
-                match value {
-                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                    Value::String(s) => bytes.extend(s.as_bytes()),
-                    _ => return None,
-                }
+                value_to_string(&mut bytes, &value)?
             }
             Some(Value::String(ctx.intern(&bytes)))
         } else {
@@ -803,21 +796,16 @@ pub fn concat_many<'gc>(
 ) -> Result<ConcatMetaResult<'gc>, MetaOperatorError> {
     // Fast path scope; never loops, returns if successful, otherwise
     // breaks to fall back to the slow impl.
-    loop {
+    'fast: {
         // Since we have to make two passes to check for complex types,
         // estimate the length in the first pass.
         let Some(len) = estimate_concatenated_len(values)? else {
-            break;
+            break 'fast;
         };
 
         let mut bytes = Vec::with_capacity(len);
         for value in values {
-            match value {
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                Value::String(s) => bytes.extend(s.as_bytes()),
-                _ => unreachable!(),
-            }
+            value_to_string(&mut bytes, value).unwrap();
         }
         return Ok(ConcatMetaResult::Value(Value::String(ctx.intern(&bytes))));
     }
@@ -826,7 +814,7 @@ pub fn concat_many<'gc>(
     let func = Callback::from_fn(&ctx, |ctx, _, stack| {
         let args = stack.len();
         let s = async_sequence(&ctx, |_, mut seq| async move {
-            for i in (1..args).into_iter().rev() {
+            for i in (1..args).rev() {
                 let call = seq.try_enter(|ctx, locals, _, mut stack| {
                     let bottom = i - 1;
                     let call = concat(ctx, stack[i - 1], stack[i])?;
@@ -853,16 +841,16 @@ pub fn concat_separated<'gc>(
 
     // Fast path scope; never loops, returns if successful, otherwise
     // breaks to fall back to the slow impl.
-    loop {
+    'fast: {
         let sep_str = match separator.into_string(ctx) {
             Some(s) => s,
-            None => break,
+            None => break 'fast,
         };
 
         // Since we have to make two passes to check for complex types,
         // estimate the length in the first pass.
         let Some(len) = estimate_concatenated_len(values)? else {
-            break;
+            break 'fast;
         };
 
         let sep_count = values.len().saturating_sub(1);
@@ -876,21 +864,11 @@ pub fn concat_separated<'gc>(
 
         let mut iter = values.iter();
         if let Some(val) = iter.next() {
-            match val {
-                Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                Value::String(s) => bytes.extend(s.as_bytes()),
-                _ => unreachable!(),
-            }
+            value_to_string(&mut bytes, val).unwrap();
 
-            while let Some(val) = iter.next() {
+            for val in iter.by_ref() {
                 bytes.extend(&*sep_str);
-                match val {
-                    Value::Integer(i) => write!(&mut bytes, "{}", i).unwrap(),
-                    Value::Number(n) => write!(&mut bytes, "{}", n).unwrap(),
-                    Value::String(s) => bytes.extend(s.as_bytes()),
-                    _ => unreachable!(),
-                }
+                value_to_string(&mut bytes, val).unwrap();
             }
         }
         drop(iter);
@@ -904,7 +882,7 @@ pub fn concat_separated<'gc>(
         let b = async_sequence(&ctx, |locals, mut seq| {
             let sep = locals.stash(&ctx, sep);
             async move {
-                for i in (1..args).into_iter().rev() {
+                for i in (1..args).rev() {
                     let call = seq.try_enter(|ctx, locals, _, mut stack| {
                         let bottom = i;
                         let call = concat(ctx, locals.fetch(&sep), stack[i])?;
@@ -927,6 +905,16 @@ pub fn concat_separated<'gc>(
         Ok(CallbackReturn::Sequence(b))
     });
     Ok(ConcatMetaResult::Call(func.into()))
+}
+
+fn value_to_string(bytes: &mut Vec<u8>, value: &Value<'_>) -> Option<()> {
+    match value {
+        Value::Integer(i) => bytes.extend(i.to_string().as_bytes()),
+        Value::Number(n) => bytes.extend(n.to_string().as_bytes()),
+        Value::String(s) => bytes.extend(s.as_bytes()),
+        _ => return None,
+    }
+    Some(())
 }
 
 #[must_use]

@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Error, Read};
 
 /// Takes an `R: BufRead` and:
 ///
@@ -8,16 +8,14 @@ use std::io::{self, BufRead, BufReader, Read};
 ///
 /// This mimics the initial behavior of luaL_loadfile(x). In order to correctly detect and skip the
 /// BOM and unix shebang, the internal buffer of the BufRead must be >= 3 bytes.
-pub fn skip_prefix<R: BufRead>(r: &mut R) -> Result<(), io::Error> {
-    if {
-        let buf = r.fill_buf()?;
-        buf.len() >= 3 && buf[0] == 0xef && buf[1] == 0xbb && buf[2] == 0xbf
-    } {
+pub fn skip_prefix<R: BufRead>(r: &mut R) -> Result<(), Error> {
+    let buf = r.fill_buf()?;
+    if buf.len() >= 3 && buf[0] == 0xef && buf[1] == 0xbb && buf[2] == 0xbf {
         r.consume(3);
     }
 
     let buf = r.fill_buf()?;
-    let has_shebang = buf.len() >= 1 && buf[0] == b'#';
+    let has_shebang = !buf.is_empty() && buf[0] == b'#';
     if has_shebang {
         r.consume(1);
         loop {
@@ -46,7 +44,7 @@ pub fn skip_prefix<R: BufRead>(r: &mut R) -> Result<(), io::Error> {
 /// Reads a Lua script from a `R: Read` and wraps it in a BufReader
 ///
 /// Also calls `skip_prefix` to skip any leading UTF-8 BOM or unix shebang.
-pub fn buffered_read<R: Read>(r: R) -> Result<BufReader<R>, io::Error> {
+pub fn buffered_read<R: Read>(r: R) -> Result<BufReader<R>, Error> {
     let mut r = BufReader::new(r);
     skip_prefix(&mut r)?;
     Ok(r)

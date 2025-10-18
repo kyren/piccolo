@@ -11,23 +11,23 @@
 //! where `mode` dictates how to handle errors
 //! and `script` is a valid Lua script.
 
-use piccolo::{Closure, Executor, Lua};
-use std::{fs::read_dir, io::BufRead, path::PathBuf, sync::mpsc::channel};
-
 use crate::collected_print::print_callback;
+use piccolo::{Closure, Executor, Lua};
+use std::fs::read_dir;
+use std::io::BufRead;
+use std::path::PathBuf;
+use std::sync::mpsc::channel;
 
 mod collected_print {
     use gc_arena::Collect;
+    use piccolo::meta_ops::{self, MetaResult};
     use piccolo::{
-        meta_ops::{self, MetaResult},
         BoxSequence, Callback, CallbackReturn, Context, Execution, Sequence, SequencePoll, Stack,
         Value,
     };
-    use std::{
-        io::{Cursor, Write},
-        pin::Pin,
-        sync::mpsc::Sender,
-    };
+    use std::io::{Cursor, Write};
+    use std::pin::Pin;
+    use std::sync::mpsc::Sender;
 
     pub fn print_callback<'gc>(ctx: piccolo::Context<'gc>, tx: Sender<Vec<u8>>) -> Callback<'gc> {
         Callback::from_fn(

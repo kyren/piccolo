@@ -1,14 +1,9 @@
-use std::{
-    any::TypeId,
-    fmt,
-    hash::{Hash, Hasher},
-};
-
-use gc_arena::{
-    arena::Root,
-    barrier::{self, Write},
-    Collect, Gc, Mutation, Rootable,
-};
+use core::any::TypeId;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use gc_arena::arena::Root;
+use gc_arena::barrier::{self, Write};
+use gc_arena::{Collect, Gc, Mutation, Rootable};
 
 /// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
 ///
@@ -187,9 +182,8 @@ impl<'gc, M> Any<'gc, M> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::arena::rootless_mutate;
-
     use super::*;
+    use gc_arena::arena::rootless_mutate;
 
     #[test]
     fn test_any_value() {

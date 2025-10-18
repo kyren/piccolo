@@ -1,8 +1,7 @@
-use gc_arena::Collect;
-
 use crate::types::{
     ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueIndex, VarCount,
 };
+use gc_arena::Collect;
 
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(require_static)]

@@ -1,6 +1,7 @@
-use gc_arena::{lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation};
-
-use crate::{thread::ThreadInner, Thread};
+use crate::thread::ThreadInner;
+use crate::Thread;
+use gc_arena::lock::RefLock;
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Mutation};
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]

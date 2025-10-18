@@ -1,5 +1,4 @@
-use std::cmp::Ordering;
-
+use core::cmp::Ordering;
 use piccolo::{Lua, Table, Value};
 
 #[test]

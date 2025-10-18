@@ -1,13 +1,9 @@
-use std::{
-    iter,
-    ops::{Bound, Index, IndexMut, RangeBounds},
-    slice::{self, SliceIndex},
-};
-
-use allocator_api2::vec;
-use gc_arena::allocator_api::MetricsAlloc;
-
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
+use allocator_api2::vec;
+use core::iter;
+use core::ops::{Bound, Index, IndexMut, RangeBounds};
+use core::slice::{self, SliceIndex};
+use gc_arena::allocator_api::MetricsAlloc;
 
 /// The mechanism through which all callbacks receive parameters and return values.
 ///

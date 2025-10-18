@@ -1,4 +1,5 @@
-use gc_arena::{lock::Lock, Collect, Gc, Rootable};
+use gc_arena::lock::Lock;
+use gc_arena::{Collect, Gc, Rootable};
 use piccolo::{Callback, CallbackReturn, Closure, Executor, Lua, UserData, Value};
 
 #[derive(Collect)]

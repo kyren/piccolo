@@ -1,15 +1,10 @@
-use std::{
-    hash::{Hash, Hasher},
-    mem,
-};
-
-use gc_arena::{arena::Root, barrier, lock, Collect, Gc, Mutation, Rootable, Static};
+use crate::any::{Any, AnyInner};
+use crate::Table;
+use core::hash::{Hash, Hasher};
+use core::mem;
+use gc_arena::arena::Root;
+use gc_arena::{barrier, lock, Collect, Gc, Mutation, Rootable, Static};
 use thiserror::Error;
-
-use crate::{
-    any::{Any, AnyInner},
-    Table,
-};
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("UserData type mismatch")]
@@ -38,7 +33,7 @@ pub type UserDataInner<'gc> = AnyInner<UserDataMetaState<'gc>>;
 ///
 /// There is no automatic mechanism to provide internal mutability on the held value. If the held
 /// value needs to be internally mutable and is `'static`, consider normal mechanisms for Rust
-/// internal mutability like [`std::cell::RefCell`]. If the type is a GC type and needs to be
+/// internal mutability like [`core::cell::RefCell`]. If the type is a GC type and needs to be
 /// internally mutable, use the mechanisms in `gc-arena` for this like [`gc_arena::lock::RefLock`]
 /// instead.
 ///

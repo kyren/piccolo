@@ -1,20 +1,17 @@
-use std::hash::{Hash, Hasher};
-
-use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
-use thiserror::Error;
-
+use super::thread::{Frame, LuaFrame, ThreadState};
+use super::vm::run_vm;
+use crate::compiler::{FunctionRef, LineNumber};
+use crate::thread::BadThreadMode;
 use crate::{
-    compiler::{FunctionRef, LineNumber},
-    thread::BadThreadMode,
     CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll,
     Stack, String, Thread, ThreadMode, Variadic,
 };
-
-use super::{
-    thread::{Frame, LuaFrame, ThreadState},
-    vm::run_vm,
-};
+use allocator_api2::vec;
+use core::hash::{Hash, Hasher};
+use gc_arena::allocator_api::MetricsAlloc;
+use gc_arena::lock::RefLock;
+use gc_arena::{Collect, Gc, Mutation};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutorMode {

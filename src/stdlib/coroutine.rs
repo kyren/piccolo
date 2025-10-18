@@ -1,6 +1,5 @@
-use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Table, Thread, ThreadMode};
-
 use super::base::PCall;
+use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Table, Thread, ThreadMode};
 
 pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
     let coroutine = Table::new(&ctx);

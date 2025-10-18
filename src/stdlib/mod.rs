@@ -5,7 +5,9 @@ mod math;
 mod string;
 mod table;
 
-pub use self::{
-    base::load_base, coroutine::load_coroutine, io::load_io, math::load_math, string::load_string,
-    table::load_table,
-};
+pub use self::base::load_base;
+pub use self::coroutine::load_coroutine;
+pub use self::io::load_io;
+pub use self::math::load_math;
+pub use self::string::load_string;
+pub use self::table::load_table;

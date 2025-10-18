@@ -1,3 +1,5 @@
+extern crate alloc;
+
 pub mod freeze;
 pub mod user_methods;
 

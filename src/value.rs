@@ -1,8 +1,6 @@
-use std::{f64, fmt, i64};
-
-use gc_arena::{Collect, Gc};
-
 use crate::{Callback, Closure, Constant, Function, String, Table, Thread, UserData};
+use core::{f64, fmt, i64};
+use gc_arena::{Collect, Gc};
 
 /// The single data type for all Lua variables.
 ///
@@ -56,7 +54,7 @@ impl<'gc> Value<'gc> {
         struct ValueDisplay<'gc>(Value<'gc>);
 
         impl<'gc> fmt::Display for ValueDisplay<'gc> {
-            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> core::fmt::Result {
                 match self.0 {
                     Value::Nil => write!(fmt, "nil"),
                     Value::Boolean(b) => write!(fmt, "{}", b),
@@ -85,7 +83,7 @@ impl<'gc> Value<'gc> {
         struct ShallowDebug<'gc>(Value<'gc>);
 
         impl<'gc> fmt::Debug for ShallowDebug<'gc> {
-            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+            fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> core::fmt::Result {
                 match self.0 {
                     Value::Table(t) => {
                         write!(fmt, "Value::Table({:p})", Gc::as_ptr(t.into_inner()))
@@ -261,10 +259,9 @@ impl<'gc> From<UserData<'gc>> for Value<'gc> {
 
 #[cfg(test)]
 mod tests {
-    use gc_arena::Rootable;
-
     use crate::table::Table;
     use crate::{Lua, UserData};
+    use gc_arena::Rootable;
 
     #[test]
     fn recursive_table_debug() {

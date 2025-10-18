@@ -1,17 +1,14 @@
-use std::{char, fmt};
-
-use gc_arena::Collect;
-use thiserror::Error;
-
+use super::string_utils::{
+    debug_utf8_lossy, is_alpha, is_digit, is_newline, FORM_FEED, VERTICAL_TAB,
+};
+use super::StringInterner;
 use crate::compiler::string_utils::{
     from_digit, from_hex_digit, is_hex_digit, is_space, read_dec_float, read_dec_integer,
     read_hex_float, read_hex_integer, ALERT_BEEP, BACKSPACE,
 };
-
-use super::{
-    string_utils::{debug_utf8_lossy, is_alpha, is_digit, is_newline, FORM_FEED, VERTICAL_TAB},
-    StringInterner,
-};
+use core::{char, fmt};
+use gc_arena::Collect;
+use thiserror::Error;
 
 #[derive(Clone)]
 pub enum Token<S> {
@@ -920,11 +917,9 @@ fn get_reserved_word_token<S>(word: &[u8]) -> Option<Token<S>> {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
-    use crate::compiler::interning::BasicInterner;
-
     use super::*;
+    use crate::compiler::interning::BasicInterner;
+    use alloc::rc::Rc;
 
     fn test_tokens(source: &str, tokens: &[Token<Rc<[u8]>>]) {
         let mut lexer = Lexer::new(source.as_bytes(), BasicInterner::default());

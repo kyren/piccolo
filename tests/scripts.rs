@@ -1,9 +1,6 @@
-use std::{
-    fs::{read_dir, File},
-    io::{stdout, Read, Write},
-};
-
 use piccolo::{io, Closure, Executor, ExternError, Lua};
+use std::fs::{read_dir, File};
+use std::io::{stdout, Read, Write};
 
 fn run_lua_code(name: &str, code: &[u8]) -> Result<(), ExternError> {
     let mut lua = Lua::full();

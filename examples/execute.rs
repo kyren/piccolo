@@ -1,7 +1,7 @@
+use piccolo::io::buffered_read;
+use piccolo::{Closure, Executor, Lua};
 use std::fs::File;
 use std::io::Read;
-
-use piccolo::{io::buffered_read, Closure, Executor, Lua};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load the Lua file

@@ -1,5 +1,4 @@
-use std::fmt::{self, Debug};
-
+use core::fmt::{self, Debug};
 use gc_arena::Collect;
 
 /// An index that points to a register in the stack relative to the current frame.

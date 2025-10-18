@@ -1,10 +1,7 @@
-use crate::{
-    opcode::{Operation, RCIndex},
-    types::RegisterIndex,
-    Constant,
-};
-
 use super::parser::{BinaryOperator, UnaryOperator};
+use crate::opcode::{Operation, RCIndex};
+use crate::types::RegisterIndex;
+use crate::Constant;
 
 // Binary operators which map directly to a single opcode
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]

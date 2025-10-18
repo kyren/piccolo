@@ -1,8 +1,8 @@
-use std::{array, iter, ops, string::String as StdString};
-
 use crate::{
     Callback, Closure, Context, Function, String, Table, Thread, TypeError, UserData, Value,
 };
+use alloc::string::String as StdString;
+use core::{array, iter, ops};
 
 pub trait IntoValue<'gc> {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc>;

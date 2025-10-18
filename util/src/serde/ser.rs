@@ -1,10 +1,8 @@
-use std::fmt;
-
+use super::markers::{none, unit};
+use core::fmt;
 use piccolo::{Context, Table, Value};
 use serde::ser;
 use thiserror::Error;
-
-use super::markers::{none, unit};
 
 #[derive(Debug, Error)]
 #[error("{0}")]

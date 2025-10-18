@@ -1,11 +1,11 @@
-use std::{fmt, hash::Hash, i64, mem};
-
+use crate::{Callback, Closure, Function, String, Table, Thread, UserData, Value};
 use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
+use core::hash::Hash;
+use core::{fmt, i64, mem};
+use gc_arena::allocator_api::MetricsAlloc;
+use gc_arena::{Collect, Gc, Mutation};
 use hashbrown::{hash_map, HashMap};
 use thiserror::Error;
-
-use crate::{Callback, Closure, Function, String, Table, Thread, UserData, Value};
 
 #[derive(Debug, Copy, Clone, Error)]
 pub enum InvalidTableKey {

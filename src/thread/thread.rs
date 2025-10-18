@@ -1,24 +1,18 @@
-use std::{
-    cell::RefMut,
-    hash::{Hash, Hasher},
-};
-
-use allocator_api2::vec;
-use gc_arena::{
-    allocator_api::MetricsAlloc, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation,
-};
-use thiserror::Error;
-
-use crate::{
-    closure::{UpValue, UpValueState},
-    fuel::count_fuel,
-    meta_ops,
-    types::{RegisterIndex, VarCount},
-    BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    String, Table, UserData, Value,
-};
-
 use super::VMError;
+use crate::closure::{UpValue, UpValueState};
+use crate::fuel::count_fuel;
+use crate::types::{RegisterIndex, VarCount};
+use crate::{
+    meta_ops, BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function,
+    IntoMultiValue, String, Table, UserData, Value,
+};
+use allocator_api2::vec;
+use core::cell::RefMut;
+use core::hash::{Hash, Hasher};
+use gc_arena::allocator_api::MetricsAlloc;
+use gc_arena::lock::RefLock;
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Mutation};
+use thiserror::Error;
 
 /// The current state of a [`Thread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

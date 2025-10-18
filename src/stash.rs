@@ -1,17 +1,15 @@
-use std::fmt;
-
-use gc_arena::{DynamicRoot, DynamicRootSet, Mutation, Rootable};
-
+use crate::callback::CallbackInner;
+use crate::closure::ClosureInner;
+use crate::string::StringInner;
+use crate::table::TableInner;
+use crate::thread::{ExecutorInner, ThreadInner};
+use crate::userdata::UserDataInner;
 use crate::{
-    callback::CallbackInner,
-    closure::ClosureInner,
-    string::StringInner,
-    table::TableInner,
-    thread::{ExecutorInner, ThreadInner},
-    userdata::UserDataInner,
     Callback, Closure, Error, Executor, Function, RuntimeError, String, Table, Thread, UserData,
     Value,
 };
+use core::fmt;
+use gc_arena::{DynamicRoot, DynamicRootSet, Mutation, Rootable};
 
 /// A trait for types that can be stashed into a [`DynamicRootSet`].
 ///

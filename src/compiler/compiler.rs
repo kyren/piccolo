@@ -1,40 +1,32 @@
-use std::{
-    collections::{hash_map, VecDeque},
-    fmt, iter, mem,
+use super::lexer::LineNumber;
+use super::operators::{
+    categorize_binop, comparison_binop_const_fold, comparison_binop_operation,
+    simple_binop_const_fold, simple_binop_operation, unop_const_fold, unop_operation,
+    BinOpCategory, ComparisonBinOp, ShortCircuitBinOp, SimpleBinOp,
 };
-
+use super::parser::{
+    AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
+    ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
+    FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalAttributes,
+    LocalFunctionStatement, LocalStatement, PrimaryExpression, RecordKey, RepeatStatement,
+    ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression, TableConstructor,
+    UnaryOperator, WhileStatement,
+};
+use super::register_allocator::RegisterAllocator;
+use super::StringInterner;
+use crate::constant::IdenticalConstant;
+use crate::opcode::{OpCode, Operation, RCIndex};
+use crate::types::{
+    ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
+    UpValueIndex, VarCount,
+};
+use crate::Constant;
 use ahash::HashMap;
+use alloc::collections::VecDeque;
+use core::{fmt, iter, mem};
 use gc_arena::Collect;
+use std::collections::hash_map;
 use thiserror::Error;
-
-use crate::{
-    constant::IdenticalConstant,
-    opcode::{OpCode, Operation, RCIndex},
-    types::{
-        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
-        UpValueIndex, VarCount,
-    },
-    Constant,
-};
-
-use super::{
-    lexer::LineNumber,
-    operators::{
-        categorize_binop, comparison_binop_const_fold, comparison_binop_operation,
-        simple_binop_const_fold, simple_binop_operation, unop_const_fold, unop_operation,
-        BinOpCategory, ComparisonBinOp, ShortCircuitBinOp, SimpleBinOp,
-    },
-    parser::{
-        AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
-        ConstructorField, Expression, FieldSuffix, ForStatement, FunctionCallStatement,
-        FunctionDefinition, FunctionStatement, HeadExpression, IfStatement, LocalAttributes,
-        LocalFunctionStatement, LocalStatement, PrimaryExpression, RecordKey, RepeatStatement,
-        ReturnStatement, SimpleExpression, Statement, SuffixPart, SuffixedExpression,
-        TableConstructor, UnaryOperator, WhileStatement,
-    },
-    register_allocator::RegisterAllocator,
-    StringInterner,
-};
 
 #[derive(Debug, Copy, Clone, Error)]
 pub enum CompileErrorKind {

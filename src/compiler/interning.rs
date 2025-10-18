@@ -1,6 +1,5 @@
-use std::rc::Rc;
-
 use ahash::HashSet;
+use alloc::rc::Rc;
 
 pub trait StringInterner {
     type String: AsRef<[u8]> + Clone;

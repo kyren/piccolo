@@ -1,16 +1,14 @@
-use std::hash::{Hash, Hasher};
-
+use crate::compiler::{self, CompiledPrototype, FunctionRef, LineNumber};
+use crate::opcode::OpCode;
+use crate::thread::OpenUpValue;
+use crate::types::UpValueDescriptor;
+use crate::{Constant, Context, String, Table, Value};
 use allocator_api2::{boxed, vec, SliceExt};
-use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
+use core::hash::{Hash, Hasher};
+use gc_arena::allocator_api::MetricsAlloc;
+use gc_arena::lock::Lock;
+use gc_arena::{Collect, Gc, Mutation};
 use thiserror::Error;
-
-use crate::{
-    compiler::{self, CompiledPrototype, FunctionRef, LineNumber},
-    opcode::OpCode,
-    thread::OpenUpValue,
-    types::UpValueDescriptor,
-    Constant, Context, String, Table, Value,
-};
 
 // Note: These errors must not have #[error(transparent)] so that
 // anyhow::Error::root_cause and downcasting work as expected by the

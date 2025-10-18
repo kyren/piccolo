@@ -1,5 +1,7 @@
-use std::{cell::RefCell, marker::PhantomData, mem, rc::Rc};
-
+use alloc::rc::Rc;
+use core::cell::RefCell;
+use core::marker::PhantomData;
+use core::mem;
 use thiserror::Error;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
