@@ -50,25 +50,18 @@ impl<S> Constant<S> {
 
 impl<S: AsRef<[u8]>> Constant<S> {
     /// Converts the given constant to an integer or number, if possible.
+    #[inline]
     pub fn to_numeric(&self) -> Option<Constant<S>> {
         match self {
             &Self::Integer(a) => Some(Constant::Integer(a)),
             &Self::Number(a) => Some(Constant::Number(a)),
-            Self::String(a) => {
-                let a = trim_whitespace(a.as_ref());
-                if let Some(i) = read_integer(a) {
-                    Some(Constant::Integer(i))
-                } else if let Some(n) = read_float(a) {
-                    Some(Constant::Number(n))
-                } else {
-                    None
-                }
-            }
+            Self::String(a) => string_to_numeric(a),
             _ => None,
         }
     }
 
     /// Interprets Numbers, Integers, and Strings as a Number, if possible.
+    #[inline]
     pub fn to_number(&self) -> Option<f64> {
         match self.to_numeric() {
             Some(Self::Integer(a)) => Some(a as f64),
@@ -78,6 +71,7 @@ impl<S: AsRef<[u8]>> Constant<S> {
     }
 
     /// Interprets Numbers, Integers, and Strings as an Integer, if possible.
+    #[inline]
     pub fn to_integer(&self) -> Option<i64> {
         match self.to_numeric() {
             Some(Self::Integer(a)) => Some(a),
@@ -95,22 +89,22 @@ impl<S: AsRef<[u8]>> Constant<S> {
     // Mathematical operators
 
     pub fn add(&self, rhs: &Self) -> Option<Self> {
-        Some(match (self, rhs) {
-            (&Self::Integer(a), &Self::Integer(b)) => Self::Integer(a.wrapping_add(b)),
+        Some(match (self.to_numeric()?, rhs.to_numeric()?) {
+            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.wrapping_add(b)),
             (a, b) => Self::Number(a.to_number()? + b.to_number()?),
         })
     }
 
     pub fn subtract(&self, rhs: &Self) -> Option<Self> {
-        Some(match (self, rhs) {
-            (&Self::Integer(a), &Self::Integer(b)) => Self::Integer(a.wrapping_sub(b)),
+        Some(match (self.to_numeric()?, rhs.to_numeric()?) {
+            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.wrapping_sub(b)),
             (a, b) => Self::Number(a.to_number()? - b.to_number()?),
         })
     }
 
     pub fn multiply(&self, rhs: &Self) -> Option<Self> {
-        Some(match (self, rhs) {
-            (&Self::Integer(a), &Self::Integer(b)) => Self::Integer(a.wrapping_mul(b)),
+        Some(match (self.to_numeric()?, rhs.to_numeric()?) {
+            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.wrapping_mul(b)),
             (a, b) => Self::Number(a.to_number()? * b.to_number()?),
         })
     }
@@ -123,8 +117,8 @@ impl<S: AsRef<[u8]>> Constant<S> {
     /// This operation returns an Integer only if both arguments are Integers. Rounding is towards
     /// negative infinity.
     pub fn floor_divide(&self, rhs: &Self) -> Option<Self> {
-        match (self, rhs) {
-            (&Self::Integer(a), &Self::Integer(b)) => {
+        match (self.to_numeric()?, rhs.to_numeric()?) {
+            (Self::Integer(a), Self::Integer(b)) => {
                 if b == 0 {
                     None
                 } else {
@@ -146,8 +140,8 @@ impl<S: AsRef<[u8]>> Constant<S> {
     /// Computes the Lua modulus (`%`) operator. This is unlike Rust's `%` operator which computes
     /// the remainder.
     pub fn modulo(&self, rhs: &Self) -> Option<Self> {
-        match (self, rhs) {
-            (&Self::Integer(a), &Self::Integer(b)) => {
+        match (self.to_numeric()?, rhs.to_numeric()?) {
+            (Self::Integer(a), Self::Integer(b)) => {
                 if b == 0 {
                     None
                 } else {
@@ -323,5 +317,14 @@ impl<S: AsRef<[u8]>> Hash for IdenticalConstant<S> {
                 s.as_ref().hash(state);
             }
         }
+    }
+}
+
+fn string_to_numeric<S: AsRef<[u8]>>(a: &S) -> Option<Constant<S>> {
+    let a = trim_whitespace(a.as_ref());
+    if let Some(i) = read_integer(a) {
+        Some(Constant::Integer(i))
+    } else {
+        read_float(a).map(Constant::Number)
     }
 }
