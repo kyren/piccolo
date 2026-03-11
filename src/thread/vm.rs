@@ -326,7 +326,7 @@ pub(super) fn run_vm<'gc>(
             }
 
             Operation::GenericForLoop { base, jump } => {
-                if registers.stack_frame[base.0 as usize + 1].to_bool() {
+                if !registers.stack_frame[base.0 as usize + 1].is_nil() {
                     registers.stack_frame[base.0 as usize] =
                         registers.stack_frame[base.0 as usize + 1];
                     *registers.pc = add_offset(*registers.pc, jump);
