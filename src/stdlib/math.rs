@@ -337,7 +337,7 @@ pub fn load_random<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
                     (Some(high), Some(low)) => {
                         let high_bytes = high.to_ne_bytes();
                         let low_bytes = low.to_ne_bytes();
-                        let seed: [u8; 32] = core::array::from_fn(|idx| {
+                        let seed: <SmallRng as SeedableRng>::Seed = core::array::from_fn(|idx| {
                             let idx_mod_16 = idx % 16;
                             if idx_mod_16 >= 8 {
                                 high_bytes[idx_mod_16 - 8]
