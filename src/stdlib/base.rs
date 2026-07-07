@@ -194,7 +194,18 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "getmetatable",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             if let Value::Table(t) = stack.get(0) {
-                stack.replace(ctx, t.metatable());
+                if let Some(mt) = t.metatable() {
+                    let mt_key = "__metatable".into_value(ctx);
+                    let replacement = mt.get_value(ctx, mt_key);
+
+                    if replacement.is_nil() {
+                        stack.replace(ctx, mt);
+                    } else {
+                        stack.replace(ctx, replacement);
+                    }
+                } else {
+                    stack.replace(ctx, Value::Nil);
+                }
                 Ok(CallbackReturn::Return)
             } else {
                 Err("'getmetatable' can only be used on table types"
@@ -208,6 +219,16 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         "setmetatable",
         Callback::from_fn(&ctx, |ctx, _, mut stack| {
             let (t, mt): (Table, Option<Table>) = stack.consume(ctx)?;
+
+            if let Some(prev_mt) = t.metatable() {
+                let mt_key = "__metatable".into_value(ctx);
+                let replacement = prev_mt.get_value(ctx, mt_key);
+
+                if !replacement.is_nil() {
+                    return Err("cannot change a protected metatable".into_value(ctx).into());
+                }
+            }
+
             t.set_metatable(&ctx, mt);
             stack.replace(ctx, t);
             Ok(CallbackReturn::Return)
