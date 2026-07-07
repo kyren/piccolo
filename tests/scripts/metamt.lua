@@ -4,6 +4,12 @@ local test = {}
 setmetatable(test, meta)
 assert(getmetatable(test) == 6)
 
+
+function is_err(f)
+    return pcall(f) == false
+end
+
+
 -- Testing dynamic changes and support for all Lua types bar userdata:
 
 -- notably, if __metatable field is absent, then getmetatable returns normally
@@ -45,4 +51,9 @@ assert(test["key"] == nil)
 
 meta.__index = { key = "direct" }
 assert(test["key"] == "direct")
+
+
+-- Testing that presence of __metatable override forbids updating the metatable.
+
+assert(is_err(function() setmetatable(test, {}) end))
 
