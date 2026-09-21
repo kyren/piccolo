@@ -1,10 +1,10 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    i64, mem,
+    mem,
 };
 
-use gc_arena::{lock::RefLock, Collect, Gc, Mutation};
+use gc_arena::{Collect, Gc, Mutation, lock::RefLock};
 
 use crate::{Context, FromValue, IntoValue, TypeError, Value};
 
@@ -52,7 +52,7 @@ impl<'gc> Hash for Table<'gc> {
 
 impl<'gc> Table<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Table<'gc> {
-        Self::from_parts(mc, RawTable::new(mc), None)
+        Self::from_parts(mc, RawTable::new(), None)
     }
 
     pub fn from_parts(

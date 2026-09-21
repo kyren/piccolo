@@ -43,11 +43,7 @@ pub enum UpValueDescriptor {
 impl Opt254 {
     pub fn try_new(v: Option<u8>) -> Option<Opt254> {
         if let Some(v) = v {
-            if v == 255 {
-                None
-            } else {
-                Some(Opt254(v))
-            }
+            if v == 255 { None } else { Some(Opt254(v)) }
         } else {
             Some(Opt254(255))
         }
@@ -78,11 +74,7 @@ impl Opt254 {
     }
 
     pub fn to_u8(self) -> Option<u8> {
-        if self.0 == 255 {
-            None
-        } else {
-            Some(self.0)
-        }
+        if self.0 == 255 { None } else { Some(self.0) }
     }
 }
 

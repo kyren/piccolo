@@ -1,8 +1,7 @@
-use std::{fmt, hash::Hash, i64, mem};
+use std::{fmt, hash::Hash, mem};
 
-use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, Collect, Gc, Mutation};
-use hashbrown::{hash_map, HashMap};
+use gc_arena::{Collect, Gc};
+use hashbrown::HashTable;
 use thiserror::Error;
 
 use crate::{Callback, Closure, Function, String, Table, Thread, UserData, Value};
@@ -34,10 +33,8 @@ pub enum NextValue<'gc> {
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct RawTable<'gc> {
-    array: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    // TODO: It would be safer to use `hashbrown::HashTable` and access the inner raw table when
-    // necessary, but `HashTable` does not allow access to the inner raw table yet.
-    map: HashMap<Key<'gc>, Value<'gc>, (), MetricsAlloc<'gc>>,
+    array: Vec<Value<'gc>>,
+    table: HashTable<(Key<'gc>, Value<'gc>)>,
     #[collect(require_static)]
     hash_builder: ahash::random_state::RandomState,
 }
@@ -56,7 +53,7 @@ impl<'gc> fmt::Debug for RawTable<'gc> {
                         )
                     })
                     .chain({
-                        self.map.iter().filter_map(|(k, v)| {
+                        self.table.iter().filter_map(|(k, v)| {
                             if let Key::Live(k) = k {
                                 Some((k.to_value().debug_shallow(), v.debug_shallow()))
                             } else {
@@ -70,21 +67,21 @@ impl<'gc> fmt::Debug for RawTable<'gc> {
 }
 
 impl<'gc> RawTable<'gc> {
-    pub fn new(mc: &Mutation<'gc>) -> Self {
-        Self::with_capacity(mc, 0, 0)
+    pub fn new() -> Self {
+        Self::with_capacity(0, 0)
     }
 
-    pub fn with_capacity(mc: &Mutation<'gc>, array_capacity: usize, map_capacity: usize) -> Self {
-        let mut array = vec::Vec::new_in(MetricsAlloc::new(mc));
+    pub fn with_capacity(array_capacity: usize, map_capacity: usize) -> Self {
+        let mut array = Vec::new();
         array.resize(array_capacity, Value::Nil);
 
-        let map = HashMap::with_capacity_and_hasher_in(map_capacity, (), MetricsAlloc::new(mc));
+        let table = HashTable::with_capacity(map_capacity);
 
         let hash_builder = ahash::random_state::RandomState::new();
 
         Self {
             array,
-            map,
+            table,
             hash_builder,
         }
     }
@@ -97,15 +94,10 @@ impl<'gc> RawTable<'gc> {
         }
 
         if let Ok(key) = CanonicalKey::new(key) {
-            if let Some((_, v)) = self
-                .map
-                .raw_entry()
-                .from_hash(self.hash_builder.hash_one(key), |k| k.eq(key))
-            {
-                *v
-            } else {
-                Value::Nil
-            }
+            let hash = self.hash_builder.hash_one(key);
+            self.table
+                .find(hash, |(k, _)| k.eq(key))
+                .map_or(Default::default(), |(_, v)| *v)
         } else {
             Value::Nil
         }
@@ -131,12 +123,7 @@ impl<'gc> RawTable<'gc> {
         // If the value is nil then we are removing from the map part, which cannot fail.
         if value.is_nil() {
             return Ok(
-                if let hash_map::RawEntryMut::Occupied(mut occupied) = self
-                    .map
-                    .raw_entry_mut()
-                    .from_hash(hash, |k| k.eq(table_key))
-                {
-                    let (k, v) = occupied.get_key_value_mut();
+                if let Some((k, v)) = self.table.find_mut(hash, |(k, _)| k.eq(table_key)) {
                     if let Some(dead) = k.kill() {
                         *k = dead;
                     }
@@ -149,19 +136,27 @@ impl<'gc> RawTable<'gc> {
 
         // If there is an existing entry in the map part, replace it, otherwise try to fit a new
         // entry.
-        let raw_map = self.map.raw_table_mut();
-        if let Some(bucket) = raw_map.find(hash, |(k, _)| k.eq(table_key)) {
-            let (k, v) = unsafe { bucket.as_mut() };
-            if k.is_dead_key() {
-                // Resurrect the key if it is dead.
-                *k = Key::Live(table_key);
+        match self.table.find_entry(hash, |(k, _)| k.eq(table_key)) {
+            Ok(mut entry) => {
+                let (k, v) = entry.get_mut();
+                if k.is_dead_key() {
+                    // Resurrect the key if it is dead.
+                    *k = Key::Live(table_key);
+                }
+                return Ok(mem::replace(v, value));
             }
-            return Ok(mem::replace(v, value));
-        } else if raw_map
-            .try_insert_no_grow(hash, (Key::Live(table_key), value))
-            .is_ok()
-        {
-            return Ok(Value::Nil);
+            Err(entry) => {
+                let table = entry.into_table();
+                if table.len() < table.capacity() {
+                    table.insert_unique(hash, (Key::Live(table_key), value), |(k, _)| {
+                        self.hash_builder.hash_one(
+                            k.live_key()
+                                .expect("all keys must be live when table is grown"),
+                        )
+                    });
+                    return Ok(Value::Nil);
+                }
+            }
         }
 
         // If a new element does not fit in either the array or map part of the table, we need to
@@ -188,7 +183,7 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            for (&key, &value) in &self.map {
+            for (key, value) in self.table.iter() {
                 if !value.is_nil() {
                     if let Some(i) = to_array_index(
                         key.live_key()
@@ -235,13 +230,16 @@ impl<'gc> RawTable<'gc> {
 
         // If we can't grow the array, we need to grow the map and place the key there. We
         // explicitly double the size of the map.
-        self.reserve_map(self.map.len().max(1));
+        self.reserve_map(self.table.len().max(1));
 
         // Now we can insert the new key value pair
-        self.map
-            .raw_table_mut()
-            .try_insert_no_grow(hash, (Key::Live(table_key), value))
-            .unwrap();
+        self.table
+            .insert_unique(hash, (Key::Live(table_key), value), |(k, _)| {
+                self.hash_builder.hash_one(
+                    k.live_key()
+                        .expect("all keys must be live when table is grown"),
+                )
+            });
 
         Ok(Value::Nil)
     }
@@ -269,7 +267,7 @@ impl<'gc> RawTable<'gc> {
         if !self.array.is_empty() && self.array[array_len as usize - 1].is_nil() {
             // If the array part ends in a Nil, there must be a border inside it
             binary_search(0, array_len, |i| self.array[i as usize - 1].is_nil())
-        } else if self.map.is_empty() {
+        } else if self.table.is_empty() {
             // If the array part does not end in a nil but the map part is empty, then the array
             // length is a border.
             array_len
@@ -279,11 +277,10 @@ impl<'gc> RawTable<'gc> {
             let min = array_len;
             let mut max = array_len.checked_add(1).unwrap();
             while self
-                .map
-                .raw_entry()
-                .from_hash(
+                .table
+                .find(
                     self.hash_builder.hash_one(CanonicalKey::Integer(max)),
-                    |k| k.eq(CanonicalKey::Integer(max)),
+                    |(k, _)| k.eq(CanonicalKey::Integer(max)),
                 )
                 .is_some_and(|(_, v)| !v.is_nil())
             {
@@ -302,12 +299,10 @@ impl<'gc> RawTable<'gc> {
 
             // We have found a max where table[max] == nil, so we can now binary search
             binary_search(min, max, |i| {
-                match self
-                    .map
-                    .raw_entry()
-                    .from_hash(self.hash_builder.hash_one(CanonicalKey::Integer(i)), |k| {
-                        k.eq(CanonicalKey::Integer(i))
-                    }) {
+                match self.table.find(
+                    self.hash_builder.hash_one(CanonicalKey::Integer(i)),
+                    |(k, _)| k.eq(CanonicalKey::Integer(i)),
+                ) {
                     Some((_, v)) => v.is_nil(),
                     None => true,
                 }
@@ -336,8 +331,6 @@ impl<'gc> RawTable<'gc> {
             None
         };
 
-        let raw_table = self.map.raw_table();
-
         // If `start_index` is set, then we search the array portion past `start_index` for any
         // non-nil values, otherwise we return the first entry with a non-nil value in the map
         // portion (which always follows the array portion in our iteration order).
@@ -351,46 +344,41 @@ impl<'gc> RawTable<'gc> {
                 }
             }
 
-            unsafe {
-                for bucket_index in 0..raw_table.buckets() {
-                    if raw_table.is_bucket_full(bucket_index) {
-                        let (key, value) = *raw_table.bucket(bucket_index).as_ref();
-                        if !value.is_nil() {
-                            return NextValue::Found {
-                                key: key
-                                    .live_key()
-                                    .expect("dead keys must have e values")
-                                    .to_value(),
-                                value,
-                            };
-                        }
+            for bucket_index in 0..self.table.num_buckets() {
+                if let Some((key, value)) = self.table.get_bucket(bucket_index) {
+                    if !value.is_nil() {
+                        return NextValue::Found {
+                            key: key
+                                .live_key()
+                                .expect("dead keys must have e values")
+                                .to_value(),
+                            value: *value,
+                        };
                     }
                 }
             }
-
             return NextValue::Last;
         }
 
         // Otherwise, if we were given a key present in the map portion, we return the key following
         // it in bucket order.
         if let Ok(table_key) = CanonicalKey::new(key) {
-            if let Some(bucket) = raw_table.find(self.hash_builder.hash_one(table_key), |(k, _)| {
-                k.eq(table_key)
-            }) {
-                unsafe {
-                    let bucket_index = raw_table.bucket_index(&bucket);
-                    for i in bucket_index + 1..raw_table.buckets() {
-                        if raw_table.is_bucket_full(i) {
-                            let (key, value) = *raw_table.bucket(i).as_ref();
-                            if !value.is_nil() {
-                                return NextValue::Found {
-                                    key: key
-                                        .live_key()
-                                        .expect("dead keys must have Nil values")
-                                        .to_value(),
-                                    value,
-                                };
-                            }
+            if let Some(bucket_index) = self
+                .table
+                .find_bucket_index(self.hash_builder.hash_one(table_key), |(k, _)| {
+                    k.eq(table_key)
+                })
+            {
+                for i in bucket_index + 1..self.table.num_buckets() {
+                    if let Some((key, value)) = self.table.get_bucket(i) {
+                        if !value.is_nil() {
+                            return NextValue::Found {
+                                key: key
+                                    .live_key()
+                                    .expect("dead keys must have Nil values")
+                                    .to_value(),
+                                value: *value,
+                            };
                         }
                     }
                 }
@@ -442,7 +430,7 @@ impl<'gc> RawTable<'gc> {
         self.array.resize(self.array.capacity(), Value::Nil);
 
         // We need to take any newly valid array keys from the map part.
-        self.map.retain(|k, v| {
+        self.table.retain(|(k, v)| {
             if v.is_nil() {
                 // If our entry is dead, remove it.
                 return false;
@@ -465,11 +453,11 @@ impl<'gc> RawTable<'gc> {
 
     /// Reserve space in the map part of the table for at least `additional` more elements.
     pub fn reserve_map(&mut self, additional: usize) {
-        if additional > self.map.capacity() - self.map.len() {
+        if additional > self.table.capacity() - self.table.len() {
             // We always filter out all dead keys when growing the map.
-            self.map.retain(|_, v| !v.is_nil());
+            self.table.retain(|(_, v)| !v.is_nil());
 
-            self.map.raw_table_mut().reserve(additional, |(key, _)| {
+            self.table.reserve(additional, |(key, _)| {
                 self.hash_builder.hash_one(
                     key.live_key()
                         .expect("all keys must be live when table is grown"),
@@ -606,11 +594,7 @@ impl<'gc> Key<'gc> {
 // equal value, if such an integer exists.
 fn f64_to_i64(n: f64) -> Option<i64> {
     let i = n as i64;
-    if i as f64 == n {
-        Some(i)
-    } else {
-        None
-    }
+    if i as f64 == n { Some(i) } else { None }
 }
 
 // Parameter must not be NaN, should return a bit-pattern which is always equal when the

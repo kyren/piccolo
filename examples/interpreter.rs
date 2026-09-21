@@ -1,13 +1,13 @@
 use std::fs::File;
 use std::{error::Error as StdError, io::Read};
 
-use clap::{crate_description, crate_name, crate_version, Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, crate_description, crate_name, crate_version};
 use rustyline::DefaultEditor;
 
 use piccolo::{
+    Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua, StashedExecutor,
     compiler::{ParseError, ParseErrorKind},
-    io, meta_ops, Callback, CallbackReturn, Closure, Executor, ExternError, Function, Lua,
-    StashedExecutor,
+    io, meta_ops,
 };
 
 fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), ExternError> {

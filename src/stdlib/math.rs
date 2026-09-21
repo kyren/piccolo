@@ -1,8 +1,8 @@
 use gc_arena::Mutation;
 
 use crate::{
-    async_sequence, meta_ops, Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue,
-    IntoValue, SequenceReturn, Table, Value,
+    Callback, CallbackReturn, Context, FromMultiValue, IntoMultiValue, IntoValue, SequenceReturn,
+    Table, Value, async_sequence, meta_ops,
 };
 
 fn callback<'gc, F, A, R>(name: &'static str, mc: &Mutation<'gc>, f: F) -> Callback<'gc>
@@ -291,9 +291,9 @@ pub fn load_trig<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
 pub fn load_random<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
     use std::{cell::RefCell, rc::Rc};
 
-    use rand::{rngs::SmallRng, Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-    let seeded_rng = Rc::new(RefCell::new(SmallRng::from_entropy()));
+    let seeded_rng = Rc::new(RefCell::new(rand::make_rng::<SmallRng>()));
 
     let random_rng = Rc::clone(&seeded_rng);
     math.set_field(
@@ -305,11 +305,13 @@ pub fn load_random<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
             move |_, (a, b): (Option<i64>, Option<i64>)| -> Option<Value> {
                 let rng = &random_rng;
                 match (a, b) {
-                    (None, None) => Some(rng.borrow_mut().gen::<f64>().into()),
-                    (Some(0), None) => Some(rng.borrow_mut().gen::<i64>().into()),
+                    (None, None) => Some(rng.borrow_mut().random::<f64>().into()),
+                    (Some(0), None) => Some(rng.borrow_mut().random::<i64>().into()),
                     (Some(a), None) if a < 0 => None,
-                    (Some(a), None) => Some(rng.borrow_mut().gen_range(1..=a).into()),
-                    (Some(a), Some(b)) if a <= b => Some(rng.borrow_mut().gen_range(a..=b).into()),
+                    (Some(a), None) => Some(rng.borrow_mut().random_range(1..=a).into()),
+                    (Some(a), Some(b)) if a <= b => {
+                        Some(rng.borrow_mut().random_range(a..=b).into())
+                    }
                     _ => None,
                 }
             },
@@ -327,7 +329,7 @@ pub fn load_random<'gc>(ctx: Context<'gc>, math: Table<'gc>) {
                 let rng = &randomseed_rng;
                 match (u, l) {
                     (None, None) => {
-                        *rng.borrow_mut() = SmallRng::from_entropy();
+                        *rng.borrow_mut() = rand::make_rng::<SmallRng>();
                         Some(())
                     }
                     (Some(seed), None) | (Some(seed), Some(0)) => {

@@ -3,10 +3,10 @@ use std::pin::Pin;
 use gc_arena::Collect;
 
 use crate::{
-    meta_ops::{self, MetaResult},
-    table::NextValue,
     BoxSequence, Callback, CallbackReturn, Context, Error, Execution, IntoValue, MetaMethod,
     Sequence, SequencePoll, Stack, String, Table, TypeError, Value, Variadic,
+    meta_ops::{self, MetaResult},
+    table::NextValue,
 };
 
 pub fn load_base<'gc>(ctx: Context<'gc>) {
@@ -36,7 +36,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                             expected: "string",
                             found: value.type_name(),
                         }
-                        .into())
+                        .into());
                     }
                 };
                 if !(2..=36).contains(&base) {
@@ -117,7 +117,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
             stack.pop_front();
             Ok(CallbackReturn::Call {
                 function,
-                then: Some(BoxSequence::new(&ctx, PCall)),
+                then: Some(BoxSequence::new(PCall)),
             })
         }),
     );
@@ -268,7 +268,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                     stack.replace(ctx, (table, Value::Nil));
                     return Ok(CallbackReturn::Call {
                         function,
-                        then: Some(BoxSequence::new(&ctx, PairsReturn)),
+                        then: Some(BoxSequence::new(PairsReturn)),
                     });
                 }
             }
@@ -310,7 +310,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
                 stack.extend(call.args);
                 CallbackReturn::Call {
                     function: call.function,
-                    then: Some(BoxSequence::new(&ctx, INext(next_index))),
+                    then: Some(BoxSequence::new(INext(next_index))),
                 }
             }
         })
@@ -329,7 +329,7 @@ pub fn load_base<'gc>(ctx: Context<'gc>) {
         Callback::from_fn(&ctx, move |ctx, _, mut stack| {
             match stack.consume::<Option<String>>(ctx)? {
                 Some(arg) if arg == "count" => {
-                    stack.into_back(ctx, ctx.metrics().total_allocation() as f64 / 1024.0);
+                    stack.into_back(ctx, ctx.metrics().total_gc_count() as f64 / 1024.0);
                 }
                 Some(_) => {
                     return Err("bad argument to 'collectgarbage'".into_value(ctx).into());

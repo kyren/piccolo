@@ -3,12 +3,12 @@ use std::{
     mem,
 };
 
-use gc_arena::{arena::Root, barrier, lock, Collect, Gc, Mutation, Rootable, Static};
+use gc_arena::{Collect, Gc, Mutation, Rootable, Static, arena::Root, barrier, lock};
 use thiserror::Error;
 
 use crate::{
-    any::{Any, AnyInner},
     Table,
+    any::{Any, AnyInner},
 };
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -77,7 +77,7 @@ impl<'gc> UserData<'gc> {
     pub fn new<R>(mc: &Mutation<'gc>, val: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a> + 'static,
-        Root<'gc, R>: Sized + Collect,
+        Root<'gc, R>: Sized + Collect<'gc>,
     {
         UserData(Any::new::<R>(mc, val))
     }

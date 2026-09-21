@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gc_arena::{arena::Root, barrier, Collect, Rootable, Static};
+use gc_arena::{Collect, Rootable, Static, arena::Root, barrier};
 use piccolo::{
     Callback, CallbackReturn, Context, Error, Execution, FromMultiValue, IntoMultiValue,
     MetaMethod, Table, UserData,
@@ -140,7 +140,7 @@ where
 impl<'gc, U> UserMethods<'gc, U>
 where
     U: for<'a> Rootable<'a> + 'static,
-    for<'a> Root<'a, U>: Sized + Collect,
+    for<'a> Root<'a, U>: Sized + Collect<'gc>,
 {
     /// A type-safe convenience method that creates a new [`UserData`] value and sets its metatable
     /// to the one returned from [`UserMethods::metatable`].

@@ -3,19 +3,16 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use allocator_api2::vec;
-use gc_arena::{
-    allocator_api::MetricsAlloc, lock::RefLock, Collect, Finalization, Gc, GcWeak, Mutation,
-};
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Mutation, lock::RefLock};
 use thiserror::Error;
 
 use crate::{
+    BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
+    String, Table, UserData, Value,
     closure::{UpValue, UpValueState},
     fuel::count_fuel,
     meta_ops,
     types::{RegisterIndex, VarCount},
-    BoxSequence, Callback, Closure, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue,
-    String, Table, UserData, Value,
 };
 
 use super::VMError;
@@ -78,9 +75,9 @@ impl<'gc> Thread<'gc> {
         let p = Gc::new(
             &ctx,
             RefLock::new(ThreadState {
-                frames: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
-                stack: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
-                open_upvalues: vec::Vec::new_in(MetricsAlloc::new(&ctx)),
+                frames: Vec::new(),
+                stack: Vec::new(),
+                open_upvalues: Vec::new(),
             }),
         );
         ctx.finalizers().register_thread(&ctx, p);
@@ -327,9 +324,9 @@ pub(super) enum Frame<'gc> {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ThreadState<'gc> {
-    pub(super) frames: vec::Vec<Frame<'gc>, MetricsAlloc<'gc>>,
-    pub(super) stack: vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
-    pub(super) open_upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    pub(super) frames: Vec<Frame<'gc>>,
+    pub(super) stack: Vec<Value<'gc>>,
+    pub(super) open_upvalues: Vec<UpValue<'gc>>,
 }
 
 impl<'gc> ThreadState<'gc> {
@@ -912,7 +909,7 @@ pub(super) struct LuaRegisters<'gc, 'a> {
     upper_stack: &'a mut [Value<'gc>],
     bottom: usize,
     base: usize,
-    open_upvalues: &'a mut vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    open_upvalues: &'a mut Vec<UpValue<'gc>>,
     thread: Thread<'gc>,
 }
 

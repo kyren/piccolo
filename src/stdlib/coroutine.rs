@@ -1,4 +1,4 @@
-use crate::{meta_ops, BoxSequence, Callback, CallbackReturn, Context, Table, Thread, ThreadMode};
+use crate::{BoxSequence, Callback, CallbackReturn, Context, Table, Thread, ThreadMode, meta_ops};
 
 use super::base::PCall;
 
@@ -25,7 +25,7 @@ pub fn load_coroutine<'gc>(ctx: Context<'gc>) {
             let thread: Thread = stack.from_front(ctx)?;
             Ok(CallbackReturn::Resume {
                 thread,
-                then: Some(BoxSequence::new(&ctx, PCall)),
+                then: Some(BoxSequence::new(PCall)),
             })
         }),
     );

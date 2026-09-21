@@ -184,10 +184,17 @@ impl<'h, 'f, F: for<'a> Freeze<'a>> ScopeGuard for FreezeGuard<'h, 'f, F> {
             !self.handle.is_valid(),
             "handle already used in another `FreezeGuard::scope` call"
         );
-        *self.handle.inner.borrow_mut() = Some(mem::transmute::<
-            <F as Freeze<'f>>::Frozen,
-            <F as Freeze<'static>>::Frozen,
-        >(self.value.take().unwrap()));
+        *self.handle.inner.borrow_mut() = Some(
+            // SAFETY: function is marked unsafe, caller must uphold invariants of ScopeGuard
+            // However, the conditional panic above looks like it is enough to keep this transmute safe?
+            // If that is the case, shouldn't ScopeGuard::set be makred as a safe function in trait
+            // since this implementors can enforce the safety? Or does this still need to be enforced at call site?
+            unsafe {
+                mem::transmute::<<F as Freeze<'f>>::Frozen, <F as Freeze<'static>>::Frozen>(
+                    self.value.take().unwrap(),
+                )
+            },
+        );
     }
 
     fn unset(&mut self) {
@@ -307,8 +314,11 @@ impl ScopeGuard for () {
 
 impl<A: ScopeGuard, B: ScopeGuard> ScopeGuard for (A, B) {
     unsafe fn set(&mut self) {
-        self.0.set();
-        self.1.set();
+        // SAFETY: function is marked unsafe, caller must uphold invariants of ScopeGuard
+        unsafe {
+            self.0.set();
+            self.1.set();
+        }
     }
 
     fn unset(&mut self) {
@@ -321,6 +331,7 @@ struct DropGuard<'a, S: ScopeGuard>(&'a mut S);
 
 impl<'a, S: ScopeGuard> DropGuard<'a, S> {
     unsafe fn new(s: &'a mut S) -> Self {
+        // SAFETY: function is marked unsafe, caller must uphold invariants of ScopeGuard
         unsafe {
             s.set();
         }
@@ -377,20 +388,27 @@ mod tests {
 
         let i = 4;
         let j = 5;
+        let k = 6;
 
         let fi = FrozenI32::new();
         let fj = FrozenI32::new();
+        let fk = FrozenI32::new();
 
-        let mut fscope = FrozenScope::new().freeze(&fi, &i).freeze(&fj, &j);
+        let mut fscope = FrozenScope::new()
+            .freeze(&fi, &i)
+            .freeze(&fj, &j)
+            .freeze(&fk, &k);
 
         fscope.scope(|| {
             fi.with(|f| assert_eq!(**f, 4));
             fj.with(|f| assert_eq!(**f, 5));
+            fk.with(|f| assert_eq!(**f, 6));
         });
 
         fscope.scope(|| {
             fi.with(|f| assert_eq!(**f, 4));
             fj.with(|f| assert_eq!(**f, 5));
+            fk.with(|f| assert_eq!(**f, 6));
         });
     }
 }

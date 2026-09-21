@@ -5,14 +5,14 @@ use anyhow::Context as _;
 use gc_arena::Collect;
 
 use crate::{
-    async_callback::{AsyncSequence, Locals},
-    async_sequence,
-    fuel::count_fuel,
-    meta_ops::{self, concat_separated, ConcatMetaResult, MetaResult},
-    table::RawTable,
     BoxSequence, Callback, CallbackReturn, Closure, Context, Error, Execution, Function, IntoValue,
     MetaMethod, Sequence, SequencePoll, SequenceReturn, Stack, StashedError, StashedFunction,
     StashedTable, StashedValue, Table, Value,
+    async_callback::{AsyncSequence, Locals},
+    async_sequence,
+    fuel::count_fuel,
+    meta_ops::{self, ConcatMetaResult, MetaResult, concat_separated},
+    table::RawTable,
 };
 
 pub fn load_table<'gc>(ctx: Context<'gc>) {
@@ -23,7 +23,6 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
         "pack",
         Callback::from_fn(&ctx, |ctx, _, stack| {
             Ok(CallbackReturn::Sequence(BoxSequence::new(
-                &ctx,
                 Pack::SetLength {
                     table: Table::new(&ctx).into(),
                     length: stack.len(),
@@ -56,7 +55,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             Unpack::FindLength { start, table }
         };
 
-        Ok(CallbackReturn::Sequence(BoxSequence::new(&ctx, seq)))
+        Ok(CallbackReturn::Sequence(BoxSequence::new(seq)))
     })
     .into();
 
@@ -100,7 +99,7 @@ pub fn load_table<'gc>(ctx: Context<'gc>) {
             // Defer to table.unpack for indexing implementation.
             Ok(CallbackReturn::Call {
                 function: *unpack,
-                then: Some(BoxSequence::new(&ctx, CallSequence(then_impl.into()))),
+                then: Some(BoxSequence::new(CallSequence(then_impl.into()))),
             })
         }),
     );

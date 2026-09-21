@@ -4,13 +4,13 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::compiler::string_utils::{
-    from_digit, from_hex_digit, is_hex_digit, is_space, read_dec_float, read_dec_integer,
-    read_hex_float, read_hex_integer, ALERT_BEEP, BACKSPACE,
+    ALERT_BEEP, BACKSPACE, from_digit, from_hex_digit, is_hex_digit, is_space, read_dec_float,
+    read_dec_integer, read_hex_float, read_hex_integer,
 };
 
 use super::{
-    string_utils::{debug_utf8_lossy, is_alpha, is_digit, is_newline, FORM_FEED, VERTICAL_TAB},
     StringInterner,
+    string_utils::{FORM_FEED, VERTICAL_TAB, debug_utf8_lossy, is_alpha, is_digit, is_newline},
 };
 
 #[derive(Clone)]

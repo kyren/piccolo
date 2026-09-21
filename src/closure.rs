@@ -1,15 +1,14 @@
 use std::hash::{Hash, Hasher};
 
-use allocator_api2::{boxed, vec, SliceExt};
-use gc_arena::{allocator_api::MetricsAlloc, lock::Lock, Collect, Gc, Mutation};
+use gc_arena::{Collect, Gc, Mutation, lock::Lock};
 use thiserror::Error;
 
 use crate::{
+    Constant, Context, String, Table, Value,
     compiler::{self, CompiledPrototype, FunctionRef, LineNumber},
     opcode::OpCode,
     thread::OpenUpValue,
     types::UpValueDescriptor,
-    Constant, Context, String, Table, Value,
 };
 
 // Note: These errors must not have #[error(transparent)] so that
@@ -38,11 +37,11 @@ pub struct FunctionPrototype<'gc> {
     pub fixed_params: u8,
     pub has_varargs: bool,
     pub stack_size: u16,
-    pub constants: boxed::Box<[Constant<String<'gc>>], MetricsAlloc<'gc>>,
-    pub opcodes: boxed::Box<[OpCode], MetricsAlloc<'gc>>,
-    pub opcode_line_numbers: boxed::Box<[(usize, LineNumber)], MetricsAlloc<'gc>>,
-    pub upvalues: boxed::Box<[UpValueDescriptor], MetricsAlloc<'gc>>,
-    pub prototypes: boxed::Box<[Gc<'gc, FunctionPrototype<'gc>>], MetricsAlloc<'gc>>,
+    pub constants: Box<[Constant<String<'gc>>]>,
+    pub opcodes: Box<[OpCode]>,
+    pub opcode_line_numbers: Box<[(usize, LineNumber)]>,
+    pub upvalues: Box<[UpValueDescriptor]>,
+    pub prototypes: Box<[Gc<'gc, FunctionPrototype<'gc>>]>,
 }
 
 impl<'gc> FunctionPrototype<'gc> {
@@ -66,31 +65,21 @@ impl<'gc> FunctionPrototype<'gc> {
             compiled_function: &CompiledPrototype<S>,
             map_string: impl Fn(&S) -> String<'gc> + Copy,
         ) -> FunctionPrototype<'gc> {
-            let alloc = MetricsAlloc::new(mc);
+            let constants: Vec<_> = compiled_function
+                .constants
+                .iter()
+                .map(|c| c.as_string_ref().map_string(map_string))
+                .collect();
 
-            let mut constants = vec::Vec::new_in(alloc.clone());
-            constants.extend(
-                compiled_function
-                    .constants
-                    .iter()
-                    .map(|c| c.as_string_ref().map_string(map_string)),
-            );
+            let opcodes = Vec::from(compiled_function.opcodes.as_slice());
+            let opcode_line_numbers = Vec::from(compiled_function.opcode_line_numbers.as_slice());
+            let upvalues = Vec::from(compiled_function.upvalues.as_slice());
 
-            let opcodes = SliceExt::to_vec_in(compiled_function.opcodes.as_slice(), alloc.clone());
-            let opcode_line_numbers = SliceExt::to_vec_in(
-                compiled_function.opcode_line_numbers.as_slice(),
-                alloc.clone(),
-            );
-            let upvalues =
-                SliceExt::to_vec_in(compiled_function.upvalues.as_slice(), alloc.clone());
-
-            let mut prototypes = vec::Vec::new_in(alloc);
-            prototypes.extend(
-                compiled_function
-                    .prototypes
-                    .iter()
-                    .map(|cf| Gc::new(mc, new(mc, chunk_name, cf, map_string))),
-            );
+            let prototypes: Vec<_> = compiled_function
+                .prototypes
+                .iter()
+                .map(|cf| Gc::new(mc, new(mc, chunk_name, cf, map_string)))
+                .collect();
 
             FunctionPrototype {
                 chunk_name,
@@ -188,7 +177,7 @@ pub enum ClosureError {
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, FunctionPrototype<'gc>>,
-    upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+    upvalues: Vec<UpValue<'gc>>,
 }
 
 /// A garbage collected pointer to an executable Lua function.
@@ -223,7 +212,7 @@ impl<'gc> Closure<'gc> {
         environment: Option<Table<'gc>>,
     ) -> Result<Closure<'gc>, ClosureError> {
         let proto = Gc::new(mc, proto);
-        let mut upvalues = vec::Vec::new_in(MetricsAlloc::new(mc));
+        let mut upvalues = Vec::new();
 
         if !proto.upvalues.is_empty() {
             if proto.upvalues.len() > 1 || proto.upvalues[0] != UpValueDescriptor::Environment {
@@ -244,7 +233,7 @@ impl<'gc> Closure<'gc> {
     pub fn from_parts(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, FunctionPrototype<'gc>>,
-        upvalues: vec::Vec<UpValue<'gc>, MetricsAlloc<'gc>>,
+        upvalues: Vec<UpValue<'gc>>,
     ) -> Self {
         Self(Gc::new(mc, ClosureInner { proto, upvalues }))
     }

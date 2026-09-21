@@ -1,14 +1,13 @@
 use std::hash::{Hash, Hasher};
 
-use allocator_api2::vec;
-use gc_arena::{allocator_api::MetricsAlloc, lock::RefLock, Collect, Gc, Mutation};
+use gc_arena::{Collect, Gc, Mutation, lock::RefLock};
 use thiserror::Error;
 
 use crate::{
-    compiler::{FunctionRef, LineNumber},
-    thread::BadThreadMode,
     CallbackReturn, Context, Error, FromMultiValue, Fuel, Function, IntoMultiValue, SequencePoll,
     Stack, String, Thread, ThreadMode, Variadic,
+    compiler::{FunctionRef, LineNumber},
+    thread::BadThreadMode,
 };
 
 use super::{
@@ -42,7 +41,7 @@ pub struct BadExecutorMode {
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct ExecutorState<'gc> {
-    thread_stack: vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+    thread_stack: Vec<Thread<'gc>>,
 }
 
 pub type ExecutorInner<'gc> = RefLock<ExecutorState<'gc>>;
@@ -102,7 +101,7 @@ impl<'gc> Executor<'gc> {
         let executor = Executor(Gc::new(
             mc,
             RefLock::new(ExecutorState {
-                thread_stack: vec::Vec::new_in(MetricsAlloc::new(mc)),
+                thread_stack: Vec::new(),
             }),
         ));
         executor.reset(mc, thread)?;
@@ -207,7 +206,7 @@ impl<'gc> Executor<'gc> {
                     return Err(BadThreadMode {
                         found: mode,
                         expected: None,
-                    })
+                    });
                 }
             }
 
@@ -245,7 +244,7 @@ impl<'gc> Executor<'gc> {
             if top_state.mode() == ThreadMode::Normal {
                 fn do_yield<'gc>(
                     ctx: Context<'gc>,
-                    thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+                    thread_stack: &mut Vec<Thread<'gc>>,
                     top_state: &mut ThreadState<'gc>,
                     to_thread: Option<Thread<'gc>>,
                     bottom: usize,
@@ -268,7 +267,7 @@ impl<'gc> Executor<'gc> {
 
                 fn do_resume<'gc>(
                     ctx: Context<'gc>,
-                    thread_stack: &mut vec::Vec<Thread<'gc>, MetricsAlloc<'gc>>,
+                    thread_stack: &mut Vec<Thread<'gc>>,
                     top_state: &mut ThreadState<'gc>,
                     thread: Thread<'gc>,
                     bottom: usize,

@@ -1,7 +1,7 @@
 use crate::{
+    Constant,
     opcode::{Operation, RCIndex},
     types::RegisterIndex,
-    Constant,
 };
 
 use super::parser::{BinaryOperator, UnaryOperator};

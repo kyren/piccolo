@@ -1,19 +1,19 @@
 use std::ops;
 
 use gc_arena::{
+    Arena, Collect, Mutation, Rootable,
     arena::{CollectionPhase, Root},
     metrics::Metrics,
-    Arena, Collect, Mutation, Rootable,
 };
 
 use crate::{
+    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
+    Singleton, StashedExecutor, String, Table, TypeError, Value,
     finalizers::Finalizers,
     stash::{Fetchable, Stashable},
     stdlib::{load_base, load_coroutine, load_io, load_math, load_string, load_table},
     string::InternedStringSet,
     thread::BadThreadMode,
-    Error, ExternError, FromMultiValue, FromValue, Fuel, IntoValue, Registry, RuntimeError,
-    Singleton, StashedExecutor, String, Table, TypeError, Value,
 };
 
 /// A value representing the main "execution context" of a Lua state.
@@ -91,7 +91,7 @@ impl<'gc> Context<'gc> {
     pub fn singleton<S>(self) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a> + 'static,
-        Root<'gc, S>: Sized + Singleton<'gc> + Collect,
+        Root<'gc, S>: Sized + Singleton<'gc> + Collect<'gc>,
     {
         self.state.registry.singleton::<S>(self)
     }
@@ -192,21 +192,21 @@ impl Lua {
     /// memory and also all data Lua datastructures held inside `Gc`, as they are tracked as
     /// "external allocations" in `gc-arena`.
     pub fn total_memory(&self) -> usize {
-        self.gc_metrics().total_allocation()
+        self.gc_metrics().total_gc_count()
     }
 
     /// Finish the current collection cycle completely, calls `gc_arena::Arena::collect_all()`.
     pub fn gc_collect(&mut self) {
         if self.arena.collection_phase() != CollectionPhase::Sweeping {
-            self.arena.mark_all().unwrap().finalize(|fc, root| {
+            self.arena.finish_marking().unwrap().finalize(|fc, root| {
                 root.finalizers.prepare(fc);
             });
-            self.arena.mark_all().unwrap().finalize(|fc, root| {
+            self.arena.finish_marking().unwrap().finalize(|fc, root| {
                 root.finalizers.finalize(fc);
             });
         }
 
-        self.arena.collect_all();
+        self.arena.finish_cycle();
         assert!(self.arena.collection_phase() == CollectionPhase::Sleeping);
     }
 
@@ -240,11 +240,11 @@ impl Lua {
                     marked.finalize(|fc, root| {
                         root.finalizers.prepare(fc);
                     });
-                    self.arena.mark_all().unwrap().finalize(|fc, root| {
+                    self.arena.finish_marking().unwrap().finalize(|fc, root| {
                         root.finalizers.finalize(fc);
                     });
                     // Immediately transition to `CollectionPhase::Sweeping`.
-                    self.arena.mark_all().unwrap().start_sweeping();
+                    self.arena.finish_marking().unwrap().start_sweeping();
                 }
             }
         }

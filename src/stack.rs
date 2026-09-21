@@ -4,9 +4,6 @@ use std::{
     slice::{self, SliceIndex},
 };
 
-use allocator_api2::vec;
-use gc_arena::allocator_api::MetricsAlloc;
-
 use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Value};
 
 /// The mechanism through which all callbacks receive parameters and return values.
@@ -18,12 +15,12 @@ use crate::{Context, FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeE
 /// `Thread`. In this way, we avoid needing to constantly allocate space for callback arguments
 /// and returns.
 pub struct Stack<'gc, 'a> {
-    values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>,
+    values: &'a mut Vec<Value<'gc>>,
     bottom: usize,
 }
 
 impl<'gc, 'a> Stack<'gc, 'a> {
-    pub fn new(values: &'a mut vec::Vec<Value<'gc>, MetricsAlloc<'gc>>, bottom: usize) -> Self {
+    pub fn new(values: &'a mut Vec<Value<'gc>>, bottom: usize) -> Self {
         assert!(values.len() >= bottom);
         Self { values, bottom }
     }
@@ -106,10 +103,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.capacity() - self.bottom
     }
 
-    pub fn drain<R: RangeBounds<usize>>(
-        &mut self,
-        range: R,
-    ) -> vec::Drain<'_, Value<'gc>, MetricsAlloc<'gc>> {
+    pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> std::vec::Drain<'_, Value<'gc>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(r) => Bound::Included(self.bottom + r),
             Bound::Excluded(r) => Bound::Excluded(self.bottom + r),

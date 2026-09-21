@@ -1,9 +1,9 @@
 use std::{error::Error as StdError, fs::File, io::Read};
 
-use clap::{crate_description, crate_name, crate_version, Arg, Command};
+use clap::{Arg, Command, crate_description, crate_name, crate_version};
 
 use piccolo::{
-    compiler::{self, interning::BasicInterner, string_utils::debug_utf8_lossy, CompiledPrototype},
+    compiler::{self, CompiledPrototype, interning::BasicInterner, string_utils::debug_utf8_lossy},
     io,
 };
 

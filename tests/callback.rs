@@ -103,7 +103,7 @@ fn loopy_callback() -> Result<(), ExternError> {
                     })
                 })
                 .into(),
-                then: Some(BoxSequence::new(&ctx, Cont(4))),
+                then: Some(BoxSequence::new(Cont(4))),
             })
         });
         ctx.set_global("callback", callback);
@@ -193,7 +193,7 @@ fn yield_sequence() -> Result<(), ExternError> {
             stack.extend([Value::Integer(3), Value::Integer(4)]);
             Ok(CallbackReturn::Yield {
                 to_thread: None,
-                then: Some(BoxSequence::new(&ctx, Cont(0))),
+                then: Some(BoxSequence::new(Cont(0))),
             })
         });
         ctx.set_global("callback", callback);
@@ -271,7 +271,7 @@ fn resume_with_err() {
             stack.replace(ctx, "return");
             Ok(CallbackReturn::Yield {
                 to_thread: None,
-                then: Some(BoxSequence::new(&ctx, Cont)),
+                then: Some(BoxSequence::new(Cont)),
             })
         });
 

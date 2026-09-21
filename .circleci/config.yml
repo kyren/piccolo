@@ -3,15 +3,15 @@ version: 2
 jobs:
   build:
     docker:
-      - image: cimg/rust:1.81
+      - image: cimg/rust:1.95
     steps:
       - checkout
       - run:
           name: Setup Rust
           command: |
-            rustup component add rustfmt
+            rustup component add rustfmt rust-src
             rustup toolchain uninstall nightly
-            rustup toolchain install nightly -c miri rust-src
+            rustup toolchain install nightly -c miri
       - run:
           name: Version information
           command: |

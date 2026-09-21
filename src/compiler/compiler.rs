@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, VecDeque},
+    collections::{VecDeque, hash_map},
     fmt, iter, mem,
 };
 
@@ -8,21 +8,22 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
+    Constant,
     constant::IdenticalConstant,
     opcode::{OpCode, Operation, RCIndex},
     types::{
-        ConstantIndex16, ConstantIndex8, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
+        ConstantIndex8, ConstantIndex16, Opt254, PrototypeIndex, RegisterIndex, UpValueDescriptor,
         UpValueIndex, VarCount,
     },
-    Constant,
 };
 
 use super::{
+    StringInterner,
     lexer::LineNumber,
     operators::{
-        categorize_binop, comparison_binop_const_fold, comparison_binop_operation,
-        simple_binop_const_fold, simple_binop_operation, unop_const_fold, unop_operation,
-        BinOpCategory, ComparisonBinOp, ShortCircuitBinOp, SimpleBinOp,
+        BinOpCategory, ComparisonBinOp, ShortCircuitBinOp, SimpleBinOp, categorize_binop,
+        comparison_binop_const_fold, comparison_binop_operation, simple_binop_const_fold,
+        simple_binop_operation, unop_const_fold, unop_operation,
     },
     parser::{
         AssignmentStatement, AssignmentTarget, BinaryOperator, Block, CallSuffix, Chunk,
@@ -33,7 +34,6 @@ use super::{
         TableConstructor, UnaryOperator, WhileStatement,
     },
     register_allocator::RegisterAllocator,
-    StringInterner,
 };
 
 #[derive(Debug, Copy, Clone, Error)]

@@ -1,16 +1,13 @@
 use std::{any::TypeId, hash::BuildHasherDefault};
 
 use ahash::AHasher;
-use gc_arena::{
-    allocator_api::MetricsAlloc, arena::Root, lock::RefLock, Collect, DynamicRootSet, Gc, Mutation,
-    Rootable,
-};
-use hashbrown::{hash_map, HashMap};
+use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, Rootable, arena::Root, lock::RefLock};
+use hashbrown::{HashMap, hash_map};
 
 use crate::{
+    Context,
     any::Any,
     stash::{Fetchable, Stashable},
-    Context,
 };
 
 /// A type which can have a single registered value per [`Lua`](crate::Lua) instance.
@@ -34,14 +31,12 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons:
-        Gc<'gc, RefLock<HashMap<TypeId, Any<'gc>, BuildHasherDefault<AHasher>, MetricsAlloc<'gc>>>>,
+    singletons: Gc<'gc, RefLock<HashMap<TypeId, Any<'gc>, BuildHasherDefault<AHasher>>>>,
 }
 
 impl<'gc> Registry<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
-        let singletons =
-            HashMap::with_hasher_in(BuildHasherDefault::default(), MetricsAlloc::new(mc));
+        let singletons = HashMap::with_hasher(BuildHasherDefault::default());
 
         Self {
             roots: DynamicRootSet::new(mc),
@@ -56,7 +51,7 @@ impl<'gc> Registry<'gc> {
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a> + 'static,
-        Root<'gc, S>: Sized + Singleton<'gc> + Collect,
+        Root<'gc, S>: Sized + Singleton<'gc> + Collect<'gc>,
     {
         let mut singletons = self.singletons.borrow_mut(&ctx);
         match singletons.entry(TypeId::of::<S>()) {

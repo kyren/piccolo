@@ -1,6 +1,6 @@
 use std::fmt;
 
-use piccolo::{table::NextValue, Table, Value};
+use piccolo::{Table, Value, table::NextValue};
 use serde::de;
 use thiserror::Error;
 

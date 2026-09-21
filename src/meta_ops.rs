@@ -4,10 +4,10 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::async_callback::{AsyncSequence, Locals};
-use crate::{async_sequence, SequenceReturn, Stack};
 use crate::{
-    table::InvalidTableKey, Callback, CallbackReturn, Context, Function, IntoValue, Table, Value,
+    Callback, CallbackReturn, Context, Function, IntoValue, Table, Value, table::InvalidTableKey,
 };
+use crate::{SequenceReturn, Stack, async_sequence};
 
 /// An enum of every possible Lua metamethod.
 ///
@@ -223,7 +223,7 @@ pub fn index<'gc>(
             return Err(MetaOperatorError::Unary(
                 MetaMethod::Index,
                 table.type_name(),
-            ))
+            ));
         }
     };
 

@@ -1,4 +1,4 @@
-use piccolo::{error::LuaError, Callback, Closure, Error, Executor, ExternError, Lua, Value};
+use piccolo::{Callback, Closure, Error, Executor, ExternError, Lua, Value, error::LuaError};
 use thiserror::Error;
 
 #[test]
