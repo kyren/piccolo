@@ -261,7 +261,7 @@ fn table_remove_impl<'gc>(
             let index = index.unwrap_or(length);
 
             // either index and length are zero, or index == length + 1 (without overflow)
-            if index.saturating_sub(1) == length {
+            if (index == 0 && length == 0) || index.saturating_sub(1) == length {
                 seq.enter(|_, _, _, mut stack| {
                     stack.push_back(Value::Nil);
                 });
